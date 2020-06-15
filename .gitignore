@@ -1,0 +1,15 @@
+#configure
+#aclocal.m4
+autom4te.cache
+compile
+config.guess
+config.sub
+config.log
+depcomp
+install-sh
+missing
+src/config.h.in
+**/*~
+**/.deps
+#**/Makefile
+**/Makefile.in
