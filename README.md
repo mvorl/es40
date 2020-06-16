@@ -1,8 +1,12 @@
 __ES40 Alpha System Emulator__
 
-Original project at http://www.es40.org
+Original project at http://www.es40.org (now dead)
 
-Original code from CVS cvs.sourceforge.net:/cvsroot/es40
+Original code at https://sourceforge.net/projects/es40/
+This code based on the latest snapshot build 20080503_1030
+
+With code from a discussion on 
+[openvmshobbyist.com](https://www.openvmshobbyist.com/forum/viewthread.php?forum_id=161&thread_id=2801)
 
 With inspirations from Github projects by
 [SMR11](https://github.com/SMR11/es40) and
