@@ -1,8 +1,13 @@
-ES40 Alpha System Emulator
-========================
+__ES40 Alpha System Emulator__
 
 Original project at http://www.es40.org
-Code from cvs cvs.sourceforge.net:/cvsroot/es40
+
+Original code from CVS cvs.sourceforge.net:/cvsroot/es40
+
+With inspirations from Github projects by
+[SMR11](https://github.com/SMR11/es40) and
+[promovicz](https://github.com/promovicz/es40)
+
 
 Original README below
 
