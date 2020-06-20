@@ -136,7 +136,7 @@
  *	controls every clocktick, but rather transfers control directly to
  *	CSystem::Run(), or to the Interactive Debugger.
  *   b)	In the IDB-version, the name of a script to execute can be specified
- *	on the command line (es40_idb @script).
+ *	on the command line (es40_idb \@script).
  *
  * X-1.16	Camiel Vanderhoeven				13-FEB-2007
  *	The define DISASM_START can be set to the number of processor cycles

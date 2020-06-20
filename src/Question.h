@@ -74,7 +74,7 @@ public:
 
   /**
    * Define a default value to use when the question is answered
-   * with a <return>.
+   * with a RETURN.
    **/
   void setDefault(string defval) 
   { 

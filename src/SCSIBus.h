@@ -51,7 +51,7 @@ class CSCSIBus : public CSystemComponent
 {
   public:
     CSCSIBus(CConfigurator* cfg, CSystem* c);
-    ~             CSCSIBus(void);
+    ~CSCSIBus(void);
     virtual int   SaveState(FILE* f);
     virtual int   RestoreState(FILE* f);
 

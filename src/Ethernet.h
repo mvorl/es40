@@ -91,6 +91,6 @@ class CPacketQueue
                          bool need_crc);      // adds pcap packet to queue
     bool        get_head(eth_packet& packet); // get packet at head
     CPacketQueue(const char* name, int max);        // constructor
-    ~           CPacketQueue(); // destructor
+    ~CPacketQueue(); // destructor
 };
 #endif // !defined(INCLUDED_ETHERNET_H)

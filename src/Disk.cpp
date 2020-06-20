@@ -172,7 +172,7 @@ CDisk::~CDisk(void)
 }
 
 /**
- * \Calculate the number of cylinders to report.
+ * \brief Calculate the number of cylinders to report.
  **/
 void CDisk::calc_cylinders()
 {

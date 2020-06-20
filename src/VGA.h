@@ -53,7 +53,7 @@ class CVGA : public CPCIDevice
 {
   public:
     CVGA(class CConfigurator* cfg, class CSystem* c, int pcibus, int pcidev);
-    ~             CVGA(void);
+    ~CVGA(void);
 
     virtual u8    get_actl_palette_idx(u8 index) = 0;
     virtual void  redraw_area(unsigned x0, unsigned y0, unsigned width,

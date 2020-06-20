@@ -151,7 +151,7 @@
  *
  * \section hp DEC/Compaq/HP OS-es
  *
- * \subsection vms OpenVMS
+ * \subsection guest_vms OpenVMS
  * Test 8.3
  *   - Using newide, all devices are recognized and use DMA mode, including CDs.
  *   - There is a permissions violation during install.  Do not abort it, and the
@@ -159,7 +159,7 @@
  *     reported. A lot seems to depend on timing).
  *   .
  *
- * \subsection tru64 Tru64 Unix
+ * \subsection guest_tru64 Tru64 Unix
  * Tested using 5.1B
  *   - Using the newide device:
  *       - Devices are probed correctly.

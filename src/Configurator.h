@@ -125,7 +125,7 @@ class CConfigurator
   public:
     CConfigurator(class CConfigurator*  parent, char*  name, char*  value,
                   char*  text, size_t textlen);
-    ~       CConfigurator(void);
+    ~CConfigurator(void);
 
     char*   strip_string(char* c);
     void    add_value(char* n, char* v);

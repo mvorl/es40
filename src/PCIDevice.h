@@ -66,7 +66,7 @@ class CPCIDevice : public CSystemComponent
   public:
     CPCIDevice(class CConfigurator*  cfg, class CSystem*  c, int pcibus,
                int pcidev);
-    ~             CPCIDevice(void);
+    ~CPCIDevice(void);
     virtual int   SaveState(FILE* f);
     virtual int   RestoreState(FILE* f);
     virtual void  ResetPCI();

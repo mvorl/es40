@@ -245,7 +245,7 @@
  *  - Alpha 21264/EV68CB and 21264/EV68DC Microprocessor Hardware Reference Manual [HRM] (http://download.majix.org/dec/21264ev68cb_ev68dc_hrm.pdf)
  *  - DS-0026A-TE: Alpha 21264B Microprocessor Hardware Reference Manual [HRM] (http://ftp.digital.com/pub/Digital/info/semiconductor/literature/21264hrm.pdf)
  *  - Alpha Architecture Reference Manual, fourth edition [ARM] (http://download.majix.org/dec/alpha_arch_ref.pdf)
- *	.
+ *  .
  **/
 class CAlphaCPU : public CSystemComponent, public CRunnable
 {

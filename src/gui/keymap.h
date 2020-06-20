@@ -76,7 +76,7 @@ class bx_keymap_c
 {
   public:
     bx_keymap_c(CConfigurator* cfg);
-    ~             bx_keymap_c(void);
+    ~bx_keymap_c(void);
 
     void          loadKeymap(u32 stringToSymbol (const char*));
     void          loadKeymap(u32 stringToSymbol (const char*),
