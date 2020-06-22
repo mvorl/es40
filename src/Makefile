@@ -388,7 +388,7 @@ CPP = gcc -E
 CPPFLAGS = 
 CXX = g++
 CXXDEPMODE = depmode=gcc3
-CXXFLAGS = -Ofast -flto  -I/usr/include/SDL -D_GNU_SOURCE=1 -D_REENTRANT -DHAVE_SDL -I/usr/include -DHAVE_PCAP  -DHAVE_X11 -pthread
+CXXFLAGS = -Ofast -flto -Wall -Wno-unused-variable -Wno-unused-but-set-variable -I/usr/include/SDL -D_GNU_SOURCE=1 -D_REENTRANT -DHAVE_SDL -I/usr/include -DHAVE_PCAP  -DHAVE_X11 -pthread
 CYGPATH_W = echo
 DEFS = -DHAVE_CONFIG_H
 DEPDIR = .deps
