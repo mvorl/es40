@@ -727,7 +727,8 @@ static const char* const kv_ali_ide[] = { "dma", 0 };
 static const char* const kv_vga[] = { "rom", 0 };
 static const char* const kv_lsi53c1020[] = { "flash", "rom", "firmware", 0 };
 static const char* const kv_dec21143[] = {
-  "adapter", "mac", "queue", "crc", "trace_packets", 0 };
+  "adapter", "mac", "queue", "crc", "trace_packets",
+  "autonegotiate_delay", 0 };
 static const char* const kv_disk_file[] = {
   "file", "model_number", "serial_number", "serial_num", "rev_number",
   "rev_num", "read_only", "cdrom", "autocreate_size", 0 };

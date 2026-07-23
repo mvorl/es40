@@ -102,6 +102,8 @@
 #endif
 #include "Ethernet.h"
 #include "base/Semaphore.h"
+#include <atomic>
+#include <chrono>
 
 #if defined(WIN32)
 typedef int          bpf_int32;
@@ -203,8 +205,13 @@ private:
   void                nic_write(u32 address, int dsize, u32 data);
   void                mii_access(uint32_t oldreg, uint32_t idata);
   void                srom_access(uint32_t oldreg, uint32_t idata);
+  void                start_sia_autoneg();
   void                complete_sia_autoneg();
   void                trace_packet(const char* dir, const u8* frame, int len);
+
+  bool                autoneg_delay_enabled;  
+  std::atomic<bool>   autoneg_pending{false};
+  std::chrono::steady_clock::time_point autoneg_complete_at;
 
   int                 dec21143_rx();
   int                 dec21143_tx();

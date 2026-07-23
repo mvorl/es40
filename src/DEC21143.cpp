@@ -331,6 +331,15 @@ void CDEC21143::run()
 		{
 			if (StopThread)
 				return;
+
+			/* Deferred SIA autoneg: complete outside the guest's CSR write. */
+			if (autoneg_pending.load(std::memory_order_acquire) &&
+				std::chrono::steady_clock::now() >= autoneg_complete_at)
+			{
+				autoneg_pending = false;
+				complete_sia_autoneg();
+			}
+
 			receive_process();
 
 			bool  asserted;
@@ -655,6 +664,8 @@ void CDEC21143::init()
 		(int)myCfg->get_num_value("queue", false, 1024));
 	calc_crc = myCfg->get_bool_value("crc", false);
 	trace_packets = myCfg->get_bool_value("trace_packets", false);
+	/* Hidden option: defer SIA autoneg completion ~50ms. */
+	autoneg_delay_enabled = myCfg->get_bool_value("autonegotiate_delay", false);
 
 	state.rx.cur_buf = NULL;
 	/* Use a 2KB TX scratch buffer like QEMU's tulip (tx_frame[2048]) to avoid overflows. */
@@ -1086,26 +1097,23 @@ void CDEC21143::nic_write(u32 address, int dsize, u32 data)
 		break;
 
 	case CSR_SIASTAT: /*  csr12  */
+		state.reg[CSR_SIASTAT / 8] = oldreg;  /* status register: ignore written data */
 		if (((data & SIASTAT_ANS) == SIASTAT_ANS_START)
 			&& (state.reg[CSR_SIATXRX / 8] & SIATXRX_ANE))
 		{
-			complete_sia_autoneg();
-		}
-		else
-		{
-			state.reg[CSR_SIASTAT / 8] = oldreg;
+			start_sia_autoneg();
 		}
 		break;
 
 	case CSR_SIATXRX: /*  csr14  */
 		if ((data & SIATXRX_ANE) && (state.reg[CSR_SIACONN / 8] & SIACONN_SRL))
-			complete_sia_autoneg();
+			start_sia_autoneg();
 		break;
 
 	case CSR_SIACONN: /*  csr13  */
 		if ((data & SIACONN_SRL) && (state.reg[CSR_SIATXRX / 8] & SIATXRX_ANE))
 		{
-			complete_sia_autoneg();
+			start_sia_autoneg();
 		}
 		break;
 
@@ -1310,6 +1318,25 @@ void CDEC21143::mii_access(uint32_t oldreg, uint32_t idata)
 	state.reg[CSR_MIIROM / 8] &= ~MIIROM_MDI;
 	if (ibit)
 		state.reg[CSR_MIIROM / 8] |= MIIROM_MDI;
+}
+
+/* deferred autoneg instead of finishing it inside the CSR write */
+void CDEC21143::start_sia_autoneg()
+{
+	if (!autoneg_delay_enabled)
+	{
+		/* Default: legacy instant completion. */
+		complete_sia_autoneg();
+		return;
+	}
+
+	/* Negotiating: ANS = ability detect, link down, no partner seen yet. */
+	state.reg[CSR_SIASTAT / 8] &= ~(SIASTAT_ANS | SIASTAT_LPN);
+	state.reg[CSR_SIASTAT / 8] |= SIASTAT_ANS_ABD | SIASTAT_LS100 | SIASTAT_LS10;
+
+	autoneg_complete_at = std::chrono::steady_clock::now() +
+		std::chrono::milliseconds(50);
+	autoneg_pending.store(true, std::memory_order_release);
 }
 
 void CDEC21143::complete_sia_autoneg()
@@ -2207,6 +2234,8 @@ void CDEC21143::ResetNIC()
 
 	/*  MII Management decoder initial state:  */
 	state.mii.state = MII_STATE_RESET;
+
+	autoneg_pending = false;
 
 	state.tx.suspend = false;
 
