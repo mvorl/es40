@@ -116,6 +116,8 @@ void CKeyboard::init()
 	state.allow_irq12 = 1;
 	state.kbd_output_buffer = 0;
 	state.aux_output_buffer = 0;
+	state.kbd_output_is_scancode = false;
+	state.aux_output_is_stream = false;
 	state.last_comm = 0;
 	state.expecting_port60h = 0;
 	state.irq1_requested = 0;
@@ -361,6 +363,8 @@ void CKeyboard::resetinternals(bool powerup)
 	for (int i = 0; i < BX_KBD_ELEMENTS; i++)
 		state.kbd_internal_buffer.buffer[i] = 0;
 	state.kbd_internal_buffer.head = 0;
+	state.deferred_scancode = 0;
+	state.deferred_scancode_valid = false;
 
 	state.kbd_internal_buffer.expecting_typematic = 0;
 	state.kbd_internal_buffer.expecting_make_break = 0;
@@ -427,36 +431,13 @@ u8 CKeyboard::read_60()
 		state.aux_output_buffer = 0;
 		state.status.outb = 0;
 		state.status.auxb = 0;
+		state.kbd_output_is_scancode = false;
+		state.aux_output_is_stream = false;
 		state.irq12_requested = 0;
 
-		// Drop the IRQ line for the byte just read (clearing the 8259 edge
-		// latch) BEFORE the controller-queue refill below.  That refill writes
-		// the output buffer directly, so without this the refilled byte can't
-		// raise a fresh edge (last_irr stuck high) and wedges, freezing input.
-		// kbd_service() re-raises after the refill.
-		kbd_update_irq();
-
-		if (state.kbd_controller_Qsize)
-		{
-			unsigned  i;
-			state.aux_output_buffer = state.kbd_controller_Q[0];
-			state.status.outb = 1;
-			state.status.auxb = 1;
-			if (state.allow_irq12)
-				state.irq12_requested = 1;
-			for (i = 0; i < state.kbd_controller_Qsize - 1; i++)
-			{
-
-				// move Q elements towards head of queue by one
-				state.kbd_controller_Q[i] = state.kbd_controller_Q[i + 1];
-			}
-
-			state.kbd_controller_Qsize--;
-		}
-
 		// Refill the output buffer from the queues and re-evaluate the IRQ
-		// lines (kbd_service drops the line for the byte just read, then raises
-		// a fresh edge if another byte is now pending
+		// lines.  kbd_service first drops the line for the byte just read,
+		// then raises a fresh edge if another byte is pending.
 		kbd_service();
 #ifdef DEBUG_KBD
 		BX_DEBUG(("[mouse] read from 0x60 returns 0x%02x", val));
@@ -468,33 +449,9 @@ u8 CKeyboard::read_60()
 		val = state.kbd_output_buffer;
 		state.status.outb = 0;
 		state.status.auxb = 0;
+		state.kbd_output_is_scancode = false;
 		state.irq1_requested = 0;
 		state.bat_in_progress = 0;
-
-		// Drop the IRQ line before the controller-queue refill below (see the
-		// mouse path above) so the refilled byte still produces a fresh edge.
-		kbd_update_irq();
-
-		if (state.kbd_controller_Qsize)
-		{
-			unsigned  i;
-			state.aux_output_buffer = state.kbd_controller_Q[0];
-			state.status.outb = 1;
-			state.status.auxb = 1;
-			if (state.allow_irq1)
-				state.irq1_requested = 1;
-			for (i = 0; i < state.kbd_controller_Qsize - 1; i++)
-			{
-
-				// move Q elements towards head of queue by one
-				state.kbd_controller_Q[i] = state.kbd_controller_Q[i + 1];
-			}
-
-#ifdef DEBUG_KBD
-			BX_DEBUG(("s.controller_Qsize: %02X", state.kbd_controller_Qsize));
-#endif
-			state.kbd_controller_Qsize--;
-		}
 
 		// Refill from the queues and re-evaluate the IRQ lines.
 		kbd_service();
@@ -584,6 +541,10 @@ void CKeyboard::write_60(u8 value)
 #ifdef DEBUG_KBD
 	printf("kbd: port 60 write: %02x.   \n", value);
 #endif
+
+	// Device/controller commands take priority over asynchronous host input
+	// in the shared 8042 output path.
+	prepare_command_response();
 
 	// data byte written last to 0x60
 	state.status.c_d = 0;
@@ -724,7 +685,10 @@ void CKeyboard::write_60(u8 value)
 		ctrl_to_kbd(value);
 	}
 
-	execute();
+	// Guest I/O services bytes already produced by the emulated devices.
+	// Host mouse movement is sampled only by the keyboard worker so a write
+	// cannot manufacture a stream packet behind its own command response.
+	kbd_service();
 }
 
 /**
@@ -738,6 +702,9 @@ void CKeyboard::write_64(u8 value)
 
 	static int  kbd_initialized = 0;
 	u8          command_byte;
+
+	// Controller commands take priority over asynchronous host input.
+	prepare_command_response();
 
 	// command byte written last to 0x64
 	state.status.c_d = 1;
@@ -753,19 +720,12 @@ void CKeyboard::write_64(u8 value)
 		BX_DEBUG(("get keyboard command byte"));
 #endif
 
-		// controller output buffer must be empty
-		if (state.status.outb)
-		{
-#ifdef DEBUG_KBD
-			BX_ERROR(("kbd: OUTB set and command 0x%02x encountered", value));
-#endif
-			break;
-		}
-
 		command_byte = (state.scancodes_translate << 6) |
 			((!state.aux_clock_enabled) << 5) | ((!state.kbd_clock_enabled) << 4) |
 			(0 << 3) | (state.status.sysf << 2) | (state.allow_irq12 << 1) |
 			(state.allow_irq1 << 0);
+		// A controller response waits behind an occupied OBF; it must not be
+		// silently lost just because device data arrived first.
 		controller_enQ(command_byte, 0);
 		break;
 
@@ -822,9 +782,16 @@ void CKeyboard::write_64(u8 value)
 #ifdef DEBUG_KBD
 		printf("kbd_ctrl: command aa: self test.   \n");
 #endif
+		// A controller self-test discards pending asynchronous keyboard input.
+		state.kbd_internal_buffer.head = 0;
+		state.kbd_internal_buffer.num_elements = 0;
+		state.deferred_scancode = 0;
+		state.deferred_scancode_valid = false;
+
 		if (kbd_initialized == 0)
 		{
 			state.kbd_controller_Qsize = 0;
+			state.kbd_controller_Qsource = 0;
 			state.status.outb = 0;
 			kbd_initialized = 1;
 		}
@@ -969,7 +936,20 @@ void CKeyboard::write_64(u8 value)
 		break;
 	}
 
-	execute();
+	// Do not sample host mouse movement as a side effect of a controller
+	// command.  In particular, a keyboard command and its ACK must not gain
+	// an AUX packet between them merely because this write called execute().
+	kbd_service();
+}
+
+/**
+ * Queue a solicited response from the keyboard device.  Responses use the
+ * controller FIFO so they remain distinct from asynchronous host scancodes
+ * and receive priority when the shared output buffer becomes free.
+ **/
+void CKeyboard::kbd_response_enQ(u8 data)
+{
+	controller_enQ(data, 0);
 }
 
 /**
@@ -988,9 +968,18 @@ void CKeyboard::controller_enQ(u8 data, unsigned source)
 	if (state.status.outb)
 	{
 		if (state.kbd_controller_Qsize >= BX_KBD_CONTROLLER_QSIZE)
-			FAILURE(Runtime, "controller_enq(): controller_Q full!");
-		state.kbd_controller_Q[state.kbd_controller_Qsize++] = data;
-		state.kbd_controller_Qsource = source;
+		{
+			BX_ERROR(("controller_enq(): controller_Q full, dropping %02x "
+				"from source %u", (unsigned)data, source));
+			return;
+		}
+
+		const unsigned queue_index = state.kbd_controller_Qsize++;
+		state.kbd_controller_Q[queue_index] = data;
+		if (source)
+			state.kbd_controller_Qsource |= (1u << queue_index);
+		else
+			state.kbd_controller_Qsource &= ~(1u << queue_index);
 		return;
 	}
 
@@ -1000,6 +989,8 @@ void CKeyboard::controller_enQ(u8 data, unsigned source)
 		state.kbd_output_buffer = data;
 		state.status.outb = 1;
 		state.status.auxb = 0;
+		state.kbd_output_is_scancode = false;
+		state.aux_output_is_stream = false;
 		state.status.inpb = 0;
 		if (state.allow_irq1)
 			state.irq1_requested = 1;
@@ -1009,10 +1000,132 @@ void CKeyboard::controller_enQ(u8 data, unsigned source)
 		state.aux_output_buffer = data;
 		state.status.outb = 1;
 		state.status.auxb = 1;
+		state.kbd_output_is_scancode = false;
+		state.aux_output_is_stream = false;
 		state.status.inpb = 0;
 		if (state.allow_irq12)
 			state.irq12_requested = 1;
 	}
+}
+
+/**
+ * Move the controller response at the head of its FIFO to the shared output
+ * buffer.  kbd_controller_Qsource is a bitmask so mixed keyboard/controller
+ * and AUX replies retain their source as the FIFO is compacted.
+ **/
+bool CKeyboard::controller_deQ()
+{
+	if (state.status.outb || !state.kbd_controller_Qsize)
+		return false;
+
+	const u8 data = state.kbd_controller_Q[0];
+	const bool source = (state.kbd_controller_Qsource & 1u) != 0;
+
+	for (unsigned i = 1; i < state.kbd_controller_Qsize; i++)
+		state.kbd_controller_Q[i - 1] = state.kbd_controller_Q[i];
+
+	state.kbd_controller_Qsize--;
+	state.kbd_controller_Qsource >>= 1;
+	state.status.outb = 1;
+	state.status.auxb = source;
+	state.kbd_output_is_scancode = false;
+	state.aux_output_is_stream = false;
+	state.status.inpb = 0;
+
+	if (source)
+	{
+		state.aux_output_buffer = data;
+		if (state.allow_irq12)
+			state.irq12_requested = 1;
+	}
+	else
+	{
+		state.kbd_output_buffer = data;
+		if (state.allow_irq1)
+			state.irq1_requested = 1;
+	}
+
+	return true;
+}
+
+/**
+ * Whether a controller or device command is waiting for its port-60
+ * data/parameter byte.  Asynchronous input must not split the transaction.
+ **/
+bool CKeyboard::input_transaction_active() const
+{
+	return state.expecting_port60h
+		|| state.expecting_scancodes_set
+		|| state.kbd_internal_buffer.expecting_typematic
+		|| state.kbd_internal_buffer.expecting_led_write
+		|| state.kbd_internal_buffer.expecting_make_break
+		|| state.expecting_mouse_parameter;
+}
+
+/**
+ * Discard asynchronous host movement so a guest command can use the shared
+ * controller path without a stream byte being mistaken for its response.
+ * Mouse command replies use the controller FIFO and are deliberately kept.
+ **/
+void CKeyboard::discard_mouse_stream()
+{
+	state.mouse.data_pending = false;
+	state.mouse.delayed_dx = 0;
+	state.mouse.delayed_dy = 0;
+	state.mouse.delayed_dz = 0;
+	state.mouse_internal_buffer.num_elements = 0;
+	state.mouse_internal_buffer.head = 0;
+
+	if (state.status.outb && state.status.auxb
+		&& state.aux_output_is_stream)
+	{
+		state.aux_output_buffer = 0;
+		state.status.outb = 0;
+		state.status.auxb = 0;
+		state.kbd_output_is_scancode = false;
+		state.aux_output_is_stream = false;
+		state.irq12_requested = 0;
+		kbd_update_irq();
+	}
+}
+
+/**
+ * Move an exposed host scancode behind solicited responses at a guest command
+ * boundary.  The dedicated slot preserves the byte even when the scan FIFO is
+ * full; reset commands clear both through resetinternals().
+ **/
+void CKeyboard::defer_keyboard_input()
+{
+	if (state.status.outb && !state.status.auxb
+		&& state.kbd_output_is_scancode)
+	{
+		if (state.deferred_scancode_valid)
+		{
+			BX_ERROR(("keyboard deferred-scancode slot already occupied"));
+		}
+		else
+		{
+			state.deferred_scancode = state.kbd_output_buffer;
+			state.deferred_scancode_valid = true;
+		}
+
+		state.kbd_output_buffer = 0;
+		state.status.outb = 0;
+		state.kbd_output_is_scancode = false;
+		state.irq1_requested = 0;
+		kbd_update_irq();
+	}
+}
+
+/**
+ * Give a guest controller/device command an uncontaminated response path.
+ * Mouse stream data is dropped so the next packet begins at a header byte;
+ * keyboard scans are deferred.  All solicited replies are retained.
+ **/
+void CKeyboard::prepare_command_response()
+{
+	discard_mouse_stream();
+	defer_keyboard_input();
 }
 
 /**
@@ -1051,6 +1164,10 @@ void CKeyboard::set_aux_clock_enable(u8 value)
 	if (value == 0)
 	{
 		state.aux_clock_enabled = 0;
+
+		// Host movement must not survive an inhibited AUX interface and
+		// reappear as stale input when it is enabled later.
+		discard_mouse_stream();
 	}
 	else
 	{
@@ -1077,7 +1194,7 @@ void CKeyboard::ctrl_to_kbd(u8 value)
 #ifdef DEBUG_KBD
 		printf("setting key %x to make/break mode (unused)   \n", value);
 #endif
-		enQ(0xFA);      // send ACK
+		kbd_response_enQ(0xFA);      // send ACK
 		return;
 	}
 
@@ -1100,7 +1217,7 @@ void CKeyboard::ctrl_to_kbd(u8 value)
 			((double)(8 + (value & 0x07)) * (double)exp(log((double)2) * (double)((value >> 3) & 0x03)) * 0.00417);
 		BX_INFO(("setting repeat rate to %.1f cps (unused)", cps));
 #endif
-		enQ(0xFA);      // send ACK
+		kbd_response_enQ(0xFA);      // send ACK
 		return;
 	}
 
@@ -1112,7 +1229,7 @@ void CKeyboard::ctrl_to_kbd(u8 value)
 		BX_DEBUG(("LED status set to %02x",
 			(unsigned)state.kbd_internal_buffer.led_status));
 #endif
-		enQ(0xFA);      // send ACK %%%
+		kbd_response_enQ(0xFA);      // send ACK
 		return;
 	}
 
@@ -1128,25 +1245,25 @@ void CKeyboard::ctrl_to_kbd(u8 value)
 				BX_INFO(("Switched to scancode set %d",
 					(unsigned)state.current_scancodes_set + 1));
 #endif
-				enQ(0xFA);
+				kbd_response_enQ(0xFA);
 			}
 			else
 			{
 				BX_ERROR(("Received scancodes set out of range: %d", value));
-				enQ(0xFF);  // send ERROR
+				kbd_response_enQ(0xFF);  // send ERROR
 			}
 		}
 		else
 		{
 
 			// Send ACK (SF patch #1159626)
-			enQ(0xFA);
+			kbd_response_enQ(0xFA);
 
 			// Send current scancodes set to port 0x60
 			if (state.scancodes_translate)
-				enQ(translation8042[1 + state.current_scancodes_set]);
+				kbd_response_enQ(translation8042[1 + state.current_scancodes_set]);
 			else
-				enQ(1 + state.current_scancodes_set);
+				kbd_response_enQ(1 + state.current_scancodes_set);
 		}
 
 		return;
@@ -1168,21 +1285,20 @@ void CKeyboard::ctrl_to_kbd(u8 value)
 		//#endif
 		//      // (mch) trying to get this to work...
 		//      state.status.sysf = 1;
-		//      enQ_imm(0xfe);
 		//      break;
 	case 0xed:        // LED Write
 		state.kbd_internal_buffer.expecting_led_write = 1;
 #ifdef DEBUG_KBD
 		printf("kbd: Expecting led write info.   \n");
 #endif
-		enQ_imm(0xFA);  // send ACK %%%
+		kbd_response_enQ(0xFA);      // send ACK
 		break;
 
 	case 0xee:        // echo
 #ifdef DEBUG_KBD
 		printf("kbd: command ee: echo.   \n");
 #endif
-		enQ(0xEE);      // return same byte (EEh) as echo diagnostic
+		kbd_response_enQ(0xEE);      // return same byte (EEh) as echo diagnostic
 		break;
 
 	case 0xf0:        // Select alternate scan code set
@@ -1190,7 +1306,7 @@ void CKeyboard::ctrl_to_kbd(u8 value)
 #ifdef DEBUG_KBD
 		printf("kbd: Expecting scancode set info.   \n");
 #endif
-		enQ(0xFA);      // send ACK
+		kbd_response_enQ(0xFA);      // send ACK
 		break;
 
 	case 0xf2:        // identify keyboard
@@ -1202,13 +1318,13 @@ void CKeyboard::ctrl_to_kbd(u8 value)
 		//
 		// Keyboards do report an ID as a reply to the command f2. An MF2 AT keyboard
 		// reports ID ab 83. Translation turns this into ab 41.
-		enQ(0xFA);
-		enQ(0xAB);
+		kbd_response_enQ(0xFA);
+		kbd_response_enQ(0xAB);
 
 		if (state.scancodes_translate)
-			enQ(0x41);
+			kbd_response_enQ(0x41);
 		else
-			enQ(0x83);
+			kbd_response_enQ(0x83);
 		break;
 
 	case 0xf3:        // typematic info
@@ -1216,7 +1332,7 @@ void CKeyboard::ctrl_to_kbd(u8 value)
 #ifdef DEBUG_KBD
 		printf("kbd: Expecting typematic info.   \n");
 #endif
-		enQ(0xFA);      // send ACK
+		kbd_response_enQ(0xFA);      // send ACK
 		break;
 
 	case 0xf4:        // enable keyboard
@@ -1224,12 +1340,12 @@ void CKeyboard::ctrl_to_kbd(u8 value)
 #ifdef DEBUG_KBD
 		printf("kbd: command f4: enable keyboard.   \n");
 #endif
-		enQ(0xFA);      // send ACK
+		kbd_response_enQ(0xFA);      // send ACK
 		break;
 
 	case 0xf5:        // reset keyboard to power-up settings and disable scanning
 		resetinternals(1);
-		enQ(0xFA);      // send ACK
+		kbd_response_enQ(0xFA);      // send ACK
 		state.kbd_internal_buffer.scanning_enabled = 0;
 #ifdef DEBUG_KBD
 		printf("kbd: command f5: reset and disable keyboard.   \n");
@@ -1238,7 +1354,7 @@ void CKeyboard::ctrl_to_kbd(u8 value)
 
 	case 0xf6:        // reset keyboard to power-up settings and enable scanning
 		resetinternals(1);
-		enQ(0xFA);      // send ACK
+		kbd_response_enQ(0xFA);      // send ACK
 		state.kbd_internal_buffer.scanning_enabled = 1;
 #ifdef DEBUG_KBD
 		printf("kbd: command f6: reset and enable keyboard.   \n");
@@ -1250,7 +1366,7 @@ void CKeyboard::ctrl_to_kbd(u8 value)
 #ifdef DEBUG_KBD
 		printf("kbd: Expecting make/break info.   \n");
 #endif
-		enQ(0xFA);      /* send ACK */
+		kbd_response_enQ(0xFA);      /* send ACK */
 		break;
 
 	case 0xfe:        // resend. aiiee.
@@ -1262,9 +1378,9 @@ void CKeyboard::ctrl_to_kbd(u8 value)
 		printf("kbd: command ff: reset keyboard w/BAT.   \n");
 #endif
 		resetinternals(1);
-		enQ(0xFA);      // send ACK
+		kbd_response_enQ(0xFA);      // send ACK
 		state.bat_in_progress = 1;
-		enQ(0xAA);      // BAT test passed
+		kbd_response_enQ(0xAA);      // BAT test passed
 		break;
 
 		//case 0xd3:
@@ -1277,41 +1393,14 @@ void CKeyboard::ctrl_to_kbd(u8 value)
 	case 0xfb:        // PS/2 Set Key Type to Typematic
 	case 0xfd:        // PS/2 Set Key Type to Make
 		printf("kbd: unhandled command: %02x, ACKing     \n", value);
-		enQ(0xFA);
+		kbd_response_enQ(0xFA);
 		break;
 
 	default:
 		printf("kbd: command %02x: not recognized!   \n", value);
-		enQ(0xFE);      /* send NACK */
+		kbd_response_enQ(0xFE);      /* send NACK */
 		break;
 	}
-}
-
-/**
- * enqueue scancode in multibyte internal keyboard buffer
- **/
-void CKeyboard::enQ_imm(u8 val)
-{
-	int tail;
-
-	if (state.kbd_internal_buffer.num_elements >= BX_KBD_ELEMENTS)
-	{
-		BX_PANIC(("internal keyboard buffer full (imm)"));
-		return;
-	}
-
-	tail =
-		(
-			state.kbd_internal_buffer.head +
-			state.kbd_internal_buffer.num_elements
-			) %
-		BX_KBD_ELEMENTS;
-
-	state.kbd_output_buffer = val;
-	state.status.outb = 1;
-
-	if (state.allow_irq1)
-		state.irq1_requested = 1;
 }
 
 /**
@@ -1646,7 +1735,7 @@ void CKeyboard::mouse_enQ(u8 mouse_data)
 	state.mouse_internal_buffer.buffer[tail] = mouse_data;
 	state.mouse_internal_buffer.num_elements++;
 
-	// Event-driven delivery, same as enQ() — see kbd_service().
+	// Event-driven delivery, same as enQ(); see kbd_service().
 	kbd_service();
 }
 
@@ -1660,8 +1749,11 @@ void CKeyboard::mouse_motion(int delta_x, int delta_y, int delta_z, unsigned but
 {
 	CFastMutex::ScopedLock guard(kbdLock);
 
-	// The host must not create PS/2 data while guest reporting is disabled.
-	if (!state.mouse.captured || !state.mouse.enable)
+	// Host motion produces unsolicited packets only while stream reporting is
+	// active and the controller can clock the AUX device.
+	if (!state.mouse.captured || !state.mouse.enable
+		|| state.mouse.mode != MOUSE_MODE_STREAM
+		|| !state.aux_clock_enabled)
 		return;
 
 	state.mouse.delayed_dx += delta_x;
@@ -1690,15 +1782,25 @@ void CKeyboard::create_mouse_packet(bool force_enq)
 
 	u8  b4;
 
-	// A reporting-disabled mouse must never create a PS/2 movement packet.
-	if (!state.mouse.enable)
+	// A reporting-disabled, non-stream, or controller-inhibited mouse must
+	// never create an unsolicited PS/2 movement packet.
+	if (!state.mouse.enable || state.mouse.mode != MOUSE_MODE_STREAM
+		|| !state.aux_clock_enabled)
 		return;
 
-	// A port-64 controller command and its following port-60 data byte are one
-	// transaction. In particular, do not synthesize movement between D4 and
-	// the mouse command byte, where it would precede the command's ACK.
-	if (!force_enq && state.expecting_port60h)
-		return;
+	if (!force_enq)
+	{
+		// Do not queue unsolicited stream data behind a byte already exposed
+		// in the controller's single output buffer.
+		if (state.status.outb)
+			return;
+
+		// Keep device command/parameter exchanges contiguous.  Besides the
+		// controller's two-write commands, this covers the interval between a
+		// keyboard or mouse command ACK and its required parameter.
+		if (input_transaction_active())
+			return;
+	}
 
 	if (state.mouse_internal_buffer.num_elements && !force_enq)
 	{
@@ -1793,12 +1895,13 @@ void CKeyboard::kbd_update_irq()
 }
 
 /**
- * Pull the next queued byte into the (single) output buffer if it is free —
- * keyboard bytes take priority over mouse — and drive the IRQ lines.  
+ * Pull the next queued byte into the single output buffer if it is free.
+ * Controller replies take priority, followed by deferred/queued keyboard
+ * scans and mouse stream data.
  *
  * kbd_update_irq() is called both before and after the refill: the first call
- * drops the line for the byte just consumed (clearing the 8259 edge latch) so
- * the refilled byte yields a fresh edge
+ * drops the line for the byte just consumed (clearing the cancellable PIC
+ * request) so the refilled byte yields a fresh edge.
  **/
 void CKeyboard::kbd_service()
 {
@@ -1806,8 +1909,25 @@ void CKeyboard::kbd_service()
 
 	if (!state.status.outb)
 	{
-		if (state.kbd_internal_buffer.num_elements
-			&& (state.kbd_clock_enabled || state.bat_in_progress))
+		if (controller_deQ())
+		{
+			// The helper populated the shared output buffer.
+		}
+		else if (!input_transaction_active()
+			&& state.deferred_scancode_valid
+			&& state.kbd_clock_enabled)
+		{
+			state.kbd_output_buffer = state.deferred_scancode;
+			state.deferred_scancode = 0;
+			state.deferred_scancode_valid = false;
+			state.status.outb = 1;
+			state.status.auxb = 0;
+			state.kbd_output_is_scancode = true;
+			state.aux_output_is_stream = false;
+		}
+		else if (!input_transaction_active()
+			&& state.kbd_internal_buffer.num_elements
+			&& state.kbd_clock_enabled)
 		{
 			state.kbd_output_buffer =
 				state.kbd_internal_buffer.buffer[state.kbd_internal_buffer.head];
@@ -1816,8 +1936,11 @@ void CKeyboard::kbd_service()
 			state.kbd_internal_buffer.num_elements--;
 			state.status.outb = 1;
 			state.status.auxb = 0;
+			state.kbd_output_is_scancode = true;
+			state.aux_output_is_stream = false;
 		}
 		else if (state.aux_clock_enabled
+			&& !input_transaction_active()
 			&& state.mouse_internal_buffer.num_elements)
 		{
 			state.aux_output_buffer =
@@ -1827,6 +1950,8 @@ void CKeyboard::kbd_service()
 			state.mouse_internal_buffer.num_elements--;
 			state.status.outb = 1;
 			state.status.auxb = 1;
+			state.kbd_output_is_scancode = false;
+			state.aux_output_is_stream = true;
 		}
 	}
 

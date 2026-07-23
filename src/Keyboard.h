@@ -100,11 +100,16 @@ private:
   void      write_64(u8 data);
   void      resetinternals(bool powerup);
   void      enQ(u8 scancode);
+  void      kbd_response_enQ(u8 data);
   void      controller_enQ(u8 data, unsigned source);
+  bool      controller_deQ();
+  bool      input_transaction_active() const;
+  void      discard_mouse_stream();
+  void      defer_keyboard_input();
+  void      prepare_command_response();
   void      set_kbd_clock_enable(u8 value);
   void      set_aux_clock_enable(u8 value);
   void      ctrl_to_kbd(u8 value);
-  void      enQ_imm(u8 val);
   void      ctrl_to_mouse(u8 value);
   bool      mouse_enQ_packet(u8 b1, u8 b2, u8 b3, u8 b4);
   void      mouse_enQ(u8 mouse_data);
@@ -138,6 +143,10 @@ private:
     bool  allow_irq12;
     u8    kbd_output_buffer;
     u8    aux_output_buffer;
+    u8    deferred_scancode;
+    bool  deferred_scancode_valid;
+    bool  kbd_output_is_scancode;
+    bool  aux_output_is_stream;
     u8    last_comm;
     u8    expecting_port60h;
     u8    expecting_mouse_parameter;
@@ -225,7 +234,7 @@ private:
 #define BX_KBD_CONTROLLER_QSIZE 5
     u8        kbd_controller_Q[BX_KBD_CONTROLLER_QSIZE];
     unsigned  kbd_controller_Qsize;
-    unsigned  kbd_controller_Qsource; /**< 0=keyboard, 1=mouse */
+    unsigned  kbd_controller_Qsource; /**< Per-entry source bitmask: 0=keyboard, 1=mouse. */
   } state;
 };
 
