@@ -1842,8 +1842,11 @@ void CAliM1543C::pic_update_output(int index)
 		}
 		else
 		{
-			if (is_level)
-				state.pic_irr[0] &= ~cascade_mask;
+			// The cascade request is derived from the slave output, so it
+			// must disappear with that output.  Keeping a master IRQ2 after
+			// the slave request was canceled produces a phantom IRQ15 and
+			// can leave master ISR2 permanently in service.
+			state.pic_irr[0] &= ~cascade_mask;
 			state.pic_last_irr[0] &= ~cascade_mask;
 		}
 		pic_update_output(0);
@@ -2209,10 +2212,10 @@ void CAliM1543C::pic_deassert(int index, int intno)
  *
  * Because the source is a level, IRR FOLLOWS the line: a rising edge latches
  * IRR (debounced via last_irr so a held line yields one interrupt), and a
- * falling line RETRACTS IRR.  This intentionally differs from a stock 8259 
- * which keeps an edge latched until INTA: a real 8259 has a wire whose source 
- * holds it, but here the "wire" IS the output-buffer level and once the guest 
- * empties the buffer there is nothing left to deliver.
+ * falling line RETRACTS IRR.  This intentionally differs from a stock 8259
+ * which keeps an edge latched until INTA: a real 8259 has a wire whose source
+ * holds it, but here the "wire" IS the emulated device cause and once that
+ * cause disappears there is nothing left to deliver.
  * 
  * caller must hold picLock 
  **/
@@ -2236,8 +2239,9 @@ void CAliM1543C::pic_set_line_inner(int index, int intno, bool active)
 	}
 	else
 	{
-		// Edge triggered: latch IRR only on the rising edge.  IRR is cleared at
-		// INTA, not here, so re-driving a held line produces no duplicate edge.
+		// Edge triggered: latch IRR only on the rising edge.  A held line
+		// produces no duplicate edge; INTA consumes it unless the emulated
+		// cause falls first.
 		if (active)
 		{
 			if ((state.pic_last_irr[index] & mask) == 0)
@@ -2246,10 +2250,8 @@ void CAliM1543C::pic_set_line_inner(int index, int intno, bool active)
 		}
 		else
 		{
-			// Line low — the output buffer emptied (normal read, drained read,
-			// or poll), so there is nothing left to deliver: retract the latched
-			// edge.  A stock 8259 keeps it until INTA, but here the line IS the
-			// buffer level.  
+			// The emulated cause disappeared before INTA.  Retract the
+			// request and rearm edge detection.
 			state.pic_irr[index]      &= ~mask;
 			state.pic_last_irr[index] &= ~mask;
 		}
