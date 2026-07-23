@@ -1660,7 +1660,8 @@ void CKeyboard::mouse_motion(int delta_x, int delta_y, int delta_z, unsigned but
 {
 	CFastMutex::ScopedLock guard(kbdLock);
 
-	if (!state.mouse.captured)
+	// The host must not create PS/2 data while guest reporting is disabled.
+	if (!state.mouse.captured || !state.mouse.enable)
 		return;
 
 	state.mouse.delayed_dx += delta_x;
@@ -1688,6 +1689,16 @@ void CKeyboard::create_mouse_packet(bool force_enq)
 	u8  b3;
 
 	u8  b4;
+
+	// A reporting-disabled mouse must never create a PS/2 movement packet.
+	if (!state.mouse.enable)
+		return;
+
+	// A port-64 controller command and its following port-60 data byte are one
+	// transaction. In particular, do not synthesize movement between D4 and
+	// the mouse command byte, where it would precede the command's ACK.
+	if (!force_enq && state.expecting_port60h)
+		return;
 
 	if (state.mouse_internal_buffer.num_elements && !force_enq)
 	{
