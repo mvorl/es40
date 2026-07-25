@@ -2208,6 +2208,11 @@
     <ClCompile Include="..\MPU401.cpp" />
     <ClCompile Include="..\Configurator.cpp" />
     <ClCompile Include="..\DEC21143.cpp" />
+    <ClCompile Include="..\NetworkBackend.cpp" />
+    <ClCompile Include="..\NetworkPcap.cpp" />
+    <ClCompile Include="..\NetworkTap.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="..\Disk.cpp" />
     <ClCompile Include="..\DiskController.cpp" />
     <ClCompile Include="..\DiskDevice.cpp" />
@@ -2298,6 +2303,9 @@
     <ClInclude Include="..\es40_debug.h" />
     <ClInclude Include="..\es40_endian.h" />
     <ClInclude Include="..\Ethernet.h" />
+    <ClInclude Include="..\NetworkBackend.h" />
+    <ClInclude Include="..\NetworkPcap.h" />
+    <ClInclude Include="..\NetworkTap.h" />
     <ClInclude Include="..\Flash.h" />
     <ClInclude Include="..\FloppyController.h" />
     <ClInclude Include="..\gui\gui.h" />
