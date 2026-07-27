@@ -532,7 +532,7 @@ scancode      scancodes[BX_KEY_NBKEYS][3] =
 																																		  // BX_KEY_BACKSLASH ( ibm 42, 29)
 																																		  { "\x2B" , "\xAB" },
 																																		  { "\x5D" , "\xF0\x5D" },
-																																		  { "\x53" , "\xF0\x53" },
+																																		  { "\x5C" , "\xF0\x5C" },
 																																		},
 
 																																		{
