@@ -1019,10 +1019,11 @@ int CTraceEngine::parse(char command[100][100])
 			{
 				printf("%%IDB-F-NOBRKP: No breakpoint set, press Ctrl-C to end run.\n");
 
-				/* catch CTRL-C and shutdown gracefully */
+				/* catch CTRL-C / SIGTERM and shutdown gracefully */
 				extern int  got_sigint;
 				void        sigint_handler(int);
 				signal(SIGINT, &sigint_handler);
+				signal(SIGTERM, &sigint_handler);
 				while (!got_sigint)
 				{
 					theSystem->SingleStep();
@@ -1095,6 +1096,7 @@ int CTraceEngine::parse(char command[100][100])
 
 				void  sigint_handler(int);
 				signal(SIGINT, &sigint_handler);
+				signal(SIGTERM, &sigint_handler);
 				while (1)
 				{
 					theSystem->SingleStep();
@@ -1426,6 +1428,7 @@ int CTraceEngine::parse(char command[100][100])
 				extern int  got_sigint;
 				void        sigint_handler(int);
 				signal(SIGINT, &sigint_handler);
+				signal(SIGTERM, &sigint_handler);
 				for (i = 0; i < RunCycles; i++)
 				{
 					if (theSystem->SingleStep())

@@ -643,7 +643,7 @@ void CSystem::UpdateX86BIOSClock()
 int got_sigint = 0;
 
 /**
- * Handle a SIGINT by setting a flag that terminates the emulator.
+ * Handle a SIGINT (CTRL-C) or SIGTERM by setting a flag that terminates the emulator.
  **/
 void sigint_handler(int signum)
 {
@@ -672,15 +672,16 @@ void CSystem::Run()
 
 
 
-	/* catch CTRL-C and shutdown gracefully */
+	/* catch CTRL-C and SIGTERM and shutdown gracefully */
 	signal(SIGINT, &sigint_handler);
+	signal(SIGTERM, &sigint_handler);
 
 	start_threads();
 
 	for (k = 0;; k++)
 	{
 		if (got_sigint)
-			FAILURE(Graceful, "CTRL-C detected");
+			FAILURE(Graceful, "CTRL-C or SIGTERM detected");
 
 		if (ProcessPendingReset())
 			continue;
