@@ -12,15 +12,34 @@
 
 #ifdef ES40_JIT
 
+// Host codegen architecture. x86-64 has the full backend (emit_op & friends emit x86 via
+// asmjit); ARM64 is scaffolding only -- the engine and dispatcher compile, but compile_block
+// emits no code, so every block falls back to the interpreter (see jitengine.cpp).
+#if defined(_M_X64) || defined(__x86_64__)
+#define ES40_JIT_X64 1
+#elif defined(_M_ARM64) || defined(__aarch64__)
+#define ES40_JIT_A64 1
+#else
+#error "ES40_JIT requires an x86-64 or ARM64 host"
+#endif
+
 #include <cstdint>
 #include "../config_debug.h"   // JIT_VERIFY
 #ifdef JIT_STATS
+// host cycle counter for the JIT_STATS wall-time split: TSC on x86-64, CNTVCT_EL0 on ARM64
+#if defined(ES40_JIT_X64)
 #if defined(_MSC_VER)
-#include <intrin.h>        // __rdtsc -- host TSC for the JIT_STATS wall-time split
+#include <intrin.h>        // __rdtsc
 #else
 #include <x86intrin.h>
 #endif
 static inline uint64_t jit_rdtsc() { return __rdtsc(); }
+#elif defined(_M_ARM64)
+#include <intrin.h>
+static inline uint64_t jit_rdtsc() { return _ReadStatusReg(ARM64_SYSREG(3, 3, 14, 0, 2)); }   // CNTVCT_EL0
+#else
+static inline uint64_t jit_rdtsc() { uint64_t v; __asm__ __volatile__("mrs %0, cntvct_el0" : "=r"(v)); return v; }
+#endif
 #endif
 #if defined(JIT_REGPROF) && !defined(JIT_STATS)
 #error "JIT_REGPROF needs JIT_STATS (its report rides note_exec's 100M-instruction window)"

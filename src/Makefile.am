@@ -106,7 +106,14 @@ es40_SOURCES = AliM1543C.cpp \
 if ENABLE_ASMJIT
 include jit/asmjit.am
 AM_CPPFLAGS += -I$(top_srcdir)/src/jit -DES40_JIT \
-               -I$(top_srcdir)/third_party/asmjit -DASMJIT_NO_AARCH64
+               -I$(top_srcdir)/third_party/asmjit
+# Build only the host-matching asmjit backend: x86-64 is the real codegen target;
+# ARM64 is scaffolding (a64 backend compiled for future use, no code emitted yet).
+if ES40_JIT_HOST_A64
+AM_CPPFLAGS += -DASMJIT_NO_X86
+else
+AM_CPPFLAGS += -DASMJIT_NO_AARCH64
+endif
 
 es40_SOURCES += jit/jitengine.cpp
 

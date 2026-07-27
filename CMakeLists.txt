@@ -373,6 +373,10 @@ endif()
 
 if (NOT ES40_DISABLE_ASMJIT)
     set(ASMJIT_NO_INSTALL ON)
+    # Build only the backend matching the target: x86-64 is the real codegen host; ARM64
+    # (incl. Apple Silicon) builds the JIT scaffolding, which always falls back to the
+    # interpreter (no a64 code is emitted yet -- see src/jit/jitengine.cpp).
+    set(ASMJIT_NO_FOREIGN ON)
     add_subdirectory(third_party/asmjit)
     list(APPEND ES40_DEFINITIONS ES40_JIT)
     target_include_directories(es40 PRIVATE ${CMAKE_SOURCE_DIR}/third_party/asmjit)

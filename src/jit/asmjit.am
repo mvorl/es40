@@ -34,6 +34,31 @@ libasmjit_a_SOURCES = \
     $(top_srcdir)/third_party/asmjit/asmjit/core/target.cpp \
     $(top_srcdir)/third_party/asmjit/asmjit/core/type.cpp \
     $(top_srcdir)/third_party/asmjit/asmjit/core/virtmem.cpp \
+    $(top_srcdir)/third_party/asmjit/asmjit/support/arena.cpp \
+    $(top_srcdir)/third_party/asmjit/asmjit/support/arenabitset.cpp \
+    $(top_srcdir)/third_party/asmjit/asmjit/support/arenahash.cpp \
+    $(top_srcdir)/third_party/asmjit/asmjit/support/arenalist.cpp \
+    $(top_srcdir)/third_party/asmjit/asmjit/support/arenatree.cpp \
+    $(top_srcdir)/third_party/asmjit/asmjit/support/arenavector.cpp \
+    $(top_srcdir)/third_party/asmjit/asmjit/support/support.cpp
+
+# One backend per host (matches Makefile.am's ASMJIT_NO_X86 / ASMJIT_NO_AARCH64 split):
+# the a64 backend is scaffolding for a future ARM64 codegen -- nothing emits through it yet.
+if ES40_JIT_HOST_A64
+libasmjit_a_SOURCES += \
+    $(top_srcdir)/third_party/asmjit/asmjit/arm/a64assembler.cpp \
+    $(top_srcdir)/third_party/asmjit/asmjit/arm/a64builder.cpp \
+    $(top_srcdir)/third_party/asmjit/asmjit/arm/a64compiler.cpp \
+    $(top_srcdir)/third_party/asmjit/asmjit/arm/a64emithelper.cpp \
+    $(top_srcdir)/third_party/asmjit/asmjit/arm/a64formatter.cpp \
+    $(top_srcdir)/third_party/asmjit/asmjit/arm/a64func.cpp \
+    $(top_srcdir)/third_party/asmjit/asmjit/arm/a64instapi.cpp \
+    $(top_srcdir)/third_party/asmjit/asmjit/arm/a64instdb.cpp \
+    $(top_srcdir)/third_party/asmjit/asmjit/arm/a64operand.cpp \
+    $(top_srcdir)/third_party/asmjit/asmjit/arm/a64rapass.cpp \
+    $(top_srcdir)/third_party/asmjit/asmjit/arm/armformatter.cpp
+else
+libasmjit_a_SOURCES += \
     $(top_srcdir)/third_party/asmjit/asmjit/x86/x86assembler.cpp \
     $(top_srcdir)/third_party/asmjit/asmjit/x86/x86builder.cpp \
     $(top_srcdir)/third_party/asmjit/asmjit/x86/x86compiler.cpp \
@@ -43,12 +68,6 @@ libasmjit_a_SOURCES = \
     $(top_srcdir)/third_party/asmjit/asmjit/x86/x86instapi.cpp \
     $(top_srcdir)/third_party/asmjit/asmjit/x86/x86instdb.cpp \
     $(top_srcdir)/third_party/asmjit/asmjit/x86/x86operand.cpp \
-    $(top_srcdir)/third_party/asmjit/asmjit/x86/x86rapass.cpp \
-    $(top_srcdir)/third_party/asmjit/asmjit/support/arena.cpp \
-    $(top_srcdir)/third_party/asmjit/asmjit/support/arenabitset.cpp \
-    $(top_srcdir)/third_party/asmjit/asmjit/support/arenahash.cpp \
-    $(top_srcdir)/third_party/asmjit/asmjit/support/arenalist.cpp \
-    $(top_srcdir)/third_party/asmjit/asmjit/support/arenatree.cpp \
-    $(top_srcdir)/third_party/asmjit/asmjit/support/arenavector.cpp \
-    $(top_srcdir)/third_party/asmjit/asmjit/support/support.cpp
+    $(top_srcdir)/third_party/asmjit/asmjit/x86/x86rapass.cpp
+endif
 

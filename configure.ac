@@ -273,6 +273,18 @@ AC_ARG_ENABLE([asmjit],
 
 AM_CONDITIONAL([ENABLE_ASMJIT], [test "x$enable_asmjit" = "xyes"])
 
+# JIT host architecture: x86-64 gets the full codegen backend; ARM64 builds the JIT
+# scaffolding (the engine compiles but emits no code yet, so every block falls back to
+# the interpreter). Any other host can't build the engine at all.
+AS_IF([test "x$enable_asmjit" = "xyes"], [
+  case "$host_cpu" in
+    x86_64|amd64|aarch64|arm64) ;;
+    *) AC_MSG_ERROR([--enable-asmjit requires an x86-64 or ARM64 host (host_cpu=$host_cpu)]) ;;
+  esac
+])
+AM_CONDITIONAL([ES40_JIT_HOST_A64],
+  [test "x$host_cpu" = "xaarch64" || test "x$host_cpu" = "xarm64"])
+
 # Generate the various makefiles.
 AC_CONFIG_FILES([Makefile doc/Makefile m4/Makefile src/Makefile])
 AC_OUTPUT

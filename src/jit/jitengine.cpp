@@ -8,17 +8,19 @@
 #include <chrono>   // note_exec times its own stats-print I/O (excluded from the wall-clock RPCC)
 #include <initializer_list>
 #define ASMJIT_STATIC
-#include <asmjit/x86.h>
-
 // asmjit's x64 backend emits x86-64; asmjit's CallConv maps the host C ABI
-// (Microsoft x64 or System V) from the build env. Block any other host arch 
-// rather than silently emit for a 32-bit or non-x86 target. (until ARM is added)
-// I don't forsee ever wanting to add or use 32-bit x86. 
-#if !defined(_M_X64) && !defined(__x86_64__)
-#error "ES40_JIT requires an x86-64 host (asmjit x64 backend emits 64-bit code)"
+// (Microsoft x64 or System V) from the build env. On ARM64 only asmjit's core is
+// needed (JitRuntime for the engine plumbing) -- no a64 codegen is emitted yet.
+// jitengine.h rejects any other host arch. I don't forsee ever adding 32-bit x86.
+#ifdef ES40_JIT_X64
+#include <asmjit/x86.h>
+#else
+#include <asmjit/core.h>
 #endif
 
 namespace {
+
+#ifdef ES40_JIT_X64   // guest-ISA classification + emit support: only the x86 backend uses it
 
 #ifdef JIT_DISASM
 // Log/error any asmjit emit failure (badly formed instruction / bad operand) that the Assembler
@@ -381,6 +383,8 @@ SafeOp classify(uint32_t ins, bool pal_block)
   return OP_NONE;
 }
 
+#endif // ES40_JIT_X64
+
 } // namespace
 
 // Defined further down; forward-declared so compile_block's punch-list print can use it.
@@ -649,6 +653,8 @@ void CJitEngine::flush_non_global()
       if (!m_traces[i].segs[s].asm_global) { m_traces[i].valid = false; note_trace_stale(); break; }
   }
 }
+
+#ifdef ES40_JIT_X64   // ---- the x86-64 codegen backend (emit_op / compile_block / compile_trace) ----
 
 // ZAP/ZAPNOT byte-expand: g_zapnot_mask[b] has byte i = 0xFF where bit i of b is set (ZAPNOT keeps
 // those bytes; ZAP keeps the complement). Compiled ZAP indexes this instead of an 8-way bit test.
@@ -2315,6 +2321,30 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   m_trace_formed++;
 #endif
 }
+
+#else // !ES40_JIT_X64 -- ARM64 scaffolding: the engine's bookkeeping (record/lookup/flush/
+      // coherence) compiles and runs, but no code is emitted. The dispatcher only enters
+      // b->code / t->code when non-null, so every block falls back to the interpreter.
+
+void CJitEngine::emit_op(void*, const uint8_t*, void*, const HelperSet&,
+                         bool, JitBlock*, uint32_t, uint32_t, RegAlloc&) {}
+
+void CJitEngine::compile_block(JitBlock* b, const uint8_t*, uint64_t, void*, void*, void*,
+    void*, void*, void*, void*, void*, void*, void*, void*, void*, void*, void*, void*,
+    void*, void*, void*, void*)
+{
+  // Mark the attempt so record()'s hot path never re-requests a compile; code stays
+  // null, so this block is interpreted permanently (no recompile churn).
+  b->compiled = true;
+  b->code = nullptr;
+  b->jit_body = nullptr;
+  b->prefix_len = 0;
+}
+
+void CJitEngine::compile_trace(TraceFragment*, JitBlock**, uint32_t,
+                               const uint8_t*, uint64_t, const HelperSet&) {}
+
+#endif // ES40_JIT_X64
 
 #ifdef JIT_VERIFY
 uint64_t CJitEngine::verify_compare(uint64_t blk_virt, const uint64_t* interp, const uint64_t* jit,

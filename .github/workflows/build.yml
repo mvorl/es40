@@ -482,6 +482,10 @@ jobs:
           - Release NN NS IDB
           - Release NN NS LSM
           - Release NN NS LSS
+          # JIT (AsmJit) scaffolding build on the arm64 image: compiles with ES40_JIT but
+          # emits no code yet (always falls back to the interpreter). Real-codegen macOS
+          # JIT coverage is the separate Intel job below.
+          - Release JIT
 
     steps:
       - name: Checkout
@@ -586,6 +590,11 @@ jobs:
           )
           configure_args=()
 
+          if [[ "$configuration" == *"JIT"* ]]; then
+            echo "Configuring with AsmJit JIT (arm64 scaffolding) for: $configuration"
+            configure_args+=(--enable-asmjit)
+          fi
+
           if [[ "$is_no_network" -eq 1 ]]; then
             echo "Configuring without pcap for NN configuration: $configuration"
             configure_args+=(--disable-pcap)
@@ -648,9 +657,9 @@ jobs:
           if-no-files-found: error
 
   macos-x86_64-jit-build:
-    # The JIT is x86-64 only (asmjit x64 backend; ASMJIT_NO_AARCH64), so it cannot build on the
-    # arm64 macos-latest image. Deliberately a separate Intel-only job -- the macos-build matrix
-    # above stays pure arm64 on macos-latest.
+    # Real JIT codegen is x86-64 only (asmjit x64 backend). The arm64 macos-build matrix above
+    # now builds the ES40_JIT scaffolding (interpreter fallback, no a64 codegen yet); this
+    # Intel-only job keeps a real-codegen macOS JIT build covered.
     name: macOS x86-64 JIT build (Release JIT)
     runs-on: macos-26-intel
     steps:
