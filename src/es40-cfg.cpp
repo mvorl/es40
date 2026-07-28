@@ -558,10 +558,10 @@ int main(int argc, char* argv[])
 	mem_q.setExplanation("Your system should have enough free memory to emulate the amount you choose here.");
 	mem_q.setDefault("256M");
 
-	/* Add memory sizes from 32 MB to 8 GB
-	 * (25 to 34 bits).
+	/* Add memory sizes from 32 MB to 32 GB
+	 * (25 to 35 bits).
 	 */
-	for (int i = 25; i < 34; i++)
+	for (int i = 25; i < 36; i++)
 	{
 		string a;
 		int j = i;
