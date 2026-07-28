@@ -257,6 +257,7 @@ list(APPEND ES40_DEFINITIONS "ES40_GIT_COMMIT=\"${ES40_GIT_COMMIT}\"")
 list(APPEND ES40_SOURCES
     src/base/Exception.cpp
     src/base/ThreadTLS.cpp
+	src/gui/gui.cpp
     src/gui/keymap.cpp
     src/gui/scancodes.cpp
     src/AliM1543C_ide.cpp
@@ -319,7 +320,6 @@ if (NOT ES40_DISABLE_SDL)
 
     list(APPEND ES40_SOURCES
         src/gui/sdl.cpp
-        src/gui/gui.cpp
         )
     
     if (WIN32)
