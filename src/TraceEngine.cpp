@@ -1755,9 +1755,9 @@ void CTraceEngine::list_all()
 	struct sRegion* pR = NULL;
 	struct sRegion** ppN = &pR;
 	struct sRegion* p = NULL;
-	int               f = 0;
-	int               t = 0;
-	int               ms = 1 << (theSystem->get_memory_bits() - 3);
+	s64               f = 0;
+	s64               t = 0;
+	s64               ms = (s64)(U64(1) << (theSystem->get_memory_bits() - 3));
 	u64* pM = (u64*)theSystem->PtrToMem(0);
 
 	for (;;)
