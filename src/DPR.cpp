@@ -203,16 +203,29 @@ void CDPR::init()
 
 	state.ram[0xda] = 0xaa; // TIG load
 
-	// DIMM config
-	state.ram[0x80] = 0xf0; // twice-split 8 dimms array 0
-	state.ram[0x81] = 0x01; // 64 MB
+	// DIMM config: mirror the modeled topology (CSystem::init_spd_from_config_mb):
+	// array a = DIMM slot a+1 (and a+5 when twice-split) on each of the 4 MMBs.
+	const CSystem::SDimmLayout& lay = cSystem->get_dimm_layout();
+	const std::vector<uint8_t>& spd = cSystem->get_dimm_spd();
+	for (int a = 0; a < lay.n_arrays; a++)
+	{
+		state.ram[0x80 + 2 * a] = (u8)(0xf0 | a); // twice-split 8 dimms, array a
+		u8 sz = (u8)(lay.dimm_mb / 64);           // DIMM size in 64MB units
+		state.ram[0x81 + 2 * a] = sz ? sz : 1;
+	}
 
-	//    state.ram[0x82] = 0xf1; // twice-split 8 dimms array 1
-	//    state.ram[0x83] = 0x01; // 64 MB
-	//    state.ram[0x84] = 0xf2; // twice-split 8 dimms array 2
-	//    state.ram[0x85] = 0x01; // 64 MB
-	//    state.ram[0x86] = 0xf3; // twice-split 8 dimms array 3
-	//    state.ram[0x87] = 0x01; // 64 MB
+	// RMC-cached SPD reads, one 256-byte region per installed DIMM
+	// (region for MMB m DIMM d is at 0x100 * (m*8 + (d==1 ? 8 : d-1)),
+	// per the EEROM map below)
+	for (int m = 0; m < 4; m++)
+		for (int a = 0; a < lay.n_arrays; a++)
+			for (int s = 0; s < lay.dimms_per_array / 4; s++)
+			{
+				int d = a + 1 + 4 * s;
+				u32 off = 0x100 * (m * 8 + ((d == 1) ? 8 : d - 1));
+				memcpy(&state.ram[off], spd.data(), spd.size());
+			}
+
 	// powerup failure bits
 	state.ram[0x88] = 0;    // each bit is one DIMM on MMB0
 	state.ram[0x89] = 0x00; // MMB1
@@ -247,11 +260,22 @@ void CDPR::init()
 
 	state.ram[0xaa] = 0x00; // fans good
 
-	// RMC read failure DIMM bits
-	state.ram[0xab] = 0;    // each bit is one DIMM on MMB0
-	state.ram[0xac] = 0xff; // MMB1
-	state.ram[0xad] = 0xff; // MMB2
-	state.ram[0xae] = 0xff; // MMB3
+	// RMC read failure DIMM bits: set = empty slot (no SPD to read).
+	// Same population on every MMB: bit a (and a+4 when twice-split) clear
+	// for each installed array a.
+	{
+		u8 dimm_present = 0;
+		for (int a = 0; a < lay.n_arrays; a++)
+		{
+			dimm_present |= (u8)(1 << a);
+			if (lay.dimms_per_array == 8)
+				dimm_present |= (u8)(1 << (a + 4));
+		}
+		state.ram[0xab] = (u8)~dimm_present; // MMB0
+		state.ram[0xac] = (u8)~dimm_present; // MMB1
+		state.ram[0xad] = (u8)~dimm_present; // MMB2
+		state.ram[0xae] = (u8)~dimm_present; // MMB3
+	}
 	switch (cSystem->get_cpu_num())
 	{
 	case 1: state.ram[0xaf] = 0x0e; // all MMB I2C's read + CPU 0
@@ -416,8 +440,16 @@ void CDPR::init()
 	//    34A8:34AF SROM Repeat for Array 1 of Array 0 34A0:34A7
 	//    34B0:34B7 SROM Repeat for Array 2 of Array 0 34A0:34A7
 	//    34B8:34CF SROM Repeat for Array 3 of Array 0 34A0:34A7
-	for (i = 0; i < 0x20; i++)
-		state.ram[0x34a0 + i] = i;
+	// Entry j of array a: DIMM slot a+1 (j<4) or a+5 (j>=4) on MMB j&3.
+	for (int a = 0; a < 4; a++)
+		for (int j = 0; j < 8; j++)
+		{
+			int m = j & 3;
+			int d = a + 1 + ((j >= 4) ? 4 : 0);
+			u8  status = (a < lay.n_arrays &&
+				(j < 4 || lay.dimms_per_array == 8)) ? 0 : 1; // 1 = expected missing
+			state.ram[0x34a0 + a * 8 + j] = (u8)((status << 5) | (m << 3) | ((d - 1) & 7));
+		}
 
 	//    34C0:34FF       Used as scratch area for SROM
 	//    3500:35FF       Used as the dedicated buffer in which SRM writes OCP or FRU EEROM data.
