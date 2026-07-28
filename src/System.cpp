@@ -347,6 +347,10 @@ CSystem::CSystem(CConfigurator* cfg)
 	iNumCPUs = 0;
 	iNumMemoryBits = (int)myCfg->get_num_value("memory.bits", false, 27);
 
+	// 4 Typhoon arrays of at most 8GB (ASIZ 1010) each.
+	if (iNumMemoryBits > 35)
+		FAILURE(Configuration, "memory.bits > 35 (32GB) exceeds the 4-array Typhoon maximum");
+
 	// initialize SPD data according to configured memory size
 	const uint32_t total_mb = static_cast<uint32_t>((1ULL << iNumMemoryBits) >> 20);
 	init_spd_from_config_mb(total_mb);
@@ -426,7 +430,12 @@ void CSystem::ResetMem(unsigned int membits)
 {
 	free(memory);
 	iNumMemoryBits = membits;
-	CHECK_ALLOCATION(memory = calloc(1 << iNumMemoryBits, 1));
+	if (iNumMemoryBits > 30) {
+		CHECK_ALLOCATION(memory = calloc((size_t)1 << (iNumMemoryBits - 10), 1 << 10));
+	}
+	else {
+		CHECK_ALLOCATION(memory = calloc((size_t)1 << iNumMemoryBits, 1));
+	}
 }
 
 /**
@@ -471,7 +480,7 @@ char* CSystem::PtrToMem(u64 address)
 	if (address >> iNumMemoryBits) // Non Memory
 		return 0;
 
-	return &(((char*)memory)[(int)address]);
+	return (char*)memory + address;
 }
 
 /**
@@ -1968,16 +1977,19 @@ u64 CSystem::cchip_csr_read(u32 a, CSystemComponent* source)
 	}
 
 	case 0x100:
-
-		// WE PUT ALL OUR MEMORY IN A SINGLE ARRAY FOR NOW...
-		return((u64)(iNumMemoryBits - 23) << 12);  //size
-
 	case 0x140:
 	case 0x180:
 	case 0x1c0:
-
-		// WE PUT ALL OUR MEMORY IN A SINGLE ARRAY FOR NOW...
-		return 0;
+	{
+		// AAR0-3: memory presented as up to 4 arrays of at most 8GB each
+		// (Typhoon ASIZ max, HRM Table 10-15); base address in ADDR<34:24>.
+		int           arr = (int)((a >> 6) & 3);
+		unsigned int  arr_bits = (iNumMemoryBits > 33) ? 33 : iNumMemoryBits;
+		int           n_arr = 1 << (iNumMemoryBits - arr_bits);
+		if (arr >= n_arr)
+			return 0; // bank disabled
+		return ((u64)arr << arr_bits) | ((u64)(arr_bits - 23) << 12);
+	}
 
 	case 0x200:
 	case 0x240:
@@ -2865,11 +2877,11 @@ void CSystem::SaveState(const char* fn)
 {
 	FILE* f;
 	int           i;
-	unsigned int  m;
+	u64           m;
 	unsigned int  j;
 	int* mem = (int*)memory;
 	int           int0 = 0;
-	unsigned int  memints = (1 << iNumMemoryBits) / (unsigned int)sizeof(int);
+	u64           memints = (U64(1) << iNumMemoryBits) / sizeof(int);
 	u32           temp_32;
 
 	f = fopen(fn, "wb");
@@ -2891,7 +2903,7 @@ void CSystem::SaveState(const char* fn)
 			{
 				j = 0;
 				m++;
-				while (!mem[m] && (m < memints))
+				while ((m < memints) && !mem[m])
 				{
 					m++;
 					j++;
@@ -2899,7 +2911,7 @@ void CSystem::SaveState(const char* fn)
 						break;
 				}
 
-				if (mem[m])
+				if ((m < memints) && mem[m])
 					m--;
 				fwrite(&int0, 1, sizeof(int), f);
 				fwrite(&j, 1, sizeof(int), f);
@@ -2925,10 +2937,10 @@ void CSystem::RestoreState(const char* fn)
 {
 	FILE* f;
 	int           i;
-	unsigned int  m;
+	u64           m;
 	unsigned int  j;
 	int* mem = (int*)memory;
-	unsigned int  memints = (1 << iNumMemoryBits) / (unsigned int)sizeof(int);
+	u64           memints = (U64(1) << iNumMemoryBits) / sizeof(int);
 	u32           temp_32;
 
 	f = fopen(fn, "rb");
@@ -2988,19 +3000,19 @@ void CSystem::RestoreState(const char* fn)
 void CSystem::DumpMemory(unsigned int filenum)
 {
 	char    file[100];
-	int     x;
+	u64     x;
 	int* mem = (int*)memory;
 	FILE* f;
 
 	sprintf(file, "memory_%012d.dmp", filenum);
 	f = fopen(file, "wb");
 
-	x = (1 << iNumMemoryBits) / (unsigned int)sizeof(int) / 2;
+	x = (U64(1) << iNumMemoryBits) / sizeof(int) / 2;
 
-	while (!mem[x - 1])
+	while (x > 0 && !mem[x - 1])
 		x--;
 
-	fwrite(mem, 1, x * sizeof(int), f);
+	fwrite(mem, 1, (size_t)(x * sizeof(int)), f);
 	fclose(f);
 }
 
@@ -3131,34 +3143,6 @@ void CSystem::clear_ipi(int ProcNum)
 }
 
 /* ---------------- SPD generation + init ---------------- */
-std::vector<uint32_t> CSystem::split_mb_into_dimms(uint32_t total_mb)
-{
-	// ES40 prefers matched Registered ECC DIMMs for interleave.
-	// Try to form 4 identical sticks, else 2, else fall back to greedy.
-	const uint32_t choices[] = { 1024, 512, 256, 128, 64 };
-	auto fill_all = [&](uint32_t each, int n)->std::vector<uint32_t> {
-		std::vector<uint32_t> v(4, 0);
-		for (int i = 0; i < n; ++i) v[i] = each;
-		return v;
-		};
-	// 4-way match
-	for (uint32_t c : choices) if (total_mb == 4 * c) return fill_all(c, 4);
-	// 2-way match
-	for (uint32_t c : choices) if (total_mb == 2 * c) return fill_all(c, 2);
-	// Mixed but server-ish: try largest even pairs first, then greedy.
-	std::vector<uint32_t> out(4, 0);
-	uint32_t remain = total_mb;
-	for (uint32_t c : choices) {
-		while (remain >= 2 * c) {
-			for (int k = 0; k < 2; k++) { for (int i = 0; i < 4; i++) if (!out[i]) { out[i] = c; break; } }
-			remain -= 2 * c;
-		}
-	}
-	for (uint32_t c : choices) {
-		while (remain >= c) { for (int i = 0; i < 4; i++) if (!out[i]) { out[i] = c; break; } remain -= c; }
-	}
-	return out;
-}
 
 std::vector<uint8_t> CSystem::build_sdram_spd(uint32_t mb, bool registered_ecc)
 {
@@ -3166,6 +3150,9 @@ std::vector<uint8_t> CSystem::build_sdram_spd(uint32_t mb, bool registered_ecc)
 	// Geometry chosen to make capacity math coherent for 64/128/256/512/1024 MB.
 	struct Geo { uint8_t rows, cols, ranks; } g{};
 	switch (mb) {
+	case 8:    g = { 10,  8, 1 }; break;   // tiny legacy parts
+	case 16:   g = { 11,  8, 1 }; break;
+	case 32:   g = { 11,  9, 1 }; break;
 	case 64:   g = { 12,  9, 1 }; break;   // 8Mx8 devices, 1 rank
 	case 128:  g = { 13,  9, 1 }; break;   // 16Mx8, 1 rank
 	case 256:  g = { 13, 10, 2 }; break;   // 16Mx8, 2 ranks
@@ -3204,12 +3191,20 @@ std::vector<uint8_t> CSystem::build_sdram_spd(uint32_t mb, bool registered_ecc)
 
 void CSystem::init_spd_from_config_mb(uint32_t total_mb)
 {
-	auto dimms = split_mb_into_dimms(total_mb);
-	for (int i = 0; i < 4; i++) {
-		if (!dimms[i]) continue;
-		auto image = build_sdram_spd(dimms[i], /*registered_ecc*/true);
-		m_mpd_bus.attach(std::make_shared<Eeprom24C02>(uint8_t(0x50 + i), image));
-	}
+	// Model the real topology: 4 MMBs, array a = slot a+1 (and a+5 when
+	// twice-split) on each MMB. >8GB splits into multiple 8GB arrays to
+	// match the AAR presentation (Typhoon ASIZ max = 8GB per array).
+	m_dimm_layout.n_arrays = (total_mb > 8192) ? (int)(total_mb / 8192) : 1;
+	uint32_t per_array_mb = total_mb / m_dimm_layout.n_arrays;
+	m_dimm_layout.dimms_per_array = (per_array_mb >= 512) ? 8 : 4;
+	m_dimm_layout.dimm_mb = per_array_mb / m_dimm_layout.dimms_per_array;
+	m_dimm_spd = build_sdram_spd(m_dimm_layout.dimm_mb, /*registered_ecc*/true);
+
+	// The I2C bus can't carry every DIMM (HRM 9.10): attach one
+	// representative EEPROM per subarray, at 0x50 + array*2 + subarray.
+	for (int a = 0; a < m_dimm_layout.n_arrays; a++)
+		for (int s = 0; s < m_dimm_layout.dimms_per_array / 4; s++)
+			m_mpd_bus.attach(std::make_shared<Eeprom24C02>(uint8_t(0x50 + a * 2 + s), m_dimm_spd));
 }
 
 

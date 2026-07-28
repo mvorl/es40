@@ -265,6 +265,17 @@ public:
   CAlphaCPU* get_cpu(int cpunum) { return acCPUs[cpunum]; };
   int           get_cpu_num() { return iNumCPUs; };
 
+  // DIMM topology: 4 MMBs; array a = slot a+1 (and a+5 when twice-split) on
+  // every MMB. Max config = 4 arrays x 8 x 1GB DIMMs = 32GB (all 32 slots).
+  struct SDimmLayout
+  {
+    int      n_arrays;        // populated memory arrays (1, 2 or 4)
+    int      dimms_per_array; // 8 (twice-split) or 4 (single subarray)
+    uint32_t dimm_mb;         // capacity of each (identical) DIMM
+  };
+  const SDimmLayout& get_dimm_layout() { return m_dimm_layout; };
+  const std::vector<uint8_t>& get_dimm_spd() { return m_dimm_spd; };
+
   virtual       ~CSystem();
   unsigned int  iNumMemoryBits;
 
@@ -314,7 +325,8 @@ private:
   // Build SPD images that match configured memory.
   void init_spd_from_config_mb(uint32_t total_mb);
   static std::vector<uint8_t> build_sdram_spd(uint32_t dimm_mb, bool registered_ecc = true);
-  static std::vector<uint32_t> split_mb_into_dimms(uint32_t total_mb);
+  SDimmLayout    m_dimm_layout;
+  std::vector<uint8_t> m_dimm_spd; // shared SPD image (all DIMMs identical)
 
   int           iNumCPUs;
   u64           cpu_lock_value[4]; // per-CPU LDx_L value, for same-address STx_C compare-and-swap
