@@ -834,10 +834,19 @@ void CAlphaCPU::jit_run(int budget)
 				// Count-preserving, paced catch-up: the schedule advances one period per
 				// fire so ticks lost to a busy/stalled CPU0 thread are repaid and the
 				// guests' tick-counted clocks (VMS never resyncs) stay true to wall time.
-				// Repayment is paced to >= half a period between fires (max 2x nominal,
-				// never a burst - burst/compressed ticks skew RPCC-vs-tick calibrations).
+				// Repay gaps are MODULATED so consecutive SRM cycles-per-tick windows
+				// (~100 ticks) never agree during a repay stretch. Per-fire noise alone
+				// averages out 1/sqrt(N) over a window; the triangle wave's ~2.8-window
+				// wavelength survives the averaging, and the noise breaks symmetric-
+				// alignment ties. 
 				// Backlog beyond 1s (debugger pause, host sleep) is dropped.
-				if (now - tick_last_fire >= std::chrono::nanoseconds(period_ns / 2))
+				tick_fire_idx++;
+				const u32 ph = tick_fire_idx % 277;
+				const u32 tri = (ph <= 138) ? ph : (277 - ph);
+				tick_pace_lcg = tick_pace_lcg * 1664525u + 1013904223u;
+				const u64 gap_ns = period_ns / 2 + period_ns * tri / 400
+					+ period_ns * ((tick_pace_lcg >> 24) & 0x3f) / 1024;
+				if (now - tick_last_fire >= std::chrono::nanoseconds(gap_ns))
 				{
 					cSystem->interrupt(-1, true);
 					tick_last_fire = now;
@@ -2195,10 +2204,19 @@ void CAlphaCPU::execute()
 					// Count-preserving, paced catch-up: the schedule advances one period per
 					// fire so ticks lost to a busy/stalled CPU0 thread are repaid and the
 					// guests' tick-counted clocks (VMS never resyncs) stay true to wall time.
-					// Repayment is paced to >= half a period between fires (max 2x nominal,
-					// never a burst - burst/compressed ticks skew RPCC-vs-tick calibrations).
+					// Repay gaps are MODULATED so consecutive SRM cycles-per-tick windows
+					// (~100 ticks) never agree during a repay stretch. Per-fire noise alone
+					// averages out 1/sqrt(N) over a window; the triangle wave's ~2.8-window
+					// wavelength survives the averaging, and the noise breaks symmetric-
+					// alignment ties.
 					// Backlog beyond 1s (debugger pause, host sleep) is dropped.
-					if (now - tick_last_fire >= std::chrono::nanoseconds(period_ns / 2))
+					tick_fire_idx++;
+					const u32 ph = tick_fire_idx % 277;
+					const u32 tri = (ph <= 138) ? ph : (277 - ph);
+					tick_pace_lcg = tick_pace_lcg * 1664525u + 1013904223u;
+					const u64 gap_ns = period_ns / 2 + period_ns * tri / 400
+						+ period_ns * ((tick_pace_lcg >> 24) & 0x3f) / 1024;
+					if (now - tick_last_fire >= std::chrono::nanoseconds(gap_ns))
 					{
 						cSystem->interrupt(-1, true);
 						tick_last_fire = now;

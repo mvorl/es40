@@ -453,6 +453,8 @@ private:
   // catch-up so backlog repays at no more than 2x the nominal rate.
   std::chrono::steady_clock::time_point next_timer_fire;
   std::chrono::steady_clock::time_point tick_last_fire;
+  u32                                   tick_pace_lcg = 0x9e3779b9; // noise term of the catch-up gap modulation (see timer fire in jit_run/execute)
+  u32                                   tick_fire_idx = 0;          // triangle-wave phase of the catch-up gap modulation
 
   // CALL_PAL WTINT idle nap: enabled by the cpu config, announced once
   bool                                  idle_nap_enabled = false;
