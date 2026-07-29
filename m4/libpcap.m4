@@ -94,10 +94,10 @@ AC_DEFUN([AM_PATH_PCAP],
 dnl Get the cflags and libraries for libpcap
 dnl
 
-  ES_PCAP_INC_WHERE(/opt/homebrew/opt/libpcap/include /usr/local/opt/libpcap/include /opt/local/include /usr/ng/include /usr/include /usr/local/include)
+  ES_PCAP_INC_WHERE(/opt/homebrew/opt/libpcap/include /usr/local/opt/libpcap/include /opt/local/include /usr/ng/include /usr/include /usr/local/include `xcrun --show-sdk-path 2>/dev/null`/usr/include)
 
   if test "X$ac_cv_pcap_where_inc" != "X"; then
-    ES_PCAP_LIB_WHERE(/opt/homebrew/opt/libpcap/lib /usr/local/opt/libpcap/lib /opt/local/lib /usr/ng/lib /usr/lib /usr/local/lib)
+    ES_PCAP_LIB_WHERE(/opt/homebrew/opt/libpcap/lib /usr/local/opt/libpcap/lib /opt/local/lib /usr/ng/lib /usr/lib /usr/local/lib `xcrun --show-sdk-path 2>/dev/null`/usr/lib)
   fi
 
   AC_MSG_CHECKING(whether pcap is available)
