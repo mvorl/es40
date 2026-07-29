@@ -204,27 +204,24 @@ void CDPR::init()
 	state.ram[0xda] = 0xaa; // TIG load
 
 	// DIMM config: mirror the modeled topology (CSystem::init_spd_from_config_mb):
-	// array a = DIMM slot a+1 (and a+5 when twice-split) on each of the 4 MMBs.
+	// array a = MMB a, DIMMs J1..J4 (and J5..J8 when twice-split).
 	const CSystem::SDimmLayout& lay = cSystem->get_dimm_layout();
 	const std::vector<uint8_t>& spd = cSystem->get_dimm_spd();
 	for (int a = 0; a < lay.n_arrays; a++)
 	{
-		state.ram[0x80 + 2 * a] = (u8)(0xf0 | a); // twice-split 8 dimms, array a
+		// Service guide Table C-1, byte 0x80: <7:4> F = twice-split 8 DIMMs,
+		// 4 = non-split lower set only; <3:0> = configured array position.
+		state.ram[0x80 + 2 * a] = (u8)(((lay.dimms_per_array == 8) ? 0xf0 : 0x40) | a);
 		u8 sz = (u8)(lay.dimm_mb / 64);           // DIMM size in 64MB units
 		state.ram[0x81 + 2 * a] = sz ? sz : 1;
 	}
 
-	// RMC-cached SPD reads, one 256-byte region per installed DIMM
-	// (region for MMB m DIMM d is at 0x100 * (m*8 + (d==1 ? 8 : d-1)),
-	// per the EEROM map below)
-	for (int m = 0; m < 4; m++)
-		for (int a = 0; a < lay.n_arrays; a++)
-			for (int s = 0; s < lay.dimms_per_array / 4; s++)
-			{
-				int d = a + 1 + 4 * s;
-				u32 off = 0x100 * (m * 8 + ((d == 1) ? 8 : d - 1));
-				memcpy(&state.ram[off], spd.data(), spd.size());
-			}
+	// RMC-cached SPD reads, one 256-byte region per installed DIMM.
+	// Region for MMB m DIMM Jd is at 0x100 * (m*8 + d), d = 1..8
+	// (service guide Table C-1: 100 = MMB0 J1 ... 2000 = MMB3 J8).
+	for (int a = 0; a < lay.n_arrays; a++)
+		for (int d = 1; d <= lay.dimms_per_array; d++)
+			memcpy(&state.ram[0x100 * (a * 8 + d)], spd.data(), spd.size());
 
 	// powerup failure bits
 	state.ram[0x88] = 0;    // each bit is one DIMM on MMB0
@@ -260,21 +257,12 @@ void CDPR::init()
 
 	state.ram[0xaa] = 0x00; // fans good
 
-	// RMC read failure DIMM bits: set = empty slot (no SPD to read).
-	// Same population on every MMB: bit a (and a+4 when twice-split) clear
-	// for each installed array a.
+	// RMC read failure DIMM bits (bit d-1 = Jd, set = no SPD to read):
+	// MMB m carries array m's DIMMs J1..J4 (J1..J8 when twice-split).
 	{
-		u8 dimm_present = 0;
-		for (int a = 0; a < lay.n_arrays; a++)
-		{
-			dimm_present |= (u8)(1 << a);
-			if (lay.dimms_per_array == 8)
-				dimm_present |= (u8)(1 << (a + 4));
-		}
-		state.ram[0xab] = (u8)~dimm_present; // MMB0
-		state.ram[0xac] = (u8)~dimm_present; // MMB1
-		state.ram[0xad] = (u8)~dimm_present; // MMB2
-		state.ram[0xae] = (u8)~dimm_present; // MMB3
+		u8 in_set = (lay.dimms_per_array == 8) ? 0xff : 0x0f;
+		for (int m = 0; m < 4; m++)
+			state.ram[0xab + m] = (u8)((m < lay.n_arrays) ? ~in_set : 0xff);
 	}
 	switch (cSystem->get_cpu_num())
 	{
@@ -329,39 +317,20 @@ void CDPR::init()
 
 	// EEROMs
 
-	/*
-	   100: MMB0 DIMM 2
-	   200: MMB0 DIMM 3
-	   300: MMB0 DIMM 4
-	   400: MMB0 DIMM 5
-	   500: MMB0 DIMM 6
-	   600: MMB0 DIMM 7
-	   700: MMB0 DIMM 8
-	   800: MMB0 DIMM 1
-	   900: MMB1 DIMM 2
-	   a00: MMB1 DIMM 3
-	   b00: MMB1 DIMM 4
-	   c00: MMB1 DIMM 5
-	   d00: MMB1 DIMM 6
-	   e00: MMB1 DIMM 7
-	   f00: MMB1 DIMM 8
-	   1000: MMB1 DIMM 1
-	   1100: MMB2 DIMM 2
-	   1200: MMB2 DIMM 3
-	   1300: MMB2 DIMM 4
-	   1400: MMB2 DIMM 5
-	   1500: MMB2 DIMM 6
-	   1600: MMB2 DIMM 7
-	   1700: MMB2 DIMM 8
-	   1800: MMB2 DIMM 1
-	   1900: MMB3 DIMM 2
-	   1a00: MMB3 DIMM 3
-	   1b00: MMB3 DIMM 4
-	   1c00: MMB3 DIMM 5
-	   1d00: MMB3 DIMM 6
-	   1e00: MMB3 DIMM 7
-	   1f00: MMB3 DIMM 8
-	   2000: MMB3 DIMM 1
+	/* Service guide (EK-ES240-SV) Table C-1:
+	   100: MMB0 J1 DIMM 1
+	   200: MMB0 J2 DIMM 2
+	   ...
+	   800: MMB0 J8 DIMM 8
+	   900: MMB1 J1 DIMM 1
+	   ...
+	   1000: MMB1 J8 DIMM 8
+	   1100: MMB2 J1 DIMM 1
+	   ...
+	   1800: MMB2 J8 DIMM 8
+	   1900: MMB3 J1 DIMM 1
+	   ...
+	   2000: MMB3 J8 DIMM 8
 	   2100: CPU0
 	   2200: CPU1
 	   2300: CPU2
@@ -440,15 +409,13 @@ void CDPR::init()
 	//    34A8:34AF SROM Repeat for Array 1 of Array 0 34A0:34A7
 	//    34B0:34B7 SROM Repeat for Array 2 of Array 0 34A0:34A7
 	//    34B8:34CF SROM Repeat for Array 3 of Array 0 34A0:34A7
-	// Entry j of array a: DIMM slot a+1 (j<4) or a+5 (j>=4) on MMB j&3.
+	// Entry j of array a: DIMM J(j+1) on MMB a.
 	for (int a = 0; a < 4; a++)
 		for (int j = 0; j < 8; j++)
 		{
-			int m = j & 3;
-			int d = a + 1 + ((j >= 4) ? 4 : 0);
 			u8  status = (a < lay.n_arrays &&
-				(j < 4 || lay.dimms_per_array == 8)) ? 0 : 1; // 1 = expected missing
-			state.ram[0x34a0 + a * 8 + j] = (u8)((status << 5) | (m << 3) | ((d - 1) & 7));
+				j < lay.dimms_per_array) ? 0 : 1; // 1 = expected missing
+			state.ram[0x34a0 + a * 8 + j] = (u8)((status << 5) | (a << 3) | j);
 		}
 
 	//    34C0:34FF       Used as scratch area for SROM
@@ -514,39 +481,11 @@ void CDPR::WriteMem(int index, u64 address, int dsize, u64 data)
 		{
 		case 1:
 
-			/*
-			   100: MMB0 DIMM 2
-			   200: MMB0 DIMM 3
-			   300: MMB0 DIMM 4
-			   400: MMB0 DIMM 5
-			   500: MMB0 DIMM 6
-			   600: MMB0 DIMM 7
-			   700: MMB0 DIMM 8
-			   800: MMB0 DIMM 1
-			   900: MMB1 DIMM 2
-			   a00: MMB1 DIMM 3
-			   b00: MMB1 DIMM 4
-			   c00: MMB1 DIMM 5
-			   d00: MMB1 DIMM 6
-			   e00: MMB1 DIMM 7
-			   f00: MMB1 DIMM 8
-			   1000: MMB1 DIMM 1
-			   1100: MMB2 DIMM 2
-			   1200: MMB2 DIMM 3
-			   1300: MMB2 DIMM 4
-			   1400: MMB2 DIMM 5
-			   1500: MMB2 DIMM 6
-			   1600: MMB2 DIMM 7
-			   1700: MMB2 DIMM 8
-			   1800: MMB2 DIMM 1
-			   1900: MMB3 DIMM 2
-			   1a00: MMB3 DIMM 3
-			   1b00: MMB3 DIMM 4
-			   1c00: MMB3 DIMM 5
-			   1d00: MMB3 DIMM 6
-			   1e00: MMB3 DIMM 7
-			   1f00: MMB3 DIMM 8
-			   2000: MMB3 DIMM 1
+			/* Service guide (EK-ES240-SV) Table C-1:
+			   100-800:   MMB0 J1 DIMM 1 ... J8 DIMM 8
+			   900-1000:  MMB1 J1 DIMM 1 ... J8 DIMM 8
+			   1100-1800: MMB2 J1 DIMM 1 ... J8 DIMM 8
+			   1900-2000: MMB3 J1 DIMM 1 ... J8 DIMM 8
 			   2100: CPU0
 			   2200: CPU1
 			   2300: CPU2

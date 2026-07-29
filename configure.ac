@@ -43,7 +43,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.71])
-AC_INIT([es40],[0.78],[https://github.com/ES40-Emu/es40/issues/new],[],[https://github.com/ES40-Emu/es40/issues])
+AC_INIT([es40],[0.78.1],[https://github.com/ES40-Emu/es40/issues/new],[],[https://github.com/ES40-Emu/es40/issues])
 AC_CONFIG_SRCDIR([src/Flash.cpp])
 AC_CONFIG_MACRO_DIRS([m4])
 AC_CONFIG_HEADERS([src/config.h])

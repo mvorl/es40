@@ -265,12 +265,13 @@ public:
   CAlphaCPU* get_cpu(int cpunum) { return acCPUs[cpunum]; };
   int           get_cpu_num() { return iNumCPUs; };
 
-  // DIMM topology: 4 MMBs; array a = slot a+1 (and a+5 when twice-split) on
-  // every MMB. Max config = 4 arrays x 8 x 1GB DIMMs = 32GB (all 32 slots).
+  // DIMM topology: 4 MMBs of 8 slots; array a lives on MMB a as sets of 4
+  // identical DIMMs (J1-4 lower set, J5-8 upper set). Max config = 4 arrays
+  // x 8 x 1GB DIMMs = 32GB (all 32 slots).
   struct SDimmLayout
   {
-    int      n_arrays;        // populated memory arrays (1, 2 or 4)
-    int      dimms_per_array; // 8 (twice-split) or 4 (single subarray)
+    int      n_arrays;        // populated arrays == populated MMBs (1, 2 or 4)
+    int      dimms_per_array; // 8 (twice-split) or 4 (lower set only)
     uint32_t dimm_mb;         // capacity of each (identical) DIMM
   };
   const SDimmLayout& get_dimm_layout() { return m_dimm_layout; };
