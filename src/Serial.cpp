@@ -1196,12 +1196,23 @@ void CSerial::WaitForConnection()
 	Address.sin_port = htons((u16)listenPort);
 	Address.sin_family = AF_INET;
 
-	//  Wait until we have a connection
+	//  Wait until we have a connection. Poll instead of blocking in accept()
+	//  so stop_threads() can interrupt us; otherwise shutdown hangs in join()
+	//  until a client connects (issue #158).
+	fd_set          readset;
+	struct timeval  tv;
 	connectSocket = INVALID_SOCKET;
 	while (connectSocket == INVALID_SOCKET)
 	{
-		connectSocket = (int)accept(listenSocket, (struct sockaddr*)&Address,
-			&nAddressSize);
+		if (StopThread)
+			return;
+		FD_ZERO(&readset);
+		FD_SET(listenSocket, &readset);
+		tv.tv_sec = 0;
+		tv.tv_usec = 100000;
+		if (select(listenSocket + 1, &readset, NULL, NULL, &tv) > 0)
+			connectSocket = (int)accept(listenSocket, (struct sockaddr*)&Address,
+				&nAddressSize);
 	}
 
 	iac_carry_len = 0;
