@@ -8,6 +8,7 @@
 #include <chrono>   // note_exec times its own stats-print I/O (excluded from the wall-clock RPCC)
 #include <initializer_list>
 #include <vector>   // deferred slow-path stubs (memop helper calls)
+#include <cstddef>  // offsetof (chain guard)
 #define ASMJIT_STATIC
 // asmjit's x64 backend emits x86-64; asmjit's CallConv maps the host C ABI
 // (Microsoft x64 or System V) from the build env. On ARM64 only asmjit's core is
@@ -458,7 +459,7 @@ CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uin
   JitBlock& b = m_blocks[index_of(virt_pc)];
   // record() is only reached after the dispatcher validated the live physical, and every returning
   // branch below verifies the code bytes (flush-fresh or hash), so stamp the chain epoch here.
-  b.vgen = m_itb_gen + m_flush_gen;
+  b.vgen = m_vgen_cur;
   // Still valid + matching + flush-fresh: nothing flushed us since last seen, so the code can't
   // have changed. (flush_gen-stale must NOT take this no-hash path -- post-IMB needs the hash.)
   if (b.valid && b.flush_gen == m_flush_gen && b.tag == virt_pc && (b.asm_global || b.asn == asn)
@@ -497,7 +498,7 @@ CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uin
   b.flush_gen = m_flush_gen;
   b.code = nullptr;
   b.jit_body = nullptr;   // not compiled yet -> cached links to us must miss until compile
-  for (int i = 0; i < kLinkSlots; ++i) b.link[i] = nullptr;   // no cached successors yet
+  for (int i = 0; i < kLinkSlots; ++i) b.link[i] = {};   // no cached successors yet
 #ifdef JIT_STATS
   b.link_misses = 0; b.link_fanout = 0;   // instrumentation: reset successor-fanout tracking on (re)use
 #endif
@@ -529,7 +530,7 @@ CJitEngine::JitBlock* CJitEngine::revalidate_flushed(uint64_t virt_pc, uint32_t 
     return nullptr;
   b.valid = true;          // flush_non_global() may have cleared it; the hash just re-validated the bytes
   b.flush_gen = m_flush_gen;
-  b.vgen = m_itb_gen + m_flush_gen;   // phys + code bytes just validated
+  b.vgen = m_vgen_cur;   // phys + code bytes just validated
   b.jit_body = (void*) ((uint8_t*) (void*) b.code + b.body_off);
   return &b;
 }
@@ -556,14 +557,14 @@ bool CJitEngine::trace_ok(TraceFragment* t, uint64_t head_live_phys, const uint8
     const JitBlock& sb = m_blocks[index_of(t->segs[s].guest_pc)];
     if (sb.valid && sb.tag == t->segs[s].guest_pc && sb.prefix_len != t->segs[s].n_instr) { note_trace_stale(); return false; }
   }
-  if (t->vgen == m_itb_gen + m_flush_gen)
+  if (t->vgen == m_vgen_cur)
     return true;                                      // epoch fresh: nothing changed since build
   for (uint32_t i = 0; i < t->n_segs; ++i) {
     const SourceSeg& s = t->segs[i];
     if (s.src_sum != src_hash(dram + s.phys_pc, s.n_instr))
       { note_trace_stale(); return false; }            // a segment's source bytes changed -> stale
   }
-  t->vgen = m_itb_gen + m_flush_gen;                  // all segments re-validated: re-stamp the epoch
+  t->vgen = m_vgen_cur;                               // all segments re-validated: re-stamp the epoch
   t->flush_gen = m_flush_gen;
   return true;
 }
@@ -575,7 +576,7 @@ bool CJitEngine::trace_ok(TraceFragment* t, uint64_t head_live_phys, const uint8
 // trace tier's coherence is broken 
 void CJitEngine::trace_selftest()
 {
-  const uint64_t save_itb = m_itb_gen, save_flush = m_flush_gen;
+  const uint64_t save_itb = m_itb_gen, save_flush = m_flush_gen, save_vgen = m_vgen_cur;
   uint32_t mem[8] = { 0x11111111, 0x22222222, 0x33333333, 0x44444444,
                       0x55555555, 0x66666666, 0x77777777, 0x88888888 };
   const uint8_t* d = (const uint8_t*) mem;
@@ -584,22 +585,23 @@ void CJitEngine::trace_selftest()
   t.valid = true; t.head_tag = 0x2000; t.asn = 1; t.n_segs = 2;
   t.segs[0] = { 0x2000, 0,  4, false, 1, src_hash(d + 0,  4) };   // words[0..3] at phys 0
   t.segs[1] = { 0x2010, 16, 4, false, 1, src_hash(d + 16, 4) };   // words[4..7] at phys 16
-  t.vgen = m_itb_gen + m_flush_gen;
+  t.vgen = m_vgen_cur;
 
   bool ok = true;
   ok &= ( trace_ok(&t, 0,   d) == true  );    // 1. fresh: epoch + head-phys match -> enter
   ok &= ( trace_ok(&t, 999, d) == false );    // 2. head remap / ASN-recycle: live head phys differs -> drop
-  ++m_itb_gen;                                 // 3. ITB-invalidate, bytes unchanged:
+  note_itb_invalidate();                       // 3. ITB-invalidate, bytes unchanged:
   ok &= ( trace_ok(&t, 0,   d) == true  );    //    epoch bumps, re-hash matches -> keep ...
-  ok &= ( t.vgen == m_itb_gen + m_flush_gen ); //    ... and re-stamped to the new epoch
-  mem[5] = 0xDEADBEEF; ++m_flush_gen;          // 4. SMC on interior seg1 + IMB (flush bump):
+  ok &= ( t.vgen == m_vgen_cur );              //    ... and re-stamped to the new epoch
+  mem[5] = 0xDEADBEEF;                         // 4. SMC on interior seg1 + IMB (flush bump):
+  ++m_flush_gen; ++m_vgen_cur;                 //    (flush()'s bump, minus its reclaim bookkeeping)
   ok &= ( trace_ok(&t, 0,   d) == false );    //    re-hash mismatch -> drop
   mem[5] = 0x66666666;                         // 5. restore the byte, epoch still bumped:
   ok &= ( trace_ok(&t, 0,   d) == true  );    //    re-hash matches again -> keep
 
   printf("[JIT][CPU%d] trace_ok self-test (SMC/IMB/ITB-remap/head-remap): %s\n",
          m_cpu_id, ok ? "PASS" : "*** FAIL ***");
-  m_itb_gen = save_itb; m_flush_gen = save_flush;
+  m_itb_gen = save_itb; m_flush_gen = save_flush; m_vgen_cur = save_vgen;
 }
 #endif
 
@@ -619,6 +621,9 @@ void CJitEngine::reclaim_code()
     m_blocks[i].code = nullptr;
     m_blocks[i].jit_body = nullptr;
     m_blocks[i].compiled = false;
+    // Link snapshots hold raw body pointers into the runtime just freed. The epoch alone can't be
+    // trusted.
+    for (int sl = 0; sl < kLinkSlots; ++sl) m_blocks[i].link[sl] = {};
   }
   // Traces hold JitFns into the runtime we just deleted -- drop them too, or a post-reclaim trace
   // dispatch jumps through a freed pointer. trace_lookup keys on valid, so clearing it is enough.
@@ -630,6 +635,7 @@ void CJitEngine::flush()
   // LAZY:  don't walk 16K slots each time. Bump the generation instead: stale blocks miss in
   // lookup() and revalidate_flushed() re-hashes their source bytes before they run again.
   ++m_flush_gen;
+  ++m_vgen_cur;
   if (m_rt && m_code_bytes >= kReclaimBytes)
     m_reclaim_pending = true;   // DEFER: reclaim frees all code -- unsafe from a compiled IC_FLUSH;
                                 // reclaim_if_pending() does it at the next dispatch boundary.
@@ -642,6 +648,9 @@ void CJitEngine::flush()
 void CJitEngine::flush_non_global()
 {
   if (m_rt && m_code_bytes >= kReclaimBytes) { flush(); return; }
+  // The chain guard reads link SNAPSHOTS, not the successor's live jit_body, so the soft drop
+  // below is invisible to it so need to invalidate every cached edge by epoch instead. 
+  ++m_vgen_cur;
   for (int i = 0; i < kCacheEntries; ++i) {
     if (!m_blocks[i].asm_global) {
       m_blocks[i].valid = false;
@@ -2116,16 +2125,10 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0));     a.jne(lbl);
     a.cmp(x86::byte_ptr(x86::rbp, m_off.check_timers), imm(0));  a.jne(lbl);
   };
-  // Field offsets within a JitBlock, so the epilogue can validate a cached successor via
-  // [succ + off]. 
-  const uint32_t off_body = (uint32_t) ((char*) &b->jit_body  - (char*) b);
-  const uint32_t off_tag  = (uint32_t) ((char*) &b->tag       - (char*) b);
-  const uint32_t off_vgen = (uint32_t) ((char*) &b->vgen      - (char*) b);
-  // Cached direct link: tail straight into our cached successor's body if it's still live
-  // -- compiled (jit_body != 0, cleared on flush/recompile) AND still maps this exit's PC
-  // (tag == R10) AND, for native targets, phys-validated under the current ITB generation
-  // (gen-stale -> dispatcher, which rechecks phys and re-stamps). Otherwise record a patch
-  // request (m_link_from = this block) and fall back. R10 = next PC; clobbers RAX/RCX/RDX.
+  // Cached direct link: tail straight into our cached successor's body via its SNAPSHOT
+  // {tag, vgen, body} in OUR link slots so one cache line, no dereference into the successor's
+  // JitBlock. A slot hits when it maps this exit's PC (tag == R10) and was patched under the
+  // current epoch. Otherwise record a patch request (m_link_from = this block) and fall back. 
   auto emit_chain = [&](Label& lbl) {
     Label miss = a.new_label();
     // PAL/SDE guard once -- depends on the target (R10) + SDE, not the slot: a PALmode target's shadow
@@ -2134,24 +2137,18 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
       a.test(x86::r10, imm(1));                            a.jz(ok);
       a.cmp(x86::byte_ptr(x86::rbp, m_off.sde), imm(0));   a.je(miss);   // PALmode + !SDE: don't
       a.bind(ok); }
-    // Epoch sum once, reused by every slot: vgen = itb_gen + flush_gen at last validation; both counters
-    // are monotonic, so one sum compare catches a remap OR a flush since then.
-    const uint32_t fg_off = (uint32_t) ((char*) &m_flush_gen - (char*) &m_itb_gen);
-    a.mov(x86::rdx, imm((uint64_t) &m_itb_gen));
-    a.mov(x86::r11, x86::qword_ptr(x86::rdx));
-    a.add(x86::r11, x86::qword_ptr(x86::rdx, fg_off));         // r11 = current epoch sum
-    // Poly-link: walk the cached direct successors; the first LIVE one mapping this exit (tag == R10) tails
-    // in. A 2-successor block keeps both cached, so an alternating successor stops thrashing the dispatcher.
+    // Current epoch once, reused by every slot: ONE maintained qword (m_vgen_cur).
+    a.mov(x86::rdx, imm((uint64_t) &m_vgen_cur));
+    a.mov(x86::r11, x86::qword_ptr(x86::rdx));                 // r11 = current epoch
+    // Poly-link: walk the cached successor snapshots, 2-successor cache both
     for (int sl = 0; sl < kLinkSlots; ++sl) {
       Label nxt = (sl + 1 < kLinkSlots) ? a.new_label() : miss;
-      a.mov(x86::rax, imm((uint64_t) &b->link[sl]));
-      a.mov(x86::rax, x86::qword_ptr(x86::rax));                       // succ = b->link[sl]
-      a.test(x86::rax, x86::rax);                                  a.jz(nxt);
-      a.mov(x86::rcx, x86::qword_ptr(x86::rax, off_body));             // succ->jit_body (cleared on flush)
-      a.test(x86::rcx, x86::rcx);                                  a.jz(nxt);
-      a.mov(x86::rdx, x86::qword_ptr(x86::rax, off_tag));              // succ->tag
-      a.cmp(x86::rdx, x86::r10);                                   a.jne(nxt);   // not this exit's target
-      a.cmp(x86::qword_ptr(x86::rax, off_vgen), x86::r11);         a.jne(nxt);   // stale: revalidate via dispatcher
+      if (sl == 0) a.mov(x86::rax, imm((uint64_t) &b->link[0]));
+      else         a.add(x86::rax, imm((uint32_t) sizeof(LinkSlot)));
+      a.mov(x86::rcx, x86::qword_ptr(x86::rax, (int32_t) offsetof(LinkSlot, body)));   // snapshot body
+      a.test(x86::rcx, x86::rcx);                                               a.jz(nxt);   // empty slot
+      a.cmp(x86::qword_ptr(x86::rax, (int32_t) offsetof(LinkSlot, tag)),  x86::r10); a.jne(nxt);   // not this exit's target
+      a.cmp(x86::qword_ptr(x86::rax, (int32_t) offsetof(LinkSlot, vgen)), x86::r11); a.jne(nxt);   // stale: re-patch via dispatcher
       a.jmp(x86::rcx);                                                 // HIT: tail in (shared frame)
       if (sl + 1 < kLinkSlots) a.bind(nxt);
     }
@@ -2406,7 +2403,7 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   t->asn        = blocks[0]->asn;
   t->asm_global = blocks[0]->asm_global;
   t->valid      = true;
-  t->vgen       = m_itb_gen + m_flush_gen;
+  t->vgen       = m_vgen_cur;
   t->flush_gen  = m_flush_gen;
   t->n_blocks   = n_blocks;
   t->n_instr    = total;

@@ -79,6 +79,16 @@ public:
   static constexpr int kLinkSlots = 2;   // cached direct successors per block (poly-link). Instrumentation
                                          // showed the thrashing fanout is EXACTLY 2; bump only if f3/f4 appear.
 
+  // Packed successor snapshot for the poly-link chain guard: everything the emitted guard reads
+  // lives in the SOURCE block's cache line meaning no dereference into the successor's JitBlock on the
+  // hot path. 
+  struct LinkSlot
+  {
+    uint64_t tag;    // this exit's target virtual PC (entries are keyed, so a hit is correct for that PC)
+    uint64_t vgen;   // validation epoch at patch time 
+    void*    body;   // successor's chained entry point at patch time; null = empty slot
+  };
+
   struct JitBlock
   {
     uint64_t tag;         // start VIRTUAL PC (validity tag / key)
@@ -89,7 +99,7 @@ public:
     bool     valid;
     JitFn    code;        // compiled safe-prefix, or null (prologue entry, for C calls)
     void*    jit_body;    // chained re-entry point (after the prologue); null when not compiled
-    JitBlock* link[kLinkSlots];   // cached direct successors (poly-link, round-robin back-patched); null = empty
+    LinkSlot link[kLinkSlots];    // cached direct successors (poly-link, round-robin back-patched)
 #ifdef JIT_STATS
     uint32_t link_misses; // instrumentation: per-source link-miss count, cumulative (poly-link sizing)
     uint8_t  link_fanout; // distinct re-link targets seen (saturates at 4; >4 => a small successor cache won't help)
@@ -101,8 +111,8 @@ public:
     uint64_t src_sum;     // hash of the source words at compile time (revalidate vs self-mod)
     uint32_t hash_len;    // word count src_sum covers -- frozen at compile time; n_instr drifts
                           // (interrupt-truncated cold passes shrink it), so it must NOT key the hash
-    uint64_t vgen;        // m_itb_gen + m_flush_gen at last full validation (phys + code bytes).
-                          // Both counters are monotonic, so one sum compare detects either changing
+    uint64_t vgen;        // m_vgen_cur at last full validation (phys + code bytes). The counter is
+                          // monotonic, so one compare detects any invalidating event since then
                           // -- the single chain guard (see emit_chain / jit_indirect).
     uint64_t flush_gen;   // icache-flush generation at which the code bytes were last hash-validated;
                           // stale => lookup misses and revalidate_flushed() re-hashes (lazy IC_FLUSH)
@@ -141,7 +151,7 @@ public:
     bool      asm_global;
     bool      valid;
     JitFn     code;           // single entry; null = empty slot
-    uint64_t  vgen;           // build epoch = m_itb_gen + m_flush_gen (coherence; see trace_ok)
+    uint64_t  vgen;           // build epoch = m_vgen_cur for coherence
     uint64_t  flush_gen;      // IC-flush epoch at build
     uint32_t  n_blocks, n_instr;
     SourceSeg segs[kMaxTraceSegs];   uint32_t n_segs;
@@ -261,9 +271,10 @@ public:
 
   // ITB-generation counter for the indirect-chain staleness check (jit_indirect). Bumped on every
   // I-stream TB invalidate (tbia/tbiap/tbis, ACCESS_EXEC) ... those can remap a code page WITHOUT
-  // flushing the JIT, so a chained block could run stale bytes. 
-  inline void     note_itb_invalidate() { ++m_itb_gen; }
-  inline uint64_t vgen() const          { return m_itb_gen + m_flush_gen; }   // combined validation epoch
+  // flushing the JIT, so a chained block could run stale bytes.
+  inline void     note_itb_invalidate() { ++m_itb_gen; ++m_vgen_cur; }
+  // Combined validation epoch, maintained (not summed) so the emitted chain guard reads ONE qword.
+  inline uint64_t vgen() const          { return m_vgen_cur; }
 
   // Bail-cause counters (JIT_STATS): why a compiled chain returned to the dispatcher -- a branch/
   // fall-through cached-link miss vs a computed-jump (jit_indirect) miss. Empty when stats are off,
@@ -309,6 +320,7 @@ private:
   uint64_t m_recorded;
   uint64_t m_itb_gen = 0; // current ITB generation (bumped on every I-stream TB invalidate)
   uint64_t m_flush_gen = 0; // current icache-flush generation (bumped by flush(); lazy IC_FLUSH/IMB)
+  uint64_t m_vgen_cur = 0;  // maintained epoch = itb + flush + non-global-flush bumps 
   uint64_t m_code_bytes;  // compiled bytes since last reclaim (see flush())
   bool     m_reclaim_pending = false;   // flush() hit kReclaimBytes; reclaim at the next dispatch boundary
   void*    m_rt;          // asmjit::JitRuntime*

@@ -1297,13 +1297,19 @@ void CAlphaCPU::jit_run(int budget)
 			}
 			continue;
 #else
-			// A predecessor block's epilogue cache-missed and asked to be linked here. Now
-			// that we know this block is live and compiled, patch its successor pointer so it
-			// jumps straight in instead of returning
+			// A predecessor block's epilogue cache-missed and asked to be linked here. Now 
+			// that we know this block is live and compiled (and its vgen was just refreshed above), 
+			// snapshot it into the source's successor slots so its exit jumps straight in instead of 
+			// returning.
+			// 
+			// Tag-keyed: an existing entry for this target MUST be refreshed in place.
 			if (m_link_from) { m_jit->note_link_bail(); m_jit->note_link_edge((CJitEngine::JitBlock*)m_link_from, b->tag);
-				CJitEngine::JitBlock* lf = (CJitEngine::JitBlock*)m_link_from; bool in = false;   // poly-link: cache b in the source's successor slots
-				for (int i = 0; i < CJitEngine::kLinkSlots; ++i) if (lf->link[i] == b) in = true;   // skip if already cached (it just went stale)
-				if (!in) { for (int i = CJitEngine::kLinkSlots - 1; i > 0; --i) lf->link[i] = lf->link[i-1]; lf->link[0] = b; }   // else round-robin insert
+				CJitEngine::JitBlock* lf = (CJitEngine::JitBlock*)m_link_from;
+				const CJitEngine::LinkSlot snap = { b->tag, b->vgen, b->jit_body };
+				int found = -1;   // poly-link: refresh the existing entry for this tag, else round-robin insert
+				for (int i = 0; i < CJitEngine::kLinkSlots; ++i) if (lf->link[i].body && lf->link[i].tag == b->tag) found = i;
+				if (found >= 0) lf->link[found] = snap;
+				else { for (int i = CJitEngine::kLinkSlots - 1; i > 0; --i) lf->link[i] = lf->link[i-1]; lf->link[0] = snap; }
 				m_link_from = nullptr; }
 			m_jit_budget = budget;   // ceiling for compiled chains (epilogue stops at it)
 #ifdef JIT_STATS
