@@ -795,6 +795,47 @@ static uint32_t regprof_mask(const uint32_t* w, uint32_t n)
 // set (RA/a0/PV); compile_trace can override with the trace's own hot regs (the M2 regalloc spike).
 static const int kGlobalPins[3] = { 26, 16, 27 };
 
+// regalloc: compile_trace binds the TRACE'S hottest guest GPRs to the pin registers instead 
+// of the fixed global set, deleting their state.r[] traffic across the whole fused span. 
+static constexpr bool TracePinSpike = true;
+
+// Per-trace GPR access counts for the pin selection. Same format decode as regprof_mask 
+// plus the FP loads'/stores' integer base register;.
+// 
+// FP / HW / CALL_PAL data paths don't touch the GPR file.
+static void count_gpr_access(const uint32_t* w, uint32_t n, uint32_t* counts)
+{
+  auto touch = [&](int r) { if (r != 31) counts[r]++; };
+  for (uint32_t i = 0; i < n; ++i) {
+    const uint32_t ins = w[i];
+    const uint32_t op  = ins >> 26;
+    const int ra = (ins >> 21) & 0x1f, rb = (ins >> 16) & 0x1f, rc = ins & 0x1f;
+    const bool islit = ((ins >> 12) & 1) != 0;
+    switch (op) {
+      case 0x10: case 0x11: case 0x12: case 0x13: case 0x1c:     // integer operate: Ra, Rc, Rb(if reg)
+        touch(ra); touch(rc); if (!islit) touch(rb); break;
+      case 0x08: case 0x09: case 0x0a: case 0x0b: case 0x0c:     // LDA/LDAH + BWX ld/st: Ra, Rb(base)
+      case 0x0d: case 0x0e: case 0x0f:
+      case 0x28: case 0x29: case 0x2a: case 0x2b:                // int LDL/LDQ/LDx_L
+      case 0x2c: case 0x2d: case 0x2e: case 0x2f:                // int STL/STQ/STx_C
+      case 0x1a:                                                 // JMP/JSR/RET: Ra(link), Rb(target)
+        touch(ra); touch(rb); break;
+      case 0x30: case 0x34: case 0x38: case 0x39: case 0x3a:     // integer branches (incl BR/BSR link): Ra
+      case 0x3b: case 0x3c: case 0x3d: case 0x3e: case 0x3f:
+        touch(ra); break;
+      case 0x20: case 0x21: case 0x22: case 0x23:                // FP loads/stores: Rb is an integer base
+      case 0x24: case 0x25: case 0x26: case 0x27:
+        touch(rb); break;
+      case 0x18: {                                               // MISC: RPCC/RC/RS write Ra
+        const uint32_t f = ins & 0xffff;
+        if (f == 0xc000 || f == 0xe000 || f == 0xf000) touch(ra);
+        break;
+      }
+      default: break;
+    }
+  }
+}
+
 // Map a helper fn pointer to its HelperSet slot index.
 static int helper_index(const CJitEngine::HelperSet& hs, const void* fn)
 {
@@ -2380,6 +2421,42 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
     if (b->prefix_len == 0 || b->phys + (uint64_t) b->prefix_len * 4 > dram_size) return;
   }
 
+  // regalloc: pick the TRACE'S hottest guest GPRs for the pin registers. A trace
+  // is entered only by fresh call (no chained re-entry), so the prologue-load/done-sync pair
+  // fully owns the binding
+#ifdef _WIN32
+  const int pin_hosts[6] = { (int) x86::r12.id(), (int) x86::r13.id(), (int) x86::r15.id(),
+                             (int) x86::r14.id(), (int) x86::rsi.id(), (int) x86::rdi.id() };
+  const int n_pin_hosts = 6;
+#else
+  const int pin_hosts[4] = { (int) x86::r12.id(), (int) x86::r13.id(), (int) x86::r15.id(),
+                             (int) x86::r14.id() };
+  const int n_pin_hosts = 4;
+#endif
+  int pin_guest[6];
+  int n_pins = 0;
+  if (TracePinSpike) {
+    uint32_t acc[32] = {};
+    for (uint32_t bi = 0; bi < n_blocks; ++bi)
+      count_gpr_access((const uint32_t*) (dram + blocks[bi]->phys), blocks[bi]->prefix_len, acc);
+    acc[31] = 0;
+    for (int r = 0; r < 32; ++r) if ((r & 0xc) == 0x4) acc[r] = 0;   // r4-7, r20-23: PALshadow-remappable
+    for (int k = 0; k < n_pin_hosts; ++k) {
+      int best = -1; uint32_t bestc = 2;              // strictly > 2 accesses to justify load+sync
+      for (int r = 0; r < 32; ++r) if (acc[r] > bestc) { bestc = acc[r]; best = r; }
+      if (best < 0) break;
+      acc[best] = 0;
+      pin_guest[n_pins++] = best;
+    }
+  } else {
+    // A/B fallback: the fixed global set (block-JIT behavior)
+    pin_guest[n_pins++] = kGlobalPins[0]; pin_guest[n_pins++] = kGlobalPins[1];
+    pin_guest[n_pins++] = kGlobalPins[2]; pin_guest[n_pins++] = 30;
+#ifdef _WIN32
+    pin_guest[n_pins++] = 29; pin_guest[n_pins++] = 0;
+#endif
+  }
+
   CodeHolder code;
   if (code.init(((JitRuntime*) m_rt)->environment()) != Error::kOk) return;
   x86::Assembler a(&code);
@@ -2396,31 +2473,18 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   a.mov(x86::rbp, x86::gpq(gpa[0]));                   // cpu
   a.mov(x86::rbx, x86::gpq(gpa[1]));                   // regs
   a.mov(x86::qword_ptr(x86::rsp, 40), imm(0));         // chain count := 0 (reclaimed r14 -> stack slot)
-  a.mov(x86::r12, x86::qword_ptr(x86::rbx, 26 * 8));   // R26 (RA) pin
-  a.mov(x86::r13, x86::qword_ptr(x86::rbx, 16 * 8));   // R16 (a0) pin
-  a.mov(x86::r15, x86::qword_ptr(x86::rbx, 27 * 8));   // R27 (PV) pin
-  a.mov(x86::r14, x86::qword_ptr(x86::rbx, 30 * 8));   // R30 (SP) pin
-#ifdef _WIN32
-  a.mov(x86::rsi, x86::qword_ptr(x86::rbx, 29 * 8));   // R29 (GP) pin
-  a.mov(x86::rdi, x86::qword_ptr(x86::rbx,  0 * 8));   // R0 (v0) pin
-#endif
+  for (int k = 0; k < n_pins; ++k)                     // load the trace's pin set from regs[]
+    a.mov(x86::gpq((uint32_t) pin_hosts[k]), x86::qword_ptr(x86::rbx, pin_guest[k] * 8));
 
   Label done = a.new_label();   // shared side-exit/return: EAX preset to the instr count, state.pc live
   Label body = a.new_label();   // loop re-entry (after the prologue; pins + count stay live across iterations)
   a.bind(body);
 
-  // Block register allocator: the 3 global pins (static, live across the trace). dynamic pool in future.
+  // Trace register binding: the spike's per-trace pin set (or the global set when disabled)
   RegAlloc ra;
   for (int r = 0; r < 32; ++r) ra.host[r] = -1;
   ra.rax_holds = -1;
-  ra.host[kGlobalPins[0]] = (int) x86::r12.id();
-  ra.host[kGlobalPins[1]] = (int) x86::r13.id();
-  ra.host[kGlobalPins[2]] = (int) x86::r15.id();
-  ra.host[30] = (int) x86::r14.id();                  // SP (reclaimed r14), all platforms
-#ifdef _WIN32
-  ra.host[29] = (int) x86::rsi.id();                  // GP (Win64)
-  ra.host[0]  = (int) x86::rdi.id();                  // v0 (Win64)
-#endif
+  for (int k = 0; k < n_pins; ++k) ra.host[pin_guest[k]] = pin_hosts[k];
 
   std::vector<ColdMemStub> cold;   // outlined memop slow paths, emitted after the epilogue
   for (uint32_t bi = 0; bi < n_blocks; ++bi) {
@@ -2472,14 +2536,8 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   }
 #endif
   a.bind(done);
-  a.mov(x86::qword_ptr(x86::rbx, 26 * 8), x86::r12);   // sync pins back to regs[] before returning
-  a.mov(x86::qword_ptr(x86::rbx, 16 * 8), x86::r13);
-  a.mov(x86::qword_ptr(x86::rbx, 27 * 8), x86::r15);
-  a.mov(x86::qword_ptr(x86::rbx, 30 * 8), x86::r14);   // R30 (SP)
-#ifdef _WIN32
-  a.mov(x86::qword_ptr(x86::rbx, 29 * 8), x86::rsi);   // R29 (GP)
-  a.mov(x86::qword_ptr(x86::rbx,  0 * 8), x86::rdi);   // R0 (v0)
-#endif
+  for (int k = 0; k < n_pins; ++k)                     // sync the trace's pin set back to regs[]
+    a.mov(x86::qword_ptr(x86::rbx, pin_guest[k] * 8), x86::gpq((uint32_t) pin_hosts[k]));
   a.add(x86::rsp, imm(56));
 #ifdef _WIN32
   a.pop(x86::rdi); a.pop(x86::rsi);
