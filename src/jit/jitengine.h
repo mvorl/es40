@@ -297,6 +297,10 @@ public:
   uint64_t verify_compare(uint64_t blk_virt, const uint64_t* interp, const uint64_t* jit,
                           const uint32_t* words, uint32_t nwords);
   void trace_selftest();   // M0: unit-test trace_ok's source-coherence (SMC/IMB/ITB-remap/head-remap)
+  // Side-exit-shaped trace-verify outcome: 0 = full-span compare, 1 = legitimate boundary
+  // side-exit (compared at that boundary's snapshot), 2 = count mismatch (true divergence),
+  // 3 = deferred-op mid-block bail 
+  void note_trace_verify(int outcome);
 #endif
 
 #ifdef JIT_STATS
@@ -333,6 +337,7 @@ private:
 #endif
 #ifdef JIT_VERIFY
   uint64_t m_v_exec, m_v_fail;
+  uint64_t m_tv_cnt[4];   // trace-verify outcomes: full-span / boundary side-exit / count mismatch / deferred-op bail
 #endif
 #ifdef JIT_STATS
   uint64_t m_stat_native, m_stat_interp;        // windowed: instrs run native vs interpreted

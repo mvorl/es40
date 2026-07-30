@@ -479,6 +479,7 @@ CJitEngine::CJitEngine(int cpu_id) : m_cpu_id(cpu_id), m_recorded(0), m_code_byt
   m_rt = new asmjit::JitRuntime();
 #ifdef JIT_VERIFY
   m_v_exec = m_v_fail = 0;
+  m_tv_cnt[0] = m_tv_cnt[1] = m_tv_cnt[2] = m_tv_cnt[3] = 0;
 #endif
 #ifdef JIT_STATS
   m_stat_native = m_stat_interp = m_stat_hot = m_stat_miss = 0;
@@ -2568,6 +2569,20 @@ uint64_t CJitEngine::verify_compare(uint64_t blk_virt, const uint64_t* interp, c
              std::chrono::steady_clock::now() - t0).count();
   }
   return 0;
+}
+
+// Side-exit-shaped trace verify: tally how each compiled-trace pass was classified and report
+// periodically. side_exit staying 0 is EXPECTED for now.
+void CJitEngine::note_trace_verify(int outcome)
+{
+  if (outcome < 0 || outcome > 3) return;
+  m_tv_cnt[outcome]++;
+  const uint64_t total = m_tv_cnt[0] + m_tv_cnt[1] + m_tv_cnt[2] + m_tv_cnt[3];
+  if ((total % 200000) == 0)
+    printf("[JIT][VERIFY][TRACE] runs=%llu full=%llu side_exit=%llu bail=%llu mismatch=%llu\n",
+           (unsigned long long) total, (unsigned long long) m_tv_cnt[0],
+           (unsigned long long) m_tv_cnt[1], (unsigned long long) m_tv_cnt[3],
+           (unsigned long long) m_tv_cnt[2]);
 }
 #endif
 

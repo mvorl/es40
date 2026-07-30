@@ -1048,6 +1048,54 @@ void CAlphaCPU::jit_run(int budget)
 			const int  cm_pre = state.cm, sir_pre = state.sir;   // CM/SIRR read-back (HW_MFPR CM/SIRR)
 			const int  aster_pre = state.aster, astrr_pre = state.astrr;   // AST/FPEN/PPCEN read-back via the
 			const int  fpen_pre = state.fpen, ppcen_pre = state.ppcen;     // PCTX group (HW_MFPR 0x40-7f)
+			const u64  exc_sum_pre = state.exc_sum, fpcr_pre = state.fpcr; // restored before the TRACE pass:
+			                                                               // boundary compares need the pre-span
+			                                                               // value, not the interp's inherited final
+			// HW_MTPR verify: a compiled block writes IPR fields directly in LIVE state (its GPR
+			// writes go to jr scratch). cap_iprs snapshots the writable IPR set (the per-boundary
+			// snapshots below and the post-pass compares both use it); put_iprs restores it. Mostly
+			// pure stores; I_CTL is read-modify-written, so it's also reset pre-pass (ictl_*_pre,
+			// above). Keep this list in sync with jit_hw_mtpr.
+			auto cap_iprs = [&](u64* d) {
+				d[0] = state.last_tb_virt; d[1] = last_dtb_virt[0]; d[2] = last_dtb_virt[1];
+				d[3] = state.pctr_ctl; d[4] = state.dc_ctl; d[5] = (u64)state.cc_offset; d[6] = (u64)(u32)state.alt_cm;
+				// IER enables; check_int not snapshotted (rolling it back could suppress a poll)
+				d[7] = (u64)(u32)state.asten; d[8] = (u64)(u32)state.sien; d[9] = (u64)(u32)state.pcen;
+				d[10] = (u64)(u32)state.cren; d[11] = (u64)(u32)state.slen; d[12] = (u64)(u32)state.eien;
+				d[13] = state.exc_sum;   // FPSTART clears it (compiled ITOFx/FTOIx/FLTL)
+				d[14] = state.fpcr;      // MT_FPCR (compiled FLTL) writes it
+				d[15] = (u64)state.sde; d[16] = (u64)state.hwe;            // I_CTL (compiled as terminator)
+				d[17] = (u64)(u32)state.i_ctl_spe; d[18] = (u64)(u32)state.i_ctl_va_mode;
+				d[19] = state.i_ctl_vptb; d[20] = state.i_ctl_other;
+				d[21] = (u64)(u32)state.cm;    d[22] = (u64)(u32)state.sir;     // CM, SIRR
+				d[23] = (u64)(u32)state.aster; d[24] = (u64)(u32)state.astrr;   // 0x40-group ASTER/ASTRR
+				d[25] = (u64)(u32)state.fpen;  d[26] = (u64)(u32)state.ppcen;   // 0x40-group FPEN/PPCEN
+				};
+			auto put_iprs = [&](const u64* s) {
+				state.last_tb_virt = s[0]; last_dtb_virt[0] = s[1]; last_dtb_virt[1] = s[2];
+				state.pctr_ctl = s[3]; state.dc_ctl = s[4]; state.cc_offset = (u32)s[5]; state.alt_cm = (int)s[6];
+				state.asten = (int)s[7]; state.sien = (int)s[8]; state.pcen = (int)s[9];
+				state.cren = (int)s[10]; state.slen = (int)s[11]; state.eien = (int)s[12];
+				state.exc_sum = s[13];
+				state.fpcr = s[14];
+				state.sde = (bool)s[15]; state.hwe = (bool)s[16];
+				state.i_ctl_spe = (int)s[17]; state.i_ctl_va_mode = (int)s[18];
+				state.i_ctl_vptb = s[19]; state.i_ctl_other = s[20];
+				state.cm = (int)s[21]; state.sir = (int)s[22];
+				state.aster = (int)s[23]; state.astrr = (int)s[24];
+				state.fpen = (int)s[25]; state.ppcen = (int)s[26];
+				};
+			// Side-exit-shaped verify: snapshot the interp reference at EVERY fused-block boundary it 
+			// crosses, so a compiled trace/region that legitimately exits early is compared AT ITS EXIT
+			// instead of being flagged as mismatch. Today's verify traces have no interior gates, so the
+			// early-exit compare is dormant scaffolding the region will light up.
+			u32 n_bnd = 0;
+			u32 bnd_cnt[CJitEngine::kMaxTraceSegs];       // cumulative interp instr count at boundary
+			u32 bnd_sn[CJitEngine::kMaxTraceSegs];        // interp store-log cursor at boundary
+			u64 bnd_pc[CJitEngine::kMaxTraceSegs];        // interp pc at boundary (the resume PC)
+			u64 bnd_r[CJitEngine::kMaxTraceSegs][64];     // GPRs incl. PALshadow bank
+			u64 bnd_f[CJitEngine::kMaxTraceSegs][64];     // FP file
+			u64 bnd_ipr[CJitEngine::kMaxTraceSegs][27];   // cap_iprs set
 			const u32* vw = (const u32*)((const u8*)dram_ptr + b->phys);
 			u32 vn = 0;   // loads recorded for replay
 			u32 sn = 0;   // stores recorded for the compiled-pass compare
@@ -1179,44 +1227,20 @@ void CAlphaCPU::jit_run(int budget)
 			}
 			if (!clean) break;          // fault/divergence in this segment -> stop (compare skipped)
 				n_interp += cur_len;        // this segment ran fully
+				if (vtr && n_bnd < CJitEngine::kMaxTraceSegs) {
+					// Side-exit-shaped verify: capture the reference AT this fused-block boundary.
+					bnd_cnt[n_bnd] = n_interp;  bnd_sn[n_bnd] = sn;  bnd_pc[n_bnd] = state.pc;
+					memcpy(bnd_r[n_bnd], state.r, sizeof(bnd_r[0]));
+					memcpy(bnd_f[n_bnd], state.f, sizeof(bnd_f[0]));
+					cap_iprs(bnd_ipr[n_bnd]);
+					n_bnd++;
+				}
 				if (vtr && seg + 1 < nseg && state.pc != vtr->segs[seg + 1].guest_pc) break;   // path left the fused trace -> side-exit
 				}   // end per-segment interp loop
 				if (clean)
 			{
-				// HW_MTPR verify: a compiled block writes IPR fields directly in LIVE state (its GPR
-				// writes go to jr scratch). Snapshot the writable IPR set after the interp pass
-				// (authoritative); below we compare the compiled pass's IPR writes and roll the live
-				// fields back. Mostly pure stores; I_CTL is read-modify-written, so it's also reset pre-pass
-					// (ictl_*_pre, above). Keep this list in sync with jit_hw_mtpr.
-				auto cap_iprs = [&](u64* d) {
-					d[0] = state.last_tb_virt; d[1] = last_dtb_virt[0]; d[2] = last_dtb_virt[1];
-					d[3] = state.pctr_ctl; d[4] = state.dc_ctl; d[5] = (u64)state.cc_offset; d[6] = (u64)(u32)state.alt_cm;
-					// IER enables; check_int not snapshotted (rolling it back could suppress a poll)
-					d[7] = (u64)(u32)state.asten; d[8] = (u64)(u32)state.sien; d[9] = (u64)(u32)state.pcen;
-					d[10] = (u64)(u32)state.cren; d[11] = (u64)(u32)state.slen; d[12] = (u64)(u32)state.eien;
-					d[13] = state.exc_sum;   // FPSTART clears it (compiled ITOFx/FTOIx/FLTL)
-					d[14] = state.fpcr;      // MT_FPCR (compiled FLTL) writes it
-					d[15] = (u64)state.sde; d[16] = (u64)state.hwe;            // I_CTL (compiled as terminator)
-					d[17] = (u64)(u32)state.i_ctl_spe; d[18] = (u64)(u32)state.i_ctl_va_mode;
-					d[19] = state.i_ctl_vptb; d[20] = state.i_ctl_other;
-					d[21] = (u64)(u32)state.cm;    d[22] = (u64)(u32)state.sir;     // CM, SIRR
-					d[23] = (u64)(u32)state.aster; d[24] = (u64)(u32)state.astrr;   // 0x40-group ASTER/ASTRR
-					d[25] = (u64)(u32)state.fpen;  d[26] = (u64)(u32)state.ppcen;   // 0x40-group FPEN/PPCEN
-					};
-				auto put_iprs = [&](const u64* s) {
-					state.last_tb_virt = s[0]; last_dtb_virt[0] = s[1]; last_dtb_virt[1] = s[2];
-					state.pctr_ctl = s[3]; state.dc_ctl = s[4]; state.cc_offset = (u32)s[5]; state.alt_cm = (int)s[6];
-					state.asten = (int)s[7]; state.sien = (int)s[8]; state.pcen = (int)s[9];
-					state.cren = (int)s[10]; state.slen = (int)s[11]; state.eien = (int)s[12];
-					state.exc_sum = s[13];
-					state.fpcr = s[14];
-					state.sde = (bool)s[15]; state.hwe = (bool)s[16];
-					state.i_ctl_spe = (int)s[17]; state.i_ctl_va_mode = (int)s[18];
-					state.i_ctl_vptb = s[19]; state.i_ctl_other = s[20];
-					state.cm = (int)s[21]; state.sir = (int)s[22];
-					state.aster = (int)s[23]; state.astrr = (int)s[24];
-					state.fpen = (int)s[25]; state.ppcen = (int)s[26];
-					};
+				// (cap_iprs/put_iprs are defined above the interp reference pass -- the per-boundary
+				// side-exit snapshots need them there.)
 				u64 ipr_interp[27];
 				cap_iprs(ipr_interp);
 				// FP file: compiled ITOFx writes state.f live (like the IPR writes); snapshot the
@@ -1289,12 +1313,14 @@ void CAlphaCPU::jit_run(int budget)
 						state.cm = cm_pre; state.sir = sir_pre;
 						state.aster = aster_pre; state.astrr = astrr_pre;
 						state.fpen = fpen_pre; state.ppcen = ppcen_pre;
+						state.exc_sum = exc_sum_pre; state.fpcr = fpcr_pre;   // else the trace inherits the
+						                                                      // interp's FINAL values -> false
+						                                                      // mismatch at interior boundaries
 						u64 jr_t[64];
 						memcpy(jr_t, snap, sizeof(jr_t));
 						m_jit_vreplay = true; m_jit_vlog_i = 0; m_jit_slog_i = 0;
 						const u32 done_t = ((CJitEngine::JitFn)tr->code)(this, jr_t);
 						m_jit_vreplay = false;
-						if (done_t != n_interp) printf("[JIT][VERIFY] TRACE COUNT MISMATCH at %016llx: interp_span=%u trace_done=%u\n", (unsigned long long) start_virt, n_interp, done_t);
 							if (done_t == n_interp) {
 							if (state.pc != interp_pc)
 								printf("[JIT][VERIFY] TRACE PC MISMATCH at %016llx: interp=%016llx trace=%016llx (n=%u)\n",
@@ -1305,6 +1331,46 @@ void CAlphaCPU::jit_run(int budget)
 							for (int fi = 0; fi < 64; fi++) if (state.f[fi] != f_interp[fi]) printf("[JIT][VERIFY] TRACE FP MISMATCH at %016llx f%d: interp=%016llx trace=%016llx\n", (unsigned long long) start_virt, fi, (unsigned long long) f_interp[fi], (unsigned long long) state.f[fi]);
 							if (m_jit_slog_i != n_stores_interp) printf("[JIT][VERIFY] TRACE STORE COUNT MISMATCH at %016llx: interp=%u trace=%u\n", (unsigned long long) start_virt, n_stores_interp, m_jit_slog_i);
 							m_jit->verify_compare(start_virt, state.r, jr_t, vw, n_interp);
+							m_jit->note_trace_verify(0);   // full-span compare
+						} else {
+							// Early exit: legitimate if the trace stopped exactly at a fused-block
+							// boundary the reference pass also crossed
+							int bi = -1;
+							for (u32 q = 0; q + 1 < n_bnd; ++q) if (bnd_cnt[q] == done_t) { bi = (int)q; break; }
+							if (bi < 0) {
+								// Mid-block early bail: a deferred op  stops compiled execution AT that op 
+								// the BLOCK path silently skips its compare in exactly this case (done < prefix_len). 
+								// Identify it by the bail PC: the fault/bail path wrote state.pc = the op's own 
+								// address along the fused path. 
+								u64 bail_pc = 0; u32 cum = 0;
+								for (u32 s2 = 0; s2 < tr->n_segs; ++s2) {
+									if (done_t < cum + tr->segs[s2].n_instr) { bail_pc = tr->segs[s2].guest_pc + 4 * (u64)(done_t - cum); break; }
+									cum += tr->segs[s2].n_instr;
+								}
+								if (bail_pc && state.pc == bail_pc) {
+									m_jit->note_trace_verify(3);   // deferred-op bail: compare skipped (block-path parity)
+								} else {
+									static int n_tcm = 0;   // rate-limited: a real count divergence repeats -- 25 samples suffice
+									if (n_tcm++ < 25)
+										printf("[JIT][VERIFY] TRACE COUNT MISMATCH at %016llx: interp_span=%u trace_done=%u pc=%016llx\n",
+											(unsigned long long) start_virt, n_interp, done_t, (unsigned long long) state.pc);
+									m_jit->note_trace_verify(2);   // true divergence: no boundary or bail-pc matches
+								}
+							} else {
+								if (state.pc != bnd_pc[bi])
+									printf("[JIT][VERIFY] TRACE SIDE-EXIT PC MISMATCH at %016llx: boundary=%016llx trace=%016llx (n=%u)\n",
+										(unsigned long long) start_virt, (unsigned long long) bnd_pc[bi],
+										(unsigned long long) state.pc, done_t);
+								u64 ipr_jit_t[27]; cap_iprs(ipr_jit_t);
+								// Slots 0-2 (last TB fills) are replay-invisible (verify loads skip translation),
+								// so they're only sound at full-span compares (by inheritance) -- skip here.
+								for (int ii = 3; ii < 27; ii++)
+									if (ipr_jit_t[ii] != bnd_ipr[bi][ii]) printf("[JIT][VERIFY] TRACE SIDE-EXIT IPR MISMATCH at %016llx slot %d: interp=%016llx trace=%016llx\n", (unsigned long long) start_virt, ii, (unsigned long long) bnd_ipr[bi][ii], (unsigned long long) ipr_jit_t[ii]);
+								for (int fi = 0; fi < 64; fi++) if (state.f[fi] != bnd_f[bi][fi]) printf("[JIT][VERIFY] TRACE SIDE-EXIT FP MISMATCH at %016llx f%d: interp=%016llx trace=%016llx\n", (unsigned long long) start_virt, fi, (unsigned long long) bnd_f[bi][fi], (unsigned long long) state.f[fi]);
+								if (m_jit_slog_i != bnd_sn[bi]) printf("[JIT][VERIFY] TRACE SIDE-EXIT STORE COUNT MISMATCH at %016llx: interp=%u trace=%u\n", (unsigned long long) start_virt, bnd_sn[bi], m_jit_slog_i);
+								m_jit->verify_compare(start_virt, bnd_r[bi], jr_t, vw, done_t);
+								m_jit->note_trace_verify(1);   // legitimate boundary side-exit
+							}
 						}
 					}
 				}
