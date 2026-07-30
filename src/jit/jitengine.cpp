@@ -719,23 +719,35 @@ static uint32_t regprof_mask(const uint32_t* w, uint32_t n)
 // set (RA/a0/PV); compile_trace can override with the trace's own hot regs (the M2 regalloc spike).
 static const int kGlobalPins[3] = { 26, 16, 27 };
 
+// Map a helper fn pointer to its HelperSet slot index.
+static int helper_index(const CJitEngine::HelperSet& hs, const void* fn)
+{
+  static_assert(sizeof(CJitEngine::HelperSet) % sizeof(void*) == 0,
+                "HelperSet must be a pure pointer table (indexed as void*[])");
+  const void* const* p = reinterpret_cast<const void* const*>(&hs);
+  const int n = (int) (sizeof(hs) / sizeof(void*));
+  for (int i = 0; i < n; ++i) if (p[i] == fn) return i;
+  return -1;
+}
+
 // memop slow path: the inline fast path's guards jump to `slow`, which is emitted in a
-// cold tail after the block epilogue. The stub re-creates emit_call's marshalling + fault 
+// cold tail after the block epilogue. The stub re-creates emit_call's marshalling + fault
 // bail from captured PODs, then jumps back to `join`.
 struct ColdMemStub {
   enum Kind { LOAD, STORE, FPMEM };
   Kind          kind;
-  asmjit::Label slow;       // stub entry 
-  asmjit::Label join;       // fast-path merge point 
-  asmjit::Label done;       // the block's shared bail exit 
+  asmjit::Label slow;       // stub entry
+  asmjit::Label join;       // fast-path merge point
+  asmjit::Label done;       // the block's shared bail exit
   void*         helper;     // jit_read / jit_write / jit_fp_read / jit_fp_write
-  int           size_bits;  // LOAD/STORE operand size 
-  uint32_t      descr;      // FPMEM only: (fmt<<16)|size 
-  int           ra;         // LOAD dest / STORE value guest reg 
+  int           hidx = -1;  // helper's HelperSet index for the table call; -1 = imm64 fallback
+  int           size_bits;  // LOAD/STORE operand size
+  uint32_t      descr;      // FPMEM only: (fmt<<16)|size
+  int           ra;         // LOAD dest / STORE value guest reg
   int           pin;        // host reg id bound to `ra`, or -1 = the regs[] memory slot
-  int           slot;       // PALshadow-adjusted regs[] index for `ra` 
-  uint32_t      i;          // op index in the block 
-  uint64_t      fault_pc;   // resume PC on fault 
+  int           slot;       // PALshadow-adjusted regs[] index for `ra`
+  uint32_t      i;          // op index in the block
+  uint64_t      fault_pc;   // resume PC on fault
 };
 
 // Emit one cold stub. Arg marshalling mirrors emit_call: non-immediate sources are placed before
@@ -765,8 +777,9 @@ static void emit_cold_mem_stub(asmjit::x86::Assembler& a, const uint8_t* gpa,
       a.mov(ad(3), imm(s.descr));
       break;
   }
-  a.mov(x86::rax, imm((uint64_t) s.helper));
-  a.call(x86::rax);
+  if (s.hidx >= 0 && off.helpers)
+    a.call(x86::qword_ptr(x86::rbp, (int32_t) (off.helpers + s.hidx * 8)));   // via the CPU-resident table
+  else { a.mov(x86::rax, imm((uint64_t) s.helper)); a.call(x86::rax); }
   Label ok = a.new_label();
   a.test(x86::eax, x86::eax);
   a.jz(ok);
@@ -913,8 +926,10 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 };
             int k = 0; for (const JitArg& s : as) { if (s.k != JA_I32 && s.k != JA_I64) place(k, s); ++k; }
             k = 0;     for (const JitArg& s : as) { if (s.k == JA_I32 || s.k == JA_I64) place(k, s); ++k; }
-            a.mov(x86::rax, imm((uint64_t)fn));
-            a.call(x86::rax);
+            const int hi = helper_index(hs, fn);
+            if (hi >= 0 && m_off.helpers)
+                a.call(x86::qword_ptr(x86::rbp, (int32_t)(m_off.helpers + hi * 8)));   // via the CPU-resident table 
+            else { a.mov(x86::rax, imm((uint64_t)fn)); a.call(x86::rax); }
             };
 
         // Memory-format loads: va = regs[Rb] + disp16.
@@ -976,7 +991,8 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             {
                 ColdMemStub s{};
                 s.kind = ColdMemStub::LOAD;  s.slow = slow;  s.join = ldone;  s.done = done;
-                s.helper = read_helper;      s.size_bits = size_bits;
+                s.helper = read_helper;      s.hidx = helper_index(hs, read_helper);
+                s.size_bits = size_bits;
                 s.ra = ra;  s.pin = pin_id(ra);
                 s.slot = (pal_block && ((ra & 0xc) == 0x4)) ? ra + 32 : ra;   // PALshadow remap (see reg())
                 s.i = i;    s.fault_pc = b->tag + 4 * (uint64_t) i;
@@ -1040,7 +1056,8 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             {
                 ColdMemStub s{};
                 s.kind = ColdMemStub::STORE;  s.slow = slow;  s.join = sdone;  s.done = done;
-                s.helper = write_helper;      s.size_bits = size_bits;
+                s.helper = write_helper;      s.hidx = helper_index(hs, write_helper);
+                s.size_bits = size_bits;
                 s.ra = ra;  s.pin = pin_id(ra);
                 s.slot = (pal_block && ((ra & 0xc) == 0x4)) ? ra + 32 : ra;   // PALshadow remap (see reg())
                 s.i = i;    s.fault_pc = b->tag + 4 * (uint64_t) i;
@@ -1122,6 +1139,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 ColdMemStub s{};
                 s.kind = ColdMemStub::FPMEM;  s.slow = slow;  s.join = fdone;  s.done = done;
                 s.helper = isload ? fp_read_helper : fp_write_helper;
+                s.hidx = helper_index(hs, s.helper);
                 s.descr = descr;  s.ra = fa;  s.pin = -1;  s.slot = 0;   // helper owns the f[] access
                 s.i = i;          s.fault_pc = b->tag + 4 * (uint64_t) i;
                 cold.push_back(s);
@@ -2169,8 +2187,10 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     emit_gate(exit_chain);                                        // budget/interrupt: bail to dispatcher
     a.mov(aq(0), x86::rbp);                                       // cpu    (arg 0)
     a.mov(aq(1), x86::r10);                                       // target (arg 1) == state.pc
-    a.mov(x86::rax, imm((uint64_t) indirect_helper));
-    a.call(x86::rax);                                             // jit_indirect(cpu, target) -> body | 0
+    { const int hi = helper_index(hs, indirect_helper);           // jit_indirect(cpu, target) -> body | 0
+      if (hi >= 0 && m_off.helpers)
+        a.call(x86::qword_ptr(x86::rbp, (int32_t) (m_off.helpers + hi * 8)));
+      else { a.mov(x86::rax, imm((uint64_t) indirect_helper)); a.call(x86::rax); } }
     a.test(x86::rax, x86::rax);                              a.jz(exit_chain);
     a.jmp(x86::rax);                                              // HIT: tail into the target's body
     a.bind(exit_chain);

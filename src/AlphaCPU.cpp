@@ -537,6 +537,24 @@ void CAlphaCPU::init()
 		o.exc_addr = (uint32_t)((char*)&state.exc_addr - (char*)this);
 		o.pal_base = (uint32_t)((char*)&state.pal_base - (char*)this);
 		o.sde = (uint32_t)((char*)&state.sde - (char*)this);
+		// CPU-resident helper table:
+		{
+			const CJitEngine::HelperSet ht = {
+				(void*)&CAlphaCPU::jit_read,        (void*)&CAlphaCPU::jit_write,
+				(void*)&CAlphaCPU::jit_opcdec,      (void*)&CAlphaCPU::jit_hw_mfpr,
+				(void*)&CAlphaCPU::jit_read_phys,   (void*)&CAlphaCPU::jit_hw_mtpr,
+				(void*)&CAlphaCPU::jit_write_phys,  (void*)&CAlphaCPU::jit_indirect,
+				(void*)&CAlphaCPU::jit_read_locked, (void*)&CAlphaCPU::jit_stc,
+				(void*)&CAlphaCPU::jit_misc,        (void*)&CAlphaCPU::jit_read_vpte, (void*)&CAlphaCPU::jit_read_wchk,
+				(void*)&CAlphaCPU::jit_itof,        (void*)&CAlphaCPU::jit_ftoi,
+				(void*)&CAlphaCPU::jit_fltl,
+				(void*)&CAlphaCPU::jit_fp_read,     (void*)&CAlphaCPU::jit_fp_write,
+				(void*)&CAlphaCPU::jit_fltv };
+			static_assert(sizeof(ht) == sizeof(m_jit_helper_tab),
+				"m_jit_helper_tab must match HelperSet exactly (the JIT indexes it as void*[])");
+			memcpy(m_jit_helper_tab, &ht, sizeof(ht));
+			o.helpers = (uint32_t)((char*)&m_jit_helper_tab[0] - (char*)this);
+		}
 		m_jit->set_offsets(o);
 	}
 #endif

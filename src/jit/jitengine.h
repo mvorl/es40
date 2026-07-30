@@ -170,6 +170,7 @@ public:
     // checks before jumping on; link_from is where the epilogue records a link-patch request.
     uint32_t jit_budget, check_int, check_timers, link_from;
     uint32_t exc_addr, pal_base, sde;   // CALL_PAL: exc_addr save, PAL entry base, PALshadow enable
+    uint32_t helpers;   // CPU-resident helper fn table 
   };
   void set_offsets(const JitOffsets& o) { m_off = o; }
 
