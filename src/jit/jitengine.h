@@ -314,8 +314,10 @@ public:
 #endif
 
 private:
-  JitBlock m_blocks[kCacheEntries];
-  TraceFragment m_traces[kTraceEntries];   // M0+: the trace tier's cache (inert until M1)
+  // Both caches are heap allocations (see the ctor), preferring large/huge pages: the block
+  // cache is ~40 MB indexed by PC hash, effectively random access, so 4K pages thrash the
+  JitBlock* m_blocks;
+  TraceFragment* m_traces;   // M0+: the trace tier's cache (inert until M1)
   bool     m_traces_enabled = false;       // global kill-switch; default OFF -> bit-identical
   int      m_cpu_id;
   uint64_t m_recorded;

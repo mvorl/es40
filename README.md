@@ -23,6 +23,15 @@ matching your build toolchain is needed.
   
 ## Status  
   
+## 7/30/26 - JIT large pages  
+On Windows, there is a JIT large page functionality that requires the   
+SeLockMemoryPrivilege in windows. You may have to enable this if you do not see  
+[JIT][CPU0] block cache 38 MB (large pages), trace cache 4 MB (large pages)  
+on startup. On Windows Professional and higher editions, this is found in  
+secpol.msc under Local Policies -> User Rights Assignment -> Lock pages in memory  
+Linux does not require privilege for this. This provides a minor performance  
+boost to JIT.  
+  
 ## 6/13/26 - JIT support is here!  
 Working for Windows 2210, OpenVMS, and Tru64. No other OSes tested.  
 Non-windows JIT support is experimental but should be fine.  

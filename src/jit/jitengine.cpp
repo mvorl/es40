@@ -9,6 +9,7 @@
 #include <initializer_list>
 #include <vector>   // deferred slow-path stubs (memop helper calls)
 #include <cstddef>  // offsetof (chain guard)
+#include <cstdlib>  // abort (fatal block/trace cache allocation failure)
 #define ASMJIT_STATIC
 // asmjit's x64 backend emits x86-64; asmjit's CallConv maps the host C ABI
 // (Microsoft x64 or System V) from the build env. On ARM64 only asmjit's core is
@@ -392,10 +393,82 @@ SafeOp classify(uint32_t ins, bool pal_block)
 // Defined further down; forward-declared so compile_block's punch-list print can use it.
 static const char* opcode_name(unsigned op);
 
+// ---- big-table allocation: prefer large/huge pages for the randomly-indexed caches ----
+// The block cache (~40 MB/CPU) is indexed by PC hash, so its accesses are TLB-hostile with 4K
+// pages. Windows: MEM_LARGE_PAGES needs SeLockMemoryPrivilege ("Lock pages in memory" assigned
+// to the account); enabling it on the token is best-effort and allocation falls back to normal 
+// pages. 
+// 
+// Linux: MADV_HUGEPAGE (THP) is best-effort and needs no privilege. 
+// 
+// All paths return zeroed memory.
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
+
+static void* big_alloc(size_t bytes, bool* large)
+{
+  *large = false;
+#ifdef _WIN32
+  static bool priv_tried = false;
+  if (!priv_tried) {
+    priv_tried = true;
+    HANDLE tok;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &tok)) {
+      TOKEN_PRIVILEGES tp = {}; tp.PrivilegeCount = 1;
+      if (LookupPrivilegeValueW(nullptr, L"SeLockMemoryPrivilege", &tp.Privileges[0].Luid)) {
+        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+        AdjustTokenPrivileges(tok, FALSE, &tp, 0, nullptr, nullptr);
+      }
+      CloseHandle(tok);
+    }
+  }
+  const size_t lp = GetLargePageMinimum();
+  if (lp) {
+    const size_t rounded = (bytes + lp - 1) & ~(lp - 1);
+    void* p = VirtualAlloc(nullptr, rounded, MEM_RESERVE | MEM_COMMIT | MEM_LARGE_PAGES, PAGE_READWRITE);
+    if (p) { *large = true; return p; }
+  }
+  return VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+  void* p = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (p == MAP_FAILED) return nullptr;
+#ifdef MADV_HUGEPAGE
+  if (madvise(p, bytes, MADV_HUGEPAGE) == 0) *large = true;   // THP hint; kernel may still decline
+#endif
+  return p;
+#endif
+}
+
+static void big_free(void* p, size_t bytes)
+{
+  if (!p) return;
+#ifdef _WIN32
+  (void) bytes;
+  VirtualFree(p, 0, MEM_RELEASE);
+#else
+  munmap(p, bytes);
+#endif
+}
+
 CJitEngine::CJitEngine(int cpu_id) : m_cpu_id(cpu_id), m_recorded(0), m_code_bytes(0), m_rt(nullptr)
 {
-  memset(m_blocks, 0, sizeof(m_blocks));    // flush() is lazy (gen bump) -- zero the slots here
-  memset(m_traces, 0, sizeof(m_traces));    // trace tier: empty until formation fills slots
+  // flush() is lazy (gen bump), so the slots must start zeroed -- all big_alloc paths return
+  // zeroed pages. Compiled code embeds absolute addresses into m_blocks..
+  bool blk_lp = false, trc_lp = false;
+  m_blocks = (JitBlock*) big_alloc((size_t) kCacheEntries * sizeof(JitBlock), &blk_lp);
+  m_traces = (TraceFragment*) big_alloc((size_t) kTraceEntries * sizeof(TraceFragment), &trc_lp);
+  if (!m_blocks || !m_traces) {
+    fprintf(stderr, "[JIT][CPU%d] FATAL: block/trace cache allocation failed\n", m_cpu_id);
+    abort();
+  }
+  printf("[JIT][CPU%d] block cache %zu MB (%s pages), trace cache %zu MB (%s pages)\n", m_cpu_id,
+         ((size_t) kCacheEntries * sizeof(JitBlock)) >> 20, blk_lp ? "large" : "normal",
+         ((size_t) kTraceEntries * sizeof(TraceFragment)) >> 20, trc_lp ? "large" : "normal");
   // Trace tier kill-switch (config_debug.h JIT_TRACES). OFF by default, 1-block traces preempt block
   // chaining = a net loss; re-enable when fusion closes loops in-trace.
 #ifdef JIT_TRACES
@@ -438,7 +511,9 @@ CJitEngine::CJitEngine(int cpu_id) : m_cpu_id(cpu_id), m_recorded(0), m_code_byt
 
 CJitEngine::~CJitEngine()
 {
-  delete (asmjit::JitRuntime*) m_rt;
+  delete (asmjit::JitRuntime*) m_rt;   // frees all compiled code (which references m_blocks) first
+  big_free(m_blocks, (size_t) kCacheEntries * sizeof(JitBlock));
+  big_free(m_traces, (size_t) kTraceEntries * sizeof(TraceFragment));
 #ifdef JIT_DISASM
   if (m_disasm_fp) fclose(m_disasm_fp);
 #endif
