@@ -2198,15 +2198,23 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   } else if (terminator_branch) {
     a.add(x86::qword_ptr(x86::rsp, 40), imm(plen));   // R10 still holds the next PC (branch wrote state.pc + R10)
 #ifndef JIT_VERIFY
+    // Gate thinning: the budget/interrupt gate is needed only where a chain can REVISIT code.
+    // PC strictly increases through fall-throughs and forward branches, so every guest cycle
+    // contains a backward branch or a computed jump.
+    const uint32_t lw = words[plen - 1];
+    const uint32_t lop = lw >> 26;
+    const bool gate_exit = !(lop >= 0x30 && lop <= 0x3f) || (((lw >> 20) & 1) != 0);
     Label exit_chain = a.new_label();
-    Label not_self   = a.new_label();
-    emit_gate(exit_chain);
-    // Self-loop fast path: a taken branch back to our own start (r10 == b->tag) jumps
-    // straight into the body, skipping the resolver call entirely.
-    a.mov(x86::rax, imm(b->tag));                               // tag may exceed imm32
-    a.cmp(x86::r10, x86::rax);                                  a.jne(not_self);
-    a.jmp(body);
-    a.bind(not_self);
+    if (gate_exit) {
+      emit_gate(exit_chain);
+      // Self-loop fast path: a taken branch back to our own start (r10 == b->tag) jumps
+      // straight into the body, skipping the resolver call entirely.
+      Label not_self = a.new_label();
+      a.mov(x86::rax, imm(b->tag));                             // tag may exceed imm32
+      a.cmp(x86::r10, x86::rax);                                a.jne(not_self);
+      a.jmp(body);
+      a.bind(not_self);
+    }
     emit_chain(exit_chain);
     a.bind(exit_chain);
 #endif
@@ -2214,8 +2222,8 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     set_pc(b->tag + 4 * (uint64_t) plen);   // straight-line fall-through to the next block
     a.add(x86::qword_ptr(x86::rsp, 40), imm(plen));
 #ifndef JIT_VERIFY
+    // No gate: fall-through PC is strictly forward.
     Label exit_chain = a.new_label();
-    emit_gate(exit_chain);
     emit_chain(exit_chain);
     a.bind(exit_chain);
 #endif
