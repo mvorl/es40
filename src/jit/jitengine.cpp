@@ -7,6 +7,7 @@
 #include <cstring>
 #include <chrono>   // note_exec times its own stats-print I/O (excluded from the wall-clock RPCC)
 #include <initializer_list>
+#include <vector>   // deferred slow-path stubs (memop helper calls)
 #define ASMJIT_STATIC
 // asmjit's x64 backend emits x86-64; asmjit's CallConv maps the host C ABI
 // (Microsoft x64 or System V) from the build env. On ARM64 only asmjit's core is
@@ -709,12 +710,84 @@ static uint32_t regprof_mask(const uint32_t* w, uint32_t n)
 // set (RA/a0/PV); compile_trace can override with the trace's own hot regs (the M2 regalloc spike).
 static const int kGlobalPins[3] = { 26, 16, 27 };
 
+// memop slow path: the inline fast path's guards jump to `slow`, which is emitted in a
+// cold tail after the block epilogue. The stub re-creates emit_call's marshalling + fault 
+// bail from captured PODs, then jumps back to `join`.
+struct ColdMemStub {
+  enum Kind { LOAD, STORE, FPMEM };
+  Kind          kind;
+  asmjit::Label slow;       // stub entry 
+  asmjit::Label join;       // fast-path merge point 
+  asmjit::Label done;       // the block's shared bail exit 
+  void*         helper;     // jit_read / jit_write / jit_fp_read / jit_fp_write
+  int           size_bits;  // LOAD/STORE operand size 
+  uint32_t      descr;      // FPMEM only: (fmt<<16)|size 
+  int           ra;         // LOAD dest / STORE value guest reg 
+  int           pin;        // host reg id bound to `ra`, or -1 = the regs[] memory slot
+  int           slot;       // PALshadow-adjusted regs[] index for `ra` 
+  uint32_t      i;          // op index in the block 
+  uint64_t      fault_pc;   // resume PC on fault 
+};
+
+// Emit one cold stub. Arg marshalling mirrors emit_call: non-immediate sources are placed before
+// immediates so a size/selector immediate can't overwrite RDX 
+static void emit_cold_mem_stub(asmjit::x86::Assembler& a, const uint8_t* gpa,
+                               const CJitEngine::JitOffsets& off, const ColdMemStub& s)
+{
+  using namespace asmjit;
+  auto aq = [&](int k) { return x86::gpq(gpa[k]); };
+  auto ad = [&](int k) { return x86::gpd(gpa[k]); };
+  a.bind(s.slow);
+  a.mov(aq(0), x86::rbp);                                       // cpu
+  if (aq(1).id() != x86::rdx.id()) a.mov(aq(1), x86::rdx);      // va (precomputed in RDX)
+  switch (s.kind) {
+    case ColdMemStub::LOAD:                                     // jit_read(cpu, va, size, &out)
+      a.lea(aq(3), x86::qword_ptr(x86::rsp, 32));               // &out slot
+      a.mov(ad(2), imm((uint32_t) s.size_bits));
+      break;
+    case ColdMemStub::STORE:                                    // jit_write(cpu, va, size, value)
+      if (s.ra == 31)      a.xor_(ad(3), ad(3));                // value (R31 == 0)
+      else if (s.pin >= 0) a.mov(aq(3), x86::gpq((uint32_t) s.pin));
+      else                 a.mov(aq(3), x86::qword_ptr(x86::rbx, s.slot * 8));
+      a.mov(ad(2), imm((uint32_t) s.size_bits));
+      break;
+    case ColdMemStub::FPMEM:                                    // jit_fp_read/write(cpu, va, fa, descr)
+      a.mov(ad(2), imm((uint32_t) s.ra));
+      a.mov(ad(3), imm(s.descr));
+      break;
+  }
+  a.mov(x86::rax, imm((uint64_t) s.helper));
+  a.call(x86::rax);
+  Label ok = a.new_label();
+  a.test(x86::eax, x86::eax);
+  a.jz(ok);
+  a.mov(x86::r10, imm(s.fault_pc));                             // fault: resume at this op
+  a.mov(x86::qword_ptr(x86::rbp, off.state_pc), x86::r10);
+  a.mov(x86::eax, imm(s.i));                                    // this iteration: i instrs done
+  a.add(x86::eax, x86::dword_ptr(x86::rsp, 40));                // + earlier chained iterations
+  a.jmp(s.done);
+  a.bind(ok);
+  if (s.kind == ColdMemStub::LOAD) {
+    // Result extraction + dest write must leave RAX = r[ra] to uphold the fast path's
+    // value-forward contract at `join` (the next op may reuse RAX as Ra).
+    if      (s.size_bits == 64) a.mov(x86::rax, x86::qword_ptr(x86::rsp, 32));
+    else if (s.size_bits == 32) a.movsxd(x86::rax, x86::dword_ptr(x86::rsp, 32));
+    else if (s.size_bits == 16) a.movzx(x86::eax, x86::word_ptr(x86::rsp, 32));
+    else                        a.movzx(x86::eax, x86::byte_ptr(x86::rsp, 32));
+    if (s.pin >= 0) a.mov(x86::gpq((uint32_t) s.pin), x86::rax);
+    else            a.mov(x86::qword_ptr(x86::rbx, s.slot * 8), x86::rax);
+  }
+  a.jmp(s.join);
+}
+
 void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const HelperSet& hs,
-    bool pal_block, JitBlock* b, uint32_t ins, uint32_t i, RegAlloc& regalloc)
+    bool pal_block, JitBlock* b, uint32_t ins, uint32_t i, RegAlloc& regalloc, void* cold_ptr)
 {
     using namespace asmjit;
     x86::Assembler& a = *(x86::Assembler*)a_ptr;
     Label& done = *(Label*)done_ptr;
+    std::vector<ColdMemStub>& cold = *(std::vector<ColdMemStub>*) cold_ptr;
+    (void) cold;   // JIT_VERIFY builds keep every helper call inline and never record a stub
     // aliases so the moved if-chain references the helper names verbatim:
     void* read_helper = hs.read_helper;               void* write_helper = hs.write_helper;
     void* opcdec_helper = hs.opcdec_helper;           void* hw_mfpr_helper = hs.hw_mfpr_helper;
@@ -845,10 +918,11 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             else { mov_from_reg(x86::rdx, rb); if (disp) a.add(x86::rdx, imm(disp)); }
             if (op == OP_LDQ_U) a.and_(x86::rdx, imm(~(uint64_t)7));   // LDQ_U: force 8-byte alignment
 
+#ifdef JIT_VERIFY
             // Slow path: jit_read(cpu, va, size, &out); on fault bail to `done` returning i
             // (0..i-1 committed). In JIT_VERIFY builds this is the ONLY path, so the helper's
             // replay keeps the differential check race-free.
-            auto emit_helper = [&]() {
+            {
                 emit_call(read_helper, { {JA_CPU, 0}, {JA_VA, 0}, {JA_I32, (uint64_t)size_bits}, {JA_OUT, 0} });
                 Label ok = a.new_label();
                 a.test(x86::eax, x86::eax);
@@ -863,10 +937,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 else if (op == OP_LDWU) a.movzx(x86::eax, x86::word_ptr(x86::rsp, 32));   // BWX: zero-extend
                 else                    a.movzx(x86::eax, x86::byte_ptr(x86::rsp, 32));   // LDBU
                 mov_to_reg(ra, x86::rax);
-                };
-
-#ifdef JIT_VERIFY
-            emit_helper();
+            }
 #else
             // Inline fast path: aligned + data_page_cache[0][dpc_index(va)] hit + DRAM. Falls to the
             // helper on misalign / cache miss / MMIO. Mirrors jit_read's data-cache path. RDX = va
@@ -892,10 +963,16 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             else if (op == OP_LDWU) a.movzx(x86::eax, x86::word_ptr(x86::r10, x86::rax));   // BWX: zero-extend
             else                    a.movzx(x86::eax, x86::byte_ptr(x86::r10, x86::rax));   // LDBU
             mov_to_reg(ra, x86::rax);
-            a.jmp(ldone);
-            a.bind(slow);
-            emit_helper();
-            a.bind(ldone);
+            a.bind(ldone);   // fast path falls through; the slow path is a cold-tail stub jumping back here
+            {
+                ColdMemStub s{};
+                s.kind = ColdMemStub::LOAD;  s.slow = slow;  s.join = ldone;  s.done = done;
+                s.helper = read_helper;      s.size_bits = size_bits;
+                s.ra = ra;  s.pin = pin_id(ra);
+                s.slot = (pal_block && ((ra & 0xc) == 0x4)) ? ra + 32 : ra;   // PALshadow remap (see reg())
+                s.i = i;    s.fault_pc = b->tag + 4 * (uint64_t) i;
+                cold.push_back(s);
+            }
 #endif
             continue;
         }
@@ -912,7 +989,8 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             else { mov_from_reg(x86::rdx, rb); if (disp) a.add(x86::rdx, imm(disp)); }
             if (op == OP_STQ_U) a.and_(x86::rdx, imm(~(uint64_t)7));        // STQ_U: force 8-byte alignment
 
-            auto emit_helper = [&]() {
+#ifdef JIT_VERIFY
+            {
                 emit_call(write_helper, { {JA_CPU, 0}, {JA_VA, 0}, {JA_I32, (uint64_t)size_bits}, {JA_GPZ, (uint64_t)ra} });  // jit_write(cpu, va, size, value)
                 Label ok = a.new_label();
                 a.test(x86::eax, x86::eax);
@@ -922,10 +1000,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 a.add(x86::eax, x86::dword_ptr(x86::rsp, 40));                                    // + earlier chained iterations
                 a.jmp(done);
                 a.bind(ok);
-                };
-
-#ifdef JIT_VERIFY
-            emit_helper();
+            }
 #else
             // Inline fast path: aligned + data_page_cache[1][dpc_index(va)] hit + DRAM. RDX = va
             // (preserved for the helper); R11 = write-cache slot byte offset; RAX/R10/R9 scratch.
@@ -952,10 +1027,16 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             else if (op == OP_STL)                   a.mov(x86::dword_ptr(x86::r10, x86::rax), x86::r9d);
             else if (op == OP_STW)                   a.mov(x86::word_ptr(x86::r10, x86::rax), x86::r9w);
             else                                     a.mov(x86::byte_ptr(x86::r10, x86::rax), x86::r9b);   // STB
-            a.jmp(sdone);
-            a.bind(slow);
-            emit_helper();
-            a.bind(sdone);
+            a.bind(sdone);   // fast path falls through; the slow path is a cold-tail stub jumping back here
+            {
+                ColdMemStub s{};
+                s.kind = ColdMemStub::STORE;  s.slow = slow;  s.join = sdone;  s.done = done;
+                s.helper = write_helper;      s.size_bits = size_bits;
+                s.ra = ra;  s.pin = pin_id(ra);
+                s.slot = (pal_block && ((ra & 0xc) == 0x4)) ? ra + 32 : ra;   // PALshadow remap (see reg())
+                s.i = i;    s.fault_pc = b->tag + 4 * (uint64_t) i;
+                cold.push_back(s);
+            }
 #endif
             continue;
         }
@@ -1027,10 +1108,15 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 a.mov(x86::r9, x86::qword_ptr(x86::rbp, m_off.f_base + fa * 8));
                 a.mov(x86::qword_ptr(x86::r10, x86::rax), x86::r9);
             }
-            a.jmp(fdone);
-            a.bind(slow);
-            emit_helper();
-            a.bind(fdone);
+            a.bind(fdone);   // fast path falls through; the slow path is a cold-tail stub jumping back here
+            {
+                ColdMemStub s{};
+                s.kind = ColdMemStub::FPMEM;  s.slow = slow;  s.join = fdone;  s.done = done;
+                s.helper = isload ? fp_read_helper : fp_write_helper;
+                s.descr = descr;  s.ra = fa;  s.pin = -1;  s.slot = 0;   // helper owns the f[] access
+                s.i = i;          s.fault_pc = b->tag + 4 * (uint64_t) i;
+                cold.push_back(s);
+            }
 #endif
             continue;
         }
@@ -2017,8 +2103,9 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
                        misc_helper, read_vpte_helper, read_wchk_helper, itof_helper, ftoi_helper,
                        fltl_helper, fp_read_helper, fp_write_helper, fltv_helper };
 
+  std::vector<ColdMemStub> cold;   // outlined memop slow paths, emitted after the epilogue
   for (uint32_t i = 0; i < plen; ++i)
-      emit_op(&a, gpa, &done, hs, pal_block, b, words[i], i, ra);
+      emit_op(&a, gpa, &done, hs, pal_block, b, words[i], i, ra, &cold);
 
   // Epilogue. Count this block's instructions, then chain into the next block (staying
   // in native code) or return to the dispatcher.
@@ -2141,6 +2228,10 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   a.pop(x86::rbx);
   a.ret();
 
+  // Cold tail: the outlined memop slow paths (dead 99.8% of the time -- dpc hit rate). 
+  for (const ColdMemStub& s : cold)
+    emit_cold_mem_stub(a, gpa, m_off, s);
+
   const size_t csz = code.code_size();
   JitFn fn = nullptr;
 #ifdef JIT_DISASM
@@ -2230,6 +2321,7 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   ra.host[0]  = (int) x86::rdi.id();                  // v0 (Win64)
 #endif
 
+  std::vector<ColdMemStub> cold;   // outlined memop slow paths, emitted after the epilogue
   for (uint32_t bi = 0; bi < n_blocks; ++bi) {
     JitBlock* b = blocks[bi];
     const uint32_t plen = b->prefix_len;
@@ -2244,7 +2336,7 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
     a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
 
     for (uint32_t i = 0; i < plen; ++i)
-      emit_op(&a, gpa, &done, hs, pal_block, b, words[i], i, ra);
+      emit_op(&a, gpa, &done, hs, pal_block, b, words[i], i, ra, &cold);
 
     a.add(x86::qword_ptr(x86::rsp, 40), imm(plen));   // count this block
     a.mov(x86::eax, x86::dword_ptr(x86::rsp, 40));    // EAX = instrs completed so far (preset for `done` -- a side-exit or return)
@@ -2295,6 +2387,10 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   a.pop(x86::r14); a.pop(x86::rbp); a.pop(x86::rbx);
   a.ret();
 
+  // Cold tail: the outlined memop slow paths
+  for (const ColdMemStub& s : cold)
+    emit_cold_mem_stub(a, gpa, m_off, s);
+
   const size_t csz = code.code_size();
   JitFn fn = nullptr;
   if (((JitRuntime*) m_rt)->add(&fn, &code) != Error::kOk) return;
@@ -2327,7 +2423,7 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
       // b->code / t->code when non-null, so every block falls back to the interpreter.
 
 void CJitEngine::emit_op(void*, const uint8_t*, void*, const HelperSet&,
-                         bool, JitBlock*, uint32_t, uint32_t, RegAlloc&) {}
+                         bool, JitBlock*, uint32_t, uint32_t, RegAlloc&, void*) {}
 
 void CJitEngine::compile_block(JitBlock* b, const uint8_t*, uint64_t, void*, void*, void*,
     void*, void*, void*, void*, void*, void*, void*, void*, void*, void*, void*, void*,
