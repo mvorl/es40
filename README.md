@@ -27,7 +27,8 @@ matching your build toolchain is needed.
 On Windows, there is a JIT large page functionality that requires the
 SeLockMemoryPrivilege in windows. You may have to enable this if you do not see
 [JIT][CPU0] block cache 38 MB (large pages), trace cache 4 MB (large pages)
-on startup. On Windows Professional and higher editions, this is found in
+on startup.  
+On Windows Professional and higher editions, this is found in
 secpol.msc under Local Policies -> User Rights Assignment -> Lock pages in memory
 Linux does not require privilege for this. This provides a minor performance
 boost to JIT.
