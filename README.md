@@ -8,7 +8,7 @@ Windows 11 with VS2026 and X64 builds only is the main development environment.
 Requires npcap for networking. Use "NN" builds if you do not need networking.
 
 Latest VC redist may be required to run binaries, available here:  
-https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist
+https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist  
 Latest 2017-2026 x64 redistributable is recommended. At minimum the version 
 matching your build toolchain is needed.
 
@@ -93,12 +93,14 @@ That was a wild ride.
 
 ## 4/24/26 - ARC works!
 Lingering screen corruption issue - memtest failure at 0x80000  
+
 Flash system from v73.iso with all options - exit the first stage updater
 and say yes to manual update, update all flash options - RMC will fail
 this is expected. ARC will now load/run from flash.  
+
 Screen blanking before memtest failure and screen corruption expected
 ARC large sweep clobbers several areas of memory. HW correctness fix to
-follow shortly to correct this.
+follow shortly to correct this.  
 
 ## 4/11/26 - BEHAVIOR CHANGE IN SERIAL PORT OPERATION
 ### I removed LF stripping and modified telnet negotiation.
@@ -126,9 +128,11 @@ buffer full while using VGA console.
 X11 has basic display support under OpenVMS now, some text corruption issues
 exist that are being worked on. Mouse input support is currently non-present.
 Boot to login and CDE desktop works.  
+
 Cirrus is being excluded from builds now, as it is just a generic VGA card
 implementation and after render path reworks will need some tending to for
 conversion.  
+
 Upgraded to SDL3. Brings lots of new goodies. Gets rid of archaic SDL1.2.  
 Incrimented version to 0.5 due to major changes across the board such as above.
 
@@ -140,10 +144,11 @@ yet complete, has already brought along some interesting improvements, such
 as better text-mode graphics and somewhat more concise code. Contribution back
 to MAME upstream for this code will be forthcoming for the items we implemented
 prior that MAME does not have.  
+
 Large comments and functions that documented VGA behavior and standards
 information have been moved to 'old_vga_docs.txt' to clean up so that our code
 more closely tracks MAME's S3 implementation to better enable simple diff'ing
-and code sharing as progress is made.
+and code sharing as progress is made.  
 
 Some basic work has been done in general as well in the direction of getting
 ARC firmware working.
