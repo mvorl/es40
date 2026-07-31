@@ -175,9 +175,9 @@ Use S3Trio64 bios 86c764x1.bin
 
 We'll need both npcap and SDL-3.4 for full featured es40 builds.
 
-If you build only NS target configurations, then you do not need SDL.
-If you build only NN target configurations, then you do not need npcap.
-If you build NS NN target configurations, then you do not need either.
+If you build only NS target configurations, then you do not need SDL.  
+If you build only NN target configurations, then you do not need npcap.  
+If you build NS NN target configurations, then you do not need either.  
 
 ## SDL:
 
@@ -260,8 +260,3 @@ cmake --build build
 See `CMakeLists.txt` for options to define. To point `cmake` to the SDL3 installation, use `-DSDL3_DIR=path-to-sdl3`.
 
 ------------------------------------------------------------------------
-
-## Old notes, to be reviewed.
-
-Direct SDK can be found here: (This may not be needed, attempt SDL build
-without first) https://www.microsoft.com/en-us/download/details.aspx?id=6812
