@@ -528,7 +528,7 @@ private:
   // JIT block-discovery engine (per-CPU), allocated in init().
   CJitEngine* m_jit = nullptr;
   s64  m_jit_budget = 0;       // instruction ceiling for a compiled chain
-  void* m_link_from = nullptr; // JitBlock* whose successor link the dispatcher should patch
+  void* m_link_from = nullptr; // LinkSlot* array the dispatcher should patch
   void* m_jit_helper_tab[19] = {}; // helper fn table
   void jit_run(int budget);    // drives the ES40_JIT lane via the interpreter
   void jit_flush_blocks();     // invalidate all discovered JIT blocks

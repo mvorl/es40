@@ -792,12 +792,21 @@ static uint32_t regprof_mask(const uint32_t* w, uint32_t n)
 #endif
 
 // The 3 guest GPRs kept live in the callee-saved pins r12/r13/r15. compile_block uses the global hot
-// set (RA/a0/PV); compile_trace can override with the trace's own hot regs (the M2 regalloc spike).
+// set (RA/a0/PV); compile_trace can override with the trace's own hot regs.
 static const int kGlobalPins[3] = { 26, 16, 27 };
 
-// regalloc: compile_trace binds the TRACE'S hottest guest GPRs to the pin registers instead 
-// of the fixed global set, deleting their state.r[] traffic across the whole fused span. 
-static constexpr bool TracePinSpike = true;
+// regalloc: compile_trace binds the TRACE'S hottest guest GPRs to the pin registers instead
+// of the fixed global set, deleting their state.r[] traffic across the whole fused span.
+static constexpr bool TracePinSpike = false;   // measured net-negative on the chained vehicle
+                                               // (boundary adapters outweigh in-loop binding)
+
+// chain-out: trace exits chain into block bodies via per-exit LinkSlot arrays (block
+// poly-link's guard + patch protocol) instead of returning to the dispatcher.
+static constexpr bool TraceChainOut = true;
+
+// chain-in: block exits chain into traces via the trace's chained entry (the hook patches
+// link slots with it), skipping the dispatcher entry cost.
+static constexpr bool TraceChainIn = true;
 
 // Per-trace GPR access counts for the pin selection. Same format decode as regprof_mask 
 // plus the FP loads'/stores' integer base register;.
@@ -2288,8 +2297,8 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
       if (sl + 1 < kLinkSlots) a.bind(nxt);
     }
     a.bind(miss);
-    a.mov(x86::rax, imm((uint64_t) b));
-    a.mov(x86::qword_ptr(x86::rbp, m_off.link_from), x86::rax);   // request a successor-cache patch
+    a.mov(x86::rax, imm((uint64_t) &b->link[0]));
+    a.mov(x86::qword_ptr(x86::rbp, m_off.link_from), x86::rax);   // request a successor-cache patch (LinkSlot*)
     // fall through to lbl (return to dispatcher)
   };
 #endif
@@ -2478,6 +2487,36 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
 
   Label done = a.new_label();   // shared side-exit/return: EAX preset to the instr count, state.pc live
   Label body = a.new_label();   // loop re-entry (after the prologue; pins + count stay live across iterations)
+#ifndef JIT_VERIFY
+  // Chain bookkeeping: exit trampolines pass their LinkSlot array in R11 to one shared stub; 
+  // translate between the trace's pin set and the global block, skipped when the sets coincide.
+  Label chain_stub = a.new_label();
+  Label done_nosync = a.new_label();   // post-sync teardown entry (adapter already synced pins)
+  Label exit_tramp[kMaxTraceExits];
+  uint32_t tramp_slot[kMaxTraceExits];
+  uint32_t n_tramp = 0, n_x = 0;
+  bool pins_differ = (n_pins != n_pin_hosts);
+  { const int glob[6] = { kGlobalPins[0], kGlobalPins[1], kGlobalPins[2], 30, 29, 0 };
+    for (int k = 0; k < n_pins && !pins_differ; ++k) if (pin_guest[k] != glob[k]) pins_differ = true; }
+  // chained entry: tail-jmp target with the frame live and GLOBAL pins in registers; the
+  // adapter syncs them to regs[] and loads the trace set, then falls into body.
+  size_t chain_off = 0;
+  if (TraceChainIn) {
+    if (pins_differ) a.jmp(body);        // the C entry (trace pins already loaded) skips the adapter
+    Label chain_in = a.new_label();
+    a.bind(chain_in);
+    chain_off = code.code_size();
+    if (pins_differ) {
+      a.mov(x86::qword_ptr(x86::rbx, 26 * 8), x86::r12); a.mov(x86::qword_ptr(x86::rbx, 16 * 8), x86::r13);
+      a.mov(x86::qword_ptr(x86::rbx, 27 * 8), x86::r15); a.mov(x86::qword_ptr(x86::rbx, 30 * 8), x86::r14);
+#ifdef _WIN32
+      a.mov(x86::qword_ptr(x86::rbx, 29 * 8), x86::rsi); a.mov(x86::qword_ptr(x86::rbx, 0 * 8), x86::rdi);
+#endif
+      for (int k = 0; k < n_pins; ++k)
+        a.mov(x86::gpq((uint32_t) pin_hosts[k]), x86::qword_ptr(x86::rbx, pin_guest[k] * 8));
+    }
+  }
+#endif
   a.bind(body);
 
   // Trace register binding: the spike's per-trace pin set (or the global set when disabled)
@@ -2508,36 +2547,138 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
 
     if (bi + 1 < n_blocks) {
       // Guard: did this block actually flow to the next fused block? R10 = its next PC; a mismatch means
-      // the path diverged from what we fused -> side-exit to the dispatcher at the real next PC (state.pc).
+      // the path diverged from what we fused -> side-exit (chained out when enabled) at the real next PC.
       a.mov(x86::rcx, imm(blocks[bi + 1]->tag));   // 64-bit tag may exceed imm32; rcx scratch (not EAX)
       a.cmp(x86::r10, x86::rcx);
+#ifndef JIT_VERIFY
+      if (TraceChainOut && n_x < kMaxTraceExits) {
+        exit_tramp[n_tramp] = a.new_label(); tramp_slot[n_tramp] = n_x;
+        a.jne(exit_tramp[n_tramp]); n_tramp++; n_x++;
+      } else
+        a.jne(done);
+#else
       a.jne(done);
+#endif
     }
   }
 #ifndef JIT_VERIFY
-  // Loop closure: if the last block branches back to the trace head, close the loop in compiled code with
-  // the budget/interrupt gate ON the back-edge (risk #1). Verify builds omit this -> the trace runs one
-  // iteration and exits at state.pc, so the side-exit verify validates the body unchanged.
+  // Loop closure, generalized: ANY final terminator left R10 = the next PC, so close the
+  // loop dynamically whenever it returns to the head, covers static back-edges AND computed
+  // ones (RET-closed call-containing loops from link-guided fusion). Budget/interrupt gate ON
+  // the back-edge. Verify builds omit this.
+  bool final_is_jmp = false;
   { JitBlock* lb = blocks[n_blocks - 1];
     const uint32_t* lw = (const uint32_t*) (dram + lb->phys);
     const uint32_t lop = lw[lb->prefix_len - 1], lopc = lop >> 26;
-    if (lopc == 0x30 || lopc == 0x34 || (lopc >= 0x38 && lopc <= 0x3f)) {   // PC-relative branch terminator
-      const int64_t disp = (int64_t) ((uint64_t) (lop & 0x1FFFFF) << 43) >> 43;
-      const uint64_t tgt = (((lb->tag & ~(uint64_t) 1) + 4 * (uint64_t) (lb->prefix_len - 1)) + 4 + (uint64_t) (disp * 4)) | (lb->tag & 1);
-      if (tgt == blocks[0]->tag) {   // taken target == head -> a closable loop
-        a.mov(x86::rcx, imm(blocks[0]->tag));
-        a.cmp(x86::r10, x86::rcx); a.jne(done);                                    // not looping now -> exit
-        a.mov(x86::rax, x86::qword_ptr(x86::rsp, 40)); a.cmp(x86::rax, x86::qword_ptr(x86::rbp, m_off.jit_budget)); a.jge(done);   // budget ceiling
-        a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0));     a.jne(done);   // interrupt pending
-        a.cmp(x86::byte_ptr(x86::rbp, m_off.check_timers), imm(0));  a.jne(done);   // timer pending
-        a.jmp(body);                                                               // loop in compiled code
+    final_is_jmp = (lopc == 0x1a || lopc == 0x1e);   // JMP/HW_RET: varying target -> jit_indirect exit
+  }
+  {
+    Label not_head = a.new_label();
+    a.mov(x86::rcx, imm(blocks[0]->tag));
+    a.cmp(x86::r10, x86::rcx); a.jne(not_head);                                  // not the head -> final exit
+    a.mov(x86::rax, x86::qword_ptr(x86::rsp, 40)); a.cmp(x86::rax, x86::qword_ptr(x86::rbp, m_off.jit_budget)); a.jge(done);   // budget ceiling
+    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0));     a.jne(done);   // interrupt pending
+    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_timers), imm(0));  a.jne(done);   // timer pending
+    a.mov(x86::rcx, imm((uint64_t) &t->underrun));                             // R3b: looping -> healthy
+    a.mov(x86::dword_ptr(x86::rcx), imm(0));
+    a.jmp(body);                                                               // loop in compiled code
+    a.bind(not_head);
+  }
+  if (TraceChainOut) {
+    // Final exit: R10 = next PC (!= head), EAX/count current.
+    if (final_is_jmp) {
+      // Computed target: chain via jit_indirect, gated + pin-adapted like the stub.
+      Label jref = a.new_label(), jmiss = a.new_label();
+      a.mov(x86::rax, x86::qword_ptr(x86::rsp, 40)); a.cmp(x86::rax, x86::qword_ptr(x86::rbp, m_off.jit_budget)); a.jge(jref);
+      a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0));    a.jne(jref);
+      a.cmp(x86::byte_ptr(x86::rbp, m_off.check_timers), imm(0)); a.jne(jref);
+      { Label ok = a.new_label();
+        a.test(x86::r10, imm(1)); a.jz(ok);
+        a.cmp(x86::byte_ptr(x86::rbp, m_off.sde), imm(0)); a.je(jref);
+        a.bind(ok); }
+      if (pins_differ) {
+        for (int k = 0; k < n_pins; ++k) a.mov(x86::qword_ptr(x86::rbx, pin_guest[k] * 8), x86::gpq((uint32_t) pin_hosts[k]));
+        a.mov(x86::r12, x86::qword_ptr(x86::rbx, 26 * 8)); a.mov(x86::r13, x86::qword_ptr(x86::rbx, 16 * 8));
+        a.mov(x86::r15, x86::qword_ptr(x86::rbx, 27 * 8)); a.mov(x86::r14, x86::qword_ptr(x86::rbx, 30 * 8));
+#ifdef _WIN32
+        a.mov(x86::rsi, x86::qword_ptr(x86::rbx, 29 * 8)); a.mov(x86::rdi, x86::qword_ptr(x86::rbx, 0 * 8));
+#endif
       }
+      a.mov(x86::gpq(gpa[0]), x86::rbp);
+      a.mov(x86::gpq(gpa[1]), x86::r10);
+      { const int hi = helper_index(hs, hs.indirect_helper);
+        if (hi >= 0 && m_off.helpers) a.call(x86::qword_ptr(x86::rbp, (int32_t) (m_off.helpers + hi * 8)));
+        else { a.mov(x86::rax, imm((uint64_t) hs.indirect_helper)); a.call(x86::rax); } }
+      a.test(x86::rax, x86::rax); a.jz(jmiss);
+      a.jmp(x86::rax);                                    // HIT: tail into the target block's body
+      a.bind(jmiss);
+      a.mov(x86::eax, x86::dword_ptr(x86::rsp, 40));
+      a.jmp(pins_differ ? done_nosync : done);
+      a.bind(jref);
+      a.mov(x86::eax, x86::dword_ptr(x86::rsp, 40));
+      a.jmp(done);
+    } else if (n_x < kMaxTraceExits) {
+      a.mov(x86::r11, imm((uint64_t) &t->exits[n_x].link[0]));
+      a.jmp(chain_stub);
+      n_x++;
+    } else
+      a.jmp(done);
+  }
+  // Side-exit trampolines: R11 = the exit's slot array, then the shared stub.
+  for (uint32_t x = 0; x < n_tramp; ++x) {
+    a.bind(exit_tramp[x]);
+    a.mov(x86::r11, imm((uint64_t) &t->exits[tramp_slot[x]].link[0]));
+    a.jmp(chain_stub);
+  }
+  if (TraceChainOut) {
+    // Shared chain-out stub: r10 = target, r11 = this exit's LinkSlot array, count in [rsp+40].
+    // Gate + PAL/SDE run BEFORE the adapter, so bail paths return with trace pins live (-> done).
+    a.bind(chain_stub);
+    Label stub_ret = a.new_label(), miss = a.new_label();
+    a.mov(x86::rcx, imm((uint64_t) &t->underrun));   // count the side-exit (closure resets)
+    a.inc(x86::dword_ptr(x86::rcx));
+    a.mov(x86::rax, x86::qword_ptr(x86::rsp, 40)); a.cmp(x86::rax, x86::qword_ptr(x86::rbp, m_off.jit_budget)); a.jge(stub_ret);
+    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0));    a.jne(stub_ret);
+    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_timers), imm(0)); a.jne(stub_ret);
+    { Label ok = a.new_label();
+      a.test(x86::r10, imm(1)); a.jz(ok);
+      a.cmp(x86::byte_ptr(x86::rbp, m_off.sde), imm(0)); a.je(stub_ret);
+      a.bind(ok); }
+    if (pins_differ) {   // adapter: trace pins -> regs[], then the global block convention
+      for (int k = 0; k < n_pins; ++k) a.mov(x86::qword_ptr(x86::rbx, pin_guest[k] * 8), x86::gpq((uint32_t) pin_hosts[k]));
+      a.mov(x86::r12, x86::qword_ptr(x86::rbx, 26 * 8)); a.mov(x86::r13, x86::qword_ptr(x86::rbx, 16 * 8));
+      a.mov(x86::r15, x86::qword_ptr(x86::rbx, 27 * 8)); a.mov(x86::r14, x86::qword_ptr(x86::rbx, 30 * 8));
+#ifdef _WIN32
+      a.mov(x86::rsi, x86::qword_ptr(x86::rbx, 29 * 8)); a.mov(x86::rdi, x86::qword_ptr(x86::rbx, 0 * 8));
+#endif
     }
+    a.mov(x86::rdx, imm((uint64_t) &m_vgen_cur));
+    a.mov(x86::rdx, x86::qword_ptr(x86::rdx));            // current epoch
+    for (int sl = 0; sl < kLinkSlots; ++sl) {
+      Label nxt = (sl + 1 < kLinkSlots) ? a.new_label() : miss;
+      const int off = sl * (int) sizeof(LinkSlot);
+      a.mov(x86::rcx, x86::qword_ptr(x86::r11, off + (int) offsetof(LinkSlot, body)));
+      a.test(x86::rcx, x86::rcx);                                                  a.jz(nxt);
+      a.cmp(x86::qword_ptr(x86::r11, off + (int) offsetof(LinkSlot, tag)), x86::r10);  a.jne(nxt);
+      a.cmp(x86::qword_ptr(x86::r11, off + (int) offsetof(LinkSlot, vgen)), x86::rdx); a.jne(nxt);
+      a.jmp(x86::rcx);                                    // HIT: tail into the block body
+      if (sl + 1 < kLinkSlots) a.bind(nxt);
+    }
+    a.bind(miss);
+    a.mov(x86::qword_ptr(x86::rbp, m_off.link_from), x86::r11);   // request a patch of this exit's slots
+    a.mov(x86::eax, x86::dword_ptr(x86::rsp, 40));
+    if (pins_differ) a.jmp(done_nosync); else a.jmp(done);
+    a.bind(stub_ret);
+    a.mov(x86::eax, x86::dword_ptr(x86::rsp, 40));
+    a.jmp(done);
   }
 #endif
   a.bind(done);
   for (int k = 0; k < n_pins; ++k)                     // sync the trace's pin set back to regs[]
     a.mov(x86::qword_ptr(x86::rbx, pin_guest[k] * 8), x86::gpq((uint32_t) pin_hosts[k]));
+#ifndef JIT_VERIFY
+  a.bind(done_nosync);   // chain paths whose adapter already synced land here
+#endif
   a.add(x86::rsp, imm(56));
 #ifdef _WIN32
   a.pop(x86::rdi); a.pop(x86::rsi);
@@ -2560,7 +2701,14 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
                     src_hash(dram + b->phys, b->prefix_len) };
     total += b->prefix_len;
   }
+  for (uint32_t e = 0; e < kMaxTraceExits; ++e) t->exits[e] = TraceExit{};   // fresh slot: empty links
   t->code       = fn;
+#ifndef JIT_VERIFY
+  t->chain_entry = TraceChainIn ? (void*) ((uint8_t*) (void*) fn + chain_off) : nullptr;
+#else
+  t->chain_entry = nullptr;
+#endif
+  t->underrun   = 0;
   t->head_tag   = blocks[0]->tag;
   t->asn        = blocks[0]->asn;
   t->asm_global = blocks[0]->asm_global;
@@ -2570,7 +2718,11 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   t->n_blocks   = n_blocks;
   t->n_instr    = total;
   t->n_segs     = n_blocks;
+#ifndef JIT_VERIFY
+  t->n_exits    = n_x;
+#else
   t->n_exits    = 0;
+#endif
   m_code_bytes += csz;
 #ifdef JIT_STATS
   m_trace_formed++;

@@ -929,11 +929,11 @@ void CAlphaCPU::jit_run(int budget)
 		// cache stays the universal fallback. Under JIT_VERIFY the production run is gated OFF,
 		// traces still FORM (below), but they're exercised + compared inside the block verify (next
 		// stage) rather than driving execution unchecked.
-#ifndef JIT_VERIFY
+#if !defined(JIT_VERIFY) && defined(JIT_TRACES)
 		// Same run-gates as the block path below: a compiled trace has no per-instruction interrupt
 		// poll, so DON'T enter it while an interrupt/timer is pending (the interpreter must service it,
 		// or the CPU livelocks -> OS sanity-timer bugcheck), nor a PALmode trace without SDE, nor one
-		// that would overrun the budget.
+		// that would overrun the budget. JIT_TRACES-off builds compile the whole hook away.
 		auto trace_segs_live = [&](CJitEngine::TraceFragment* tf) -> bool {
 			// The head's live phys is checked by trace_ok; re-resolve each INTERIOR segment too. An interior
 			// page remapped to a different physical with IDENTICAL bytes is invisible to the source hash.
@@ -943,9 +943,21 @@ void CAlphaCPU::jit_run(int budget)
 		if (have_phys && m_jit->traces_enabled() && !state.check_int && !state.check_timers)
 		{
 			CJitEngine::TraceFragment* t = m_jit->trace_lookup(start_virt, start_asn);
+			if (t && t->underrun >= 64) { m_jit->demote_trace(t); t = nullptr; }   // R3b: stopped looping -> net tax
 			if (t && (int)t->n_instr <= budget && (!(t->head_tag & 1) || state.sde)
 				&& m_jit->trace_ok(t, start_phys, (const uint8_t*)dram_ptr) && trace_segs_live(t))
 			{
+				// chain-in: a predecessor's exit missed here and the trace is validated (vgen just
+				// re-stamped) -- patch its slots with the trace's chained entry so the edge lands
+				// in-frame next time. Hook-before-block ordering makes traces win the patch.
+				if (m_link_from && t->chain_entry) { m_jit->note_link_bail();
+					CJitEngine::LinkSlot* lf = (CJitEngine::LinkSlot*)m_link_from;
+					const CJitEngine::LinkSlot snap = { t->head_tag, t->vgen, t->chain_entry };
+					int found = -1;
+					for (int i = 0; i < CJitEngine::kLinkSlots; ++i) if (lf[i].body && lf[i].tag == t->head_tag) found = i;
+					if (found >= 0) lf[found] = snap;
+					else { for (int i = CJitEngine::kLinkSlots - 1; i > 0; --i) lf[i] = lf[i-1]; lf[0] = snap; }
+					m_link_from = nullptr; }
 				m_jit_budget = budget;   // ceiling for the trace (its loads/bails honor it like a block)
 #ifdef JIT_STATS
 				const uint64_t _trace_t0 = jit_rdtsc();
@@ -993,6 +1005,7 @@ void CAlphaCPU::jit_run(int budget)
 			&& (!(b->tag & 1) || state.sde))   // PALmode block: its shadow-register remap assumes SDE
 		{
 			b->vgen = m_jit->vgen();   // phys validated + lookup proved flush-fresh: refresh the chain epoch
+#ifdef JIT_TRACES
 			// after a block has dispatched 8x, promote it to a single-block trace (a
 			// future trace head). Dispatch-counted for now -- it undercounts chained loops, but they
 			// still surface here when a chain breaks
@@ -1013,15 +1026,35 @@ void CAlphaCPU::jit_run(int budget)
 				// until the chain branches back to the head (compile_trace then closes the loop) or hits a
 				// non-branch / non-live target / a non-head cycle / the segment cap. Works under verify too
 				// (b->link is only set by production chaining).
+				// 
+				// form LOOP traces only -- a closed back-edge is the one shape with an advantage
+				// over block chains (in-trace iteration + the spike's per-trace pins).
+				// 
+				// Linear traces duplicated block work (I-cache) and varying-successor heads (DCL
+				// dispatch) formed pure side-exit taxes. Non-closing heads pay this scan once (hot
+				// fires at exactly 8) and never re-form.
+				static constexpr bool TraceLoopsOnly = true;
 				CJitEngine::JitBlock* blist[CJitEngine::kMaxTraceSegs] = { b };
 				u32 nb = 1;
+				bool closes = false;
+				// link-guided fusion: computed jumps (0x1a JMP/JSR/RET only -- no mode/state
+				// change) follow the block's own hottest OBSERVED successor; the inter-block guard
+				// (R10 == fused tag) is exactly the return-address speculation check. Lets loops
+				// containing calls close (the common real-world hot-loop shape).
+				static constexpr bool TraceLinkFusion = true;
 				for (CJitEngine::JitBlock* cur = b; nb < CJitEngine::kMaxTraceSegs; ) {
 				  const u32* aw = (const u32*)((const u8*)dram_ptr + cur->phys);
 				  const u32 lop = aw[cur->prefix_len - 1]; const u32 lopc = lop >> 26;
-				  if (!(lopc == 0x30 || lopc == 0x34 || (lopc >= 0x38 && lopc <= 0x3f))) break;   // not PC-relative
-				  const int64_t disp = (int64_t)((uint64_t)(lop & 0x1FFFFF) << 43) >> 43;
-				  const u64 spc = (((cur->tag & ~U64(1)) + 4 * (u64)(cur->prefix_len - 1)) + 4 + (u64)(disp * 4)) | (cur->tag & 1);
-				  if (spc == b->tag) break;   // back-edge to the head -> compile_trace closes the loop
+				  u64 spc = 0;
+				  if (lopc == 0x30 || lopc == 0x34 || (lopc >= 0x38 && lopc <= 0x3f)) {   // PC-relative: static taken target
+				    const int64_t disp = (int64_t)((uint64_t)(lop & 0x1FFFFF) << 43) >> 43;
+				    spc = (((cur->tag & ~U64(1)) + 4 * (u64)(cur->prefix_len - 1)) + 4 + (u64)(disp * 4)) | (cur->tag & 1);
+				  } else if (TraceLinkFusion && lopc == 0x1a) {
+				    for (int li = 0; li < CJitEngine::kLinkSlots; ++li)
+				      if (cur->link[li].body) { spc = cur->link[li].tag; break; }
+				    if (!spc || (spc & 1) != (cur->tag & 1)) break;   // no observed successor / mode change
+				  } else break;                                       // breaker terminator: don't cross
+				  if (spc == b->tag) { closes = true; break; }   // back-edge to the head -> compile_trace closes the loop
 				  CJitEngine::JitBlock* succ = m_jit->lookup(spc, start_asn);
 				  if (!succ || succ == b || !succ->code || succ->prefix_len == 0) break;
 					  u64 sp; if (!live_exec_phys(spc, &sp) || sp != succ->phys) break;   // successor remapped since compile -> stale, don't fuse
@@ -1029,8 +1062,10 @@ void CAlphaCPU::jit_run(int budget)
 				  if (dup) break;
 				  blist[nb++] = succ; cur = succ;
 				}
-				m_jit->compile_trace(m_jit->trace_slot(start_virt), blist, nb, (const uint8_t*)dram_ptr, dram_size, hs);
+				if (!TraceLoopsOnly || closes)
+					m_jit->compile_trace(m_jit->trace_slot(start_virt), blist, nb, (const uint8_t*)dram_ptr, dram_size, hs);
 			}
+#endif   // JIT_TRACES
 #ifdef JIT_VERIFY
 			// Interpret the prefix (authoritative), recording each loaded value so the
 			// compiled pass can replay it instead of re-reading memory. Skip the compare
@@ -1387,13 +1422,13 @@ void CAlphaCPU::jit_run(int budget)
 			// returning.
 			// 
 			// Tag-keyed: an existing entry for this target MUST be refreshed in place.
-			if (m_link_from) { m_jit->note_link_bail(); m_jit->note_link_edge((CJitEngine::JitBlock*)m_link_from, b->tag);
-				CJitEngine::JitBlock* lf = (CJitEngine::JitBlock*)m_link_from;
+			if (m_link_from) { m_jit->note_link_bail();   // (fanout stats retired with the generic LinkSlot* target)
+				CJitEngine::LinkSlot* lf = (CJitEngine::LinkSlot*)m_link_from;
 				const CJitEngine::LinkSlot snap = { b->tag, b->vgen, b->jit_body };
 				int found = -1;   // poly-link: refresh the existing entry for this tag, else round-robin insert
-				for (int i = 0; i < CJitEngine::kLinkSlots; ++i) if (lf->link[i].body && lf->link[i].tag == b->tag) found = i;
-				if (found >= 0) lf->link[found] = snap;
-				else { for (int i = CJitEngine::kLinkSlots - 1; i > 0; --i) lf->link[i] = lf->link[i-1]; lf->link[0] = snap; }
+				for (int i = 0; i < CJitEngine::kLinkSlots; ++i) if (lf[i].body && lf[i].tag == b->tag) found = i;
+				if (found >= 0) lf[found] = snap;
+				else { for (int i = CJitEngine::kLinkSlots - 1; i > 0; --i) lf[i] = lf[i-1]; lf[0] = snap; }
 				m_link_from = nullptr; }
 			m_jit_budget = budget;   // ceiling for compiled chains (epilogue stops at it)
 #ifdef JIT_STATS

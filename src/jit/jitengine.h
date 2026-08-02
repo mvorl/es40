@@ -141,6 +141,7 @@ public:
   struct Snapshot { uint64_t dirty_gpr; uint64_t dirty_fpr; };
 
   struct TraceExit {
+    LinkSlot link[kLinkSlots];   // chain-out: this exit's cached successors
     uint64_t guest_pc;    // resume PC handed to the block dispatcher (compile-time constant)
     Snapshot snap;        // M4+ (zero until then)
   };
@@ -151,6 +152,8 @@ public:
     bool      asm_global;
     bool      valid;
     JitFn     code;           // single entry; null = empty slot
+    void*     chain_entry;    // chain-in: tail-jmp entry (frame live, global pins)
+    uint32_t  underrun;       // side-exits taken since the last loop closure 
     uint64_t  vgen;           // build epoch = m_vgen_cur for coherence
     uint64_t  flush_gen;      // IC-flush epoch at build
     uint32_t  n_blocks, n_instr;
@@ -208,6 +211,12 @@ public:
   // the slot a head PC maps to (formation fills it). Unlike trace_lookup, returns the slot
   // unconditionally so  the caller decides whether to (re)form into it.
   inline TraceFragment* trace_slot(uint64_t head_pc) { return &m_traces[trace_index_of(head_pc)]; }
+  // a loop trace that stopped looping (side-exits without closures) is a net tax, drop it. 
+  inline void demote_trace(TraceFragment* tf) {
+    tf->valid = false; tf->chain_entry = nullptr; tf->underrun = 0;
+    ++m_vgen_cur;
+    note_trace_stale();
+  }
   inline void note_trace_stale() {   // always defined (callable from trace_ok); counts only under JIT_STATS
 #ifdef JIT_STATS
     m_trace_stale++;
