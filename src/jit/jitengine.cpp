@@ -462,12 +462,13 @@ CJitEngine::CJitEngine(int cpu_id) : m_cpu_id(cpu_id), m_recorded(0), m_code_byt
   bool blk_lp = false, trc_lp = false;
   m_blocks = (JitBlock*) big_alloc((size_t) kCacheEntries * sizeof(JitBlock), &blk_lp);
   m_traces = (TraceFragment*) big_alloc((size_t) kTraceEntries * sizeof(TraceFragment), &trc_lp);
-  if (!m_blocks || !m_traces) {
+  m_set_rr = (uint8_t*) calloc((size_t) kSets, 1);   // 64 KB; not worth a large-page reservation
+  if (!m_blocks || !m_traces || !m_set_rr) {
     fprintf(stderr, "[JIT][CPU%d] FATAL: block/trace cache allocation failed\n", m_cpu_id);
     abort();
   }
-  printf("[JIT][CPU%d] block cache %zu MB (%s pages), trace cache %zu MB (%s pages)\n", m_cpu_id,
-         ((size_t) kCacheEntries * sizeof(JitBlock)) >> 20, blk_lp ? "large" : "normal",
+  printf("[JIT][CPU%d] block cache %zu MB (%s pages, %d sets x %d ways), trace cache %zu MB (%s pages)\n", m_cpu_id,
+         ((size_t) kCacheEntries * sizeof(JitBlock)) >> 20, blk_lp ? "large" : "normal", kSets, kWays,
          ((size_t) kTraceEntries * sizeof(TraceFragment)) >> 20, trc_lp ? "large" : "normal");
   // Trace tier kill-switch (config_debug.h JIT_TRACES). OFF by default, 1-block traces preempt block
   // chaining = a net loss; re-enable when fusion closes loops in-trace.
@@ -514,6 +515,7 @@ CJitEngine::~CJitEngine()
 {
   delete (asmjit::JitRuntime*) m_rt;   // frees all compiled code (which references m_blocks) first
   big_free(m_blocks, (size_t) kCacheEntries * sizeof(JitBlock));
+  free(m_set_rr);
   big_free(m_traces, (size_t) kTraceEntries * sizeof(TraceFragment));
 #ifdef JIT_DISASM
   if (m_disasm_fp) fclose(m_disasm_fp);
@@ -532,38 +534,64 @@ static inline uint64_t src_hash(const uint8_t* p, uint32_t n_instr)
 
 CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uint32_t asn, bool asm_global, uint32_t n_instr, const uint8_t* dram)
 {
-  JitBlock& b = m_blocks[index_of(virt_pc)];
-  // record() is only reached after the dispatcher validated the live physical, and every returning
-  // branch below verifies the code bytes (flush-fresh or hash), so stamp the chain epoch here.
+  JitBlock* const set = set_base(virt_pc);
+
+  // Set-associative: a second process running the/ same virtual PC now takes its 
+  // OWN way instead of evicting the first one's compiled block.
+  JitBlock* hit = nullptr;
+  for (int w = 0; w < kWays; ++w)
+    if (way_keyed(set[w], virt_pc, asn)) { hit = &set[w]; break; }
+
+  if (hit) {
+    JitBlock& b = *hit;
+    // record() is only reached after the dispatcher validated the live physical, and every returning
+    // branch below verifies the code bytes (flush-fresh or hash), so stamp the chain epoch here.
+    b.vgen = m_vgen_cur;
+    // Still valid + flush-fresh: nothing flushed us since last seen, so the code is unchanged.
+    if (b.valid && b.flush_gen == m_flush_gen && b.phys == phys_pc) {
+      b.n_instr = n_instr;
+      return &b;
+    }
+    // Revalidate: a flush dropped the block but kept the compiled code. If the bytes the prefix was
+    // compiled from still hash the same, reuse it instead of recompiling. Hash over hash_len, NOT
+    // the caller's n_instr -- interrupt-truncated cold passes make n vary for the same block.
+    if (b.code && b.phys == phys_pc && b.src_sum == src_hash(dram + phys_pc, b.hash_len)) {
+      b.valid = true;
+      b.flush_gen = m_flush_gen;
+      b.n_instr = n_instr;
+      b.jit_body = (void*) ((uint8_t*) (void*) b.code + b.body_off);   // restore chained re-entry
+      return &b;
+    }
+  }
+
+  // New block, page remap, or modified bytes: record fresh and force a recompile. Reuse the keyed
+  // way when we have one (same block, changed source); otherwise take a free way, evict on full.
+  JitBlock* victim = hit;
+  if (!victim) {
+    for (int w = 0; w < kWays; ++w)
+      if (!set[w].valid && !set[w].code) { victim = &set[w]; break; }
+    if (!victim) {
+      uint8_t& rr = m_set_rr[set_of(virt_pc)];
+      victim = &set[rr];
+      rr = (uint8_t) ((rr + 1) & (kWays - 1));
+    }
+  }
+  JitBlock& b = *victim;
   b.vgen = m_vgen_cur;
-  // Still valid + matching + flush-fresh: nothing flushed us since last seen, so the code can't
-  // have changed. (flush_gen-stale must NOT take this no-hash path -- post-IMB needs the hash.)
-  if (b.valid && b.flush_gen == m_flush_gen && b.tag == virt_pc && (b.asm_global || b.asn == asn)
-      && b.phys == phys_pc) {
-    b.n_instr = n_instr;
-    return &b;
-  }
-  // Revalidate: a flush dropped the block but kept the compiled code. If the bytes the prefix was
-  // compiled from still hash the same, reuse it instead of recompiling. Hash over hash_len, NOT
-  // the caller's n_instr -- interrupt-truncated cold passes make n vary for the same block.
-  if (b.code && b.tag == virt_pc && (b.asm_global || b.asn == asn) && b.phys == phys_pc
-      && b.src_sum == src_hash(dram + phys_pc, b.hash_len)) {
-    b.valid = true;
-    b.flush_gen = m_flush_gen;
-    b.n_instr = n_instr;
-    b.jit_body = (void*) ((uint8_t*) (void*) b.code + b.body_off);   // restore chained re-entry
-    return &b;
-  }
-  // New block, page remap, or modified bytes: record fresh and force a recompile.
 #ifdef JIT_STATS
-  // Why is this a FRESH compile (steps 2+3 both failed)? Categorize the slot's prior occupant in the
-  // same order step 3 checks, so we know whether the churn is cache aliasing (tag) -- which more slots
-  // fix -- vs same-PC cross-process (asn) -- which needs asn in the index -- vs remap/self-mod/cold.
-  if      (!b.code)                         m_fresh_cold++;   // empty / reclaimed slot (genuine cold or warmup)
-  else if (b.tag != virt_pc)                m_fresh_tag++;    // a DIFFERENT block aliases this slot (cache-size lever)
-  else if (!(b.asm_global || b.asn == asn)) m_fresh_asn++;    // same PC, different process (needs asn-in-index)
-  else if (b.phys != phys_pc)               m_fresh_phys++;   // page remap
-  else                                      m_fresh_hash++;   // source bytes changed (self-modifying code)
+  // Why is this a FRESH compile? With ways, "asn" no longer means "the index can't tell processes
+  // apart" -- it means the set ran OUT of ways for this PC, i.e. kWays is too small. "tag" is plain
+  // capacity/conflict pressure on the set (the cache-size lever).
+  if (hit) {
+    if (b.phys != phys_pc)                m_fresh_phys++;   // page remap
+    else                                  m_fresh_hash++;   // source bytes changed (self-modifying code)
+  } else if (!b.code && !b.valid)         m_fresh_cold++;   // empty / reclaimed way (genuine cold or warmup)
+  else {
+    bool same_pc_other_asn = false;       // some way holds this PC under a different ASN -> ways exhausted
+    for (int w = 0; w < kWays; ++w)
+      if (set[w].code && set[w].tag == virt_pc) { same_pc_other_asn = true; break; }
+    if (same_pc_other_asn) m_fresh_asn++; else m_fresh_tag++;
+  }
 #endif
   b.tag = virt_pc;
   b.phys = phys_pc;
@@ -594,14 +622,19 @@ CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uin
 // straight to the hot path 
 CJitEngine::JitBlock* CJitEngine::revalidate_flushed(uint64_t virt_pc, uint32_t asn, uint64_t phys_pc, const uint8_t* dram)
 {
-  JitBlock& b = m_blocks[index_of(virt_pc)];
   // Resurrect BOTH lazy-flush survivors (flush(): valid, flush_gen-stale) AND flush_non_global() drops
   // (valid cleared). The source-hash below is the guard, matching record()'s revalidate path
   // so don't require valid flags; requiring it forced every flush_non_global'd block through an
-  // interpret pass. tag/asn/phys/hash still guard collisions, cross-process aliasing, page remaps, 
+  // interpret pass. tag/asn/phys/hash still guard collisions, cross-process aliasing, page remaps,
   // and self-modifying code.
-  if (!(b.code && b.tag == virt_pc && (b.asm_global || b.asn == asn)))
+  JitBlock* keyed = nullptr;
+  JitBlock* const set = set_base(virt_pc);
+  for (int w = 0; w < kWays; ++w)
+    if (set[w].code && set[w].tag == virt_pc && (set[w].asm_global || set[w].asn == asn))
+      { keyed = &set[w]; break; }
+  if (!keyed)
     return nullptr;
+  JitBlock& b = *keyed;
   if (b.phys != phys_pc || b.src_sum != src_hash(dram + phys_pc, b.hash_len))
     return nullptr;
   b.valid = true;          // flush_non_global() may have cleared it; the hash just re-validated the bytes
@@ -630,8 +663,15 @@ bool CJitEngine::trace_ok(TraceFragment* t, uint64_t head_live_phys, const uint8
   // record regrows it invisibly to the hash below. If the live head block compiled a different length,
   // the trace is stale; drop it so the dispatcher re-forms a consistent one.
   for (uint32_t s = 0; s < t->n_segs; ++s) {   // ANY fused block's prefix_len can oscillate with no source/epoch change (not just the head)
-    const JitBlock& sb = m_blocks[index_of(t->segs[s].guest_pc)];
-    if (sb.valid && sb.tag == t->segs[s].guest_pc && sb.prefix_len != t->segs[s].n_instr) { note_trace_stale(); return false; }
+    // Set-associative: find the segment's OWN way (its ASN), not just whatever shares the set.
+    const SourceSeg& sg = t->segs[s];
+    const JitBlock* const set = set_base(sg.guest_pc);
+    for (int w = 0; w < kWays; ++w) {
+      const JitBlock& sb = set[w];
+      if (!(sb.valid && sb.tag == sg.guest_pc && (sb.asm_global || sb.asn == sg.asn))) continue;
+      if (sb.prefix_len != sg.n_instr) { note_trace_stale(); return false; }
+      break;
+    }
   }
   if (t->vgen == m_vgen_cur)
     return true;                                      // epoch fresh: nothing changed since build

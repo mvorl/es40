@@ -56,12 +56,21 @@ public:
   // 256K slots: the OS-active CPU's block working set (50K+) thrashed the old 16K direct-mapped cache
   // (~190K recompiles/100M); 64K cut that to ~14K/100M, but a 50K set in 64K slots still conflict-evicts
   // (load ~0.8). 256K drops the load to ~0.2. JitBlock ~110 B -> ~28 MB/CPU of metadata.
+  //
+  // SET-ASSOCIATIVE: more slots could never fix the churn. Every Unix process has
+  // its text at the SAME virtual addresses, so a virt_pc-only index puts every 
+  // process's copy of a/ block in one slot with only the ASN telling them apart 
+  // so they evit each other on every context switch, at any table size. 
   static constexpr int      kCacheBits = 18;
-  static constexpr int      kCacheEntries = 1 << kCacheBits;
-  static constexpr uint64_t kIndexMask = (uint64_t) kCacheEntries - 1;
+  static constexpr int      kCacheEntries = 1 << kCacheBits;   // TOTAL entries (kSets * kWays)
+  static constexpr int      kWays = 8;                         // keys per set; raise if fresh-cause asn stays high
+  static constexpr int      kSets = kCacheEntries / kWays;
+  static constexpr uint64_t kSetMask = (uint64_t) kSets - 1;
+  static_assert(kWays > 0 && (kWays & (kWays - 1)) == 0, "kWays must be a power of 2 (victim cursor masks with kWays-1)");
+  static_assert(kSets * kWays == kCacheEntries, "kSets * kWays must cover the whole table (flush scans it linearly)");
 
-  // Trace tier (M0+): a small SECOND cache, beside m_blocks, for hot superblock heads. Only the
-  // hottest loop heads are promoted, so it stays small. Same direct-mapped, virtual+ASN-keyed shape.
+  // Trace tier: a small SECOND cache, beside m_blocks, for hot superblock heads. 
+  // Only the hottest loop heads are promoted, so it stays small.
   static constexpr int      kTraceBits = 12;            // 4K trace heads
   static constexpr uint64_t kTraceEntries = 1 << kTraceBits;
   static constexpr uint64_t kTraceIndexMask = kTraceEntries - 1;
@@ -89,6 +98,8 @@ public:
     void*    body;   // successor's chained entry point at patch time; null = empty slot
   };
 
+  // FIELD ORDER IS LOAD-BEARING: everything lookup() reads -- tag, asn, asm_global, valid,
+  // flush_gen -- is packed into the first 40 bytes so a way costs ONE cache line to test.
   struct JitBlock
   {
     uint64_t tag;         // start VIRTUAL PC (validity tag / key)
@@ -97,6 +108,8 @@ public:
     bool     asm_global;  // global (ASM) page: matches any ASN, like the icache
     uint32_t n_instr;     // instructions in the straight-line block
     bool     valid;
+    uint64_t flush_gen;   // icache-flush generation at which the code bytes were last hash-validated;
+                          // stale => lookup misses and revalidate_flushed() re-hashes (lazy IC_FLUSH).
     JitFn    code;        // compiled safe-prefix, or null (prologue entry, for C calls)
     void*    jit_body;    // chained re-entry point (after the prologue); null when not compiled
     LinkSlot link[kLinkSlots];    // cached direct successors (poly-link, round-robin back-patched)
@@ -114,8 +127,6 @@ public:
     uint64_t vgen;        // m_vgen_cur at last full validation (phys + code bytes). The counter is
                           // monotonic, so one compare detects any invalidating event since then
                           // -- the single chain guard (see emit_chain / jit_indirect).
-    uint64_t flush_gen;   // icache-flush generation at which the code bytes were last hash-validated;
-                          // stale => lookup misses and revalidate_flushed() re-hashes (lazy IC_FLUSH)
     uint32_t hot;         // dispatches since record; at the promote threshold -> form a trace
 #ifdef JIT_REGPROF
     uint64_t rp_hits;     // REGPROF: block executions since record (body-entry inc -- counts chained runs)
@@ -189,16 +200,31 @@ public:
   explicit CJitEngine(int cpu_id = 0);   // cpu_id tags the stats/diagnostic prints
   ~CJitEngine();
 
-  static inline uint64_t index_of(uint64_t virt_pc) { return (virt_pc >> 2) & kIndexMask; }
+  static inline uint64_t set_of(uint64_t virt_pc) { return (virt_pc >> 2) & kSetMask; }
   static inline uint64_t trace_index_of(uint64_t virt_pc) { return (virt_pc >> 2) & kTraceIndexMask; }
 
-  // Virtual+ASN keyed: no translation on the dispatch hot path. A global (ASM)
-  // block matches any ASN, mirroring the icache's hit rule. flush_gen-stale blocks
+  // The kWays entries a PC maps to, contiguous. A set is ~kWays * sizeof(JitBlock) (~1.2 KB at
+  // 8 ways), so a full scan is a MISS-path cost, not a hit-path one.
+  inline JitBlock* set_base(uint64_t virt_pc) { return &m_blocks[set_of(virt_pc) * kWays]; }
+
+  // Does this way hold the block for (virt_pc, asn)? A global (ASM) block matches any ASN,
+  // mirroring the icache's hit rule. 
+  static inline bool way_keyed(const JitBlock& b, uint64_t virt_pc, uint32_t asn)
+  {
+    return (b.valid || b.code) && b.tag == virt_pc && (b.asm_global || b.asn == asn);
+  }
+
+  // Virtual+ASN keyed: no translation on the dispatch hot path. flush_gen-stale blocks
   // miss here; revalidate_flushed() resurrects them after a source-hash check.
   inline JitBlock* lookup(uint64_t virt_pc, uint32_t asn)
   {
-    JitBlock& b = m_blocks[index_of(virt_pc)];
-    return (b.valid && b.flush_gen == m_flush_gen && b.tag == virt_pc && (b.asm_global || b.asn == asn)) ? &b : nullptr;
+    JitBlock* const set = set_base(virt_pc);
+    for (int w = 0; w < kWays; ++w) {
+      JitBlock& b = set[w];
+      if (b.valid && b.flush_gen == m_flush_gen && b.tag == virt_pc && (b.asm_global || b.asn == asn))
+        return &b;
+    }
+    return nullptr;
   }
 
   // Trace tier (M0+): the global kill-switch + the trace-cache lookup. traces_enabled() is false until
@@ -330,6 +356,7 @@ private:
   // Both caches are heap allocations (see the ctor), preferring large/huge pages: the block
   // cache is ~40 MB indexed by PC hash, effectively random access, so 4K pages thrash the
   JitBlock* m_blocks;
+  uint8_t*  m_set_rr;        // per-set round-robin victim cursor (only consulted when every way is live)
   TraceFragment* m_traces;   // M0+: the trace tier's cache (inert until M1)
   bool     m_traces_enabled = false;       // global kill-switch; default OFF -> bit-identical
   int      m_cpu_id;
