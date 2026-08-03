@@ -1,23 +1,116 @@
 # DEC ES40 Simulator
 
-es40 is free software. Please see the file COPYING for details.  
-For documentation, please see the files in the doc subdirectory.  
-For building and installation instructions please see below.  
+es40 is free software. Please see the file COPYING for details.
 
-Windows 11 with VS2026 and X64 builds only is the main development environment.  
+For building and installation instructions please see below.
+
+Windows 11 with VS2026 and X64 builds only is the main development environment.
+
 Requires npcap for networking. Use "NN" builds if you do not need networking.
 
 Latest VC redist may be required to run binaries, available here:  
 https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist  
-Latest 2017-2026 x64 redistributable is recommended. At minimum the version 
-matching your build toolchain is needed.
+Latest 2017-2026 x64 redistributable is recommended.  
+At minimum the version matching your build toolchain is needed.
 
-## Please use es40-cfg to generate a config the first time you use it to ensure you do not omit any required devices from the chipset.
+For outdated documentation, please see the files in the doc subdirectory.
+
+### Please use es40-cfg to generate a config the first time you use it to ensure you do not omit any required devices from the chipset.
 ### Reference src\es40.cfg for configuration values and explanations
 
 # Live shot of X11 running on emulated S3 via SDL display!
 
 ![Screenshot](https://github.com/ES40-Emu/es40/blob/main/screenshots/OpenVMS.png?raw=true)
+
+------------------------------------------------------------------------
+
+# Building Instructions for Windows
+
+We'll need both npcap and SDL-3.4 for full featured es40 builds.
+
+If you build only NS target configurations, then you do not need SDL.  
+If you build only NN target configurations, then you do not need npcap.  
+If you build NS NN target configurations, then you do not need either.  
+
+## SDL:
+
+Retrieve SDL from https://github.com/libsdl-org/SDL
+
+For simplicity, I had extracted and configured include and link directories
+for all es40 targets/configurations to look for SDL under C:\dev\SDL\ - a simple
+find and replace in the .vcxproj files can change this if you want - eg find
+"C:\dev\SDL\" and replace with your desired SDL location.
+
+Extract the root of the repository to C:\dev\SDL\
+
+Under C:\dev\SDL3\VisualC\ there is a SDL.sln file - open this in VS2022/26.
+
+Accept the 'trust and continue' dialog if it is displayed
+
+If prompted to retarget the solution, select the desired Windows SDK and
+toolchain version
+
+Build the solution for x64 Debug and Release configurations.
+
+## npcap:
+
+If you wish to build only NN target configurations, you can skip this step.
+
+If you wish to build all configurations, but not run, you only need to extract
+the npcap SDK to C:\dev\npcap-sdk\
+
+To run network enabled binaries, you will need to install npcap itself.  
+The installer and SDK for npcap can be found here: https://npcap.com/#download
+
+## es40:
+
+After your pathing is fixed in the vcxproj files or you used the default
+c:\dev\ locations and structure, you should be able to open the es40.sln file
+
+Run Build solution for individual configurations, or batch build to build
+all configurations.
+
+SDL3.dll will be required to be placed with the compiled es40 application, for
+debug x64 build it would be placed in this location: src\VS2022\x64\Debug
+or wherever you copy es40.exe to.
+
+SDL3.dll will be found in C:\dev\SDL3\VisualC\x64\Debug for example
+if you built x64 debug release configuration.
+
+Make sure to set the debug working directory in project settings as
+`$(OutDir)` for this configuration, the command being `$(TargetPath)` as is set
+by default is fine, however.
+
+Resulting binaries will be in x64\Debug, x64\Release, x64\Release IDB, etc,
+with the binary names being similar to es40 Release NS NN.exe.
+
+------------------------------------------------------------------------
+
+# Building Instructions for Linux
+
+For distributions not including SDL3 development libraries, see the [SDL Wiki](https://wiki.libsdl.org/SDL3/README-linux) on how to build and install these.
+
+libpcap comes included in many Linux distributions. If it isn't, install it e.g. for apt-based systems by
+```sh
+sudo apt install libpcap-dev
+```
+
+Configuring and building can both be done by `autoconf` and `cmake`.
+
+To build using `autoconf`, do
+```sh
+./autogen.sh
+./configure
+make
+```
+See `./configure --help` for options.
+
+To build using `cmake`, do
+```
+cmake -S . -B build [-Doption=ON ...]
+cmake --build build
+```
+See `CMakeLists.txt` for options to define. To point `cmake` to the SDL3 installation, use `-DSDL3_DIR=path-to-sdl3`.
 
 ------------------------------------------------------------------------
 
@@ -174,95 +267,5 @@ the flash rom directly on that version.
 ## 8/27/25 Actual S3 VBIOS WORKS!
 S3 Incomplete, but it boots and executes SRM!  
 Use S3Trio64 bios 86c764x1.bin
-
-------------------------------------------------------------------------
-
-# Building Instructions for Windows
-
-We'll need both npcap and SDL-3.4 for full featured es40 builds.
-
-If you build only NS target configurations, then you do not need SDL.  
-If you build only NN target configurations, then you do not need npcap.  
-If you build NS NN target configurations, then you do not need either.  
-
-## SDL:
-
-Retrieve SDL from https://github.com/libsdl-org/SDL
-
-For simplicity, I had extracted and configured include and link directories
-for all es40 targets/configurations to look for SDL under C:\dev\SDL\ - a simple
-find and replace in the .vcxproj files can change this if you want - eg find
-"C:\dev\SDL\" and replace with your desired SDL location.
-
-Extract the root of the repository to C:\dev\SDL\
-
-Under C:\dev\SDL3\VisualC\ there is a SDL.sln file - open this in VS2022/26.
-
-Accept the 'trust and continue' dialog if it is displayed
-
-If prompted to retarget the solution, select the desired Windows SDK and
-toolchain version
-
-Build the solution for x64 Debug and Release configurations.
-
-## npcap:
-
-If you wish to build only NN target configurations, you can skip this step.
-
-If you wish to build all configurations, but not run, you only need to extract
-the npcap SDK to C:\dev\npcap-sdk\
-
-To run network enabled binaries, you will need to install npcap itself.  
-The installer and SDK for npcap can be found here: https://npcap.com/#download
-
-## es40:
-
-After your pathing is fixed in the vcxproj files or you used the default
-c:\dev\ locations and structure, you should be able to open the es40.sln file
-
-Run Build solution for individual configurations, or batch build to build
-all configurations.
-
-SDL3.dll will be required to be placed with the compiled es40 application, for
-debug x64 build it would be placed in this location: src\VS2022\x64\Debug
-or wherever you copy es40.exe to.
-
-SDL3.dll will be found in C:\dev\SDL3\VisualC\x64\Debug for example
-if you built x64 debug release configuration.
-
-Make sure to set the debug working directory in project settings as
-`$(OutDir)` for this configuration, the command being `$(TargetPath)` as is set
-by default is fine, however.
-
-Resulting binaries will be in x64\Debug, x64\Release, x64\Release IDB, etc,
-with the binary names being similar to es40 Release NS NN.exe.
-
-------------------------------------------------------------------------
-
-# Building Instructions for Linux
-
-For distributions not including SDL3 development libraries, see the [SDL Wiki](https://wiki.libsdl.org/SDL3/README-linux) on how to build and install these.
-
-libpcap comes included in many Linux distributions. If it isn't, install it e.g. for apt-based systems by
-```sh
-sudo apt install libpcap-dev
-```
-
-Configuring and building can both be done by `autoconf` and `cmake`.
-
-To build using `autoconf`, do
-```sh
-./autogen.sh
-./configure
-make
-```
-See `./configure --help` for options.
-
-To build using `cmake`, do
-```
-cmake -S . -B build [-Doption=ON ...]
-cmake --build build
-```
-See `CMakeLists.txt` for options to define. To point `cmake` to the SDL3 installation, use `-DSDL3_DIR=path-to-sdl3`.
 
 ------------------------------------------------------------------------
