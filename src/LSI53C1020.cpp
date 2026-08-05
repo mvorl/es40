@@ -123,6 +123,10 @@
 #define LSI_FUNCTION_FW_DOWNLOAD        0x09U
 #define LSI_FUNCTION_FW_UPLOAD          0x12U
 
+#define LSI_EVENT_IOC_BUS_RESET         0x00000004U
+#define LSI_EVENT_EVENT_CHANGE          0x0000000AU
+#define LSI_MSGFLAGS_CONTINUATION_REPLY 0x80U
+
 #define LSI_IOCSTATUS_SUCCESS               0x0000U
 #define LSI_IOCSTATUS_INVALID_FUNCTION      0x0001U
 #define LSI_IOCSTATUS_INTERNAL_ERROR        0x0004U
@@ -150,6 +154,7 @@
 #define LSI_PORT_SCSI_ID         7U
 #define LSI_FW_VERSION           0x01000000U
 #define LSI_REPLY_FRAME_BYTES    128U
+#define LSI_IOC_BLOCK_DWORDS     16U
 
 #define LSI_PORTFACTS_PORTTYPE_SCSI      0x01U
 #define LSI_PORTFACTS_PROTOCOL_INITIATOR 0x0008U
@@ -164,6 +169,7 @@
 
 #define LSI_CFG_PAGETYPE_IO_UNIT       0x00U
 #define LSI_CFG_PAGETYPE_IOC           0x01U
+#define LSI_CFG_PAGETYPE_BIOS          0x02U
 #define LSI_CFG_PAGETYPE_SCSI_PORT     0x03U
 #define LSI_CFG_PAGETYPE_SCSI_DEVICE   0x04U
 #define LSI_CFG_PAGETYPE_MANUFACTURING 0x09U
@@ -197,6 +203,8 @@
 #define LSI_REPLY_MFA_ADDRESS_BIT 0x80000000U
 #define LSI_REPLY_REMOVAL_BYTES   (sizeof(u32) * (LSI_REPLY_FIFO_DEPTH + 1U))
 #define LSI_FRAME_MAX             128U
+/* Manufacturing page 1 is a four-byte header followed by 256 bytes of VPD. */
+#define LSI_CFG_PAGE_MAX          260U
 #define LSI_SGL_MAX_ENTRIES       256U
 #define LSI_SGL_SEG_MAX           512U
 #define LSI_SGL_MAX_ELEMENTS      1024U
@@ -1595,7 +1603,7 @@ u32 CLSI53C1020::read_l_register(u32 reg, bool io_space)
 		if (state.reply_post_count == 0U && state.bus_reset_event_pending && state.events_enabled)
 		{
 			state.bus_reset_event_pending = false;
-			post_event(0x04U, 0U);
+			post_event(LSI_EVENT_IOC_BUS_RESET, 0U);
 		}
 		else if (state.reply_post_count == 0U && state.taskmgmt_mirror_pending)
 		{
@@ -1696,6 +1704,7 @@ void CLSI53C1020::write_l_register(u32 reg, u32 value, bool io_space)
 			break;
 		if ((value & LSI_HOSTDIAG_RESET_ADAPTER) != 0U)
 		{
+			trace("HostDiag RESET_ADAPTER (hard reset)");
 			chip_reset();
 			break;
 		}
@@ -2010,6 +2019,8 @@ u32 CLSI53C1020::execute_ioc_facts(const u8* request, u8* reply)
 	memcpy(&reply[MPI_MSG_CONTEXT], &request[MPI_MSG_CONTEXT], 4U);
 	reply[0x14] = (u8)LSI_MAX_CHAIN_DEPTH;
 	reply[0x15] = state.who_init;
+	/* Request descriptors count 16-dword (64-byte) IOC blocks. */
+	reply[0x16] = LSI_IOC_BLOCK_DWORDS;
 	write_le16(&reply[0x18], LSI_REPLY_QUEUE_DEPTH);
 	write_le16(&reply[0x1A], LSI_REQUEST_FRAME_DWORDS);
 	write_le16(&reply[0x1E], firmware_product_id);
@@ -2099,12 +2110,18 @@ u32 CLSI53C1020::execute_event_notification(const u8* request, u8* reply)
 	state.events_enabled = request[0x00] != 0;
 	if (state.events_enabled)
 		state.event_msg_context = read_le32(&request[MPI_MSG_CONTEXT]);
-	reply[MPI_REPLY_MSG_LENGTH] = 7U;
+	write_le16(&reply[0x00], 1U);
+	reply[MPI_REPLY_MSG_LENGTH] = 8U;
 	reply[MPI_MSG_FUNCTION] = request[MPI_MSG_FUNCTION];
 	reply[0x06] = 0;
+	reply[0x07] = LSI_MSGFLAGS_CONTINUATION_REPLY;
 	memcpy(&reply[MPI_MSG_CONTEXT], &request[MPI_MSG_CONTEXT], 4U);
 	write_le16(&reply[MPI_REPLY_IOC_STATUS], LSI_IOCSTATUS_SUCCESS);
-	return 0x1CU;
+	write_le32(&reply[0x14], LSI_EVENT_EVENT_CHANGE);
+	state.event_context++;
+	write_le32(&reply[0x18], state.event_context);
+	write_le32(&reply[0x1C], state.events_enabled ? 1U : 0U);
+	return 0x20U;
 }
 
 /**
@@ -2757,7 +2774,7 @@ u32 CLSI53C1020::build_config_page(u8 type, u8 number, u32 page_address, bool fa
 {
 	u32 bytes = 0;
 
-	memset(data, 0, LSI_FRAME_MAX);
+	memset(data, 0, LSI_CFG_PAGE_MAX);
 	switch (type)
 	{
 	case LSI_CFG_PAGETYPE_MANUFACTURING:
@@ -2772,6 +2789,52 @@ u32 CLSI53C1020::build_config_page(u8 type, u8 number, u32 page_address, bool fa
 			memcpy(&data[0x14], "A0", 2U);
 			memcpy(&data[0x1C], "LSI53C1020", 10U);
 			memcpy(&data[0x2C], "LSI53C1020", 10U);
+		}
+		else if (number == 1U)
+		{
+			/* Manufacturing page 1 contains a 256-byte PCI VPD image. */
+			static const char identification[] = "LSI53C1020";
+			static const char part_number[] = "LSI53C1020";
+			static const char serial_number[] = "00000000";
+			u32 vpd = 0x04U;
+
+			bytes = 0x104U;
+			data[0] = 0x00U;
+			data[1] = (u8)(bytes / 4U);
+			data[2] = number;
+			data[3] = LSI_CFG_PAGETYPE_MANUFACTURING | LSI_CFG_PAGEATTR_READ_ONLY;
+
+			data[vpd++] = 0x82U;
+			data[vpd++] = (u8)(sizeof(identification) - 1U);
+			data[vpd++] = 0x00U;
+			memcpy(&data[vpd], identification, sizeof(identification) - 1U);
+			vpd += (u32)(sizeof(identification) - 1U);
+
+			data[vpd++] = 0x90U;
+			const u32 read_only_length = vpd;
+			vpd += 2U;
+			data[vpd++] = 'P';
+			data[vpd++] = 'N';
+			data[vpd++] = (u8)(sizeof(part_number) - 1U);
+			memcpy(&data[vpd], part_number, sizeof(part_number) - 1U);
+			vpd += (u32)(sizeof(part_number) - 1U);
+			data[vpd++] = 'S';
+			data[vpd++] = 'N';
+			data[vpd++] = (u8)(sizeof(serial_number) - 1U);
+			memcpy(&data[vpd], serial_number, sizeof(serial_number) - 1U);
+			vpd += (u32)(sizeof(serial_number) - 1U);
+			data[vpd++] = 'R';
+			data[vpd++] = 'V';
+			data[vpd++] = 0x01U;
+			const u32 checksum_position = vpd++;
+			data[read_only_length] = (u8)(vpd - read_only_length - 2U);
+			data[read_only_length + 1U] = 0x00U;
+
+			u8 checksum = 0;
+			for (u32 i = 0x04U; i < checksum_position; i++)
+				checksum = (u8)(checksum + data[i]);
+			data[checksum_position] = (u8)(0U - checksum);
+			data[vpd] = 0x78U;
 		}
 		break;
 
@@ -2790,6 +2853,16 @@ u32 CLSI53C1020::build_config_page(u8 type, u8 number, u32 page_address, bool fa
 			write_le16(&data[0x18], LSI_PCI_SUBSYSTEM_VENDOR_ID);
 			write_le16(&data[0x1A], LSI_PCI_SUBSYSTEM_DEVICE_ID);
 		}
+		else if (number == 1U)
+		{
+			/* Reply coalescing is disabled; only the PCI slot is reported. */
+			bytes = 0x10U;
+			data[0] = 0x01U;
+			data[1] = (u8)(bytes / 4U);
+			data[2] = number;
+			data[3] = LSI_CFG_PAGETYPE_IOC | LSI_CFG_PAGEATTR_CHANGEABLE;
+			data[0x0D] = (u8)pci_dev();
+		}
 		else if (number == 2U)
 		{
 			bytes = 0x0CU;
@@ -2797,6 +2870,36 @@ u32 CLSI53C1020::build_config_page(u8 type, u8 number, u32 page_address, bool fa
 			data[1] = (u8)(bytes / 4U);
 			data[2] = number;
 			data[3] = LSI_CFG_PAGETYPE_IOC | LSI_CFG_PAGEATTR_READ_ONLY;
+		}
+		else if (number == 3U)
+		{
+			/* No RAID physical disks. */
+			bytes = 0x08U;
+			data[0] = 0x01U;
+			data[1] = (u8)(bytes / 4U);
+			data[2] = number;
+			data[3] = LSI_CFG_PAGETYPE_IOC | LSI_CFG_PAGEATTR_READ_ONLY;
+		}
+		else if (number == 5U)
+		{
+			/* No RAID hot spares. */
+			bytes = 0x0CU;
+			data[0] = 0x00U;
+			data[1] = (u8)(bytes / 4U);
+			data[2] = number;
+			data[3] = LSI_CFG_PAGETYPE_IOC | LSI_CFG_PAGEATTR_READ_ONLY;
+		}
+		break;
+
+	case LSI_CFG_PAGETYPE_BIOS:
+		if (number == 3U)
+		{
+			/* Present but empty for driver startup probes. */
+			bytes = 0x08U;
+			data[0] = 0x00U;
+			data[1] = (u8)(bytes / 4U);
+			data[2] = number;
+			data[3] = LSI_CFG_PAGETYPE_BIOS | LSI_CFG_PAGEATTR_READ_ONLY;
 		}
 		break;
 
@@ -2847,7 +2950,7 @@ u32 CLSI53C1020::build_config_page(u8 type, u8 number, u32 page_address, bool fa
 		else if (number == 1U)
 		{
 			bytes = 0x0CU;
-			data[0] = 0x02U;
+			data[0] = 0x03U;
 			data[1] = (u8)(bytes / 4U);
 			data[2] = number;
 			data[3] = LSI_CFG_PAGETYPE_SCSI_PORT | LSI_CFG_PAGEATTR_CHANGEABLE;
@@ -2915,6 +3018,15 @@ u32 CLSI53C1020::build_config_page(u8 type, u8 number, u32 page_address, bool fa
 				write_le32(&data[0x0C], state.scsi_dev1_cfg[target]);
 			}
 		}
+		else if (number == 9U)
+		{
+			/* Present but empty for driver startup probes. */
+			bytes = 0x08U;
+			data[0] = 0x00U;
+			data[1] = (u8)(bytes / 4U);
+			data[2] = number;
+			data[3] = LSI_CFG_PAGETYPE_SCSI_DEVICE | LSI_CFG_PAGEATTR_READ_ONLY;
+		}
 		break;
 	}
 
@@ -2955,7 +3067,7 @@ u32 CLSI53C1020::execute_config(const u8* request, u8* reply)
 	const u32 sge_flags_len = read_le32(&request[0x1C]);
 	const u32 sge_len = sge_flags_len & LSI_SGE_LENGTH_MASK;
 	u64 sge_address = read_le32(&request[0x20]);
-	u8 page[LSI_FRAME_MAX];
+	u8 page[LSI_CFG_PAGE_MAX];
 	u16 iocstatus = LSI_IOCSTATUS_SUCCESS;
 
 	if ((sge_flags_len & LSI_SGE_FLAG_64BIT) != 0U)
@@ -2991,7 +3103,7 @@ u32 CLSI53C1020::execute_config(const u8* request, u8* reply)
 	case LSI_CFG_ACTION_WRITE_CURRENT:
 	case LSI_CFG_ACTION_WRITE_NVRAM:
 	{
-		u8 data[LSI_FRAME_MAX];
+		u8 data[LSI_CFG_PAGE_MAX];
 		const u32 copy = std::min<u32>(sge_len, page_bytes);
 		if (copy != 0U)
 		{
@@ -3094,7 +3206,11 @@ u32 CLSI53C1020::execute(const u8* request, u8* reply)
 		else if (task_type == 0x04U)
 		{
 			reset_scsi_bus();
-			state.bus_reset_event_pending = true;
+			/* FIFO-capable hosts expect the reset event before task completion. */
+			if (state.events_enabled && state.reply_free_count != 0U)
+				post_event(LSI_EVENT_IOC_BUS_RESET, 0U);
+			else
+				state.bus_reset_event_pending = true;
 		}
 
 		reply[0x00] = request[0x00];
@@ -3149,6 +3265,16 @@ void CLSI53C1020::execute_handshake()
 	if (request[MPI_MSG_FUNCTION] == LSI_FUNCTION_SCSI_TASK_MGMT &&
 	    reply_bytes == sizeof(state.taskmgmt_reply_frame))
 	{
+		if (state.reply_free_count != 0U)
+		{
+			/* Deliver TaskMgmt through the stocked reply FIFO. */
+			post_address_reply(reply, reply_bytes);
+			state.hs_receiving = false;
+			state.hs_replying = false;
+			state.doorbell_interrupt = true;
+			eval_interrupts();
+			return;
+		}
 		memcpy(state.taskmgmt_reply_frame, reply, sizeof(state.taskmgmt_reply_frame));
 		state.taskmgmt_mirror_pending = true;
 	}
