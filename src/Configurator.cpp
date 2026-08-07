@@ -1113,12 +1113,13 @@ void CConfigurator::initialize()
 		break;
 	}
 
-	// The ES40 hardware always has two serial ports; SRM and guest OSes
-	// expect both UARTs to exist. Synthesize any port missing from the
-	// configuration as a null_attach (bit-bucket) port.
+	// Synthesize mandatory system hardware omitted from the configuration.
+	// Missing serial ports use null_attach (bit-bucket) mode; the FDC
+	// is chipset integrated and always exists. 
 	if (myFlags & IS_CS)
 	{
 		bool have_serial[2] = { false, false };
+		bool have_fdc0 = false;
 		for (i = 0; i < iNumChildren; i++)
 		{
 			if (!strcmp(pChildren[i]->get_myValue(), "serial"))
@@ -1129,6 +1130,32 @@ void CConfigurator::initialize()
 				if (number >= 0 && number < 2)
 					have_serial[number] = true;
 			}
+			else if (!strcmp(pChildren[i]->get_myValue(), "floppy") &&
+				!strncmp(pChildren[i]->get_myName(), "fdc", 3) &&
+				atoi(&pChildren[i]->get_myName()[3]) == 0)
+			{
+				have_fdc0 = true;
+			}
+		}
+
+		if (!have_fdc0)
+		{
+			if (iNumChildren >= CFG_MAX_CHILDREN)
+				FAILURE(Configuration,
+					"No room to add the default fdc0 configuration");
+
+			printf("%%SYS-I-DEFAULTFDC: fdc0 is not configured; "
+				"adding the built-in floppy controller.\n");
+
+			char* fname;
+			CHECK_ALLOCATION(fname = (char*)malloc(5));
+			strcpy(fname, "fdc0");
+			char* fvalue;
+			CHECK_ALLOCATION(fvalue = (char*)malloc(7));
+			strcpy(fvalue, "floppy");
+			char ftext[] = "";
+			pChildren[iNumChildren++] = new CConfigurator(this, fname, fvalue,
+				ftext, 0);
 		}
 
 		for (number = 0; number < 2; number++)
