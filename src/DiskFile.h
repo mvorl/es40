@@ -59,6 +59,7 @@
 
 #include "Disk.h"
 #include "DiskFileBinCue.h"
+#include <atomic>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -66,13 +67,15 @@
 
 enum class EDiskFileMediaAction
 {
-  ChangeImage
+  ChangeImage,
+  SetReadOnly
 };
 
 struct SDiskFileMediaAction
 {
   EDiskFileMediaAction type;
   std::string path;
+  bool read_only;
 };
 
 /**
@@ -81,16 +84,21 @@ struct SDiskFileMediaAction
 class CDiskFileMediaMailbox
 {
 public:
-  explicit CDiskFileMediaMailbox(const std::string& label);
+  CDiskFileMediaMailbox(const std::string& label, bool floppy,
+                        bool initial_read_only);
 
   bool request_image_change(const char* path) noexcept;
+  bool request_read_only_toggle() noexcept;
   bool take_pending_actions(std::deque<SDiskFileMediaAction>& actions) noexcept;
   void deactivate() noexcept;
+  void reconcile_read_only(bool actual_value) noexcept;
 
   const std::string& label() const { return device_label; }
 
 private:
   std::string device_label;
+  bool floppy_device;
+  std::atomic<bool> read_only;
   bool active;
   std::mutex mutex;
   std::deque<SDiskFileMediaAction> pending_actions;
@@ -119,6 +127,7 @@ public:
 
   bool            reload_file(const char* filename);
   bool            change_media(const char* filename);
+  bool            set_read_only(bool read_only);
   virtual void    service_pending_media_actions() override;
   FILE*           get_handle() { return handle; }
 
@@ -152,6 +161,7 @@ protected:
   std::string filename;
 
 private:
+  bool            floppy_device = false;
   std::shared_ptr<CDiskFileMediaMailbox> media_mailbox;
 
   // ------------------------------------------------------------------

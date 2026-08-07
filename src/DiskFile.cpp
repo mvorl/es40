@@ -120,8 +120,10 @@
 #include <string>
 #include <string.h>
 
-CDiskFileMediaMailbox::CDiskFileMediaMailbox(const std::string& label) :
-    device_label(label), active(true)
+CDiskFileMediaMailbox::CDiskFileMediaMailbox(const std::string& label,
+    bool floppy, bool initial_read_only) :
+    device_label(label), floppy_device(floppy),
+    read_only(initial_read_only), active(true)
 {
 }
 
@@ -135,7 +137,29 @@ bool CDiskFileMediaMailbox::request_image_change(const char* path) noexcept
         if (!active)
             return false;
         pending_actions.push_back(
-            { EDiskFileMediaAction::ChangeImage, path });
+            { EDiskFileMediaAction::ChangeImage, path, false });
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+bool CDiskFileMediaMailbox::request_read_only_toggle() noexcept
+{
+    try
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (!active || !floppy_device)
+            return false;
+
+        // Queue absolute state rather than relative toggle. 
+        // Repeated requests remain deterministic regardless of FDC state.
+        const bool desired = !read_only.load(std::memory_order_relaxed);
+        pending_actions.push_back(
+            { EDiskFileMediaAction::SetReadOnly, std::string(), desired });
+        read_only.store(desired, std::memory_order_release);
         return true;
     }
     catch (...)
@@ -158,6 +182,23 @@ bool CDiskFileMediaMailbox::take_pending_actions(
     catch (...)
     {
         return false;
+    }
+}
+
+void CDiskFileMediaMailbox::reconcile_read_only(bool actual_value) noexcept
+{
+    try
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        bool projected_value = actual_value;
+        for (std::deque<SDiskFileMediaAction>::const_iterator it =
+                 pending_actions.begin(); it != pending_actions.end(); ++it)
+            if (it->type == EDiskFileMediaAction::SetReadOnly)
+                projected_value = it->read_only;
+        read_only.store(projected_value, std::memory_order_release);
+    }
+    catch (...)
+    {
     }
 }
 
@@ -188,6 +229,8 @@ CDiskFile::CDiskFile(CConfigurator* cfg, CSystem* sys, CDiskController* c,
     track_count      = 0;
     current_lba      = 0;
     logical_byte_pos = 0;
+    floppy_device    = myCfg->get_myParent() != nullptr &&
+                        myCfg->get_myParent()->get_class_id() == c_floppy;
     char* configured_filename = myCfg->get_text_value("file");
     if (!configured_filename)
     {
@@ -216,13 +259,15 @@ CDiskFile::CDiskFile(CConfigurator* cfg, CSystem* sys, CDiskController* c,
         p++;
     }
 
-    if (cdrom())
+    if (cdrom() || floppy_device)
     {
+        const char* kind = floppy_device ? "Floppy" : "CD-ROM";
         const char* device = devid_string ? devid_string : "unnamed device";
         media_mailbox = std::make_shared<CDiskFileMediaMailbox>(
-            std::string("CD-ROM: ") + device);
+            std::string(kind) + ": " + device, floppy_device, read_only);
 #if defined(HAVE_SDL)
-        sdl_register_removable_disk(media_mailbox);
+        if (cdrom())
+            sdl_register_removable_disk(media_mailbox);
 #endif
     }
 
@@ -241,7 +286,8 @@ CDiskFile::~CDiskFile(void)
     {
         media_mailbox->deactivate();
 #if defined(HAVE_SDL)
-        sdl_unregister_removable_disk(media_mailbox);
+        if (cdrom())
+            sdl_unregister_removable_disk(media_mailbox);
 #endif
     }
 
@@ -277,6 +323,38 @@ bool CDiskFile::reload_file(const char* _filename)
 bool CDiskFile::change_media(const char* _filename)
 {
     return load_file_transactional(_filename, false, false);
+}
+
+bool CDiskFile::set_read_only(bool desired_read_only)
+{
+    if (desired_read_only == read_only)
+        return true;
+
+    // BIN/CUE media are read-only in this backend.
+    if (is_bincue)
+        return false;
+    if (!handle || filename.empty())
+        return false;
+
+    if (desired_read_only && fflush(handle) != 0)
+        return false;
+
+    FILE* replacement = fopen_large(filename.c_str(),
+                                   desired_read_only ? "rb" : "rb+");
+    if (!replacement)
+        return false;
+
+    if (fseek_large(replacement, state.byte_pos, SEEK_SET) != 0)
+    {
+        fclose(replacement);
+        return false;
+    }
+
+    FILE* old_handle = handle;
+    handle = replacement;
+    read_only = desired_read_only;
+    fclose(old_handle);
+    return true;
 }
 
 bool CDiskFile::load_file_transactional(const char* _filename,
@@ -562,6 +640,16 @@ void CDiskFile::service_pending_media_actions()
     for (std::deque<SDiskFileMediaAction>::const_iterator it = actions.begin();
          it != actions.end(); ++it)
     {
+        if (it->type == EDiskFileMediaAction::SetReadOnly)
+        {
+            const bool changed = set_read_only(it->read_only);
+            media_mailbox->reconcile_read_only(read_only);
+            printf("%s: Floppy is %s%s.\n", devid_string,
+                read_only ? "read-only" : "writable",
+                changed ? "" : " (unchanged: backing file could not be reopened)");
+            continue;
+        }
+
         bool changed = false;
         try
         {
@@ -581,6 +669,7 @@ void CDiskFile::service_pending_media_actions()
             changed ? "complete" : "failed", it->path.c_str());
     }
 
+    media_mailbox->reconcile_read_only(read_only);
 }
 
 
