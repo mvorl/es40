@@ -158,6 +158,9 @@
 // Define if you want to enable unaligned access debugging
 //#define DEBUG_UNALIGN
 
+// Define if you want to enable FDC debugging/tracing
+//#define DEBUG_FDC
+
 // Define for a periodic per-CPU pc/icount dump on stderr (hang triage:
 // icount advancing = guest/CPU livelock, frozen = host deadlock)
 //#define DEBUG_HANG_SAMPLER
