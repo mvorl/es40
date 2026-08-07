@@ -134,7 +134,10 @@ public:
   void set_block_size(size_t bs)
   {
     state.block_size = bs;
-    determine_layout();           /*calc_cylinders();*/
+    if (byte_size > 0)
+      determine_layout();         /*calc_cylinders();*/
+    else
+      cylinders = heads = sectors = 0;
   };
 
   void        determine_layout();

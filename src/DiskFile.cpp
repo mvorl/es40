@@ -234,7 +234,7 @@ CDiskFile::CDiskFile(CConfigurator* cfg, CSystem* sys, CDiskController* c,
     floppy_device    = myCfg->get_myParent() != nullptr &&
                         myCfg->get_myParent()->get_class_id() == c_floppy;
     char* configured_filename = myCfg->get_text_value("file");
-    const bool start_without_media = floppy_device &&
+    const bool start_without_media = (floppy_device || cdrom()) &&
                                      (!configured_filename ||
                                       !*configured_filename);
     if (!configured_filename && !start_without_media)
@@ -246,8 +246,10 @@ CDiskFile::CDiskFile(CConfigurator* cfg, CSystem* sys, CDiskController* c,
         FAILURE_1(Runtime, "%s: Could not mount configured disk image", devid_string);
     state.scsi.media_changed = 0;
 
+    const char* default_model = floppy_device ?
+        "3.5-inch 1.44 MB floppy" : "DEC RRD42 CD-ROM";
     model_number = myCfg->get_text_value("model_number",
-        start_without_media ? "3.5-inch 1.44 MB floppy" : configured_filename);
+        start_without_media ? default_model : configured_filename);
 
     // Advance model_number pointer past any directory component.
     char* p = model_number;
@@ -277,8 +279,8 @@ CDiskFile::CDiskFile(CConfigurator* cfg, CSystem* sys, CDiskController* c,
     }
 
     if (start_without_media)
-        printf("%s: 3.5-inch 1.44 MB floppy drive has no media.\n",
-               devid_string);
+        printf("%s: %s drive has no media.\n", devid_string,
+               floppy_device ? "3.5-inch 1.44 MB floppy" : "CD-ROM");
     else
         printf("%s: Mounted file %s, %" PRId64 " %zu-byte blocks, "
                "%" PRId64 "/%ld/%ld.\n",
@@ -712,6 +714,9 @@ void CDiskFile::service_pending_media_actions()
  **/
 bool CDiskFile::seek_byte(off_t_large byte)
 {
+    if (!media_present())
+        return false;
+
     if (is_bincue)
     {
         if (byte >= byte_size)
@@ -725,6 +730,9 @@ bool CDiskFile::seek_byte(off_t_large byte)
         state.byte_pos   = byte;
         return true;
     }
+
+    if (!handle)
+        return false;
 
     // --- original plain-file path (unchanged) ---
     if (byte >= byte_size)
@@ -752,6 +760,9 @@ bool CDiskFile::seek_byte(off_t_large byte)
  **/
 size_t CDiskFile::read_bytes(void* dest, size_t bytes)
 {
+    if (!media_present())
+        return 0;
+
     if (is_bincue)
     {
         size_t total_read = 0;
@@ -811,6 +822,9 @@ size_t CDiskFile::read_bytes(void* dest, size_t bytes)
         return total_read;
     }
 
+    if (!handle)
+        return 0;
+
     // --- original plain-file path (unchanged) ---
     size_t r = fread(dest, 1, bytes, handle);
     state.byte_pos = ftell_large(handle);
@@ -825,6 +839,9 @@ size_t CDiskFile::read_bytes(void* dest, size_t bytes)
  **/
 size_t CDiskFile::write_bytes(void* src, size_t bytes)
 {
+    if (!media_present())
+        return 0;
+
     if (is_bincue)
     {
         // BIN/CUE images are treated as read-only media.
@@ -832,6 +849,9 @@ size_t CDiskFile::write_bytes(void* src, size_t bytes)
     }
 
     if (read_only)
+        return 0;
+
+    if (!handle)
         return 0;
 
     size_t r = fwrite(src, 1, bytes, handle);

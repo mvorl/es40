@@ -165,8 +165,8 @@ CDisk::CDisk(CConfigurator* cfg, CSystem* sys, CDiskController* ctrl,
 		myCfg->get_text_value("serial_num", "ES40EM00000"));
 	revision_number = myCfg->get_text_value("rev_number",
 		myCfg->get_text_value("rev_num", "0.0"));
-	read_only = myCfg->get_bool_value("read_only");
 	is_cdrom = myCfg->get_bool_value("cdrom");
+	read_only = myCfg->get_bool_value("read_only", is_cdrom);
 
 	byte_size = 0;
 	cylinders = 0;
@@ -1082,6 +1082,10 @@ int CDisk::do_scsi_command()
 		// unit is always ready...
 		// ...unless it's a cdrom and the media was changed.
 		if (cdrom()) {
+			if (!media_present()) {
+				do_scsi_error(SCSI_MEDIA_REMOVED);
+				break;
+			}
 			if (state.scsi.media_changed == SCSI_MEDIA_STATE_REMOVED) {
 				do_scsi_error(SCSI_MEDIA_REMOVED);
 				state.scsi.media_changed = SCSI_MEDIA_STATE_CHANGED;
@@ -1098,12 +1102,15 @@ int CDisk::do_scsi_command()
 	
 	case SCSICMD_READ_SUBCHANNEL:
 	{
+		if (cdrom() && !media_present()) {
+			do_scsi_error(SCSI_MEDIA_REMOVED);
+			break;
+		}
 		bool msf = get_packet_field(state.scsi.cmd.data, 1, 1, 1);
 		bool sub_q = get_packet_field(state.scsi.cmd.data, 2, 6, 1);
 		uint8_t data_format = get_packet_byte(state.scsi.cmd.data, 3);
 		uint8_t track_number = get_packet_byte(state.scsi.cmd.data, 6);
 		uint16_t alloc_length = get_packet_word(state.scsi.cmd.data, 7);
-		// TODO: Return when empty CD drives are finally a thing again.
 		{
 			int ret_len = read_sub_channel(state.scsi.dati.data, sub_q, msf, track_number, data_format, alloc_length);
 			if (ret_len == 0)
@@ -1128,7 +1135,7 @@ int CDisk::do_scsi_command()
 		bool polled = (state.scsi.cmd.data[1] & (1 << 0)) > 0;
 		int event_length, request = state.scsi.cmd.data[4];
 		uint16_t alloc_length = read_16bit(state.scsi.cmd.data + 7);
-		bool inserted = true;
+		bool inserted = media_present();
 		if (polled) {
 			// we currently only support the MEDIA event (bit 4)
 			if (request == (1 << 4)) {
@@ -1326,7 +1333,7 @@ int CDisk::do_scsi_command()
 		uint16_t start_feature = read_16bit(state.scsi.cmd.data + 2);
 		uint16_t alloc_length = read_16bit(state.scsi.cmd.data + 7);
 		uint8_t *feature_ptr = state.scsi.dati.data;
-		bool inserted = true;
+		bool inserted = media_present();
 
 		// The controller buffer is guaranteed to be at least 2048 bytes.
 		// The largest return for this command is guaranteed to be less than 1024 bytes.
@@ -1342,8 +1349,8 @@ int CDisk::do_scsi_command()
 			// state.scsi.dati.data[3] = 0;
 			state.scsi.dati.data[4] = 0; // reserved
 			state.scsi.dati.data[5] = 0; // reserved
-			state.scsi.dati.data[6] = 0; // we only support profile 8 (cd-rom)
-			state.scsi.dati.data[7] = 8; //
+			state.scsi.dati.data[6] = 0;
+			state.scsi.dati.data[7] = inserted ? 8 : 0; // current profile
 			feature_ptr += 8;
 
 			// page: 238
@@ -1417,7 +1424,8 @@ int CDisk::do_scsi_command()
 			{
 				feature_ptr[0] = 0x00; // Feature Code 0x010
 				feature_ptr[1] = 0x10;
-				feature_ptr[2] = (0 << 6) | (0 << 2) | (1 << 1) | (1 << 0); // version 0, persistent = 1, current = 1
+				feature_ptr[2] = (0 << 6) | (0 << 2) | (1 << 1) |
+					(inserted << 0); // version 0, persistent = 1
 				feature_ptr[3] = 8;											// additional length = 8
 				feature_ptr[4] = 0x00;										// Logical Block Size:
 				feature_ptr[5] = 0x00;										//   2048 (0x800)
@@ -1435,7 +1443,8 @@ int CDisk::do_scsi_command()
 			{
 				feature_ptr[0] = 0x00; // Feature Code 0x01E
 				feature_ptr[1] = 0x1E;
-				feature_ptr[2] = (0 << 6) | (2 << 2) | (1 << 1) | (1 << 0); // version 2, persistent = 1, current = 1
+				feature_ptr[2] = (0 << 6) | (2 << 2) | (1 << 1) |
+					(inserted << 0); // version 2, persistent = 1
 				feature_ptr[3] = 4;											// additional length = 4
 				feature_ptr[4] = (0 << 7) | (0 << 1) | (0 << 0);			// DAP = 0, C2 Flags = 0, CD-Text = 0
 				feature_ptr[5] = 0;
@@ -2034,6 +2043,10 @@ int CDisk::do_scsi_command()
 
 	case SCSIBLOCKCMD_SEEK:
 	{
+		if (cdrom() && !media_present()) {
+			do_scsi_error(SCSI_MEDIA_REMOVED);
+			break;
+		}
 		auto ofs = (state.scsi.cmd.data[2] << 24) + (state.scsi.cmd.data[3] << 16) + (state.scsi.cmd.data[4] << 8) + state.scsi.cmd.data[5];
 		if (ofs >= get_lba_size()) {
 			do_scsi_error(SCSI_LBA_RANGE);
@@ -2048,6 +2061,11 @@ int CDisk::do_scsi_command()
 #if defined(DEBUG_SCSI)
 		printf("%s: READ CAPACITY.\n", devid_string);
 #endif
+		if (cdrom() && !media_present())
+		{
+			do_scsi_error(SCSI_MEDIA_REMOVED);
+			break;
+		}
 		if (state.scsi.cmd.data[8] & 1)
 		{
 			FAILURE_1(NotImplemented,
@@ -2085,6 +2103,11 @@ int CDisk::do_scsi_command()
 #if defined(DEBUG_SCSI)
 		printf("%s: VERIFY(10).\n", devid_string);
 #endif
+		if (cdrom() && !media_present())
+		{
+			do_scsi_error(SCSI_MEDIA_REMOVED);
+			break;
+		}
 		// BYTCHK requests a DATA OUT compare buffer. The emulator can verify
 		// media readability, but does not implement host-data comparison.
 		if (state.scsi.cmd.data[1] & 0x02)
@@ -2117,6 +2140,11 @@ int CDisk::do_scsi_command()
 #if defined(DEBUG_SCSI)
 		printf("%s: READ.\n", devid_string);
 #endif
+		if (cdrom() && !media_present())
+		{
+			do_scsi_error(SCSI_MEDIA_REMOVED);
+			break;
+		}
 
 		//if (state.scsi.disconnect_priv)
 		//{
@@ -2216,6 +2244,11 @@ int CDisk::do_scsi_command()
 #if defined(DEBUG_SCSI)
 		printf("%s: READ_LONG.\n", devid_string);
 #endif
+		if (cdrom() && !media_present())
+		{
+			do_scsi_error(SCSI_MEDIA_REMOVED);
+			break;
+		}
 
 		// The read long command is used to read one block of disk data, including
 		// ECC data. OpenVMS uses read long / write long to do host-based shadowing.
@@ -2273,6 +2306,11 @@ int CDisk::do_scsi_command()
 #if defined(DEBUG_SCSI)
 		printf("%s: WRITE.\n", devid_string);
 #endif
+		if (cdrom() && !media_present())
+		{
+			do_scsi_error(SCSI_MEDIA_REMOVED);
+			break;
+		}
 		if (state.scsi.cmd.data[0] == SCSICMD_WRITE)
 		{
 
@@ -2350,6 +2388,11 @@ int CDisk::do_scsi_command()
 #if defined(DEBUG_SCSI)
         printf("%s: CDROM READ TOC.\n", devid_string);
 #endif
+        if (!media_present())
+        {
+            do_scsi_error(SCSI_MEDIA_REMOVED);
+            break;
+        }
         // We support format field == 0 only (standard TOC).
         if (state.scsi.cmd.data[2] & 0x0f)
         {
