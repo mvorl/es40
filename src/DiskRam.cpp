@@ -155,9 +155,9 @@ CDiskRam::~CDiskRam(void)
 
 bool CDiskRam::seek_byte(off_t_large byte)
 {
-	if (byte >= byte_size)
+	if (byte < 0 || byte >= byte_size)
 	{
-		FAILURE_1(InvalidArgument, "%s: Seek beyond end of file!\n", devid_string);
+		FAILURE_1(InvalidArgument, "%s: Seek outside disk image!\n", devid_string);
 	}
 
 	state.byte_pos = byte;
