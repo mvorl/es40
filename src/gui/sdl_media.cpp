@@ -53,6 +53,11 @@ static const SDL_DialogFileFilter cdrom_filters[] = {
     { "All files",     "*"       }
 };
 
+static const SDL_DialogFileFilter floppy_filters[] = {
+    { "Floppy images", "img;ima;vfd;dsk;flp;bin" },
+    { "All files",     "*"                       }
+};
+
 static std::atomic<bool> file_dialog_open(false);
 static std::mutex removable_disks_mutex;
 static std::vector<std::shared_ptr<CDiskFileMediaMailbox> > removable_disks;
@@ -61,6 +66,7 @@ enum EMediaPopupMode
 {
     MEDIA_POPUP_CLOSED,
     MEDIA_POPUP_DEVICES,
+    MEDIA_POPUP_FLOPPY,
     MEDIA_POPUP_MESSAGE
 };
 
@@ -72,9 +78,11 @@ struct SMediaPopupState
     SDL_Renderer* renderer = nullptr;
     SDL_WindowID window_id = 0;
     std::vector<std::shared_ptr<CDiskFileMediaMailbox> > devices;
+    std::shared_ptr<CDiskFileMediaMailbox> device;
     std::string message;
     std::vector<SDL_FRect> rows;
     int selected = 0;
+    int device_selection = 0;
     int first_visible = 0;
     int width = 0;
     int height = 0;
@@ -138,6 +146,8 @@ static int item_count()
 {
     if (media_popup.mode == MEDIA_POPUP_DEVICES)
         return (int)media_popup.devices.size() + 1;
+    if (media_popup.mode == MEDIA_POPUP_FLOPPY)
+        return 3;
     if (media_popup.mode == MEDIA_POPUP_MESSAGE)
         return 1;
     return 0;
@@ -165,8 +175,10 @@ static void close_popup()
     destroy_popup_window();
     media_popup.mode = MEDIA_POPUP_CLOSED;
     media_popup.devices.clear();
+    media_popup.device.reset();
     media_popup.message.clear();
     media_popup.selected = 0;
+    media_popup.device_selection = 0;
     media_popup.first_visible = 0;
 }
 
@@ -230,7 +242,13 @@ static void render_popup()
     if (media_popup.mode == MEDIA_POPUP_DEVICES)
     {
         title = "Change removable media";
-        subtitle = "Choose a configured CD-ROM drive";
+        subtitle = "Choose a configured drive";
+    }
+    else if (media_popup.mode == MEDIA_POPUP_FLOPPY)
+    {
+        title = "Floppy media";
+        subtitle = media_popup.device ? media_popup.device->label() :
+            "Selected floppy drive";
     }
     else
     {
@@ -282,10 +300,21 @@ static void render_popup()
                 const std::shared_ptr<CDiskFileMediaMailbox>& mailbox =
                     media_popup.devices[(size_t)index];
                 label = mailbox ? mailbox->label() :
-                    "Unnamed CD-ROM drive";
+                    "Unnamed removable drive";
             }
             else
                 label = "Cancel";
+        }
+        else if (media_popup.mode == MEDIA_POPUP_FLOPPY)
+        {
+            if (index == 0)
+                label = "Change image...";
+            else if (index == 1)
+                label = media_popup.device &&
+                    media_popup.device->displayed_read_only() ?
+                    "Make writable" : "Make read-only";
+            else
+                label = media_popup.devices.size() > 1 ? "Back" : "Cancel";
         }
         else
             label = "Close";
@@ -298,7 +327,10 @@ static void render_popup()
                   index == media_popup.selected ? 255 : 239);
     }
 
-    const char* footer = "Arrows select   Enter open   Esc cancel";
+    const char* footer = media_popup.mode == MEDIA_POPUP_FLOPPY &&
+        media_popup.devices.size() > 1 ?
+        "Arrows select   Enter open   Esc back" :
+        "Arrows select   Enter open   Esc cancel";
     draw_text(20.0f, (float)media_popup.height - footer_height + 11.0f,
               footer, 1.0f,
               std::max(1, (media_popup.width - 40) / 8),
@@ -439,7 +471,7 @@ static void SDLCALL media_file_callback(void* userdata,
         return;
 
     if (!context->mailbox->request_image_change(filelist[0]))
-        SDL_Log("The selected CD-ROM device is no longer available.");
+        SDL_Log("The selected removable-media device is no longer available.");
 }
 
 static void show_file_dialog(
@@ -459,9 +491,13 @@ static void show_file_dialog(
     }
     context->mailbox = mailbox;
 
+    const SDL_DialogFileFilter* filters = mailbox->is_floppy() ?
+        floppy_filters : cdrom_filters;
+    const int filter_count = mailbox->is_floppy() ?
+        (int)SDL_arraysize(floppy_filters) :
+        (int)SDL_arraysize(cdrom_filters);
     SDL_ShowOpenFileDialog(media_file_callback, context.release(),
-                           media_popup.parent,
-                           cdrom_filters, SDL_arraysize(cdrom_filters),
+                           media_popup.parent, filters, filter_count,
                            nullptr, false);
 }
 
@@ -470,6 +506,21 @@ static void open_device(
 {
     if (!mailbox)
         return;
+    if (media_popup.mode == MEDIA_POPUP_DEVICES)
+        media_popup.device_selection = media_popup.selected;
+    media_popup.device = mailbox;
+    if (mailbox->is_floppy())
+    {
+        media_popup.mode = MEDIA_POPUP_FLOPPY;
+        media_popup.selected = 0;
+        media_popup.first_visible = 0;
+        if (!media_popup.window)
+            create_popup_window();
+        else
+            update_popup_content();
+        return;
+    }
+
     close_popup();
     show_file_dialog(mailbox);
 }
@@ -491,11 +542,12 @@ void sdl_select_media(SDL_Window* window) noexcept
         media_popup.devices = snapshot_removable_disks();
         if (media_popup.devices.empty())
         {
-            show_message("No file-backed CD-ROM drives are configured.");
+            show_message("No removable media devices are configured.");
             return;
         }
         media_popup.mode = MEDIA_POPUP_DEVICES;
         media_popup.selected = 0;
+        media_popup.device_selection = 0;
         media_popup.first_visible = 0;
         create_popup_window();
     }
@@ -529,12 +581,45 @@ static void activate_selection()
         return;
     }
 
+    if (media_popup.mode == MEDIA_POPUP_FLOPPY)
+    {
+        std::shared_ptr<CDiskFileMediaMailbox> mailbox = media_popup.device;
+        if (!mailbox)
+        {
+            close_popup();
+            return;
+        }
+        if (media_popup.selected == 0)
+        {
+            close_popup();
+            show_file_dialog(mailbox);
+        }
+        else if (media_popup.selected == 1)
+        {
+            mailbox->request_read_only_toggle();
+            close_popup();
+        }
+        else
+            cancel_or_go_back();
+        return;
+    }
     if (media_popup.mode == MEDIA_POPUP_MESSAGE)
         close_popup();
 }
 
 static void cancel_or_go_back()
 {
+    if (media_popup.mode == MEDIA_POPUP_FLOPPY &&
+        media_popup.devices.size() > 1)
+    {
+        media_popup.mode = MEDIA_POPUP_DEVICES;
+        media_popup.device.reset();
+        media_popup.selected = std::max(0, std::min(
+            media_popup.device_selection, item_count() - 1));
+        media_popup.first_visible = 0;
+        update_popup_content();
+        return;
+    }
     close_popup();
 }
 

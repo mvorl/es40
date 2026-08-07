@@ -266,8 +266,7 @@ CDiskFile::CDiskFile(CConfigurator* cfg, CSystem* sys, CDiskController* c,
         media_mailbox = std::make_shared<CDiskFileMediaMailbox>(
             std::string(kind) + ": " + device, floppy_device, read_only);
 #if defined(HAVE_SDL)
-        if (cdrom())
-            sdl_register_removable_disk(media_mailbox);
+        sdl_register_removable_disk(media_mailbox);
 #endif
     }
 
@@ -286,8 +285,7 @@ CDiskFile::~CDiskFile(void)
     {
         media_mailbox->deactivate();
 #if defined(HAVE_SDL)
-        if (cdrom())
-            sdl_unregister_removable_disk(media_mailbox);
+        sdl_unregister_removable_disk(media_mailbox);
 #endif
     }
 

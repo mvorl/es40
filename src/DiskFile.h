@@ -94,6 +94,11 @@ public:
   void reconcile_read_only(bool actual_value) noexcept;
 
   const std::string& label() const { return device_label; }
+  bool is_floppy() const { return floppy_device; }
+  bool displayed_read_only() const
+  {
+    return read_only.load(std::memory_order_acquire);
+  }
 
 private:
   std::string device_label;
