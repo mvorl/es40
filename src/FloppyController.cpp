@@ -95,14 +95,10 @@ CFloppyController::CFloppyController(CConfigurator* cfg, CSystem* c, int id) : C
 	c->RegisterMemory(this, 1536, U64(0x00000801fc0003f0) - (0x80 * id), 6);
 	c->RegisterMemory(this, 1537, U64(0x00000801fc0003f7) - (0x80 * id), 1);
 
-	state.cmd_parms_ptr = 0;
-	state.cmd_res_ptr = 0;
-	state.status.rqm = 1;
-	state.status.dio = 0;
-	
-	state.interrupt = false;
+	memset(&state, 0, sizeof(state));
+	state.status.rqm = true;
+	state.dma = true;
 	state.dor = 0x0C;
-	state.reset_sense_cnt = 0;
 
 	printf("%s: $Id$\n",
 		devid_string);
@@ -164,6 +160,247 @@ cmdinfo[] = {
   {31, 0, 0, ""},
 };
 
+void CFloppyController::reset_controller(bool raise_irq)
+{
+	memset(&state.pio, 0, sizeof(state.pio));
+	memset(state.cmd_parms, 0, sizeof(state.cmd_parms));
+	memset(state.cmd_res, 0, sizeof(state.cmd_res));
+	state.cmd_parms_ptr = 0;
+	state.cmd_res_ptr = 0;
+	state.cmd_res_max = 0;
+	state.status.rqm = true;
+	state.status.dio = false;
+	state.status.nondma = false;
+	state.status.busy = false;
+	state.status.seeking[0] = false;
+	state.status.seeking[1] = false;
+	state.drive[0].seeking = 0;
+	state.drive[1].seeking = 0;
+	state.dma = true;
+	state.reset_sense_cnt = raise_irq ? 4 : 0;
+	clear_interrupt();
+	if (raise_irq)
+		do_interrupt();
+}
+
+bool CFloppyController::get_geometry(int drive, SFloppyGeometry* geometry)
+{
+	struct SGeometryEntry {
+		int cylinders;
+		int heads;
+		int sectors;
+		off_t_large byte_size;
+	};
+
+	static const SGeometryEntry geometries[] = {
+		{ 40, 1,  8,  40 * 1 *  8 * 512 }, // 160K
+		{ 40, 1,  9,  40 * 1 *  9 * 512 }, // 180K
+		{ 40, 2,  8,  40 * 2 *  8 * 512 }, // 320K
+		{ 40, 2,  9,  40 * 2 *  9 * 512 }, // 360K
+		{ 40, 2, 10,  40 * 2 * 10 * 512 }, // 400K
+		{ 80, 2,  8,  80 * 2 *  8 * 512 }, // 640K
+		{ 80, 2,  9,  80 * 2 *  9 * 512 }, // 720K
+		{ 80, 2, 10,  80 * 2 * 10 * 512 }, // 800K
+		{ 80, 2, 15,  80 * 2 * 15 * 512 }, // 1.2M
+		{ 80, 2, 18,  80 * 2 * 18 * 512 }, // 1.44M
+		{ 80, 2, 21,  80 * 2 * 21 * 512 }, // 1.68M (DMF)
+		{ 80, 2, 36,  80 * 2 * 36 * 512 }, // 2.88M
+	};
+
+	CDisk* disk = FDISK(drive);
+	if (disk == NULL || geometry == NULL)
+		return false;
+
+	off_t_large media_size = disk->get_byte_size();
+	const int geometry_count = (int)(sizeof(geometries) / sizeof(geometries[0]));
+	int best = 0;
+	off_t_large best_delta = media_size >= geometries[0].byte_size ?
+		media_size - geometries[0].byte_size : geometries[0].byte_size - media_size;
+
+	for (int i = 1; i < geometry_count; i++) {
+		off_t_large delta = media_size >= geometries[i].byte_size ?
+			media_size - geometries[i].byte_size : geometries[i].byte_size - media_size;
+		if (delta < best_delta) {
+			best = i;
+			best_delta = delta;
+		}
+	}
+
+	// Raw images have no track metadata.  Exact listed sizes win first.  
+	// Otherwise, prefer a 40/80-cylinder track layout that packs the 
+	// into complete cylinders, the cylinder count itself need not be
+	// standard because real drives can step beyond tracks 40/80 
+	// if you're lucky.
+	bool exact_nominal = false;
+	int extended_cylinders = 0;
+	for (int i = 0; i < geometry_count; i++) {
+		if (media_size == geometries[i].byte_size) {
+			best = i;
+			exact_nominal = true;
+			break;
+		}
+	}
+
+	if (!exact_nominal) {
+		int extended_best = -1;
+		int least_extra = 0;
+		for (int i = 0; i < geometry_count; i++) {
+			off_t_large cylinder_size =
+				(off_t_large)geometries[i].heads * geometries[i].sectors * 512;
+			if (media_size % cylinder_size != 0)
+				continue;
+
+			off_t_large cylinders = media_size / cylinder_size;
+			if (cylinders <= geometries[i].cylinders || cylinders > 256)
+				continue;
+
+			int extra = (int)cylinders - geometries[i].cylinders;
+			if (extended_best < 0 || extra < least_extra) {
+				extended_best = i;
+				extended_cylinders = (int)cylinders;
+				least_extra = extra;
+			}
+		}
+
+		if (extended_best >= 0)
+			best = extended_best;
+	}
+
+	geometry->heads = geometries[best].heads;
+	geometry->sectors = geometries[best].sectors;
+	off_t_large cylinder_size =
+		(off_t_large)geometry->heads * geometry->sectors * 512;
+	off_t_large cylinders = extended_cylinders > 0 ? extended_cylinders :
+		geometries[best].cylinders;
+	if (cylinders < 1)
+		cylinders = 1;
+	if (cylinders > 256)
+		cylinders = 256;
+	geometry->cylinders = (int)cylinders;
+	geometry->byte_size = cylinders * cylinder_size;
+	return true;
+}
+
+void CFloppyController::prepare_rw_result(int drive, int head, int eot,
+	const SFloppyGeometry& geometry, bool multi_track, bool flat_eot,
+	bool result_is_next, size_t count)
+{
+	int sectors = (int)(count / 512);
+	bool ended_in_partial_sector = (count % 512) != 0;
+	int address_advances = sectors;
+	if (!result_is_next && !ended_in_partial_sector && address_advances > 0)
+		address_advances--;
+	int last_head = head;
+
+	if (flat_eot) {
+		bool flattened_sector_number = state.cmd_parms[4] > geometry.sectors;
+		int logical_sector = state.cmd_parms[4];
+		if (!flattened_sector_number)
+			logical_sector += state.cmd_parms[3] * geometry.sectors;
+
+		for (int i = 0; i < address_advances; i++) {
+			last_head = (logical_sector - 1) / geometry.sectors;
+			if (last_head >= geometry.heads)
+				last_head = geometry.heads - 1;
+			logical_sector++;
+			if (logical_sector > eot) {
+				logical_sector = 1;
+				state.cmd_parms[2]++;
+			}
+		}
+		if (!result_is_next || ended_in_partial_sector) {
+			last_head = (logical_sector - 1) / geometry.sectors;
+			if (last_head >= geometry.heads)
+				last_head = geometry.heads - 1;
+		}
+
+		if (flattened_sector_number) {
+			state.cmd_parms[3] = 0;
+			state.cmd_parms[4] = (u8)logical_sector;
+		} else {
+			state.cmd_parms[3] = (u8)((logical_sector - 1) / geometry.sectors);
+			state.cmd_parms[4] = (u8)(((logical_sector - 1) % geometry.sectors) + 1);
+		}
+	} else {
+		for (int i = 0; i < address_advances; i++) {
+			last_head = state.cmd_parms[3];
+			state.cmd_parms[4]++;
+			if (state.cmd_parms[4] > eot) {
+				state.cmd_parms[4] = 1;
+				if (multi_track) {
+					state.cmd_parms[3]++;
+					if (state.cmd_parms[3] >= geometry.heads) {
+						state.cmd_parms[3] = 0;
+						state.cmd_parms[2]++;
+					}
+				} else {
+					// Table 5-6: MT=0 advances C but leaves H unchanged.
+					state.cmd_parms[2]++;
+				}
+			}
+		}
+		if (!result_is_next || ended_in_partial_sector)
+			last_head = state.cmd_parms[3];
+	}
+
+	state.cmd_res[0] = drive | (last_head << 2);
+	state.cmd_res[1] = 0;
+	state.cmd_res[2] = 0;
+	state.cmd_res[3] = state.cmd_parms[2];
+	state.cmd_res[4] = state.cmd_parms[3];
+	state.cmd_res[5] = state.cmd_parms[4];
+	state.cmd_res[6] = state.cmd_parms[5];
+	state.drive[drive].seeking = 1;
+}
+
+void CFloppyController::finish_pio_transfer(bool ok)
+{
+	CDisk* disk = FDISK(state.pio.drive);
+	bool was_write = state.pio.write;
+	u32 transferred = state.pio.pos;
+	u32 requested = state.pio.size;
+
+	if (ok && was_write) {
+		u32 first_size = state.pio.first_size <= state.pio.size ?
+			state.pio.first_size : state.pio.size;
+		u32 second_size = state.pio.size - first_size;
+		ok = disk != NULL && first_size > 0 && disk->seek_byte(state.pio.offset) &&
+			disk->write_bytes(state.pio.data, first_size) == first_size;
+		if (ok && second_size > 0) {
+			ok = disk->seek_byte(state.pio.second_offset) &&
+				disk->write_bytes(state.pio.data + first_size, second_size) == second_size;
+		}
+		if (ok)
+			disk->flush();
+	}
+
+	state.pio.active = false;
+	state.pio.write = false;
+	state.pio.offset = 0;
+	state.pio.second_offset = 0;
+	state.pio.size = 0;
+	state.pio.first_size = 0;
+	state.pio.pos = 0;
+	state.status.nondma = false;
+	state.status.rqm = true;
+	state.status.dio = true;
+	state.cmd_res_ptr = 0;
+	state.cmd_res_max = 7;
+
+	if (!ok) {
+		state.cmd_res[0] = (state.cmd_res[0] & (ST0_DS | ST0_HA)) | 0x40;
+		state.cmd_res[1] = ST1_ND;
+		state.cmd_res[2] = 0;
+	}
+
+	printf("FDC [PIO]: %s %s (%u/%u bytes)\n",
+		was_write ? "write" : "read", ok ? "complete" : "failed",
+		transferred, requested);
+
+	clear_interrupt();
+	do_interrupt();
+}
+
 
 
 
@@ -185,37 +422,33 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 	case FDC_REG_DOR:
 	{
 		u8 old_dor = state.dor;
-		state.dor = data;
+		state.dor = (u8)data;
 		// bit 4 = drive 0 motor, bit 5 = drive 1 motor
-		// bit 3 = dma enable (ps/2 reserved?)
+		// bit 3 = IRQ/DMA output gate (PS/2 reserved?)
 		// bit 2 = 1: fdc enable (reset), 0: hold at reset
 		// bits 1-0:  drive select 0: a, 1: b, I assume 2 & 3 are reserved.
 
 		state.drive[0].motor = (data & 0x10) >> 4;
 		state.drive[1].motor = (data & 0x20) >> 5;
-		state.dma = (data & 0x08) >> 3;
 		state.drive_select = data & 0x03;
 
-		printf("FDC:  motor a: %s, motor b: %s, dma: %s, drive: %s\n",
+		printf("FDC:  motor a: %s, motor b: %s, dma/irq gate: %s, drive: %s\n",
 			state.drive[0].motor ? "on" : "off",
 			state.drive[1].motor ? "on" : "off",
-			state.dma ? "on" : "off",
+			(data & 0x08) ? "on" : "off",
 			state.drive_select == 0 ? "A" : "B");
 
 		if ((data & 0x04) == 0) {
-			state.cmd_parms_ptr = 0;
-			state.cmd_res_ptr = 0;
-			state.cmd_res_max = 0;
-			state.status.rqm = 1;
-			state.status.dio = 0;
-			state.status.nondma = !state.dma;
-			state.reset_sense_cnt = 0;
-			state.drive[0].seeking = 0;
-			state.drive[1].seeking = 0;
-            			clear_interrupt();
-       		} else if ((old_dor & 0x04) == 0) {
-			state.reset_sense_cnt = 4;
-			do_interrupt();
+			reset_controller(false);
+		} else if ((old_dor & 0x04) == 0) {
+			reset_controller(true);
+		} else if (((old_dor ^ data) & 0x08) && state.interrupt && theAli) {
+			// DOR bit 3 gates the external IRQ pin; it does not select the
+			// transfer mode, which comes from SPECIFY's ND bit.
+			if (data & 0x08)
+				theAli->pic_interrupt(0, 6);
+			else
+				theAli->pic_deassert(0, 6);
 		}
 		break;
 	}
@@ -234,11 +467,42 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 		state.write_precomp = (data & 0x1c) >> 2;
 		printf("FDC: data rate %s, precomp: %d\n", datarate_name[state.datarate].c_str(), state.write_precomp);
 
-
+		if (data & 0x80)
+			reset_controller(true);
 		break;
 
 	case FDC_REG_COMMAND:
 		// the excitement happens here.
+		if (dsize > 8) {
+			int bytes = dsize / 8;
+			if (bytes > 8)
+				bytes = 8;
+			for (int i = 0; i < bytes; i++)
+				WriteMem(index, address, 8, (data >> (i * 8)) & 0xff);
+			break;
+		}
+
+		if (state.pio.active) {
+			if (!state.pio.write) {
+				printf("FDC: write to data register during non-DMA read phase.\n");
+				break;
+			}
+
+			state.pio.data[state.pio.pos++] = (u8)data;
+			// A non-DMA execution request is acknowledged by each FIFO access.
+			// The next ready byte generates another request; the last byte instead
+			// transitions to the independently-signalled result phase.
+			state.status.rqm = false;
+			clear_interrupt();
+			if (state.pio.pos >= state.pio.size) {
+				finish_pio_transfer(true);
+			} else {
+				state.status.rqm = true;
+				do_interrupt();
+			}
+			break;
+		}
+
 		if (state.status.dio) {
 			printf("Unrequested data byte to command port.  Throwing away.\n");
 			break;
@@ -265,8 +529,8 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 				case 3: // specify
 					// set up some hardware parameters.  We really don't care about
 					// the times (step rate time, head unload time, head load time}, but
-					// we may care about the ND bit (parm byte 3, bit 1)...
-					state.dma = ~(state.cmd_parms[2] & 0x01);
+					// the ND bit selects the execution data path.
+					state.dma = (state.cmd_parms[2] & 0x01) == 0;
 					break;
 
 				case 4: // Sense Drive Status
@@ -291,18 +555,29 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 					// 3: H = head address
 					// 4: R = sector
 					// 5: N = sector size, 2 = 512b
-					// 6: EOT = end of track 0x24 = 36 sectors (18 * 2)
+					// 6: EOT = last sector number on the track (18 for 1.44MB)
 					// 7: GPL = gap length 
 					// 8: DTL = sector size (if N = 0)
 				{
 					int drive_idx = state.cmd_parms[1] & 0x03;
 					int head = (state.cmd_parms[1] >> 2) & 1;
+					CDisk* disk = FDISK(drive_idx);
+					auto fail_rw = [&](u8 st1) {
+						state.cmd_res[0] = 0x40 | (head << 2) | drive_idx;
+						state.cmd_res[1] = st1;
+						state.cmd_res[2] = 0;
+						state.cmd_res[3] = state.cmd_parms[2];
+						state.cmd_res[4] = state.cmd_parms[3];
+						state.cmd_res[5] = state.cmd_parms[4];
+						state.cmd_res[6] = state.cmd_parms[5];
+						do_interrupt();
+					};
 
 					// The FDC chip is always present via es40-cfg generated configs, 
 					// but a R/W data command issued to a drive with not present or 
 					// no disk needs to term abnormally instead of dereferencing a null
 					// ST0 IC=01 (abnormal termination) with the Not Ready bit set.
-					if (FDISK(drive_idx) == NULL) {
+					if (disk == NULL) {
 						printf("FDC [CMD %02x]: drive %d not ready (no media) - aborting\n", cmd, drive_idx);
 						state.cmd_res[0] = 0x40 | ST0_NR | (head << 2) | drive_idx; // ST0
 						state.cmd_res[1] = 0;                   // ST1
@@ -318,12 +593,31 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 					int cyl = state.cmd_parms[2];
 					int sector = state.cmd_parms[4];
 					int eot = state.cmd_parms[6];
-					if (eot == 0) eot = 18;
-					int pos = (cyl * 2 + head) * 18 + sector - 1; // 1.44MB
+					SFloppyGeometry geometry;
+					get_geometry(drive_idx, &geometry);
+					off_t_large media_size = disk->get_byte_size();
+					if (eot == 0)
+						eot = geometry.sectors;
+
+					// Some firmware treats EOT as a flattened whole-cylinder sector
+					// number (for example 36 on 2x18 media).  Preserve that convention
+					// while using normal CHS for standard per-track commands.
+					bool flat_eot = eot > geometry.sectors &&
+						eot <= geometry.sectors * geometry.heads;
+					int logical_sector = sector;
+					if (flat_eot && logical_sector <= geometry.sectors)
+						logical_sector += head * geometry.sectors;
+					int pos;
+					if (flat_eot)
+						pos = cyl * geometry.heads * geometry.sectors + logical_sector - 1;
+					else
+						pos = (cyl * geometry.heads + head) * geometry.sectors + sector - 1;
 
 					bool mt = (state.cmd_parms[0] & 0x80) ? true : false;
 					int sectors_to_read = 0;
-					if (mt && head == 0) {
+					if (flat_eot) {
+						sectors_to_read = eot - logical_sector + 1;
+					} else if (mt && head == 0 && geometry.heads > 1) {
 						sectors_to_read = (eot - sector + 1) + eot;
 					} else {
 						sectors_to_read = eot - sector + 1;
@@ -331,20 +625,142 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 					if (sectors_to_read <= 0) sectors_to_read = 1;
 
 					size_t fdc_count = sectors_to_read * 512;
-					size_t dma_count = theDMA->get_count(2) + 1;
-					size_t count = (fdc_count < dma_count) ? fdc_count : dma_count;
+					size_t count;
+					if (state.dma) {
+						size_t dma_count = theDMA->get_count(2) + 1;
+						count = (fdc_count < dma_count) ? fdc_count : dma_count;
+					} else {
+						count = fdc_count;
+					}
 
-					printf("FDC [CMD %02x]: CHS=(%d/%d/%d) EOT=%d MT=%d. Drive=%d\n", cmd, cyl, head, sector, eot, mt, drive_idx);
-					printf("FDC [DMA]: Transfer size requested = %zu bytes (%zu sectors)\n", count, count/512);
+					printf("FDC [CMD %02x]: CHS=(%d/%d/%d) EOT=%d MT=%d. "
+						"Drive=%d geometry=%d/%d/%d media=%" PRId64 "\n",
+						cmd, cyl, head, sector, eot, mt, drive_idx,
+						geometry.cylinders, geometry.heads, geometry.sectors, media_size);
+					printf("FDC [%s]: Transfer size requested = %zu bytes (%zu sectors)\n",
+						state.dma ? "DMA" : "PIO", count, count/512);
+
+					bool sector_valid = false;
+					if (flat_eot) {
+						// Accept both H=1/R=1..SPT and the legacy H=0/R=SPT+1..
+						// flattened representation, but never combine both forms.
+						sector_valid = sector >= 1 &&
+							(sector <= geometry.sectors || head == 0) &&
+							logical_sector >= 1 && logical_sector <= eot;
+					} else {
+						sector_valid = sector >= 1 && sector <= geometry.sectors &&
+							eot >= sector && eot <= geometry.sectors;
+					}
+
+					off_t_large byte_offset = (off_t_large)pos * 512;
+					size_t first_count = count;
+					off_t_large second_offset = 0;
+					if (sector_valid && !flat_eot && mt && head == 0 &&
+						geometry.heads > 1 && eot < geometry.sectors) {
+						size_t first_track_count = (size_t)(eot - sector + 1) * 512;
+						if (first_track_count < count) {
+							first_count = first_track_count;
+							second_offset = (off_t_large)(cyl * geometry.heads + 1) *
+								geometry.sectors * 512;
+						}
+					}
+					size_t second_count = count - first_count;
+					auto range_fits = [&](off_t_large offset, size_t length) {
+						return offset >= 0 && offset <= geometry.byte_size &&
+							offset <= media_size &&
+							(off_t_large)length <= geometry.byte_size - offset &&
+							(off_t_large)length <= media_size - offset;
+					};
+					bool range_valid = range_fits(byte_offset, first_count) &&
+						(second_count == 0 || range_fits(second_offset, second_count));
+					if (state.cmd_parms[5] != 2 || !sector_valid ||
+						cyl >= geometry.cylinders || head >= geometry.heads ||
+						state.cmd_parms[3] != head || !range_valid ||
+						(!state.dma && count > sizeof(state.pio.data))) {
+						printf("FDC [%s]: unsupported request C/H/R/N/EOT="
+							"%d/%d/%d/%d/%d, media=%" PRId64 " bytes\n",
+							state.dma ? "DMA" : "PIO", cyl, head, sector,
+							state.cmd_parms[5], eot, media_size);
+						fail_rw(ST1_ND);
+						break;
+					}
+
+					if (cmd == 5 && disk->ro()) {
+						fail_rw(ST1_WP);
+						break;
+					}
+
+					if (!state.dma) {
+						// With no TC input, reaching EOT is the controller's implicit
+						// terminator.  The M1543 reports abnormal termination/End of
+						// Track and advances result CHRN to the next logical sector.
+						prepare_rw_result(drive_idx, head, eot, geometry,
+							mt, flat_eot, true, count);
+						state.cmd_res[0] =
+							(state.cmd_res[0] & (ST0_DS | ST0_HA)) | 0x40;
+						state.cmd_res[1] = ST1_EOC;
+						state.pio.active = true;
+						state.pio.write = cmd == 5;
+						state.pio.drive = (u8)drive_idx;
+						state.pio.head = (u8)head;
+						state.pio.offset = byte_offset;
+						state.pio.second_offset = second_offset;
+						state.pio.size = (u32)count;
+						state.pio.first_size = (u32)first_count;
+						state.pio.pos = 0;
+						state.cmd_res_ptr = 0;
+						state.cmd_res_max = 0;
+						state.status.rqm = true;
+						state.status.dio = !state.pio.write;
+						state.status.nondma = true;
+
+						if (!state.pio.write) {
+							memset(state.pio.data, 0, count);
+							bool ok = disk->seek_byte(state.pio.offset) &&
+								disk->read_bytes(state.pio.data, first_count) == first_count;
+							if (ok && second_count > 0) {
+								ok = disk->seek_byte(state.pio.second_offset) &&
+									disk->read_bytes(state.pio.data + first_count, second_count) ==
+									second_count;
+							}
+							if (!ok) {
+								finish_pio_transfer(false);
+								break;
+							}
+
+							u32 fingerprint = 2166136261U;
+							for (size_t i = 0; i < count; i++)
+								fingerprint = (fingerprint ^ state.pio.data[i]) * 16777619U;
+							printf("FDC [PIO]: staged read data fnv1a=%08x first=",
+								(unsigned)fingerprint);
+							for (size_t i = 0; i < count && i < 16; i++)
+								printf("%02x%s", (unsigned)state.pio.data[i],
+									i + 1 < count && i < 15 ? " " : "");
+							if (count >= 2)
+								printf(" tail=%02x %02x", (unsigned)state.pio.data[count - 2],
+									(unsigned)state.pio.data[count - 1]);
+							printf("\n");
+						}
+
+						// In non-DMA mode INT and RQM signal that execution data is ready.
+						do_interrupt();
+						break;
+					}
 
 					u8* buffer = new u8[count];
 					memset(buffer, 0, count);
 
 					printf("FDC [LBA]: Calculated LBA = %d (offset 0x%x)\n", pos, pos * 512);
 
-					SEL_FDISK->seek_byte((off_t_large)pos * 512);
+					bool io_ok = false;
 					if (cmd == 6) {
-						SEL_FDISK->read_bytes(buffer, count);
+						io_ok = disk->seek_byte(byte_offset) &&
+							disk->read_bytes(buffer, first_count) == first_count;
+						if (io_ok && second_count > 0) {
+							io_ok = disk->seek_byte(second_offset) &&
+								disk->read_bytes(buffer + first_count, second_count) ==
+								second_count;
+						}
 						printf("FDC: read data:  %zx @ %x\n  ", count, pos * 512);
 						for (int i = 0; i < count; i++)
 						{
@@ -353,7 +769,8 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 								printf("\n  ");
 						}
 						printf("\n");
-						theDMA->send_data(2, buffer, count);
+						if (io_ok)
+							theDMA->send_data(2, buffer, count);
 					} else {
 						theDMA->recv_data(2, buffer, count);
 						printf("FDC: write data:  %zx @ %x\n  ", count, pos * 512);
@@ -364,36 +781,25 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 								printf("\n  ");
 						}
 						printf("\n");
-						SEL_FDISK->write_bytes(buffer, count);
+						io_ok = disk->seek_byte(byte_offset) &&
+							disk->write_bytes(buffer, first_count) == first_count;
+						if (io_ok && second_count > 0) {
+							io_ok = disk->seek_byte(second_offset) &&
+								disk->write_bytes(buffer + first_count, second_count) ==
+								second_count;
+						}
+						if (io_ok)
+							disk->flush();
 					}
 					delete[] buffer;
 
-					int sectors_read = count / 512;
-					if (sectors_read == 0) sectors_read = 1;
-
-					for (int i = 0; i < sectors_read; i++) {
-						state.cmd_parms[4]++;
-						if (state.cmd_parms[4] > eot) {
-							state.cmd_parms[4] = 1;
-							if (mt && state.cmd_parms[3] == 0) {
-								state.cmd_parms[3] = 1;
-							} else {
-								state.cmd_parms[3] = 0;
-								state.cmd_parms[2]++;
-							}
-						}
+					if (io_ok) {
+						prepare_rw_result(drive_idx, head, eot, geometry,
+							mt, flat_eot, true, count);
+						do_interrupt();
+					} else {
+						fail_rw(ST1_ND);
 					}
-
-					state.cmd_res[0] = drive_idx | (head << 2);
-					state.cmd_res[1] = 0;
-					state.cmd_res[2] = 0;
-					state.cmd_res[3] = state.cmd_parms[2];
-					state.cmd_res[4] = state.cmd_parms[3];
-					state.cmd_res[5] = state.cmd_parms[4];
-					state.cmd_res[6] = state.cmd_parms[5];
-					state.drive[drive_idx].seeking = 1;
-
-					do_interrupt();
 				}
 				break;
 
@@ -470,7 +876,7 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 
 
 				state.status.rqm = 1;
-				if (cmdinfo[cmd].returns > 0) {
+				if (cmdinfo[cmd].returns > 0 && !state.pio.active) {
 					state.status.dio = 1;
 				}
 				state.cmd_parms_ptr = 0;
@@ -497,6 +903,7 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 u64 CFloppyController::ReadMem(int index, u64 address, int dsize)
 {
 	u64 data = 0;
+	bool log_read = true;
 
 	if (index == 1537)
 		address += 7;
@@ -539,19 +946,58 @@ u64 CFloppyController::ReadMem(int index, u64 address, int dsize)
 		break;
 
 	case FDC_REG_COMMAND:
+	{
 		// The data comes back from here.
-		data = state.cmd_res[state.cmd_res_ptr++];
-		if (state.cmd_res_ptr >= state.cmd_res_max) {
-			state.status.rqm = 1;
-			state.status.dio = 0;
-			state.cmd_res_ptr = 0;
-			state.cmd_res_max = 0;
-			clear_interrupt();
+		int bytes = dsize / 8;
+		if (bytes < 1)
+			bytes = 1;
+		if (bytes > 8)
+			bytes = 8;
+
+		for (int i = 0; i < bytes; i++) {
+			u8 value = 0;
+			if (state.pio.active) {
+				if (state.pio.write) {
+					printf("FDC: read from data register during non-DMA write phase.\n");
+					break;
+				}
+
+				value = state.pio.data[state.pio.pos++];
+				data |= ((u64)value) << (i * 8);
+				log_read = false;
+				state.status.rqm = false;
+				clear_interrupt();
+				if (state.pio.pos >= state.pio.size) {
+					finish_pio_transfer(true);
+					break;
+				}
+				state.status.rqm = true;
+				do_interrupt();
+				continue;
+			}
+
+			if (!state.status.dio || state.cmd_res_max == 0)
+				break;
+
+			bool first_result_byte = state.cmd_res_ptr == 0;
+			value = state.cmd_res[state.cmd_res_ptr++];
+			data |= ((u64)value) << (i * 8);
+			state.status.rqm = false;
+			// Result-phase INT is acknowledged by the first result-byte read,
+			// not by draining the entire seven-byte result packet.
+			if (first_result_byte)
+				clear_interrupt();
+			if (state.cmd_res_ptr >= state.cmd_res_max) {
+				state.status.rqm = true;
+				state.status.dio = false;
+				state.cmd_res_ptr = 0;
+				state.cmd_res_max = 0;
+				break;
+			}
+			state.status.rqm = true;
 		}
-
-
-
 		break;
+	}
 
 	case FDC_REG_DIR:
 		// PS/2 mode:
@@ -571,7 +1017,8 @@ u64 CFloppyController::ReadMem(int index, u64 address, int dsize)
 		break;
 	}
 
-	printf("FDC: Read register %" PRId64 ", value: %" PRIx64 "\n", address, data);
+	if (log_read)
+		printf("FDC: Read register %" PRId64 ", value: %" PRIx64 "\n", address, data);
 
 	return data;
 }
@@ -611,7 +1058,7 @@ int CFloppyController::RestoreState(FILE* f)
 		return -1;
 	}
 
-	fread(&ss, sizeof(long), 1, f);
+	r = fread(&ss, sizeof(long), 1, f);
 	if (r != 1)
 	{
 		printf("fdc: unexpected end of file!\n");
@@ -624,7 +1071,7 @@ int CFloppyController::RestoreState(FILE* f)
 		return -1;
 	}
 
-	fread(&state, sizeof(state), 1, f);
+	r = fread(&state, sizeof(state), 1, f);
 	if (r != 1)
 	{
 		printf("fdc: unexpected end of file!\n");
@@ -640,7 +1087,7 @@ int CFloppyController::RestoreState(FILE* f)
 
 	if (m2 != fdc_magic2)
 	{
-		printf("fdc: MAGIC 1 does not match!\n");
+		printf("fdc: MAGIC 2 does not match!\n");
 		return -1;
 	}
 
@@ -659,9 +1106,8 @@ void CFloppyController::init()
 }
 
 void CFloppyController::do_interrupt() {
-	// *shrug* I'll figure this out later.
 	state.interrupt = true;
-	if (theAli)
+	if (theAli && (state.dor & 0x08))
 		theAli->pic_interrupt(0, 6);
 }
 
@@ -690,10 +1136,11 @@ u8 CFloppyController::get_status() {
 			state.status.seeking[i] = true;
 	}
 
-	// we mark the controller busy if a disk is seeking or
-	// if there is data waiting to be sent by the controller.
-	if (state.status.seeking[0] || state.status.seeking[1] ||
-		(state.status.dio && state.status.rqm) || (state.cmd_parms_ptr > 0))
+	// CMD BUSY is separate from the per-drive seek/recalibrate busy bits.  For
+	// commands without a result phase it clears after the last command byte.
+	state.status.nondma = state.pio.active;
+	if (state.pio.active || (state.status.dio && state.status.rqm) ||
+		(state.cmd_parms_ptr > 0))
 		state.status.busy = true;
 	else
 		state.status.busy = false;

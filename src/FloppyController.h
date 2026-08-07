@@ -93,9 +93,22 @@ public:
   virtual void  init();
 
 private:
+  struct SFloppyGeometry {
+    int cylinders;
+    int heads;
+    int sectors;
+    off_t_large byte_size;
+  };
+
+  void reset_controller(bool raise_irq);
   void do_interrupt();
   void clear_interrupt();
   u8 get_status();
+  bool get_geometry(int drive, SFloppyGeometry* geometry);
+  void prepare_rw_result(int drive, int head, int eot,
+    const SFloppyGeometry& geometry, bool multi_track, bool flat_eot,
+    bool result_is_next, size_t count);
+  void finish_pio_transfer(bool ok);
 
   struct {
     struct {
@@ -127,6 +140,19 @@ private:
     bool interrupt;
     u8 dor;
     u8 reset_sense_cnt;
+
+    struct {
+      bool active;
+      bool write;
+      u8 drive;
+      u8 head;
+      off_t_large offset;
+      off_t_large second_offset;
+      u32 size;
+      u32 first_size;
+      u32 pos;
+      u8 data[65536];
+    } pio;
 
   } state;
 };
