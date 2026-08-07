@@ -391,6 +391,7 @@ void bx_sdl_gui_c::handle_events(void)
 {
 	u32 key_event;
 
+	sdl_media_pump();
 	while (SDL_PollEvent(&sdl_event))
 	{
 		// Ctrl+F10/F11 explicitly release the guest modifiers and then swallow

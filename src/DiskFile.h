@@ -76,6 +76,7 @@ struct SDiskFileMediaAction
   EDiskFileMediaAction type;
   std::string path;
   bool read_only;
+  bool force_locked;
 };
 
 /**
@@ -87,7 +88,8 @@ public:
   CDiskFileMediaMailbox(const std::string& label, bool floppy,
                         bool initial_read_only);
 
-  bool request_image_change(const char* path) noexcept;
+  bool request_image_change(const char* path,
+                            bool force_locked = false) noexcept;
   bool request_read_only_toggle() noexcept;
   bool take_pending_actions(std::deque<SDiskFileMediaAction>& actions) noexcept;
   void deactivate() noexcept;
@@ -99,11 +101,20 @@ public:
   {
     return read_only.load(std::memory_order_acquire);
   }
+  bool media_locked() const
+  {
+    return guest_locked.load(std::memory_order_acquire);
+  }
+  void update_media_lock(bool locked) noexcept
+  {
+    guest_locked.store(locked, std::memory_order_release);
+  }
 
 private:
   std::string device_label;
   bool floppy_device;
   std::atomic<bool> read_only;
+  std::atomic<bool> guest_locked;
   bool active;
   std::mutex mutex;
   std::deque<SDiskFileMediaAction> pending_actions;
@@ -166,6 +177,8 @@ protected:
   std::string filename;
 
 private:
+  virtual void    media_lock_changed(bool locked) override;
+
   bool            floppy_device = false;
   std::shared_ptr<CDiskFileMediaMailbox> media_mailbox;
 

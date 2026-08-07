@@ -253,6 +253,7 @@ void CDisk::scsi_reset()
 	memset(&state.scsi, 0, sizeof(state.scsi));
 	state.scsi.media_changed = media_removed ? SCSI_MEDIA_STATE_RESET_REMOVED :
 		(media_changed ? SCSI_MEDIA_STATE_RESET_CHANGED : SCSI_MEDIA_STATE_RESET);
+	media_lock_changed(false);
 }
 
 static u32  disk_magic1 = 0xD15D15D1;
@@ -331,6 +332,7 @@ int CDisk::RestoreState(FILE* f)
 
 	//calc_cylinders(); // state.block_size may have changed.
 	determine_layout();
+	media_lock_changed(state.scsi.locked);
 
 	printf("%s: %d bytes restored.\n", devid_string, (int)ss);
 	return 0;
@@ -1922,6 +1924,7 @@ int CDisk::do_scsi_command()
 		if (state.scsi.cmd.data[4] & 1)
 		{
 			state.scsi.locked = true;
+			media_lock_changed(true);
 #if defined(DEBUG_SCSI)
 			printf("%s: PREVENT MEDIA REMOVAL.\n", devid_string);
 #endif
@@ -1929,6 +1932,7 @@ int CDisk::do_scsi_command()
 		else
 		{
 			state.scsi.locked = false;
+			media_lock_changed(false);
 #if defined(DEBUG_SCSI)
 			printf("%s: ALLOW MEDIA REMOVAL.\n", devid_string);
 #endif

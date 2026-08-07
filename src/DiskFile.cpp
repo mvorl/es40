@@ -123,11 +123,12 @@
 CDiskFileMediaMailbox::CDiskFileMediaMailbox(const std::string& label,
     bool floppy, bool initial_read_only) :
     device_label(label), floppy_device(floppy),
-    read_only(initial_read_only), active(true)
+    read_only(initial_read_only), guest_locked(false), active(true)
 {
 }
 
-bool CDiskFileMediaMailbox::request_image_change(const char* path) noexcept
+bool CDiskFileMediaMailbox::request_image_change(
+    const char* path, bool force_locked) noexcept
 {
     try
     {
@@ -137,7 +138,7 @@ bool CDiskFileMediaMailbox::request_image_change(const char* path) noexcept
         if (!active)
             return false;
         pending_actions.push_back(
-            { EDiskFileMediaAction::ChangeImage, path, false });
+            { EDiskFileMediaAction::ChangeImage, path, false, force_locked });
         return true;
     }
     catch (...)
@@ -158,7 +159,8 @@ bool CDiskFileMediaMailbox::request_read_only_toggle() noexcept
         // Repeated requests remain deterministic regardless of FDC state.
         const bool desired = !read_only.load(std::memory_order_relaxed);
         pending_actions.push_back(
-            { EDiskFileMediaAction::SetReadOnly, std::string(), desired });
+            { EDiskFileMediaAction::SetReadOnly, std::string(), desired,
+              false });
         read_only.store(desired, std::memory_order_release);
         return true;
     }
@@ -321,6 +323,12 @@ bool CDiskFile::reload_file(const char* _filename)
 bool CDiskFile::change_media(const char* _filename)
 {
     return load_file_transactional(_filename, false, false);
+}
+
+void CDiskFile::media_lock_changed(bool locked)
+{
+    if (media_mailbox)
+        media_mailbox->update_media_lock(locked);
 }
 
 bool CDiskFile::set_read_only(bool desired_read_only)
@@ -647,6 +655,16 @@ void CDiskFile::service_pending_media_actions()
                 changed ? "" : " (unchanged: backing file could not be reopened)");
             continue;
         }
+
+        if (cdrom() && state.scsi.locked && !it->force_locked)
+        {
+            printf("%s: Media change refused because the guest locked the CD-ROM.\n",
+                devid_string);
+            continue;
+        }
+        if (cdrom() && state.scsi.locked && it->force_locked)
+            printf("%s: Forcing operator-approved change of guest-locked CD-ROM.\n",
+                devid_string);
 
         bool changed = false;
         try

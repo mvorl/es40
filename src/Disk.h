@@ -158,6 +158,8 @@ public:
 
   void        calc_cylinders();
 protected:
+  virtual void media_lock_changed(bool locked) {}
+
   CConfigurator* myCfg;
   CDiskController* myCtrl;
   int               myBus;

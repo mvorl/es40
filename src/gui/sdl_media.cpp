@@ -67,6 +67,7 @@ enum EMediaPopupMode
     MEDIA_POPUP_CLOSED,
     MEDIA_POPUP_DEVICES,
     MEDIA_POPUP_FLOPPY,
+    MEDIA_POPUP_CD_LOCKED,
     MEDIA_POPUP_MESSAGE
 };
 
@@ -79,6 +80,7 @@ struct SMediaPopupState
     SDL_WindowID window_id = 0;
     std::vector<std::shared_ptr<CDiskFileMediaMailbox> > devices;
     std::shared_ptr<CDiskFileMediaMailbox> device;
+    std::string pending_path;
     std::string message;
     std::vector<SDL_FRect> rows;
     int selected = 0;
@@ -92,6 +94,10 @@ static SMediaPopupState media_popup;
 static SDL_WindowID retired_popup_id = 0;
 static bool swallowed_key_releases[SDL_SCANCODE_COUNT] = {};
 static bool swallow_parent_pointer_until_release = false;
+static std::mutex pending_lock_confirmation_mutex;
+static std::shared_ptr<CDiskFileMediaMailbox>
+    pending_lock_confirmation_device;
+static std::string pending_lock_confirmation_path;
 
 void sdl_register_removable_disk(
     const std::shared_ptr<CDiskFileMediaMailbox>& mailbox) noexcept
@@ -148,6 +154,8 @@ static int item_count()
         return (int)media_popup.devices.size() + 1;
     if (media_popup.mode == MEDIA_POPUP_FLOPPY)
         return 3;
+    if (media_popup.mode == MEDIA_POPUP_CD_LOCKED)
+        return 2;
     if (media_popup.mode == MEDIA_POPUP_MESSAGE)
         return 1;
     return 0;
@@ -176,6 +184,7 @@ static void close_popup()
     media_popup.mode = MEDIA_POPUP_CLOSED;
     media_popup.devices.clear();
     media_popup.device.reset();
+    media_popup.pending_path.clear();
     media_popup.message.clear();
     media_popup.selected = 0;
     media_popup.device_selection = 0;
@@ -250,6 +259,16 @@ static void render_popup()
         subtitle = media_popup.device ? media_popup.device->label() :
             "Selected floppy drive";
     }
+    else if (media_popup.mode == MEDIA_POPUP_CD_LOCKED)
+    {
+        title = "CD-ROM media locked";
+        if (!media_popup.pending_path.empty())
+            subtitle = "The guest locked this CD-ROM while the file selector was open.";
+        else
+            subtitle = media_popup.device ?
+                media_popup.device->label() + " is locked by the guest." :
+                "The selected CD-ROM is locked by the guest.";
+    }
     else
     {
         title = "Change removable media";
@@ -316,6 +335,8 @@ static void render_popup()
             else
                 label = media_popup.devices.size() > 1 ? "Back" : "Cancel";
         }
+        else if (media_popup.mode == MEDIA_POPUP_CD_LOCKED)
+            label = index == 0 ? "Force change anyway..." : "Back";
         else
             label = "Close";
 
@@ -327,8 +348,11 @@ static void render_popup()
                   index == media_popup.selected ? 255 : 239);
     }
 
-    const char* footer = media_popup.mode == MEDIA_POPUP_FLOPPY &&
-        media_popup.devices.size() > 1 ?
+    const bool back_available =
+        (media_popup.mode == MEDIA_POPUP_FLOPPY &&
+         media_popup.devices.size() > 1) ||
+        media_popup.mode == MEDIA_POPUP_CD_LOCKED;
+    const char* footer = back_available ?
         "Arrows select   Enter open   Esc back" :
         "Arrows select   Enter open   Esc cancel";
     draw_text(20.0f, (float)media_popup.height - footer_height + 11.0f,
@@ -441,9 +465,69 @@ static void show_message(const char* message)
         update_popup_content();
 }
 
+static bool defer_lock_confirmation(
+    const std::shared_ptr<CDiskFileMediaMailbox>& mailbox,
+    const char* path) noexcept
+{
+    try
+    {
+        std::lock_guard<std::mutex> lock(pending_lock_confirmation_mutex);
+        pending_lock_confirmation_path = path;
+        pending_lock_confirmation_device = mailbox;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+void sdl_media_pump() noexcept
+{
+    try
+    {
+        std::shared_ptr<CDiskFileMediaMailbox> mailbox;
+        std::string path;
+        {
+            std::lock_guard<std::mutex> lock(
+                pending_lock_confirmation_mutex);
+            if (!pending_lock_confirmation_device)
+                return;
+            mailbox.swap(pending_lock_confirmation_device);
+            path.swap(pending_lock_confirmation_path);
+        }
+
+        if (!media_popup.parent || !mailbox)
+            return;
+
+        media_popup.devices = snapshot_removable_disks();
+        media_popup.device_selection = 0;
+        for (size_t index = 0; index < media_popup.devices.size(); index++)
+            if (media_popup.devices[index] == mailbox)
+            {
+                media_popup.device_selection = (int)index;
+                break;
+            }
+        media_popup.device = mailbox;
+        media_popup.pending_path.swap(path);
+        media_popup.mode = MEDIA_POPUP_CD_LOCKED;
+        media_popup.selected = 1;
+        media_popup.first_visible = 0;
+        if (!media_popup.window)
+            create_popup_window();
+        else
+            update_popup_content();
+    }
+    catch (...)
+    {
+        close_popup();
+    }
+}
+
 struct SMediaFileDialogContext
 {
     std::shared_ptr<CDiskFileMediaMailbox> mailbox;
+    bool force_locked = false;
 };
 
 static void SDLCALL media_file_callback(void* userdata,
@@ -470,12 +554,22 @@ static void SDLCALL media_file_callback(void* userdata,
     if (!context || !context->mailbox)
         return;
 
-    if (!context->mailbox->request_image_change(filelist[0]))
+    if (!context->mailbox->is_floppy() &&
+        context->mailbox->media_locked() && !context->force_locked)
+    {
+        if (!defer_lock_confirmation(context->mailbox, filelist[0]))
+            SDL_Log("Could not prepare the locked-media confirmation.");
+        return;
+    }
+
+    if (!context->mailbox->request_image_change(
+            filelist[0], context->force_locked))
         SDL_Log("The selected removable-media device is no longer available.");
 }
 
 static void show_file_dialog(
-    const std::shared_ptr<CDiskFileMediaMailbox>& mailbox)
+    const std::shared_ptr<CDiskFileMediaMailbox>& mailbox,
+    bool force_locked = false)
 {
     if (!mailbox || !media_popup.parent ||
         file_dialog_open.exchange(true, std::memory_order_acq_rel))
@@ -490,6 +584,7 @@ static void show_file_dialog(
         return;
     }
     context->mailbox = mailbox;
+    context->force_locked = force_locked;
 
     const SDL_DialogFileFilter* filters = mailbox->is_floppy() ?
         floppy_filters : cdrom_filters;
@@ -509,10 +604,23 @@ static void open_device(
     if (media_popup.mode == MEDIA_POPUP_DEVICES)
         media_popup.device_selection = media_popup.selected;
     media_popup.device = mailbox;
+    media_popup.pending_path.clear();
     if (mailbox->is_floppy())
     {
         media_popup.mode = MEDIA_POPUP_FLOPPY;
         media_popup.selected = 0;
+        media_popup.first_visible = 0;
+        if (!media_popup.window)
+            create_popup_window();
+        else
+            update_popup_content();
+        return;
+    }
+    if (mailbox->media_locked())
+    {
+        media_popup.mode = MEDIA_POPUP_CD_LOCKED;
+        // Default to the non-destructive choice.
+        media_popup.selected = 1;
         media_popup.first_visible = 0;
         if (!media_popup.window)
             create_popup_window();
@@ -603,17 +711,36 @@ static void activate_selection()
             cancel_or_go_back();
         return;
     }
+    if (media_popup.mode == MEDIA_POPUP_CD_LOCKED)
+    {
+        std::shared_ptr<CDiskFileMediaMailbox> mailbox = media_popup.device;
+        if (media_popup.selected == 0 && mailbox)
+        {
+            std::string path;
+            path.swap(media_popup.pending_path);
+            close_popup();
+            if (path.empty())
+                show_file_dialog(mailbox, true);
+            else if (!mailbox->request_image_change(path.c_str(), true))
+                SDL_Log("The selected CD-ROM device is no longer available.");
+        }
+        else
+            cancel_or_go_back();
+        return;
+    }
     if (media_popup.mode == MEDIA_POPUP_MESSAGE)
         close_popup();
 }
 
 static void cancel_or_go_back()
 {
-    if (media_popup.mode == MEDIA_POPUP_FLOPPY &&
-        media_popup.devices.size() > 1)
+    if ((media_popup.mode == MEDIA_POPUP_FLOPPY &&
+         media_popup.devices.size() > 1) ||
+        media_popup.mode == MEDIA_POPUP_CD_LOCKED)
     {
         media_popup.mode = MEDIA_POPUP_DEVICES;
         media_popup.device.reset();
+        media_popup.pending_path.clear();
         media_popup.selected = std::max(0, std::min(
             media_popup.device_selection, item_count() - 1));
         media_popup.first_visible = 0;
@@ -832,6 +959,15 @@ bool sdl_media_handle_event(const SDL_Event* source_event) noexcept
 void sdl_media_shutdown() noexcept
 {
     close_popup();
+    try
+    {
+        std::lock_guard<std::mutex> lock(pending_lock_confirmation_mutex);
+        pending_lock_confirmation_device.reset();
+        pending_lock_confirmation_path.clear();
+    }
+    catch (...)
+    {
+    }
     media_popup.parent = nullptr;
     retired_popup_id = 0;
     swallow_parent_pointer_until_release = false;

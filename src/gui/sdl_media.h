@@ -40,6 +40,7 @@ void sdl_unregister_removable_disk(
   const std::shared_ptr<CDiskFileMediaMailbox>& mailbox) noexcept;
 
 void sdl_select_media(SDL_Window* window) noexcept;
+void sdl_media_pump() noexcept;
 bool sdl_media_handle_event(const SDL_Event* event) noexcept;
 void sdl_media_shutdown() noexcept;
 
