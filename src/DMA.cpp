@@ -72,8 +72,6 @@ CDMA* theDMA = 0;
  **/
 CDMA::CDMA(CConfigurator* cfg, CSystem* c) : CSystemComponent(cfg, c)
 {
-	int i;
-
 	// DMA Setup
 #define LEGACY_IO(id,port,size) c->RegisterMemory(this, id, U64(0x00000801fc000000) + port, size)
 	LEGACY_IO(DMA0_IO_CHANNEL, 0x00, 8);
@@ -85,13 +83,12 @@ CDMA::CDMA(CConfigurator* cfg, CSystem* c) : CSystemComponent(cfg, c)
 	LEGACY_IO(DMA0_IO_EXT, 0x040b, 1);
 	LEGACY_IO(DMA1_IO_EXT, 0x04D6, 1);
 
-	for (i = 0; i < 8; i++)
+	memset(&state, 0, sizeof(state));
+	for (int controller = 0; controller < 2; controller++)
 	{
-		state.channel[i].c_lobyte = true;
-		state.channel[i].a_lobyte = true;
+		state.controller[controller].mask = 0x0f;
+		state.controller[controller].lobyte = true;
 	}
-	state.controller[0].mask = 0xff;
-	state.controller[1].mask = 0xff;
 
 	theDMA = this;
 	printf("dma: $Id$\n");
@@ -173,15 +170,17 @@ u64 CDMA::ReadMem(int index, u64 address, int dsize)
 			if (address & 1)
 			{
 				// word count registers
-				data = (state.channel[num].count >> (state.channel[num].c_lobyte ? 0 : 8)) & 0xff;
-				state.channel[num].c_lobyte = !state.channel[num].c_lobyte;
+				data = (state.channel[num].count >>
+					(state.controller[ctrlr].lobyte ? 0 : 8)) & 0xff;
 			}
 			else
 			{
-				// base address
-				data = (state.channel[num].current >> (state.channel[num].a_lobyte ? 0 : 8)) & 0xff;
-				state.channel[num].a_lobyte = !state.channel[num].a_lobyte;
+				// current address
+				data = (state.channel[num].current >>
+					(state.controller[ctrlr].lobyte ? 0 : 8)) & 0xff;
 			}
+			state.controller[ctrlr].lobyte =
+				!state.controller[ctrlr].lobyte;
 			break;
 
 		case DMA0_IO_MAIN:
@@ -241,26 +240,29 @@ void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 			num = ((address & 0x0e) >> 1) + (ctrlr * 4);
 			if (address & 1)
 			{
-				if (state.channel[num].c_lobyte)
-					state.channel[num].count = (state.channel[num].count & 0xff00) | data;
+				if (state.controller[ctrlr].lobyte)
+					state.channel[num].base_count =
+						(state.channel[num].base_count & 0xff00) | data;
 				else
-					state.channel[num].count = (state.channel[num].count & 0xff) | (data << 8);
-				state.channel[num].c_lobyte = !state.channel[num].c_lobyte;
+					state.channel[num].base_count =
+						(state.channel[num].base_count & 0x00ff) | (data << 8);
+				state.channel[num].count = state.channel[num].base_count;
 #if defined(DEBUG_DMA)
 				printf("dma channel %d count: %04x\n", num, state.channel[num].count);
 #endif	
 			}
 			else {
-				if (state.channel[num].a_lobyte)
+				if (state.controller[ctrlr].lobyte)
 					state.channel[num].base = (state.channel[num].base & 0xff00) | data;
 				else
-					state.channel[num].base = (state.channel[num].base & 0xff) | (data << 8);
+					state.channel[num].base = (state.channel[num].base & 0x00ff) | (data << 8);
 				state.channel[num].current = state.channel[num].base;
-				state.channel[num].a_lobyte = !state.channel[num].a_lobyte;
 #if defined(DEBUG_DMA)
 				printf("dma channel %d base: %04x\n", num, state.channel[num].base);
 #endif	
 			}
+			state.controller[ctrlr].lobyte =
+				!state.controller[ctrlr].lobyte;
 			break;
 		}
 
@@ -307,16 +309,14 @@ void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 			case 4: // clear flipflop(s)
 				if (DMA_TRACE_CONTROLLER(num))
 					printf("dma: flipflops cleared for dma %d\n", num);
-				for (int i = (num * 4); i < ((num + 1) * 4); i++)
-					state.channel[i].a_lobyte = state.channel[i].c_lobyte = true;
+				state.controller[num].lobyte = true;
 				break;
 
 			case 5: // master reset
 #if defined(DEBUG_DMA)
 				printf("DMA-I-RESET: DMA %d reset.", index - DMA_IO_BASE);
 #endif
-				for (int i = (num * 4); i < ((num + 1) * 4); i++)
-					state.channel[i].a_lobyte = state.channel[i].c_lobyte = true;
+				state.controller[num].lobyte = true;
 				state.controller[num].command = 0;
 				state.controller[num].status = 0;
 				state.controller[num].request = 0;

@@ -83,12 +83,11 @@ private:
     /// DMA channel state
     struct SDMA_chan
     {
-      bool  a_lobyte; // address lobyte expected
-      bool  c_lobyte; // count lobyte expected
       u16   current;
       u16   base;
       u16   pagebase;
       u16   count;
+      u16   base_count;
       u8    mode;
     } channel[8];
 
@@ -99,6 +98,7 @@ private:
       u8  command;
       u8  request;
       u8  mask;
+      bool lobyte; // low byte is next for address or count access
     } controller[2];
   }
   state;
