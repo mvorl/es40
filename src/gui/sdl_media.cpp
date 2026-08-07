@@ -67,6 +67,7 @@ enum EMediaPopupMode
     MEDIA_POPUP_CLOSED,
     MEDIA_POPUP_DEVICES,
     MEDIA_POPUP_FLOPPY,
+    MEDIA_POPUP_CDROM,
     MEDIA_POPUP_CD_LOCKED,
     MEDIA_POPUP_MESSAGE
 };
@@ -81,10 +82,12 @@ struct SMediaPopupState
     std::vector<std::shared_ptr<CDiskFileMediaMailbox> > devices;
     std::shared_ptr<CDiskFileMediaMailbox> device;
     std::string pending_path;
+    bool pending_eject = false;
     std::string message;
     std::vector<SDL_FRect> rows;
     int selected = 0;
     int device_selection = 0;
+    int locked_return_selection = 0;
     int first_visible = 0;
     int width = 0;
     int height = 0;
@@ -98,6 +101,7 @@ static std::mutex pending_lock_confirmation_mutex;
 static std::shared_ptr<CDiskFileMediaMailbox>
     pending_lock_confirmation_device;
 static std::string pending_lock_confirmation_path;
+static bool pending_lock_confirmation_eject = false;
 
 void sdl_register_removable_disk(
     const std::shared_ptr<CDiskFileMediaMailbox>& mailbox) noexcept
@@ -153,6 +157,8 @@ static int item_count()
     if (media_popup.mode == MEDIA_POPUP_DEVICES)
         return (int)media_popup.devices.size() + 1;
     if (media_popup.mode == MEDIA_POPUP_FLOPPY)
+        return 4;
+    if (media_popup.mode == MEDIA_POPUP_CDROM)
         return 3;
     if (media_popup.mode == MEDIA_POPUP_CD_LOCKED)
         return 2;
@@ -185,9 +191,11 @@ static void close_popup()
     media_popup.devices.clear();
     media_popup.device.reset();
     media_popup.pending_path.clear();
+    media_popup.pending_eject = false;
     media_popup.message.clear();
     media_popup.selected = 0;
     media_popup.device_selection = 0;
+    media_popup.locked_return_selection = 0;
     media_popup.first_visible = 0;
 }
 
@@ -224,7 +232,7 @@ static void render_popup()
 
     const float text_scale = media_popup.width >= 480 ? 1.5f : 1.0f;
     const float title_scale = media_popup.width >= 480 ? 1.75f : 1.25f;
-    const float row_height = media_popup.width >= 480 ? 42.0f : 32.0f;
+    const float row_height = media_popup.width >= 480 ? 58.0f : 44.0f;
     const float header_height = media_popup.width >= 480 ? 72.0f : 56.0f;
     const float footer_height = media_popup.width >= 480 ? 38.0f : 28.0f;
     const int count = item_count();
@@ -259,10 +267,18 @@ static void render_popup()
         subtitle = media_popup.device ? media_popup.device->label() :
             "Selected floppy drive";
     }
+    else if (media_popup.mode == MEDIA_POPUP_CDROM)
+    {
+        title = "CD-ROM media";
+        subtitle = media_popup.device ? media_popup.device->label() :
+            "Selected CD-ROM drive";
+    }
     else if (media_popup.mode == MEDIA_POPUP_CD_LOCKED)
     {
         title = "CD-ROM media locked";
-        if (!media_popup.pending_path.empty())
+        if (media_popup.pending_eject)
+            subtitle = "The guest locked this CD-ROM; eject requires an override.";
+        else if (!media_popup.pending_path.empty())
             subtitle = "The guest locked this CD-ROM while the file selector was open.";
         else
             subtitle = media_popup.device ?
@@ -312,6 +328,8 @@ static void render_popup()
         }
 
         std::string label;
+        std::string image_label;
+        bool device_row = false;
         if (media_popup.mode == MEDIA_POPUP_DEVICES)
         {
             if (index < (int)media_popup.devices.size())
@@ -320,6 +338,9 @@ static void render_popup()
                     media_popup.devices[(size_t)index];
                 label = mailbox ? mailbox->label() :
                     "Unnamed removable drive";
+                image_label = std::string("Image: ") +
+                    (mailbox ? mailbox->mounted_image_name() : "<none>");
+                device_row = true;
             }
             else
                 label = "Cancel";
@@ -329,27 +350,61 @@ static void render_popup()
             if (index == 0)
                 label = "Change image...";
             else if (index == 1)
+                label = "Eject";
+            else if (index == 2)
                 label = media_popup.device &&
                     media_popup.device->displayed_read_only() ?
                     "Make writable" : "Make read-only";
             else
                 label = media_popup.devices.size() > 1 ? "Back" : "Cancel";
         }
+        else if (media_popup.mode == MEDIA_POPUP_CDROM)
+        {
+            if (index == 0)
+                label = "Change image...";
+            else if (index == 1)
+                label = "Eject";
+            else
+                label = media_popup.devices.size() > 1 ? "Back" : "Cancel";
+        }
         else if (media_popup.mode == MEDIA_POPUP_CD_LOCKED)
-            label = index == 0 ? "Force change anyway..." : "Back";
+            label = index == 0 ?
+                (media_popup.pending_eject ?
+                    "Force eject anyway" : "Force change anyway...") :
+                "Back";
         else
             label = "Close";
 
-        draw_text(row.x + 14.0f,
-                  row.y + (row.h - 8.0f * text_scale) * 0.5f,
-                  label, text_scale, body_chars,
-                  index == media_popup.selected ? 255 : 218,
-                  index == media_popup.selected ? 255 : 225,
-                  index == media_popup.selected ? 255 : 239);
+        if (device_row)
+        {
+            const float label_y = row.y +
+                (media_popup.width >= 480 ? 7.0f : 4.0f);
+            const float image_y = row.y +
+                (media_popup.width >= 480 ? 32.0f : 22.0f);
+            draw_text(row.x + 14.0f, label_y, label, text_scale, body_chars,
+                      index == media_popup.selected ? 255 : 218,
+                      index == media_popup.selected ? 255 : 225,
+                      index == media_popup.selected ? 255 : 239);
+            draw_text(row.x + 14.0f, image_y, image_label, 1.0f,
+                      std::max(1, ((int)row.w - 28) / 8),
+                      index == media_popup.selected ? 220 : 157,
+                      index == media_popup.selected ? 232 : 169,
+                      index == media_popup.selected ? 255 : 189);
+        }
+        else
+        {
+            draw_text(row.x + 14.0f,
+                      row.y + (row.h - 8.0f * text_scale) * 0.5f,
+                      label, text_scale, body_chars,
+                      index == media_popup.selected ? 255 : 218,
+                      index == media_popup.selected ? 255 : 225,
+                      index == media_popup.selected ? 255 : 239);
+        }
     }
 
     const bool back_available =
-        (media_popup.mode == MEDIA_POPUP_FLOPPY &&
+        ((media_popup.mode == MEDIA_POPUP_FLOPPY ||
+          media_popup.mode == MEDIA_POPUP_CDROM) &&
          media_popup.devices.size() > 1) ||
         media_popup.mode == MEDIA_POPUP_CD_LOCKED;
     const char* footer = back_available ?
@@ -369,7 +424,7 @@ static bool size_popup_for_content()
     SDL_GetWindowSize(media_popup.parent, &parent_width, &parent_height);
 
     media_popup.width = std::max(260, std::min(560, parent_width - 24));
-    const int row_height = media_popup.width >= 480 ? 42 : 32;
+    const int row_height = media_popup.width >= 480 ? 58 : 44;
     const int header_height = media_popup.width >= 480 ? 72 : 56;
     const int footer_height = media_popup.width >= 480 ? 38 : 28;
     const int available_rows = std::max(1,
@@ -467,13 +522,14 @@ static void show_message(const char* message)
 
 static bool defer_lock_confirmation(
     const std::shared_ptr<CDiskFileMediaMailbox>& mailbox,
-    const char* path) noexcept
+    const char* path, bool eject = false) noexcept
 {
     try
     {
         std::lock_guard<std::mutex> lock(pending_lock_confirmation_mutex);
-        pending_lock_confirmation_path = path;
+        pending_lock_confirmation_path = path ? path : "";
         pending_lock_confirmation_device = mailbox;
+        pending_lock_confirmation_eject = eject;
         return true;
     }
     catch (...)
@@ -488,6 +544,7 @@ void sdl_media_pump() noexcept
     {
         std::shared_ptr<CDiskFileMediaMailbox> mailbox;
         std::string path;
+        bool eject = false;
         {
             std::lock_guard<std::mutex> lock(
                 pending_lock_confirmation_mutex);
@@ -495,6 +552,8 @@ void sdl_media_pump() noexcept
                 return;
             mailbox.swap(pending_lock_confirmation_device);
             path.swap(pending_lock_confirmation_path);
+            eject = pending_lock_confirmation_eject;
+            pending_lock_confirmation_eject = false;
         }
 
         if (!media_popup.parent || !mailbox)
@@ -510,6 +569,8 @@ void sdl_media_pump() noexcept
             }
         media_popup.device = mailbox;
         media_popup.pending_path.swap(path);
+        media_popup.pending_eject = eject;
+        media_popup.locked_return_selection = eject ? 1 : 0;
         media_popup.mode = MEDIA_POPUP_CD_LOCKED;
         media_popup.selected = 1;
         media_popup.first_visible = 0;
@@ -605,32 +666,15 @@ static void open_device(
         media_popup.device_selection = media_popup.selected;
     media_popup.device = mailbox;
     media_popup.pending_path.clear();
-    if (mailbox->is_floppy())
-    {
-        media_popup.mode = MEDIA_POPUP_FLOPPY;
-        media_popup.selected = 0;
-        media_popup.first_visible = 0;
-        if (!media_popup.window)
-            create_popup_window();
-        else
-            update_popup_content();
-        return;
-    }
-    if (mailbox->media_locked())
-    {
-        media_popup.mode = MEDIA_POPUP_CD_LOCKED;
-        // Default to the non-destructive choice.
-        media_popup.selected = 1;
-        media_popup.first_visible = 0;
-        if (!media_popup.window)
-            create_popup_window();
-        else
-            update_popup_content();
-        return;
-    }
-
-    close_popup();
-    show_file_dialog(mailbox);
+    media_popup.pending_eject = false;
+    media_popup.mode = mailbox->is_floppy() ?
+        MEDIA_POPUP_FLOPPY : MEDIA_POPUP_CDROM;
+    media_popup.selected = 0;
+    media_popup.first_visible = 0;
+    if (!media_popup.window)
+        create_popup_window();
+    else
+        update_popup_content();
 }
 
 void sdl_select_media(SDL_Window* window) noexcept
@@ -704,8 +748,64 @@ static void activate_selection()
         }
         else if (media_popup.selected == 1)
         {
+            if (!mailbox->request_eject())
+                SDL_Log("The selected floppy drive is no longer available.");
+            close_popup();
+        }
+        else if (media_popup.selected == 2)
+        {
             mailbox->request_read_only_toggle();
             close_popup();
+        }
+        else
+            cancel_or_go_back();
+        return;
+    }
+    if (media_popup.mode == MEDIA_POPUP_CDROM)
+    {
+        std::shared_ptr<CDiskFileMediaMailbox> mailbox = media_popup.device;
+        if (!mailbox)
+        {
+            close_popup();
+            return;
+        }
+
+        if (media_popup.selected == 0)
+        {
+            if (mailbox->media_locked())
+            {
+                media_popup.pending_path.clear();
+                media_popup.pending_eject = false;
+                media_popup.locked_return_selection = 0;
+                media_popup.mode = MEDIA_POPUP_CD_LOCKED;
+                media_popup.selected = 1;
+                media_popup.first_visible = 0;
+                update_popup_content();
+            }
+            else
+            {
+                close_popup();
+                show_file_dialog(mailbox);
+            }
+        }
+        else if (media_popup.selected == 1)
+        {
+            if (mailbox->media_locked())
+            {
+                media_popup.pending_path.clear();
+                media_popup.pending_eject = true;
+                media_popup.locked_return_selection = 1;
+                media_popup.mode = MEDIA_POPUP_CD_LOCKED;
+                media_popup.selected = 1;
+                media_popup.first_visible = 0;
+                update_popup_content();
+            }
+            else
+            {
+                if (!mailbox->request_eject())
+                    SDL_Log("The selected CD-ROM device is no longer available.");
+                close_popup();
+            }
         }
         else
             cancel_or_go_back();
@@ -718,8 +818,14 @@ static void activate_selection()
         {
             std::string path;
             path.swap(media_popup.pending_path);
+            const bool eject = media_popup.pending_eject;
             close_popup();
-            if (path.empty())
+            if (eject)
+            {
+                if (!mailbox->request_eject(true))
+                    SDL_Log("The selected CD-ROM device is no longer available.");
+            }
+            else if (path.empty())
                 show_file_dialog(mailbox, true);
             else if (!mailbox->request_image_change(path.c_str(), true))
                 SDL_Log("The selected CD-ROM device is no longer available.");
@@ -734,9 +840,20 @@ static void activate_selection()
 
 static void cancel_or_go_back()
 {
-    if ((media_popup.mode == MEDIA_POPUP_FLOPPY &&
-         media_popup.devices.size() > 1) ||
-        media_popup.mode == MEDIA_POPUP_CD_LOCKED)
+    if (media_popup.mode == MEDIA_POPUP_CD_LOCKED)
+    {
+        media_popup.mode = MEDIA_POPUP_CDROM;
+        media_popup.pending_path.clear();
+        media_popup.pending_eject = false;
+        media_popup.selected = std::max(0, std::min(
+            media_popup.locked_return_selection, item_count() - 1));
+        media_popup.first_visible = 0;
+        update_popup_content();
+        return;
+    }
+    if ((media_popup.mode == MEDIA_POPUP_FLOPPY ||
+         media_popup.mode == MEDIA_POPUP_CDROM) &&
+        media_popup.devices.size() > 1)
     {
         media_popup.mode = MEDIA_POPUP_DEVICES;
         media_popup.device.reset();
@@ -959,6 +1076,7 @@ void sdl_media_shutdown() noexcept
         std::lock_guard<std::mutex> lock(pending_lock_confirmation_mutex);
         pending_lock_confirmation_device.reset();
         pending_lock_confirmation_path.clear();
+        pending_lock_confirmation_eject = false;
     }
     catch (...)
     {

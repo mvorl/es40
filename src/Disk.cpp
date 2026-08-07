@@ -626,8 +626,6 @@ void CDisk::scsi_xfer_done_me(int bus)
 #define SCSICDRRW_READ_BUFFER_CAP 0x5c
 #define SCSICDRRW_SEND_CUE_SHEET  0x5d
 #define SCSICDRRW_BLANK           0xa1
-#define SCSICDRRW_UNLOAD          0x1b
-
 //  SCSI tape commands:
 #define SCSICMD_REWIND            0x01
 #define SCSICMD_READ_BLOCK_LIMITS 0x05
@@ -654,6 +652,8 @@ void CDisk::scsi_xfer_done_me(int bus)
 #define SCSI_MEDIA_REMOVED          - 6 /* Media removed */
 #define SCSI_INVALID_LUN            - 7 /* Invalid LUN */
 #define SCSI_RESET                  - 8 /* Power-on or bus/device reset */
+#define SCSI_MEDIA_LOCKED           - 9 /* Medium removal prevented */
+#define SCSI_HARDWARE_ERROR        - 10 /* Backing-media operation failed */
 
 void CDisk::do_scsi_error(int errcode, int info)
 {
@@ -739,6 +739,18 @@ void CDisk::do_scsi_error(int errcode, int info)
 	case SCSI_MEDIA_REMOVED:
 		state.scsi.sense.data[2] = 0x02;    // not ready
 		state.scsi.sense.data[12] = 0x3a;   // media not present
+		state.scsi.sense.data[13] = 0x00;
+		break;
+
+	case SCSI_MEDIA_LOCKED:
+		state.scsi.sense.data[2] = 0x05;    // illegal request
+		state.scsi.sense.data[12] = 0x53;   // media removal prevented
+		state.scsi.sense.data[13] = 0x02;
+		break;
+
+	case SCSI_HARDWARE_ERROR:
+		state.scsi.sense.data[2] = 0x04;    // hardware error
+		state.scsi.sense.data[12] = 0x44;   // internal target failure
 		state.scsi.sense.data[13] = 0x00;
 		break;
 
@@ -828,6 +840,8 @@ static inline int cdb_len_for_opcode(u8 op)
 	case 0x0A: /* WRITE (6)         */ return 6;
 	case 0x12: /* INQUIRY           */ return 6;
 	case 0x1A: /* MODE SENSE (6)    */ return 6;
+	case 0x1B: /* START STOP UNIT   */ return 6;
+	case 0x1E: /* PREVENT/ALLOW     */ return 6;
 	case 0x3E: /* READ LONG         */ return 6;
 
 		// 10-byte CDBs
@@ -1418,10 +1432,10 @@ int CDisk::do_scsi_command()
 				feature_ptr[1] = 0x03;
 				feature_ptr[2] = (0 << 6) | (0 << 2) | (1 << 1) | (1 << 0); // version 0, persistent = 1, current = 1
 				feature_ptr[3] = 4;											// additional length = 4
-				feature_ptr[4] = (0 << 5)									// Loading Mech type: 0
-								 | (0 << 3)									// No Eject Mech
+				feature_ptr[4] = (1 << 5)									// Loading mechanism: tray
+								 | (1 << 3)									// Eject mechanism present
 								 | (1 << 2)									// No Pvnt Jumper
-								 | (0 << 0);								// Lock = 0 (no locking mechanism)
+								 | (1 << 0);								// Locking supported
 				feature_ptr[5] = 0;											//
 				feature_ptr[6] = 0;											//
 				feature_ptr[7] = 0;											//
@@ -1802,6 +1816,8 @@ int CDisk::do_scsi_command()
 			{0x03,  6, 0}, // REQUEST SENSE
 			{0x12,  6, 0}, // INQUIRY
 			{0x1A,  6, 0}, // MODE SENSE(6)
+			{0x1B,  6, 0}, // START STOP UNIT
+			{0x1E,  6, 0}, // PREVENT ALLOW MEDIUM REMOVAL
 			{0x25, 10, 0}, // READ CAPACITY(10)
 			{0x28, 10, 0}, // READ(10)
 			{0x2A, 10, 0}, // WRITE(10)
@@ -1958,6 +1974,31 @@ int CDisk::do_scsi_command()
 
 		do_scsi_error(SCSI_OK);
 		break;
+
+	case SCSICMD_START_STOP_UNIT:
+	{
+		const bool load_eject = (state.scsi.cmd.data[4] & 0x02) != 0;
+		const bool start = (state.scsi.cmd.data[4] & 0x01) != 0;
+
+		if (cdrom() && load_eject && !start)
+		{
+			if (state.scsi.locked)
+			{
+				do_scsi_error(SCSI_MEDIA_LOCKED);
+				break;
+			}
+			if (!eject_media())
+			{
+				do_scsi_error(SCSI_HARDWARE_ERROR);
+				break;
+			}
+			printf("%s: CD-ROM media eject complete (guest request).\n",
+				devid_string);
+		}
+
+		do_scsi_error(SCSI_OK);
+		break;
+	}
 
 	case SCSICMD_MODE_SELECT:
 	case SCSICMD_MODE_SELECT_10:
@@ -2657,7 +2698,6 @@ int CDisk::do_scsi_command()
 	case SCSICDRRW_READ_BUFFER_CAP:
 	case SCSICDRRW_SEND_CUE_SHEET:
 	case SCSICDRRW_BLANK:
-	case SCSICDRRW_UNLOAD:
 
 		// These are CD-R/RW specific commands; we pretend to be a simple
 		// CD-ROM player, so no support for these commands.

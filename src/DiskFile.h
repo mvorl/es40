@@ -68,6 +68,7 @@
 enum class EDiskFileMediaAction
 {
   ChangeImage,
+  Eject,
   SetReadOnly
 };
 
@@ -90,12 +91,15 @@ public:
 
   bool request_image_change(const char* path,
                             bool force_locked = false) noexcept;
+  bool request_eject(bool force_locked = false) noexcept;
   bool request_read_only_toggle() noexcept;
   bool take_pending_actions(std::deque<SDiskFileMediaAction>& actions) noexcept;
   void deactivate() noexcept;
   void reconcile_read_only(bool actual_value) noexcept;
+  void update_mounted_image(const std::string& path) noexcept;
 
   const std::string& label() const { return device_label; }
+  std::string mounted_image_name() const;
   bool is_floppy() const { return floppy_device; }
   bool displayed_read_only() const
   {
@@ -116,7 +120,8 @@ private:
   std::atomic<bool> read_only;
   std::atomic<bool> guest_locked;
   bool active;
-  std::mutex mutex;
+  mutable std::mutex mutex;
+  std::string mounted_image;
   std::deque<SDiskFileMediaAction> pending_actions;
 };
 
@@ -140,6 +145,7 @@ public:
   virtual size_t  read_bytes(void* dest, size_t bytes);
   virtual size_t  write_bytes(void* src, size_t bytes);
   virtual void    flush();
+  virtual bool    eject_media() override;
 
   bool            reload_file(const char* filename);
   bool            change_media(const char* filename);

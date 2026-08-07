@@ -147,6 +147,24 @@ bool CDiskFileMediaMailbox::request_image_change(
     }
 }
 
+bool CDiskFileMediaMailbox::request_eject(bool force_locked) noexcept
+{
+    try
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (!active)
+            return false;
+        pending_actions.push_back(
+            { EDiskFileMediaAction::Eject, std::string(), false,
+              force_locked });
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
 bool CDiskFileMediaMailbox::request_read_only_toggle() noexcept
 {
     try
@@ -202,6 +220,34 @@ void CDiskFileMediaMailbox::reconcile_read_only(bool actual_value) noexcept
     catch (...)
     {
     }
+}
+
+void CDiskFileMediaMailbox::update_mounted_image(
+    const std::string& path) noexcept
+{
+    try
+    {
+        std::string image;
+        if (!path.empty())
+        {
+            const std::string::size_type separator =
+                path.find_last_of("/\\]:");
+            image = separator == std::string::npos ?
+                path : path.substr(separator + 1);
+        }
+
+        std::lock_guard<std::mutex> lock(mutex);
+        mounted_image.swap(image);
+    }
+    catch (...)
+    {
+    }
+}
+
+std::string CDiskFileMediaMailbox::mounted_image_name() const
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    return mounted_image.empty() ? "<none>" : mounted_image;
 }
 
 void CDiskFileMediaMailbox::deactivate() noexcept
@@ -273,6 +319,7 @@ CDiskFile::CDiskFile(CConfigurator* cfg, CSystem* sys, CDiskController* c,
         const char* device = devid_string ? devid_string : "unnamed device";
         media_mailbox = std::make_shared<CDiskFileMediaMailbox>(
             std::string(kind) + ": " + device, floppy_device, read_only);
+        media_mailbox->update_mounted_image(filename);
 #if defined(HAVE_SDL)
         sdl_register_removable_disk(media_mailbox);
 #endif
@@ -333,6 +380,37 @@ bool CDiskFile::reload_file(const char* _filename)
 bool CDiskFile::change_media(const char* _filename)
 {
     return load_file_transactional(_filename, false, false);
+}
+
+bool CDiskFile::eject_media()
+{
+    if (!media_present() && filename.empty())
+    {
+        if (media_mailbox)
+            media_mailbox->update_mounted_image(filename);
+        return true;
+    }
+
+    if (handle && !read_only && fflush(handle) != 0)
+        return false;
+
+    reset_bincue_state();
+    if (handle)
+    {
+        fclose(handle);
+        handle = nullptr;
+    }
+
+    filename.clear();
+    byte_size = 0;
+    cylinders = 0;
+    heads = 0;
+    sectors = 0;
+    state.byte_pos = 0;
+    state.scsi.media_changed = 1;
+    if (media_mailbox)
+        media_mailbox->update_mounted_image(filename);
+    return true;
 }
 
 void CDiskFile::media_lock_changed(bool locked)
@@ -694,10 +772,12 @@ void CDiskFile::service_pending_media_actions()
             printf("%s: Forcing operator-approved change of guest-locked CD-ROM.\n",
                 devid_string);
 
+        const bool ejecting = it->type == EDiskFileMediaAction::Eject;
         bool changed = false;
         try
         {
-            changed = change_media(it->path.c_str());
+            changed = ejecting ? eject_media() :
+                change_media(it->path.c_str());
         }
         catch (const std::exception& error)
         {
@@ -709,8 +789,16 @@ void CDiskFile::service_pending_media_actions()
             printf("%s: Media change failed with an unknown error.\n",
                 devid_string);
         }
-        printf("%s: Media change %s: %s\n", devid_string,
-            changed ? "complete" : "failed", it->path.c_str());
+        if (changed && !ejecting)
+            media_mailbox->update_mounted_image(filename);
+
+        const char* kind = floppy_device ? "Floppy" : "CD-ROM";
+        if (ejecting)
+            printf("%s: %s media eject %s.\n", devid_string, kind,
+                changed ? "complete" : "failed");
+        else
+            printf("%s: %s media change %s: %s\n", devid_string, kind,
+                changed ? "complete" : "failed", it->path.c_str());
     }
 
     media_mailbox->reconcile_read_only(read_only);
