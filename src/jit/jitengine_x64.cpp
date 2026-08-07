@@ -524,6 +524,19 @@ static int helper_index(const CJitEngine::HelperSet& hs, const void* fn)
 // memop slow path: the inline fast path's guards jump to `slow`, which is emitted in a
 // cold tail after the block epilogue. The stub re-creates emit_call's marshalling + fault
 // bail from captured PODs, then jumps back to `join`.
+// Region IR: the fused span as a linear op array, built by decode, walked by emit. 
+// Currently reproduces the direct emitter exactly, INSTR delegates to emit_op.
+static constexpr bool RegionIR = true;
+
+struct RegionOp {
+  enum Kind : uint8_t { BLOCK_ENTER, INSTR, BLOCK_END, GUARD };
+  Kind     kind;
+  uint8_t  blk;     // fused block index (INSTR: emit_op's b/pal_block; GUARD: exit slot owner)
+  uint32_t ins;     // INSTR: guest instruction word
+  uint32_t idx;     // INSTR: index in block (fault bail); BLOCK_END: block length
+  uint64_t pc;      // BLOCK_ENTER: fall-through PC default; GUARD: next fused block's tag
+};
+
 struct ColdMemStub {
   enum Kind { LOAD, STORE, FPMEM };
   Kind          kind;
@@ -2191,29 +2204,47 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   for (int k = 0; k < n_pins; ++k) ra.host[pin_guest[k]] = pin_hosts[k];
 
   std::vector<ColdMemStub> cold;   // outlined memop slow paths, emitted after the epilogue
-  for (uint32_t bi = 0; bi < n_blocks; ++bi) {
-    JitBlock* b = blocks[bi];
-    const uint32_t plen = b->prefix_len;
-    const uint32_t* words = (const uint32_t*) (dram + b->phys);
-    const bool pal_block = (b->tag & 1) != 0;
 
-    // Default R10 + state.pc = this block's sequential next (the fall-through exit). emit_op's branch/jump
-    // terminator overwrites both with its target; a fault bail writes the fault PC. For an intermediate
-    // block this also makes the guard below see R10 == the sequential successor when it falls through.
-    // (note: no compiled op currently READS state.pc mid-block, so default-before-emit is equivalent.)
-    a.mov(x86::r10, imm(b->tag + 4 * (uint64_t) plen));
-    a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
+  // DECODE: fused span -> region IR. Structure ops carry what the emit walk needs; passes
+  // rewrite this array before emission.
+  std::vector<RegionOp> ir;
+  if (RegionIR) {
+    for (uint32_t bi = 0; bi < n_blocks; ++bi) {
+      JitBlock* b = blocks[bi];
+      const uint32_t plen = b->prefix_len;
+      const uint32_t* words = (const uint32_t*) (dram + b->phys);
+      RegionOp o{}; o.blk = (uint8_t) bi;
+      o.kind = RegionOp::BLOCK_ENTER; o.pc = b->tag + 4 * (uint64_t) plen; ir.push_back(o);
+      o.kind = RegionOp::INSTR;
+      for (uint32_t i = 0; i < plen; ++i) { o.ins = words[i]; o.idx = i; ir.push_back(o); }
+      o.kind = RegionOp::BLOCK_END; o.idx = plen; ir.push_back(o);
+      if (bi + 1 < n_blocks) { o.kind = RegionOp::GUARD; o.pc = blocks[bi + 1]->tag; ir.push_back(o); }
+    }
+  }
 
-    for (uint32_t i = 0; i < plen; ++i)
-      emit_op(&a, gpa, &done, hs, pal_block, b, words[i], i, ra, &cold);
-
-    a.add(x86::qword_ptr(x86::rsp, 40), imm(plen));   // count this block
-    a.mov(x86::eax, x86::dword_ptr(x86::rsp, 40));    // EAX = instrs completed so far (preset for `done` -- a side-exit or return)
-
-    if (bi + 1 < n_blocks) {
-      // Guard: did this block actually flow to the next fused block? R10 = its next PC; a mismatch means
+  // EMIT: walk the IR (or the blocks directly when RegionIR is off -- the A/B baseline).
+  for (size_t k = 0; k < ir.size(); ++k) {
+    const RegionOp& o = ir[k];
+    JitBlock* b = blocks[o.blk];
+    switch (o.kind) {
+    case RegionOp::BLOCK_ENTER:
+      // Default R10 + state.pc = this block's sequential next (the fall-through exit). emit_op's branch/jump
+      // terminator overwrites both with its target; a fault bail writes the fault PC. For an intermediate
+      // block this also makes the guard below see R10 == the sequential successor when it falls through.
+      a.mov(x86::r10, imm(o.pc));
+      a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
+      break;
+    case RegionOp::INSTR:
+      emit_op(&a, gpa, &done, hs, (b->tag & 1) != 0, b, o.ins, o.idx, ra, &cold);
+      break;
+    case RegionOp::BLOCK_END:
+      a.add(x86::qword_ptr(x86::rsp, 40), imm(o.idx));   // count this block
+      a.mov(x86::eax, x86::dword_ptr(x86::rsp, 40));     // EAX = instrs completed so far (preset for `done`)
+      break;
+    case RegionOp::GUARD:
+      // Did this block actually flow to the next fused block? R10 = its next PC; a mismatch means
       // the path diverged from what we fused -> side-exit (chained out when enabled) at the real next PC.
-      a.mov(x86::rcx, imm(blocks[bi + 1]->tag));   // 64-bit tag may exceed imm32; rcx scratch (not EAX)
+      a.mov(x86::rcx, imm(o.pc));   // 64-bit tag may exceed imm32; rcx scratch (not EAX)
       a.cmp(x86::r10, x86::rcx);
 #ifndef JIT_VERIFY
       if (TraceChainOut && n_x < kMaxTraceExits) {
@@ -2224,6 +2255,34 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
 #else
       a.jne(done);
 #endif
+      break;
+    }
+  }
+  if (!RegionIR) {
+    for (uint32_t bi = 0; bi < n_blocks; ++bi) {
+      JitBlock* b = blocks[bi];
+      const uint32_t plen = b->prefix_len;
+      const uint32_t* words = (const uint32_t*) (dram + b->phys);
+      const bool pal_block = (b->tag & 1) != 0;
+      a.mov(x86::r10, imm(b->tag + 4 * (uint64_t) plen));
+      a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
+      for (uint32_t i = 0; i < plen; ++i)
+        emit_op(&a, gpa, &done, hs, pal_block, b, words[i], i, ra, &cold);
+      a.add(x86::qword_ptr(x86::rsp, 40), imm(plen));
+      a.mov(x86::eax, x86::dword_ptr(x86::rsp, 40));
+      if (bi + 1 < n_blocks) {
+        a.mov(x86::rcx, imm(blocks[bi + 1]->tag));
+        a.cmp(x86::r10, x86::rcx);
+#ifndef JIT_VERIFY
+        if (TraceChainOut && n_x < kMaxTraceExits) {
+          exit_tramp[n_tramp] = a.new_label(); tramp_slot[n_tramp] = n_x;
+          a.jne(exit_tramp[n_tramp]); n_tramp++; n_x++;
+        } else
+          a.jne(done);
+#else
+        a.jne(done);
+#endif
+      }
     }
   }
 #ifndef JIT_VERIFY

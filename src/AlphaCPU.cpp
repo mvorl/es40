@@ -1083,6 +1083,13 @@ void CAlphaCPU::jit_run(int budget)
 			const int  cm_pre = state.cm, sir_pre = state.sir;   // CM/SIRR read-back (HW_MFPR CM/SIRR)
 			const int  aster_pre = state.aster, astrr_pre = state.astrr;   // AST/FPEN/PPCEN read-back via the
 			const int  fpen_pre = state.fpen, ppcen_pre = state.ppcen;     // PCTX group (HW_MFPR 0x40-7f)
+			// EXC_SUM REG[12:8] (HRM 5.2.13) reports the trapping op's dest register -- report state,
+			// not execution state, and which pass recorded it differs benignly. Compare the exception
+			// bits strictly, mask the REG field.
+			auto ipr_ne = [](int ii, u64 x, u64 y) {
+				if (ii == 13) { x &= ~U64(0x1f00); y &= ~U64(0x1f00); }
+				return x != y;
+			};
 			const u64  exc_sum_pre = state.exc_sum, fpcr_pre = state.fpcr; // restored before the TRACE pass:
 			                                                               // boundary compares need the pre-span
 			                                                               // value, not the interp's inherited final
@@ -1321,7 +1328,7 @@ void CAlphaCPU::jit_run(int budget)
 					}
 					u64 ipr_jit[27];
 					cap_iprs(ipr_jit);   // compiled pass wrote IPRs into live state; check vs interp
-					for (int ii = 0; ii < 27; ii++) if (ipr_jit[ii] != ipr_interp[ii])
+					for (int ii = 0; ii < 27; ii++) if (ipr_ne(ii, ipr_jit[ii], ipr_interp[ii]))
 						printf("[JIT][VERIFY] IPR MISMATCH at %016llx slot %d: interp=%016llx jit=%016llx\n",
 							(unsigned long long) start_virt, ii,
 							(unsigned long long) ipr_interp[ii], (unsigned long long) ipr_jit[ii]);
@@ -1362,7 +1369,7 @@ void CAlphaCPU::jit_run(int budget)
 									(unsigned long long) start_virt, (unsigned long long) interp_pc,
 									(unsigned long long) state.pc, n_interp);
 							u64 ipr_jit_t[27]; cap_iprs(ipr_jit_t);   // trace wrote IPRs into live state; check vs interp (parity with the block path)
-							for (int ii = 0; ii < 27; ii++) if (ipr_jit_t[ii] != ipr_interp[ii]) printf("[JIT][VERIFY] TRACE IPR MISMATCH at %016llx slot %d: interp=%016llx trace=%016llx\n", (unsigned long long) start_virt, ii, (unsigned long long) ipr_interp[ii], (unsigned long long) ipr_jit_t[ii]);
+							for (int ii = 0; ii < 27; ii++) if (ipr_ne(ii, ipr_jit_t[ii], ipr_interp[ii])) printf("[JIT][VERIFY] TRACE IPR MISMATCH at %016llx slot %d: interp=%016llx trace=%016llx\n", (unsigned long long) start_virt, ii, (unsigned long long) ipr_interp[ii], (unsigned long long) ipr_jit_t[ii]);
 							for (int fi = 0; fi < 64; fi++) if (state.f[fi] != f_interp[fi]) printf("[JIT][VERIFY] TRACE FP MISMATCH at %016llx f%d: interp=%016llx trace=%016llx\n", (unsigned long long) start_virt, fi, (unsigned long long) f_interp[fi], (unsigned long long) state.f[fi]);
 							if (m_jit_slog_i != n_stores_interp) printf("[JIT][VERIFY] TRACE STORE COUNT MISMATCH at %016llx: interp=%u trace=%u\n", (unsigned long long) start_virt, n_stores_interp, m_jit_slog_i);
 							m_jit->verify_compare(start_virt, state.r, jr_t, vw, n_interp);
@@ -1400,7 +1407,7 @@ void CAlphaCPU::jit_run(int budget)
 								// Slots 0-2 (last TB fills) are replay-invisible (verify loads skip translation),
 								// so they're only sound at full-span compares (by inheritance) -- skip here.
 								for (int ii = 3; ii < 27; ii++)
-									if (ipr_jit_t[ii] != bnd_ipr[bi][ii]) printf("[JIT][VERIFY] TRACE SIDE-EXIT IPR MISMATCH at %016llx slot %d: interp=%016llx trace=%016llx\n", (unsigned long long) start_virt, ii, (unsigned long long) bnd_ipr[bi][ii], (unsigned long long) ipr_jit_t[ii]);
+									if (ipr_ne(ii, ipr_jit_t[ii], bnd_ipr[bi][ii])) printf("[JIT][VERIFY] TRACE SIDE-EXIT IPR MISMATCH at %016llx slot %d: interp=%016llx trace=%016llx\n", (unsigned long long) start_virt, ii, (unsigned long long) bnd_ipr[bi][ii], (unsigned long long) ipr_jit_t[ii]);
 								for (int fi = 0; fi < 64; fi++) if (state.f[fi] != bnd_f[bi][fi]) printf("[JIT][VERIFY] TRACE SIDE-EXIT FP MISMATCH at %016llx f%d: interp=%016llx trace=%016llx\n", (unsigned long long) start_virt, fi, (unsigned long long) bnd_f[bi][fi], (unsigned long long) state.f[fi]);
 								if (m_jit_slog_i != bnd_sn[bi]) printf("[JIT][VERIFY] TRACE SIDE-EXIT STORE COUNT MISMATCH at %016llx: interp=%u trace=%u\n", (unsigned long long) start_virt, bnd_sn[bi], m_jit_slog_i);
 								m_jit->verify_compare(start_virt, bnd_r[bi], jr_t, vw, done_t);
