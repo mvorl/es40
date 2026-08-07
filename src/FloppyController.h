@@ -93,6 +93,7 @@ public:
   virtual void  init();
 
 private:
+  void          service_pending_media_actions_if_idle();
   struct SFloppyGeometry {
     int cylinders;
     int heads;

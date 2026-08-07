@@ -111,6 +111,28 @@ CFloppyController::~CFloppyController()
 {
 }
 
+void CFloppyController::service_pending_media_actions_if_idle()
+{
+	if (state.pio.active || state.status.dio || state.cmd_parms_ptr != 0)
+		return;
+
+	// The controller is between commands. DMA requests complete inside the
+	// command dispatch, and a PIO request cannot reach this point while active.
+	for (int drive = 0; drive < 2; drive++)
+		if (FDISK(drive) != NULL)
+		{
+			try
+			{
+				FDISK(drive)->service_pending_media_actions();
+			}
+			catch (...)
+			{
+				printf("FDC: Could not service a pending media action for drive %d.\n",
+					drive);
+			}
+		}
+}
+
 
 std::string datarate_name[] = {
 	"500 Kb/S MFM",
@@ -482,6 +504,8 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 			break;
 		}
 
+		service_pending_media_actions_if_idle();
+
 		if (state.pio.active) {
 			if (!state.pio.write) {
 				printf("FDC: write to data register during non-DMA read phase.\n");
@@ -806,8 +830,12 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 				case 7: // recalibrate
 				{
 					int drive_idx = state.cmd_parms[1] & 3;
-					state.drive[drive_idx].seeking = 3; // wait for 3 status reads to finish seek.
-					state.drive[drive_idx].cylinder = 0;
+					if (drive_idx < 2) {
+						state.drive[drive_idx].seeking = 3; // wait for 3 status reads to finish seek.
+						state.drive[drive_idx].cylinder = 0;
+						if (FDISK(drive_idx) != NULL)
+							FDISK(drive_idx)->acknowledge_media_change();
+					}
 					do_interrupt();
 				}
 				break;
@@ -844,14 +872,21 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 					break;
 
 				case 15: // seek
+				{
 					// args:
 					// 0: opcode
 					// 1: bit 2 = HDS (head), 1 = DS1, 0 = DS0 
 					// 2: NCN = new cylinder number
-					SEL_DRIVE.seeking = 3; // wait 3 status reads to finish seek.
-					SEL_DRIVE.cylinder = state.cmd_parms[2];
+					int drive_idx = state.cmd_parms[1] & 3;
+					if (drive_idx < 2) {
+						state.drive[drive_idx].seeking = 3; // wait 3 status reads to finish seek.
+						state.drive[drive_idx].cylinder = state.cmd_parms[2];
+						if (FDISK(drive_idx) != NULL)
+							FDISK(drive_idx)->acknowledge_media_change();
+					}
 					do_interrupt();
 					break;
+				}
 
 				case 16: // Version
 					state.cmd_res[0] = 0x90; // 82077 compatible
@@ -1007,12 +1042,13 @@ u64 CFloppyController::ReadMem(int index, u64 address, int dsize)
 		//    bit 1 = datarate select 0
 		//    bit 0 = high density select
 
-		
+		service_pending_media_actions_if_idle();
 		int drive_idx = state.drive_select & 3;
-		if (drive_idx < 2 && FDISK(drive_idx) != NULL) {
-			data = 0x00; // Disk present
+		CDisk* disk = drive_idx < 2 ? FDISK(drive_idx) : NULL;
+		if (disk != NULL) {
+			data = disk->media_change_pending() ? 0x80 : 0x00;
 		} else {
-			data = 0x80; // No disk
+			data = 0x80;
 		}
 		break;
 	}
