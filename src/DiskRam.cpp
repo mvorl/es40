@@ -169,8 +169,9 @@ size_t CDiskRam::read_bytes(void* dest, size_t bytes)
 	if (state.byte_pos >= byte_size)
 		return 0;
 
-	while (state.byte_pos + bytes >= byte_size)
-		bytes--;
+	off_t_large available = byte_size - state.byte_pos;
+	if ((off_t_large)bytes > available)
+		bytes = (size_t)available;
 
 	memcpy(dest, &(((char*)ramdisk)[state.byte_pos]), bytes);
 	state.byte_pos += (unsigned long)bytes;
@@ -182,8 +183,9 @@ size_t CDiskRam::write_bytes(void* src, size_t bytes)
 	if (state.byte_pos >= byte_size)
 		return 0;
 
-	while (state.byte_pos + bytes >= byte_size)
-		bytes--;
+	off_t_large available = byte_size - state.byte_pos;
+	if ((off_t_large)bytes > available)
+		bytes = (size_t)available;
 
 	memcpy(&(((char*)ramdisk)[state.byte_pos]), src, bytes);
 	state.byte_pos += (unsigned long)bytes;
