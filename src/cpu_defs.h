@@ -601,10 +601,17 @@ inline u64 fsqrt64(u64 asig, s32 exp)
 #define TB_INDEX_ITB                  1
 
 #if defined(DEBUG_UNALIGN)
+// pc/opcode identify the guest instruction; n counts them (rare + one PC = ordinary guest
+// code). "IN-PAGE!" flags an over-trap: same 8KB page both ends means keep_mask, not the guest.
 #define TRACE_UNALIGN(flags, align)                                              \
-  printf("unaligned access %d, %d -> trap! exc_sum=0x%04" PRIx64                 \
-      ", fault_va=0x%016" PRIx64 ", mm_stat=0x%03" PRIx64 "\n",                  \
-      (flags), (align), state.exc_sum, state.fault_va, state.mm_stat)
+  do { static u64 _ua_n = 0;                                                     \
+    printf("unaligned access %d, %d -> trap! exc_sum=0x%04" PRIx64               \
+      ", fault_va=0x%016" PRIx64 ", mm_stat=0x%03" PRIx64                        \
+      ", pc=0x%016" PRIx64 ", op=0x%02x, n=%" PRIu64 "%s\n",                     \
+      (flags), (align), state.exc_sum, state.fault_va, state.mm_stat,            \
+      state.pc, (unsigned) I_GETOP(ins), ++_ua_n,                                \
+      (((a1 ^ a2) & ~ALPHA_BASE_PAGE_MASK) ? "" : "  IN-PAGE!"));                \
+  } while (0)
 #else
 #define TRACE_UNALIGN(flags, align)
 #endif
