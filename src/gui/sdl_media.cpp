@@ -833,20 +833,15 @@ bool sdl_media_handle_event(const SDL_Event* source_event) noexcept
                 source_event->type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
                 source_event->type == SDL_EVENT_MOUSE_BUTTON_UP ||
                 source_event->type == SDL_EVENT_MOUSE_WHEEL;
-            if (source_event->type == SDL_EVENT_KEY_DOWN)
-            {
-                const SDL_Scancode scancode = source_event->key.scancode;
-                if (scancode >= 0 && scancode < SDL_SCANCODE_COUNT)
-                    swallowed_key_releases[scancode] = true;
-            }
             if (source_event->type == SDL_EVENT_MOUSE_BUTTON_DOWN)
             {
                 swallow_parent_pointer_until_release = true;
                 close_popup();
             }
-            if (keyboard_event || pointer_event)
+            if (pointer_event)
                 return true;
-            return false;
+            if (!keyboard_event)
+                return false;
         }
 
         if (source_event->type >= SDL_EVENT_WINDOW_FIRST &&
