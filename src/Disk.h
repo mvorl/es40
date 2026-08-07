@@ -153,6 +153,7 @@ public:
   bool        ro() { return read_only; };
   bool        rw() { return !read_only; };
   bool        cdrom() { return is_cdrom; };
+  bool        media_present() const { return byte_size > 0; };
   bool        media_change_pending() const { return state.scsi.media_changed != 0; };
   void        acknowledge_media_change() { state.scsi.media_changed = 0; };
 

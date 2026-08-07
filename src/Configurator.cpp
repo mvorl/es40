@@ -1113,6 +1113,49 @@ void CConfigurator::initialize()
 		break;
 	}
 
+	// The ES40 has a built-in 3.5-inch 1.44 MB drive A.
+	if (myClassId == c_floppy && fdcbus == 0)
+	{
+		bool have_drive_a = false;
+		for (i = 0; i < iNumChildren; i++)
+		{
+			int disk_bus;
+			int disk_device;
+			char trailing;
+			if (sscanf(pChildren[i]->get_myName(), "disk%d.%d%c",
+				&disk_bus, &disk_device, &trailing) == 2 &&
+				disk_bus == 0 && disk_device == 0)
+			{
+				have_drive_a = true;
+				break;
+			}
+		}
+
+		if (!have_drive_a)
+		{
+			if (iNumChildren >= CFG_MAX_CHILDREN)
+				FAILURE(Configuration,
+					"No room to add the built-in floppy drive A");
+
+			printf("%%SYS-I-DEFAULTFLOPPY: disk0.0 is not configured; "
+				"adding the built-in 3.5-inch 1.44 MB drive with no media.\n");
+
+			char* dname;
+			CHECK_ALLOCATION(dname = (char*)malloc(8));
+			strcpy(dname, "disk0.0");
+			char* dvalue;
+			CHECK_ALLOCATION(dvalue = (char*)malloc(5));
+			strcpy(dvalue, "file");
+			char dtext[] = "";
+			CConfigurator* drive_a = new CConfigurator(this, dname, dvalue,
+				dtext, 0);
+			for (i = iNumChildren; i > 0; i--)
+				pChildren[i] = pChildren[i - 1];
+			pChildren[0] = drive_a;
+			iNumChildren++;
+		}
+	}
+
 	// Synthesize mandatory system hardware omitted from the configuration.
 	// Missing serial ports use null_attach (bit-bucket) mode; the FDC
 	// is chipset integrated and always exists. 

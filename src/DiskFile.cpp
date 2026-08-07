@@ -234,16 +234,20 @@ CDiskFile::CDiskFile(CConfigurator* cfg, CSystem* sys, CDiskController* c,
     floppy_device    = myCfg->get_myParent() != nullptr &&
                         myCfg->get_myParent()->get_class_id() == c_floppy;
     char* configured_filename = myCfg->get_text_value("file");
-    if (!configured_filename)
+    const bool start_without_media = floppy_device &&
+                                     (!configured_filename ||
+                                      !*configured_filename);
+    if (!configured_filename && !start_without_media)
     {
         FAILURE_1(Configuration, "%s: Disk has no file attached!\n", devid_string);
     }
 
-    if (!reload_file(configured_filename))
+    if (!start_without_media && !reload_file(configured_filename))
         FAILURE_1(Runtime, "%s: Could not mount configured disk image", devid_string);
     state.scsi.media_changed = 0;
 
-    model_number = myCfg->get_text_value("model_number", configured_filename);
+    model_number = myCfg->get_text_value("model_number",
+        start_without_media ? "3.5-inch 1.44 MB floppy" : configured_filename);
 
     // Advance model_number pointer past any directory component.
     char* p = model_number;
@@ -272,11 +276,15 @@ CDiskFile::CDiskFile(CConfigurator* cfg, CSystem* sys, CDiskController* c,
 #endif
     }
 
-    printf("%s: Mounted file %s, %" PRId64 " %zu-byte blocks, "
-           "%" PRId64 "/%ld/%ld.\n",
-           devid_string, filename.c_str(),
-           byte_size / state.block_size, state.block_size,
-           cylinders, heads, sectors);
+    if (start_without_media)
+        printf("%s: 3.5-inch 1.44 MB floppy drive has no media.\n",
+               devid_string);
+    else
+        printf("%s: Mounted file %s, %" PRId64 " %zu-byte blocks, "
+               "%" PRId64 "/%ld/%ld.\n",
+               devid_string, filename.c_str(),
+               byte_size / state.block_size, state.block_size,
+               cylinders, heads, sectors);
 }
 
 CDiskFile::~CDiskFile(void)

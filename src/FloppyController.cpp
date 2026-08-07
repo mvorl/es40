@@ -230,7 +230,7 @@ bool CFloppyController::get_geometry(int drive, SFloppyGeometry* geometry)
 	};
 
 	CDisk* disk = FDISK(drive);
-	if (disk == NULL || geometry == NULL)
+	if (disk == NULL || !disk->media_present() || geometry == NULL)
 		return false;
 
 	off_t_large media_size = disk->get_byte_size();
@@ -561,11 +561,13 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 				{
 					int drive_idx = state.cmd_parms[1] & 3;
 					int head = (state.cmd_parms[1] >> 2) & 1;
-					u8 st3 = 0x08; // bit 3 = 1 (Ready)
-					if (state.drive[drive_idx].cylinder == 0) st3 |= 0x10; // Track 0
+					CDisk* disk = drive_idx < 2 ? FDISK(drive_idx) : NULL;
+					u8 st3 = 0x08; // 82077AA ST3 bit 3 always reads one.
+					if (drive_idx < 2 && state.drive[drive_idx].cylinder == 0)
+						st3 |= 0x10; // Track 0
 					st3 |= (head << 2);
 					st3 |= drive_idx;
-					if (FDISK(drive_idx) && FDISK(drive_idx)->ro()) st3 |= 0x40;
+					if (disk && disk->media_present() && disk->ro()) st3 |= 0x40;
 					state.cmd_res[0] = st3;
 					break;
 				}
@@ -597,11 +599,11 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 						do_interrupt();
 					};
 
-					// The FDC chip is always present via es40-cfg generated configs, 
-					// but a R/W data command issued to a drive with not present or 
-					// no disk needs to term abnormally instead of dereferencing a null
+					// The FDC and a physical drive can exist without inserted media.
+					// A data command to an absent drive or empty drive terminates
+					// abnormally instead of trying to access a backing image.
 					// ST0 IC=01 (abnormal termination) with the Not Ready bit set.
-					if (disk == NULL) {
+					if (disk == NULL || !disk->media_present()) {
 						printf("FDC [CMD %02x]: drive %d not ready (no media) - aborting\n", cmd, drive_idx);
 						state.cmd_res[0] = 0x40 | ST0_NR | (head << 2) | drive_idx; // ST0
 						state.cmd_res[1] = 0;                   // ST1
@@ -856,6 +858,20 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 				{
 					int drive_idx = state.cmd_parms[1] & 3;
 					int head = (state.cmd_parms[1] >> 2) & 1;
+					CDisk* disk = drive_idx < 2 ? FDISK(drive_idx) : NULL;
+					if (!disk || !disk->media_present())
+					{
+						state.cmd_res[0] = 0x40 | ST0_NR | (head << 2) | drive_idx;
+						state.cmd_res[1] = ST1_MAM;
+						state.cmd_res[2] = 0;
+						state.cmd_res[3] = drive_idx < 2 ?
+							state.drive[drive_idx].cylinder : 0;
+						state.cmd_res[4] = head;
+						state.cmd_res[5] = 1;
+						state.cmd_res[6] = 2;
+						do_interrupt();
+						break;
+					}
 					state.cmd_res[0] = drive_idx | (head << 2);
 					state.cmd_res[1] = 0;
 					state.cmd_res[2] = 0;
@@ -1045,7 +1061,7 @@ u64 CFloppyController::ReadMem(int index, u64 address, int dsize)
 		service_pending_media_actions_if_idle();
 		int drive_idx = state.drive_select & 3;
 		CDisk* disk = drive_idx < 2 ? FDISK(drive_idx) : NULL;
-		if (disk != NULL) {
+		if (disk != NULL && disk->media_present()) {
 			data = disk->media_change_pending() ? 0x80 : 0x00;
 		} else {
 			data = 0x80;
