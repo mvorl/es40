@@ -42,10 +42,11 @@
 #include <SDL3/SDL.h>
 #include <algorithm>
 #include <atomic>
+#include <memory>
+#include <mutex>
+#include <new>
 #include <string>
 #include <vector>
-
-extern std::vector<CDiskFile*> cd_diskfiles;
 
 static const SDL_DialogFileFilter cdrom_filters[] = {
     { "CD-ROM images", "iso;cue" },
@@ -53,6 +54,8 @@ static const SDL_DialogFileFilter cdrom_filters[] = {
 };
 
 static std::atomic<bool> file_dialog_open(false);
+static std::mutex removable_disks_mutex;
+static std::vector<std::shared_ptr<CDiskFileMediaMailbox> > removable_disks;
 
 enum EMediaPopupMode
 {
@@ -68,7 +71,7 @@ struct SMediaPopupState
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
     SDL_WindowID window_id = 0;
-    std::vector<CDiskFile*> devices;
+    std::vector<std::shared_ptr<CDiskFileMediaMailbox> > devices;
     std::string message;
     std::vector<SDL_FRect> rows;
     int selected = 0;
@@ -81,6 +84,49 @@ static SMediaPopupState media_popup;
 static SDL_WindowID retired_popup_id = 0;
 static bool swallowed_key_releases[SDL_SCANCODE_COUNT] = {};
 static bool swallow_parent_pointer_until_release = false;
+
+void sdl_register_removable_disk(
+    const std::shared_ptr<CDiskFileMediaMailbox>& mailbox) noexcept
+{
+    try
+    {
+        if (!mailbox)
+            return;
+        std::lock_guard<std::mutex> lock(removable_disks_mutex);
+        removable_disks.push_back(mailbox);
+    }
+    catch (...)
+    {
+    }
+}
+
+void sdl_unregister_removable_disk(
+    const std::shared_ptr<CDiskFileMediaMailbox>& mailbox) noexcept
+{
+    try
+    {
+        std::lock_guard<std::mutex> lock(removable_disks_mutex);
+        for (std::vector<std::shared_ptr<CDiskFileMediaMailbox> >::iterator it =
+                 removable_disks.begin(); it != removable_disks.end(); ++it)
+        {
+            if (*it == mailbox)
+            {
+                removable_disks.erase(it);
+                break;
+            }
+        }
+    }
+    catch (...)
+    {
+    }
+}
+
+static std::vector<std::shared_ptr<CDiskFileMediaMailbox> >
+snapshot_removable_disks()
+{
+    std::lock_guard<std::mutex> lock(removable_disks_mutex);
+    return removable_disks;
+}
 
 static bool popup_visible()
 {
@@ -233,8 +279,9 @@ static void render_popup()
         {
             if (index < (int)media_popup.devices.size())
             {
-                CDiskFile* disk = media_popup.devices[(size_t)index];
-                label = disk && disk->devid_string ? disk->devid_string :
+                const std::shared_ptr<CDiskFileMediaMailbox>& mailbox =
+                    media_popup.devices[(size_t)index];
+                label = mailbox ? mailbox->label() :
                     "Unnamed CD-ROM drive";
             }
             else
@@ -362,11 +409,18 @@ static void show_message(const char* message)
         update_popup_content();
 }
 
+struct SMediaFileDialogContext
+{
+    std::shared_ptr<CDiskFileMediaMailbox> mailbox;
+};
+
 static void SDLCALL media_file_callback(void* userdata,
                                          const char* const* filelist,
                                          int filter)
 {
     (void)filter;
+    std::unique_ptr<SMediaFileDialogContext> context(
+        static_cast<SMediaFileDialogContext*>(userdata));
     file_dialog_open.store(false, std::memory_order_release);
 
     if (!filelist)
@@ -381,38 +435,43 @@ static void SDLCALL media_file_callback(void* userdata,
         SDL_Log("The user selected an empty file.");
         return;
     }
-    CDiskFile* disk = static_cast<CDiskFile*>(userdata);
-    if (!disk)
+    if (!context || !context->mailbox)
         return;
 
-    char* filename = SDL_strdup(filelist[0]);
-    if (!filename)
-    {
-        SDL_Log("Could not allocate the selected CD-ROM image path.");
-        return;
-    }
-    SDL_Log("Change CD-ROM image file to %s", filename);
-    disk->reload_file(filename);
-    SDL_free(filename);
+    if (!context->mailbox->request_image_change(filelist[0]))
+        SDL_Log("The selected CD-ROM device is no longer available.");
 }
 
-static void show_file_dialog(CDiskFile* disk)
+static void show_file_dialog(
+    const std::shared_ptr<CDiskFileMediaMailbox>& mailbox)
 {
-    if (!disk || !media_popup.parent ||
+    if (!mailbox || !media_popup.parent ||
         file_dialog_open.exchange(true, std::memory_order_acq_rel))
         return;
 
-    SDL_ShowOpenFileDialog(media_file_callback, disk, media_popup.parent,
+    std::unique_ptr<SMediaFileDialogContext> context(
+        new (std::nothrow) SMediaFileDialogContext);
+    if (!context)
+    {
+        file_dialog_open.store(false, std::memory_order_release);
+        show_message("Could not allocate the file-dialog request.");
+        return;
+    }
+    context->mailbox = mailbox;
+
+    SDL_ShowOpenFileDialog(media_file_callback, context.release(),
+                           media_popup.parent,
                            cdrom_filters, SDL_arraysize(cdrom_filters),
                            nullptr, false);
 }
 
-static void open_device(CDiskFile* disk)
+static void open_device(
+    const std::shared_ptr<CDiskFileMediaMailbox>& mailbox)
 {
-    if (!disk)
+    if (!mailbox)
         return;
     close_popup();
-    show_file_dialog(disk);
+    show_file_dialog(mailbox);
 }
 
 void sdl_select_media(SDL_Window* window) noexcept
@@ -429,7 +488,7 @@ void sdl_select_media(SDL_Window* window) noexcept
 
         swallow_parent_pointer_until_release = false;
         media_popup.parent = window;
-        media_popup.devices = cd_diskfiles;
+        media_popup.devices = snapshot_removable_disks();
         if (media_popup.devices.empty())
         {
             show_message("No file-backed CD-ROM drives are configured.");

@@ -102,6 +102,7 @@ public:
   virtual size_t  scsi_expected_xfer_me(int bus);
   virtual void* scsi_xfer_ptr_me(int bus, size_t bytes);
   virtual void    scsi_xfer_done_me(int bus);
+  virtual void    service_pending_media_actions() {}
   void            scsi_reset();
 
   void            set_atapi_mode() { atapi_mode = true; };

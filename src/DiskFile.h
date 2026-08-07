@@ -59,6 +59,42 @@
 
 #include "Disk.h"
 #include "DiskFileBinCue.h"
+#include <deque>
+#include <memory>
+#include <mutex>
+#include <string>
+
+enum class EDiskFileMediaAction
+{
+  ChangeImage
+};
+
+struct SDiskFileMediaAction
+{
+  EDiskFileMediaAction type;
+  std::string path;
+};
+
+/**
+ * Thread-safe mailbox shared with the UI.
+ */
+class CDiskFileMediaMailbox
+{
+public:
+  explicit CDiskFileMediaMailbox(const std::string& label);
+
+  bool request_image_change(const char* path) noexcept;
+  bool take_pending_actions(std::deque<SDiskFileMediaAction>& actions) noexcept;
+  void deactivate() noexcept;
+
+  const std::string& label() const { return device_label; }
+
+private:
+  std::string device_label;
+  bool active;
+  std::mutex mutex;
+  std::deque<SDiskFileMediaAction> pending_actions;
+};
 
 /**
  * \brief Emulated disk that uses an image file.
@@ -81,7 +117,9 @@ public:
   virtual size_t  write_bytes(void* src, size_t bytes);
   virtual void    flush();
 
-  void            reload_file(char* filename);
+  bool            reload_file(const char* filename);
+  bool            change_media(const char* filename);
+  virtual void    service_pending_media_actions() override;
   FILE*           get_handle() { return handle; }
 
   // ---------------------------------------------------------------
@@ -111,9 +149,11 @@ public:
 
 protected:
   FILE*       handle   = nullptr;
-  char*       filename = nullptr;
+  std::string filename;
 
 private:
+  std::shared_ptr<CDiskFileMediaMailbox> media_mailbox;
+
   // ------------------------------------------------------------------
   // BIN/CUE internal state
   // All members are initialised in the constructor and reset by
@@ -126,6 +166,9 @@ private:
   off_t_large     logical_byte_pos;   ///< Logical byte position (LBA * 2048)
 
   // Internal helpers ------------------------------------------------
+  bool            load_file_transactional(const char* filename,
+                                           bool allow_autocreate,
+                                           bool allow_cue_fallback);
   void            reset_bincue_state();
   bool            try_parse_cue(const char* cue_path);
   bool            open_bin_files();

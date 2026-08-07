@@ -111,11 +111,68 @@
 #include "StdAfx.h"
 #include "DiskFile.h"
 
-#include <ctype.h>
-#include <string.h>
-#include <vector>
+#if defined(HAVE_SDL)
+#include "gui/sdl_media.h"
+#endif
 
-std::vector<CDiskFile*> cd_diskfiles;
+#include <ctype.h>
+#include <exception>
+#include <string>
+#include <string.h>
+
+CDiskFileMediaMailbox::CDiskFileMediaMailbox(const std::string& label) :
+    device_label(label), active(true)
+{
+}
+
+bool CDiskFileMediaMailbox::request_image_change(const char* path) noexcept
+{
+    try
+    {
+        if (!path || !*path)
+            return false;
+        std::lock_guard<std::mutex> lock(mutex);
+        if (!active)
+            return false;
+        pending_actions.push_back(
+            { EDiskFileMediaAction::ChangeImage, path });
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+bool CDiskFileMediaMailbox::take_pending_actions(
+    std::deque<SDiskFileMediaAction>& actions) noexcept
+{
+    try
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (!active || pending_actions.empty())
+            return false;
+        actions.swap(pending_actions);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+void CDiskFileMediaMailbox::deactivate() noexcept
+{
+    try
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        active = false;
+        pending_actions.clear();
+    }
+    catch (...)
+    {
+    }
+}
 
 // ===========================================================================
 //  CDiskFile: constructor / destructor
@@ -131,17 +188,17 @@ CDiskFile::CDiskFile(CConfigurator* cfg, CSystem* sys, CDiskController* c,
     track_count      = 0;
     current_lba      = 0;
     logical_byte_pos = 0;
-
-    filename = myCfg->get_text_value("file");
-    if (!filename)
+    char* configured_filename = myCfg->get_text_value("file");
+    if (!configured_filename)
     {
         FAILURE_1(Configuration, "%s: Disk has no file attached!\n", devid_string);
     }
 
-    reload_file(filename);
+    if (!reload_file(configured_filename))
+        FAILURE_1(Runtime, "%s: Could not mount configured disk image", devid_string);
     state.scsi.media_changed = 0;
 
-    model_number = myCfg->get_text_value("model_number", filename);
+    model_number = myCfg->get_text_value("model_number", configured_filename);
 
     // Advance model_number pointer past any directory component.
     char* p = model_number;
@@ -161,13 +218,17 @@ CDiskFile::CDiskFile(CConfigurator* cfg, CSystem* sys, CDiskController* c,
 
     if (cdrom())
     {
-        printf("CD FILE\n");
-        cd_diskfiles.push_back((CDiskFile*)this);
+        const char* device = devid_string ? devid_string : "unnamed device";
+        media_mailbox = std::make_shared<CDiskFileMediaMailbox>(
+            std::string("CD-ROM: ") + device);
+#if defined(HAVE_SDL)
+        sdl_register_removable_disk(media_mailbox);
+#endif
     }
 
     printf("%s: Mounted file %s, %" PRId64 " %zu-byte blocks, "
            "%" PRId64 "/%ld/%ld.\n",
-           devid_string, filename,
+           devid_string, filename.c_str(),
            byte_size / state.block_size, state.block_size,
            cylinders, heads, sectors);
 }
@@ -175,6 +236,14 @@ CDiskFile::CDiskFile(CConfigurator* cfg, CSystem* sys, CDiskController* c,
 CDiskFile::~CDiskFile(void)
 {
     printf("%s: Closing file.\n", devid_string);
+
+    if (media_mailbox)
+    {
+        media_mailbox->deactivate();
+#if defined(HAVE_SDL)
+        sdl_unregister_removable_disk(media_mailbox);
+#endif
+    }
 
     // Close any open bin/cue file handles and free the track array.
     if (is_bincue)
@@ -200,124 +269,318 @@ CDiskFile::~CDiskFile(void)
 //  reload_file  –  entry point for both initial load and media change
 // ===========================================================================
 
-void CDiskFile::reload_file(char* _filename)
+bool CDiskFile::reload_file(const char* _filename)
 {
-    // ---- tear down any existing state --------------------------------
-    reset_bincue_state();
+    return load_file_transactional(_filename, true, true);
+}
 
-    if (handle)
+bool CDiskFile::change_media(const char* _filename)
+{
+    return load_file_transactional(_filename, false, false);
+}
+
+bool CDiskFile::load_file_transactional(const char* _filename,
+                                        bool allow_autocreate,
+                                        bool allow_cue_fallback)
+{
+    if (!_filename || !*_filename)
+        return false;
+
+    // Allocate the persistent path before touching the mounted image.
+    // failure here is harmless.
+    std::string new_filename(_filename);
+
+    // Keep the mounted image mounted until we've opened the replacement
+    // this way, a failed selection returns cleanly without changing anything
+    struct MountedState
     {
-        fclose(handle);
-        handle = nullptr;
+        FILE* handle;
+        bool is_bincue;
+        CueTrack* tracks;
+        int track_count;
+        long current_lba;
+        off_t_large logical_byte_pos;
+        off_t_large byte_size;
+        off_t_large cylinders;
+        long heads;
+        long sectors;
+        off_t_large byte_pos;
+        int media_changed;
+    } old = {
+        handle, is_bincue, tracks, track_count, current_lba,
+        logical_byte_pos, byte_size, cylinders, heads, sectors,
+        state.byte_pos, state.scsi.media_changed
+    };
+
+    if (old.handle && !read_only && fflush(old.handle) != 0)
+    {
+        printf("%s: Could not flush the current image before media change.\n",
+               devid_string);
+        return false;
     }
 
-    // ---- detect .cue extension (case-insensitive, cross-platform) ----
-    if (has_cue_extension(_filename))
-    {
-        printf("%s: Detected .cue extension, attempting BIN/CUE parse...\n",
-               devid_string);
+    handle           = nullptr;
+    is_bincue        = false;
+    tracks           = nullptr;
+    track_count      = 0;
+    current_lba      = 0;
+    logical_byte_pos = 0;
+    byte_size        = 0;
+    state.byte_pos   = 0;
 
-        if (try_parse_cue(_filename))
+    auto discard_current = [this]()
+    {
+        reset_bincue_state();
+        if (handle)
         {
-            // Success: compute logical byte_size from track data.
-            // We expose the total user-data bytes (LBAs * 2048) to the SCSI
-            // layer so that READ CAPACITY and range checks are correct.
-            is_bincue = true;
-            byte_size = 0;
-            for (int i = 0; i < track_count; i++)
+            fclose(handle);
+            handle = nullptr;
+        }
+    };
+
+    auto restore_old = [this, &old, &discard_current]()
+    {
+        discard_current();
+        handle                   = old.handle;
+        is_bincue                = old.is_bincue;
+        tracks                   = old.tracks;
+        track_count              = old.track_count;
+        current_lba              = old.current_lba;
+        logical_byte_pos         = old.logical_byte_pos;
+        byte_size                = old.byte_size;
+        cylinders                = old.cylinders;
+        heads                    = old.heads;
+        sectors                  = old.sectors;
+        state.byte_pos           = old.byte_pos;
+        state.scsi.media_changed = old.media_changed;
+    };
+
+    auto discard_old = [&old]()
+    {
+        if (old.tracks)
+        {
+            for (int i = 0; i < old.track_count; i++)
             {
-                long track_lbas = tracks[i].endLBA - tracks[i].startLBA;
-                if (track_lbas > 0)
-                    byte_size += (off_t_large)track_lbas * 2048;
+                if (old.tracks[i].fileHandle)
+                    fclose(old.tracks[i].fileHandle);
+            }
+            free(old.tracks);
+        }
+        if (old.handle)
+            fclose(old.handle);
+    };
+
+    try
+    {
+        bool loaded = false;
+
+        // ---- detect .cue extension (case-insensitive, cross-platform) ----
+        if (has_cue_extension(_filename))
+        {
+            printf("%s: Detected .cue extension, attempting BIN/CUE parse...\n",
+                   devid_string);
+
+            if (try_parse_cue(_filename))
+            {
+                // Expose total user-data bytes (LBAs * 2048) to SCSI.
+                is_bincue = true;
+                byte_size = 0;
+                for (int i = 0; i < track_count; i++)
+                {
+                    long track_lbas = tracks[i].endLBA - tracks[i].startLBA;
+                    if (track_lbas > 0)
+                        byte_size += (off_t_large)track_lbas * 2048;
+                }
+
+                state.byte_pos   = 0;
+                logical_byte_pos = 0;
+                current_lba      = 0;
+                sectors          = 32;
+                heads            = 8;
+                loaded = true;
+
+                printf("%s: BIN/CUE loaded: %d track(s), %" PRId64
+                       " logical bytes.\n",
+                       devid_string, track_count, byte_size);
+            }
+            else
+            {
+                if (!allow_cue_fallback)
+                {
+                    restore_old();
+                    return false;
+                }
+
+                // Preserve the fallback for raw whose names happen to end in .cue.
+                printf("%s: BIN/CUE parse failed, falling back to raw image.\n",
+                       devid_string);
+            }
+        }
+
+        if (!loaded)
+        {
+            if (read_only)
+                handle = fopen(_filename, "rb");
+            else
+                handle = fopen_large(_filename, "rb+");
+
+            if (!handle)
+            {
+                printf("%s: Could not open file %s!\n", devid_string, _filename);
+
+                int sz = allow_autocreate ?
+                    myCfg->get_num_value("autocreate_size", false, 0) /
+                    1024 / 1024 : 0;
+                if (!sz)
+                {
+                    restore_old();
+                    return false;
+                }
+
+                handle = fopen_large(_filename, "wb");
+                if (!handle)
+                {
+                    restore_old();
+                    return false;
+                }
+
+                void* crt_buf = calloc(1024, 1024);
+                if (!crt_buf)
+                {
+                    restore_old();
+                    return false;
+                }
+
+                printf("%s: writing %d 1kB blocks:   0%%\b\b\b\b",
+                       devid_string, sz);
+
+                int lastpc = 0;
+                bool write_ok = true;
+                for (int a = 0; a < sz; a++)
+                {
+                    if (fwrite(crt_buf, 1024, 1024, handle) != 1024)
+                    {
+                        write_ok = false;
+                        break;
+                    }
+
+                    int pc = a * 100 / sz;
+                    if (pc != lastpc)
+                    {
+                        printf("%3d\b\b\b", pc);
+                        lastpc = pc;
+                    }
+
+                    fflush(stdout);
+                }
+
+                if (!write_ok || fflush(handle) != 0)
+                {
+                    free(crt_buf);
+                    restore_old();
+                    return false;
+                }
+
+                printf("100%%\n");
+                int close_result = fclose(handle);
+                handle = nullptr;
+                free(crt_buf);
+                if (close_result != 0)
+                {
+                    restore_old();
+                    return false;
+                }
+
+                if (read_only)
+                    handle = fopen_large(_filename, "rb");
+                else
+                    handle = fopen_large(_filename, "rb+");
+
+                if (!handle)
+                {
+                    restore_old();
+                    return false;
+                }
+
+                printf("%s: %d MB file %s created.\n",
+                       devid_string, sz, _filename);
             }
 
-            state.byte_pos   = 0;
-            logical_byte_pos = 0;
-            current_lba      = 0;
+            if (fseek_large(handle, 0, SEEK_END) != 0)
+            {
+                restore_old();
+                return false;
+            }
+            byte_size = ftell_large(handle);
+            if (byte_size < (off_t_large)state.block_size ||
+                fseek_large(handle, 0, SEEK_SET) != 0)
+            {
+                restore_old();
+                return false;
+            }
+            state.byte_pos = ftell_large(handle);
+            if (state.byte_pos != 0)
+            {
+                restore_old();
+                return false;
+            }
 
             sectors = 32;
             heads   = 8;
-            determine_layout();
-            state.scsi.media_changed = 1;
-
-            printf("%s: BIN/CUE loaded: %d track(s), %" PRId64
-                   " logical bytes.\n",
-                   devid_string, track_count, byte_size);
-            return;
         }
 
-        // Parse failed: fall through to raw-file handling.
-        printf("%s: BIN/CUE parse failed, falling back to raw image.\n",
-               devid_string);
-    }
-
-    // ---- plain ISO / raw image path (completely unchanged) -----------
-    if (read_only)
-        handle = fopen(_filename, "rb");
-    else
-        handle = fopen_large(_filename, "rb+");
-
-    if (!handle)
-    {
-        printf("%s: Could not open file %s!\n", devid_string, _filename);
-
-        int sz = myCfg->get_num_value("autocreate_size", false, 0) / 1024 / 1024;
-        if (!sz)
-            FAILURE_1(Runtime,
-                      "%s: File does not exist and no autocreate_size set",
-                      devid_string);
-
-        void* crt_buf;
-        handle = fopen_large(_filename, "wb");
-        if (!handle)
-            FAILURE_1(Runtime,
-                      "%s: File does not exist and could not be created",
-                      devid_string);
-
-        crt_buf = calloc(1024, 1024);
-        printf("%s: writing %d 1kB blocks:   0%%\b\b\b\b", devid_string, sz);
-
-        int lastpc = 0;
-        for (int a = 0; a < sz; a++)
+        if (byte_size < (off_t_large)state.block_size)
         {
-            fwrite(crt_buf, 1024, 1024, handle);
-
-            int pc = a * 100 / sz;
-            if (pc != lastpc)
-            {
-                printf("%3d\b\b\b", pc);
-                lastpc = pc;
-            }
-
-            fflush(stdout);
+            printf("%s: Image %s is empty, too small, or its size could not be read.\n",
+                   devid_string, _filename);
+            restore_old();
+            return false;
         }
-
-        printf("100%%\n");
-        fclose(handle);
-        free(crt_buf);
-
-        if (read_only)
-            handle = fopen_large(_filename, "rb");
-        else
-            handle = fopen_large(_filename, "rb+");
-
-        if (!handle)
-            FAILURE_1(Runtime,
-                      "%s: File created could not be opened", devid_string);
-
-        printf("%s: %d MB file %s created.\n", devid_string, sz, _filename);
+        determine_layout();
+    }
+    catch (...)
+    {
+        restore_old();
+        throw;
     }
 
-    // Determine size.
-    fseek_large(handle, 0, SEEK_END);
-    byte_size = ftell_large(handle);
-    fseek_large(handle, 0, SEEK_SET);
-    state.byte_pos = ftell_large(handle);
-
-    sectors = 32;
-    heads   = 8;
-    determine_layout();
+    filename.swap(new_filename);
+    discard_old();
     state.scsi.media_changed = 1;
+    return true;
+}
+
+void CDiskFile::service_pending_media_actions()
+{
+    if (!media_mailbox)
+        return;
+
+    std::deque<SDiskFileMediaAction> actions;
+    if (!media_mailbox->take_pending_actions(actions))
+        return;
+
+    for (std::deque<SDiskFileMediaAction>::const_iterator it = actions.begin();
+         it != actions.end(); ++it)
+    {
+        bool changed = false;
+        try
+        {
+            changed = change_media(it->path.c_str());
+        }
+        catch (const std::exception& error)
+        {
+            printf("%s: Media change failed: %s\n",
+                devid_string, error.what());
+        }
+        catch (...)
+        {
+            printf("%s: Media change failed with an unknown error.\n",
+                devid_string);
+        }
+        printf("%s: Media change %s: %s\n", devid_string,
+            changed ? "complete" : "failed", it->path.c_str());
+    }
+
 }
 
 

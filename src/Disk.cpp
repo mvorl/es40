@@ -125,16 +125,12 @@
 #include "Disk.h"
 #include "DiskFile.h"
 
-#include <vector>
-
 #define SCSI_MEDIA_STATE_STABLE             0
 #define SCSI_MEDIA_STATE_REMOVED            1
 #define SCSI_MEDIA_STATE_CHANGED           -1
 #define SCSI_MEDIA_STATE_RESET              2
 #define SCSI_MEDIA_STATE_RESET_REMOVED      3
 #define SCSI_MEDIA_STATE_RESET_CHANGED     -2
-
-extern std::vector<CDiskFile*> cd_diskfiles;
 
   /**
    * \brief Constructor.
@@ -172,8 +168,14 @@ CDisk::CDisk(CConfigurator* cfg, CSystem* sys, CDiskController* ctrl,
 	read_only = myCfg->get_bool_value("read_only");
 	is_cdrom = myCfg->get_bool_value("cdrom");
 
+	byte_size = 0;
+	cylinders = 0;
+	heads = 0;
+	sectors = 0;
 	state.block_size = is_cdrom ? 2048 : 512;
+	state.byte_pos = 0;
 	state.scsi.sense.available = false;
+	state.scsi.locked = false;
 	state.scsi.media_changed = SCSI_MEDIA_STATE_STABLE;
 
 	myCtrl->register_disk(this, myBus, myDev);
@@ -208,6 +210,18 @@ void CDisk::calc_cylinders()
  **/
 void CDisk::scsi_select_me(int bus)
 {
+	// Selection begins a new SCSI/ATAPI transaction.
+	// That's where changing media is safe
+	try
+	{
+		service_pending_media_actions();
+	}
+	catch (...)
+	{
+		printf("%s: Could not service a pending media action.\n",
+			devid_string);
+	}
+
 	state.scsi.msgo.written = 0;
 	state.scsi.msgi.available = 0;
 	state.scsi.msgi.read = 0;
