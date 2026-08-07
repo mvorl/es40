@@ -210,6 +210,12 @@
     <ClCompile Include="..\jit\jitengine.cpp">
       <Filter>Source Files\jit</Filter>
     </ClCompile>
+    <ClCompile Include="..\jit\jitengine_x64.cpp">
+      <Filter>Source Files\jit</Filter>
+    </ClCompile>
+    <ClCompile Include="..\jit\jitengine_a64.cpp">
+      <Filter>Source Files\jit</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\AliM1543C.h">
@@ -471,6 +477,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\jit\jitengine.h">
+      <Filter>Header Files\jit</Filter>
+    </ClInclude>
+    <ClInclude Include="..\jit\jitengine_internal.h">
       <Filter>Header Files\jit</Filter>
     </ClInclude>
     <ClInclude Include="..\diag_rpcc.h">

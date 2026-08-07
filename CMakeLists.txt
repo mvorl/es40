@@ -314,6 +314,8 @@ list(APPEND ES40_SOURCES
     src/TraceEngine.cpp
     src/VGA.cpp
     src/jit/jitengine.cpp
+    src/jit/jitengine_x64.cpp
+    src/jit/jitengine_a64.cpp
     )
 
 if (WIN32)
@@ -387,7 +389,7 @@ if (NOT ES40_DISABLE_ASMJIT)
     set(ASMJIT_NO_INSTALL ON)
     # Build only the backend matching the target: x86-64 is the real codegen host; ARM64
     # (incl. Apple Silicon) builds the JIT scaffolding, which always falls back to the
-    # interpreter (no a64 code is emitted yet -- see src/jit/jitengine.cpp).
+    # interpreter (no a64 code is emitted yet -- see src/jit/jitengine_a64.cpp).
     set(ASMJIT_NO_FOREIGN ON)
     add_subdirectory(third_party/asmjit)
     list(APPEND ES40_DEFINITIONS ES40_JIT)

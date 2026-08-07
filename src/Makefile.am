@@ -123,7 +123,8 @@ else
 AM_CPPFLAGS += -DASMJIT_NO_AARCH64
 endif
 
-es40_SOURCES += jit/jitengine.cpp
+# Both backends are listed unconditionally; each is a no-op TU on the other host arch.
+es40_SOURCES += jit/jitengine.cpp jit/jitengine_x64.cpp jit/jitengine_a64.cpp
 
 es40_LDADD = libasmjit.a
 es40_idb_LDADD = libasmjit.a

@@ -1,20 +1,38 @@
 /* ES40 emulator -- JIT engine
+ * Copyright (C) 2026 by the ES40 Emulator Project
+ * All rights reserved.
  *
- * Per-CPU, direct-mapped cache of translation blocks. The dispatcher runs a
- * block's compiled safe-ALU prefix natively, then interprets the remainder.
+ * WWW    : https://github.com/ES40-Emu/es40
  *
- * Blocks are keyed by VIRTUAL PC + ASN (like the icache), so the dispatch hot
- * path needs no address translation. A TB invalidation flushes the cache (see
- * flush()); a global (ASM) block matches any ASN.
+ * SPDX-License-Identifier: BSD-1-Clause
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ *    this list of conditions and the following disclaimer.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS AND CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  */
 #if !defined(INCLUDED_JITENGINE_H)
 #define INCLUDED_JITENGINE_H
 
 #ifdef ES40_JIT
 
-// Host codegen architecture. x86-64 has the full backend (emit_op & friends emit x86 via
-// asmjit); ARM64 is scaffolding only -- the engine and dispatcher compile, but compile_block
-// emits no code, so every block falls back to the interpreter (see jitengine.cpp).
+// Host codegen architecture, picking which backend TU is live: x86-64 has the full backend
+// (jitengine_x64.cpp -- emit_op & friends emit x86 via asmjit); ARM64 is scaffolding only
+// (jitengine_a64.cpp -- the engine and dispatcher compile, but compile_block emits no code,
+// so every block falls back to the interpreter). The host-independent engine is jitengine.cpp.
 #if defined(_M_X64) || defined(__x86_64__)
 #define ES40_JIT_X64 1
 #elif defined(_M_ARM64) || defined(__aarch64__)
