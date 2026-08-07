@@ -87,6 +87,12 @@
 #include "DMA.h"
 #include "Disk.h"
 
+#if defined(DEBUG_FDC)
+#define FDC_DEBUG(...) printf(__VA_ARGS__)
+#else
+#define FDC_DEBUG(...) ((void)0)
+#endif
+
   /**
    * Constructor.
    **/
@@ -113,11 +119,12 @@ CFloppyController::~CFloppyController()
 
 void CFloppyController::service_pending_media_actions_if_idle()
 {
-	if (state.pio.active || state.status.dio || state.cmd_parms_ptr != 0)
+	if (state.pio.active || state.cmd_parms_ptr != 0)
 		return;
 
-	// The controller is between commands. DMA requests complete inside the
-	// command dispatch, and a PIO request cannot reach this point while active.
+	// DMA requests complete inside command dispatch, and the controller mutex
+	// excludes that path here. A pending result phase no longer accesses the
+	// image and therefore does not need to delay an operator media change.
 	for (int drive = 0; drive < 2; drive++)
 		if (FDISK(drive) != NULL)
 		{
@@ -131,6 +138,12 @@ void CFloppyController::service_pending_media_actions_if_idle()
 					drive);
 			}
 		}
+}
+
+void CFloppyController::check_state()
+{
+	std::lock_guard<std::recursive_mutex> lock(controller_mutex);
+	service_pending_media_actions_if_idle();
 }
 
 
@@ -415,7 +428,7 @@ void CFloppyController::finish_pio_transfer(bool ok)
 		state.cmd_res[2] = 0;
 	}
 
-	printf("FDC [PIO]: %s %s (%u/%u bytes)\n",
+	FDC_DEBUG("FDC [PIO]: %s %s (%u/%u bytes)\n",
 		was_write ? "write" : "read", ok ? "complete" : "failed",
 		transferred, requested);
 
@@ -429,6 +442,8 @@ void CFloppyController::finish_pio_transfer(bool ok)
 
 void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 {
+	std::lock_guard<std::recursive_mutex> lock(controller_mutex);
+
 	if (index == 1537)
 		address += 7;
 
@@ -438,7 +453,7 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 	{
 	case FDC_REG_STATUS_A:
 	case FDC_REG_STATUS_B:
-		printf("FDC: Read only register %" PRId64 " written.\n", address);
+		FDC_DEBUG("FDC: Read only register %" PRId64 " written.\n", address);
 		break;
 
 	case FDC_REG_DOR:
@@ -454,7 +469,7 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 		state.drive[1].motor = (data & 0x20) >> 5;
 		state.drive_select = data & 0x03;
 
-		printf("FDC:  motor a: %s, motor b: %s, dma/irq gate: %s, drive: %s\n",
+		FDC_DEBUG("FDC:  motor a: %s, motor b: %s, dma/irq gate: %s, drive: %s\n",
 			state.drive[0].motor ? "on" : "off",
 			state.drive[1].motor ? "on" : "off",
 			(data & 0x08) ? "on" : "off",
@@ -475,7 +490,7 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 		break;
 	}
 	case FDC_REG_TAPE:
-		printf("FDC: Tape register written with %" PRIx64 "\n", data);
+		FDC_DEBUG("FDC: Tape register written with %" PRIx64 "\n", data);
 		break;
 
 	case FDC_REG_STATUS:  // write = data rate selector
@@ -487,7 +502,7 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 
 		state.datarate = data & 0x03;
 		state.write_precomp = (data & 0x1c) >> 2;
-		printf("FDC: data rate %s, precomp: %d\n", datarate_name[state.datarate].c_str(), state.write_precomp);
+		FDC_DEBUG("FDC: data rate %s, precomp: %d\n", datarate_name[state.datarate].c_str(), state.write_precomp);
 
 		if (data & 0x80)
 			reset_controller(true);
@@ -508,7 +523,7 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 
 		if (state.pio.active) {
 			if (!state.pio.write) {
-				printf("FDC: write to data register during non-DMA read phase.\n");
+				FDC_DEBUG("FDC: write to data register during non-DMA read phase.\n");
 				break;
 			}
 
@@ -528,7 +543,7 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 		}
 
 		if (state.status.dio) {
-			printf("Unrequested data byte to command port.  Throwing away.\n");
+			FDC_DEBUG("Unrequested data byte to command port.  Throwing away.\n");
 			break;
 		}
 		else
@@ -539,12 +554,12 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 			//printf("FDC: parm_ptr: %d, parms: %d\n", state.cmd_parms_ptr, cmdinfo[cmd].parms);
 			if (state.cmd_parms_ptr == cmdinfo[cmd].parms)
 			{
-				printf("FDC: command %s(", cmdinfo[cmd].name.c_str());
+				FDC_DEBUG("FDC: command %s(", cmdinfo[cmd].name.c_str());
 				for (int i = 1; i < state.cmd_parms_ptr; i++)
 				{
-					printf("%x ", state.cmd_parms[i]);
+					FDC_DEBUG("%x ", state.cmd_parms[i]);
 				}
-				printf(")\n");
+				FDC_DEBUG(")\n");
 
 				state.cmd_res_max = cmdinfo[cmd].returns;
 				state.cmd_res_ptr = 0;
@@ -604,7 +619,7 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 					// abnormally instead of trying to access a backing image.
 					// ST0 IC=01 (abnormal termination) with the Not Ready bit set.
 					if (disk == NULL || !disk->media_present()) {
-						printf("FDC [CMD %02x]: drive %d not ready (no media) - aborting\n", cmd, drive_idx);
+						FDC_DEBUG("FDC [CMD %02x]: drive %d not ready (no media) - aborting\n", cmd, drive_idx);
 						state.cmd_res[0] = 0x40 | ST0_NR | (head << 2) | drive_idx; // ST0
 						state.cmd_res[1] = 0;                   // ST1
 						state.cmd_res[2] = 0;                   // ST2
@@ -659,11 +674,11 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 						count = fdc_count;
 					}
 
-					printf("FDC [CMD %02x]: CHS=(%d/%d/%d) EOT=%d MT=%d. "
+					FDC_DEBUG("FDC [CMD %02x]: CHS=(%d/%d/%d) EOT=%d MT=%d. "
 						"Drive=%d geometry=%d/%d/%d media=%" PRId64 "\n",
 						cmd, cyl, head, sector, eot, mt, drive_idx,
 						geometry.cylinders, geometry.heads, geometry.sectors, media_size);
-					printf("FDC [%s]: Transfer size requested = %zu bytes (%zu sectors)\n",
+					FDC_DEBUG("FDC [%s]: Transfer size requested = %zu bytes (%zu sectors)\n",
 						state.dma ? "DMA" : "PIO", count, count/512);
 
 					bool sector_valid = false;
@@ -703,7 +718,7 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 						cyl >= geometry.cylinders || head >= geometry.heads ||
 						state.cmd_parms[3] != head || !range_valid ||
 						(!state.dma && count > sizeof(state.pio.data))) {
-						printf("FDC [%s]: unsupported request C/H/R/N/EOT="
+						FDC_DEBUG("FDC [%s]: unsupported request C/H/R/N/EOT="
 							"%d/%d/%d/%d/%d, media=%" PRId64 " bytes\n",
 							state.dma ? "DMA" : "PIO", cyl, head, sector,
 							state.cmd_parms[5], eot, media_size);
@@ -754,6 +769,7 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 								break;
 							}
 
+#if defined(DEBUG_FDC)
 							u32 fingerprint = 2166136261U;
 							for (size_t i = 0; i < count; i++)
 								fingerprint = (fingerprint ^ state.pio.data[i]) * 16777619U;
@@ -766,6 +782,7 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 								printf(" tail=%02x %02x", (unsigned)state.pio.data[count - 2],
 									(unsigned)state.pio.data[count - 1]);
 							printf("\n");
+#endif
 						}
 
 						// In non-DMA mode INT and RQM signal that execution data is ready.
@@ -776,7 +793,7 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 					u8* buffer = new u8[count];
 					memset(buffer, 0, count);
 
-					printf("FDC [LBA]: Calculated LBA = %d (offset 0x%x)\n", pos, pos * 512);
+					FDC_DEBUG("FDC [LBA]: Calculated LBA = %d (offset 0x%x)\n", pos, pos * 512);
 
 					bool io_ok = false;
 					if (cmd == 6) {
@@ -787,6 +804,7 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 								disk->read_bytes(buffer + first_count, second_count) ==
 								second_count;
 						}
+#if defined(DEBUG_FDC)
 						printf("FDC: read data:  %zx @ %x\n  ", count, pos * 512);
 						for (int i = 0; i < count; i++)
 						{
@@ -795,10 +813,12 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 								printf("\n  ");
 						}
 						printf("\n");
+#endif
 						if (io_ok)
 							theDMA->send_data(2, buffer, count);
 					} else {
 						theDMA->recv_data(2, buffer, count);
+#if defined(DEBUG_FDC)
 						printf("FDC: write data:  %zx @ %x\n  ", count, pos * 512);
 						for (int i = 0; i < count; i++)
 						{
@@ -807,6 +827,7 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 								printf("\n  ");
 						}
 						printf("\n");
+#endif
 						io_ok = disk->seek_byte(byte_offset) &&
 							disk->write_bytes(buffer, first_count) == first_count;
 						if (io_ok && second_count > 0) {
@@ -945,7 +966,7 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 		//    bits 7-2 = reserved
 		//    bit 0-1 = MFM data rate
 		state.datarate = data & 0x03;
-		printf("FDC: data rate %s\n", datarate_name[state.datarate].c_str());
+		FDC_DEBUG("FDC: data rate %s\n", datarate_name[state.datarate].c_str());
 
 		break;
 	}
@@ -953,6 +974,8 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 
 u64 CFloppyController::ReadMem(int index, u64 address, int dsize)
 {
+	std::lock_guard<std::recursive_mutex> lock(controller_mutex);
+
 	u64 data = 0;
 	bool log_read = true;
 
@@ -989,7 +1012,7 @@ u64 CFloppyController::ReadMem(int index, u64 address, int dsize)
 
 	case FDC_REG_DOR:
 	case FDC_REG_TAPE:
-		printf("FDC: Write only register %" PRId64 " read.", address);
+		FDC_DEBUG("FDC: Write only register %" PRId64 " read.", address);
 		break;
 
 	case FDC_REG_STATUS:
@@ -1009,7 +1032,7 @@ u64 CFloppyController::ReadMem(int index, u64 address, int dsize)
 			u8 value = 0;
 			if (state.pio.active) {
 				if (state.pio.write) {
-					printf("FDC: read from data register during non-DMA write phase.\n");
+					FDC_DEBUG("FDC: read from data register during non-DMA write phase.\n");
 					break;
 				}
 
@@ -1070,7 +1093,7 @@ u64 CFloppyController::ReadMem(int index, u64 address, int dsize)
 	}
 
 	if (log_read)
-		printf("FDC: Read register %" PRId64 ", value: %" PRIx64 "\n", address, data);
+		FDC_DEBUG("FDC: Read register %" PRId64 ", value: %" PRIx64 "\n", address, data);
 
 	return data;
 }
@@ -1086,7 +1109,7 @@ int CFloppyController::SaveState(FILE* f) {
 	fwrite(&ss, sizeof(long), 1, f);
 	fwrite(&state, sizeof(state), 1, f);
 	fwrite(&fdc_magic2, sizeof(u32), 1, f);
-	printf("fdc: %ld bytes saved.\n", ss);
+	FDC_DEBUG("fdc: %ld bytes saved.\n", ss);
 	return 0;
 }
 
@@ -1143,7 +1166,7 @@ int CFloppyController::RestoreState(FILE* f)
 		return -1;
 	}
 
-	printf("fdc: %ld bytes restored.\n", ss);
+	FDC_DEBUG("fdc: %ld bytes restored.\n", ss);
 	return 0;
 }
 
@@ -1198,7 +1221,7 @@ u8 CFloppyController::get_status() {
 		state.status.busy = false;
 
 
-	printf("FDC Status: %s, %s, %s, %s, %s, %s\n",
+	FDC_DEBUG("FDC Status: %s, %s, %s, %s, %s, %s\n",
 		state.status.rqm ? "Data Register Ready" : "No Access",
 		state.status.dio ? "C->S" : "S->C",
 		state.status.nondma ? "No DMA" : "DMA",

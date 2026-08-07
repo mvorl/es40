@@ -77,6 +77,7 @@
 #include "DiskController.h"
 #include "SystemComponent.h"
 #include "DMA.h"
+#include <mutex>
 
   /**
    * \brief Emulated floppy-drive controller.
@@ -91,6 +92,7 @@ public:
   virtual int   RestoreState(FILE* f);
   virtual int   SaveState(FILE* f);
   virtual void  init();
+  virtual void  check_state() override;
 
 private:
   void          service_pending_media_actions_if_idle();
@@ -110,6 +112,8 @@ private:
     const SFloppyGeometry& geometry, bool multi_track, bool flat_eot,
     bool result_is_next, size_t count);
   void finish_pio_transfer(bool ok);
+
+  std::recursive_mutex controller_mutex;
 
   struct {
     struct {
