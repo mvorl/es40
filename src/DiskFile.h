@@ -144,6 +144,8 @@ public:
   bool            reload_file(const char* filename);
   bool            change_media(const char* filename);
   bool            set_read_only(bool read_only);
+  virtual void    check_state() override;
+  virtual void    scsi_select_me(int bus) override;
   virtual void    service_pending_media_actions() override;
   FILE*           get_handle() { return handle; }
 
@@ -181,6 +183,7 @@ private:
 
   bool            floppy_device = false;
   std::shared_ptr<CDiskFileMediaMailbox> media_mailbox;
+  std::recursive_mutex media_action_mutex;
 
   // ------------------------------------------------------------------
   // BIN/CUE internal state

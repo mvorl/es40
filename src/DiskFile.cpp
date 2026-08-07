@@ -640,12 +640,30 @@ bool CDiskFile::load_file_transactional(const char* _filename,
 
     filename.swap(new_filename);
     discard_old();
-    state.scsi.media_changed = 1;
+    state.scsi.media_changed = -1;
     return true;
+}
+
+void CDiskFile::check_state()
+{
+    if (!cdrom() || !media_mailbox)
+        return;
+
+    std::lock_guard<std::recursive_mutex> lock(media_action_mutex);
+    if (scsi_get_phase(0) == SCSI_PHASE_FREE)
+        service_pending_media_actions();
+}
+
+void CDiskFile::scsi_select_me(int bus)
+{
+    std::lock_guard<std::recursive_mutex> lock(media_action_mutex);
+    CDisk::scsi_select_me(bus);
 }
 
 void CDiskFile::service_pending_media_actions()
 {
+    std::lock_guard<std::recursive_mutex> lock(media_action_mutex);
+
     if (!media_mailbox)
         return;
 

@@ -1057,6 +1057,15 @@ int CDisk::do_scsi_command()
 		return 0;
 	}
 
+	if (cdrom() && state.scsi.media_changed == SCSI_MEDIA_STATE_CHANGED &&
+		state.scsi.cmd.data[0] != SCSICMD_INQUIRY &&
+		state.scsi.cmd.data[0] != SCSICMD_REQUEST_SENSE)
+	{
+		state.scsi.media_changed = SCSI_MEDIA_STATE_STABLE;
+		do_scsi_error(SCSI_MEDIA_CHANGE);
+		return 0;
+	}
+
 	if (state.scsi.cmd.data[1] & 0xe0)
 	{
 #if defined(DEBUG_SCSI)
