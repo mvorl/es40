@@ -68,6 +68,7 @@
 enum class EDiskFileMediaAction
 {
   ChangeImage,
+  CreateBlankFloppy,
   Eject,
   SetReadOnly
 };
@@ -76,6 +77,7 @@ struct SDiskFileMediaAction
 {
   EDiskFileMediaAction type;
   std::string path;
+  size_t image_size;
   bool read_only;
   bool force_locked;
 };
@@ -91,6 +93,7 @@ public:
 
   bool request_image_change(const char* path,
                             bool force_locked = false) noexcept;
+  bool request_blank_floppy(const char* path, size_t image_size) noexcept;
   bool request_eject(bool force_locked = false) noexcept;
   bool request_read_only_toggle() noexcept;
   bool take_pending_actions(std::deque<SDiskFileMediaAction>& actions) noexcept;
@@ -206,6 +209,8 @@ private:
   bool            load_file_transactional(const char* filename,
                                            bool allow_autocreate,
                                            bool allow_cue_fallback);
+  bool            create_blank_floppy(const char* filename,
+                                      size_t image_size);
   void            reset_bincue_state();
   bool            try_parse_cue(const char* cue_path);
   bool            open_bin_files();

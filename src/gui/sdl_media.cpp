@@ -58,6 +58,20 @@ static const SDL_DialogFileFilter floppy_filters[] = {
     { "All files",     "*"                       }
 };
 
+struct SBlankFloppyFormat
+{
+    const char* label;
+    size_t image_size;
+};
+
+static const SBlankFloppyFormat blank_floppy_formats[] = {
+    { "360 KB (40 tracks, 9 sectors)",   360 * 1024 },
+    { "720 KB (80 tracks, 9 sectors)",   720 * 1024 },
+    { "1.2 MB (80 tracks, 15 sectors)", 1200 * 1024 },
+    { "1.44 MB (80 tracks, 18 sectors)", 1440 * 1024 },
+    { "2.88 MB (80 tracks, 36 sectors)", 2880 * 1024 }
+};
+
 static std::atomic<bool> file_dialog_open(false);
 static std::mutex removable_disks_mutex;
 static std::vector<std::shared_ptr<CDiskFileMediaMailbox> > removable_disks;
@@ -67,6 +81,7 @@ enum EMediaPopupMode
     MEDIA_POPUP_CLOSED,
     MEDIA_POPUP_DEVICES,
     MEDIA_POPUP_FLOPPY,
+    MEDIA_POPUP_FLOPPY_SIZE,
     MEDIA_POPUP_CDROM,
     MEDIA_POPUP_CD_LOCKED,
     MEDIA_POPUP_MESSAGE
@@ -157,7 +172,9 @@ static int item_count()
     if (media_popup.mode == MEDIA_POPUP_DEVICES)
         return (int)media_popup.devices.size() + 1;
     if (media_popup.mode == MEDIA_POPUP_FLOPPY)
-        return 4;
+        return 5;
+    if (media_popup.mode == MEDIA_POPUP_FLOPPY_SIZE)
+        return (int)SDL_arraysize(blank_floppy_formats) + 1;
     if (media_popup.mode == MEDIA_POPUP_CDROM)
         return 3;
     if (media_popup.mode == MEDIA_POPUP_CD_LOCKED)
@@ -267,6 +284,11 @@ static void render_popup()
         subtitle = media_popup.device ? media_popup.device->label() :
             "Selected floppy drive";
     }
+    else if (media_popup.mode == MEDIA_POPUP_FLOPPY_SIZE)
+    {
+        title = "Create blank floppy image";
+        subtitle = "Choose an unformatted raw-image capacity";
+    }
     else if (media_popup.mode == MEDIA_POPUP_CDROM)
     {
         title = "CD-ROM media";
@@ -350,13 +372,22 @@ static void render_popup()
             if (index == 0)
                 label = "Change image...";
             else if (index == 1)
-                label = "Eject";
+                label = "Create blank image...";
             else if (index == 2)
+                label = "Eject";
+            else if (index == 3)
                 label = media_popup.device &&
                     media_popup.device->displayed_read_only() ?
                     "Make writable" : "Make read-only";
             else
                 label = media_popup.devices.size() > 1 ? "Back" : "Cancel";
+        }
+        else if (media_popup.mode == MEDIA_POPUP_FLOPPY_SIZE)
+        {
+            if (index < (int)SDL_arraysize(blank_floppy_formats))
+                label = blank_floppy_formats[index].label;
+            else
+                label = "Back";
         }
         else if (media_popup.mode == MEDIA_POPUP_CDROM)
         {
@@ -406,6 +437,7 @@ static void render_popup()
         ((media_popup.mode == MEDIA_POPUP_FLOPPY ||
           media_popup.mode == MEDIA_POPUP_CDROM) &&
          media_popup.devices.size() > 1) ||
+        media_popup.mode == MEDIA_POPUP_FLOPPY_SIZE ||
         media_popup.mode == MEDIA_POPUP_CD_LOCKED;
     const char* footer = back_available ?
         "Arrows select   Enter open   Esc back" :
@@ -589,6 +621,7 @@ struct SMediaFileDialogContext
 {
     std::shared_ptr<CDiskFileMediaMailbox> mailbox;
     bool force_locked = false;
+    size_t blank_floppy_size = 0;
 };
 
 static void SDLCALL media_file_callback(void* userdata,
@@ -614,6 +647,14 @@ static void SDLCALL media_file_callback(void* userdata,
     }
     if (!context || !context->mailbox)
         return;
+
+    if (context->blank_floppy_size != 0)
+    {
+        if (!context->mailbox->request_blank_floppy(
+                filelist[0], context->blank_floppy_size))
+            SDL_Log("The selected floppy drive is no longer available.");
+        return;
+    }
 
     if (!context->mailbox->is_floppy() &&
         context->mailbox->media_locked() && !context->force_locked)
@@ -655,6 +696,32 @@ static void show_file_dialog(
     SDL_ShowOpenFileDialog(media_file_callback, context.release(),
                            media_popup.parent, filters, filter_count,
                            nullptr, false);
+}
+
+static void show_blank_floppy_dialog(
+    const std::shared_ptr<CDiskFileMediaMailbox>& mailbox,
+    size_t image_size)
+{
+    if (!mailbox || !mailbox->is_floppy() || image_size == 0 ||
+        !media_popup.parent ||
+        file_dialog_open.exchange(true, std::memory_order_acq_rel))
+        return;
+
+    std::unique_ptr<SMediaFileDialogContext> context(
+        new (std::nothrow) SMediaFileDialogContext);
+    if (!context)
+    {
+        file_dialog_open.store(false, std::memory_order_release);
+        show_message("Could not allocate the blank-image request.");
+        return;
+    }
+    context->mailbox = mailbox;
+    context->blank_floppy_size = image_size;
+
+    SDL_ShowSaveFileDialog(media_file_callback, context.release(),
+                           media_popup.parent, floppy_filters,
+                           (int)SDL_arraysize(floppy_filters),
+                           "blank.img");
 }
 
 static void open_device(
@@ -748,14 +815,36 @@ static void activate_selection()
         }
         else if (media_popup.selected == 1)
         {
+            media_popup.mode = MEDIA_POPUP_FLOPPY_SIZE;
+            media_popup.selected = 3;
+            media_popup.first_visible = 0;
+            update_popup_content();
+        }
+        else if (media_popup.selected == 2)
+        {
             if (!mailbox->request_eject())
                 SDL_Log("The selected floppy drive is no longer available.");
             close_popup();
         }
-        else if (media_popup.selected == 2)
+        else if (media_popup.selected == 3)
         {
             mailbox->request_read_only_toggle();
             close_popup();
+        }
+        else
+            cancel_or_go_back();
+        return;
+    }
+    if (media_popup.mode == MEDIA_POPUP_FLOPPY_SIZE)
+    {
+        std::shared_ptr<CDiskFileMediaMailbox> mailbox = media_popup.device;
+        if (mailbox && media_popup.selected >= 0 &&
+            media_popup.selected < (int)SDL_arraysize(blank_floppy_formats))
+        {
+            const size_t image_size =
+                blank_floppy_formats[media_popup.selected].image_size;
+            close_popup();
+            show_blank_floppy_dialog(mailbox, image_size);
         }
         else
             cancel_or_go_back();
@@ -840,6 +929,14 @@ static void activate_selection()
 
 static void cancel_or_go_back()
 {
+    if (media_popup.mode == MEDIA_POPUP_FLOPPY_SIZE)
+    {
+        media_popup.mode = MEDIA_POPUP_FLOPPY;
+        media_popup.selected = 1;
+        media_popup.first_visible = 0;
+        update_popup_content();
+        return;
+    }
     if (media_popup.mode == MEDIA_POPUP_CD_LOCKED)
     {
         media_popup.mode = MEDIA_POPUP_CDROM;

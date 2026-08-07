@@ -138,7 +138,29 @@ bool CDiskFileMediaMailbox::request_image_change(
         if (!active)
             return false;
         pending_actions.push_back(
-            { EDiskFileMediaAction::ChangeImage, path, false, force_locked });
+            { EDiskFileMediaAction::ChangeImage, path, 0, false,
+              force_locked });
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+bool CDiskFileMediaMailbox::request_blank_floppy(
+    const char* path, size_t image_size) noexcept
+{
+    try
+    {
+        if (!path || !*path || image_size == 0 || image_size % 512 != 0)
+            return false;
+        std::lock_guard<std::mutex> lock(mutex);
+        if (!active || !floppy_device)
+            return false;
+        pending_actions.push_back(
+            { EDiskFileMediaAction::CreateBlankFloppy, path, image_size,
+              false, false });
         return true;
     }
     catch (...)
@@ -155,7 +177,7 @@ bool CDiskFileMediaMailbox::request_eject(bool force_locked) noexcept
         if (!active)
             return false;
         pending_actions.push_back(
-            { EDiskFileMediaAction::Eject, std::string(), false,
+            { EDiskFileMediaAction::Eject, std::string(), 0, false,
               force_locked });
         return true;
     }
@@ -177,8 +199,8 @@ bool CDiskFileMediaMailbox::request_read_only_toggle() noexcept
         // Repeated requests remain deterministic regardless of FDC state.
         const bool desired = !read_only.load(std::memory_order_relaxed);
         pending_actions.push_back(
-            { EDiskFileMediaAction::SetReadOnly, std::string(), desired,
-              false });
+            { EDiskFileMediaAction::SetReadOnly, std::string(), 0,
+              desired, false });
         read_only.store(desired, std::memory_order_release);
         return true;
     }
@@ -380,6 +402,59 @@ bool CDiskFile::reload_file(const char* _filename)
 bool CDiskFile::change_media(const char* _filename)
 {
     return load_file_transactional(_filename, false, false);
+}
+
+bool CDiskFile::create_blank_floppy(const char* _filename,
+                                    size_t image_size)
+{
+    if (!floppy_device || !_filename || !*_filename)
+        return false;
+
+    switch (image_size)
+    {
+    case  360 * 1024:
+    case  720 * 1024:
+    case 1200 * 1024:
+    case 1440 * 1024:
+    case 2880 * 1024:
+        break;
+    default:
+        printf("%s: Unsupported blank floppy image size: %zu bytes.\n",
+               devid_string, image_size);
+        return false;
+    }
+
+    bool same_image = filename == _filename;
+#if defined(_WIN32)
+    same_image = _stricmp(filename.c_str(), _filename) == 0;
+#endif
+    if (same_image)
+    {
+        printf("%s: Refusing to replace the currently mounted floppy image.\n",
+               devid_string);
+        return false;
+    }
+
+    FILE* blank = fopen_large(_filename, "wb");
+    if (!blank)
+    {
+        printf("%s: Could not create blank floppy image %s.\n",
+               devid_string, _filename);
+        return false;
+    }
+
+    const bool written =
+        fseek_large(blank, (off_t_large)image_size - 1, SEEK_SET) == 0 &&
+        fputc(0, blank) != EOF && fflush(blank) == 0;
+    const bool closed = fclose(blank) == 0;
+    if (!written || !closed)
+    {
+        printf("%s: Could not finish blank floppy image %s.\n",
+               devid_string, _filename);
+        return false;
+    }
+
+    return true;
 }
 
 bool CDiskFile::eject_media()
@@ -759,6 +834,42 @@ void CDiskFile::service_pending_media_actions()
             printf("%s: Floppy is %s%s.\n", devid_string,
                 read_only ? "read-only" : "writable",
                 changed ? "" : " (unchanged: backing file could not be reopened)");
+            continue;
+        }
+
+        if (it->type == EDiskFileMediaAction::CreateBlankFloppy)
+        {
+            bool created = false;
+            bool mounted = false;
+            try
+            {
+                created = create_blank_floppy(
+                    it->path.c_str(), it->image_size);
+                mounted = created && change_media(it->path.c_str());
+            }
+            catch (const std::exception& error)
+            {
+                printf("%s: Blank floppy creation failed: %s\n",
+                    devid_string, error.what());
+            }
+            catch (...)
+            {
+                printf("%s: Blank floppy creation failed with an unknown error.\n",
+                    devid_string);
+            }
+
+            if (mounted)
+                media_mailbox->update_mounted_image(filename);
+
+            if (mounted)
+                printf("%s: Blank %zu KB floppy image created and mounted: %s\n",
+                    devid_string, it->image_size / 1024, it->path.c_str());
+            else if (created)
+                printf("%s: Blank floppy image created but could not be mounted: %s\n",
+                    devid_string, it->path.c_str());
+            else
+                printf("%s: Blank floppy image creation failed: %s\n",
+                    devid_string, it->path.c_str());
             continue;
         }
 
