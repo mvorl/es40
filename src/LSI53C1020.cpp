@@ -3,7 +3,7 @@
  * Copyright (C) 2025 by Kisara Development LLC.
  * All rights reserved.
  *
- * WWW    : https://github.com/gdwnldsKSC/es40
+ * WWW    : https://github.com/ES40-Emu/es40
  *
  * SPDX-License-Identifier: BSD-1-Clause
  *

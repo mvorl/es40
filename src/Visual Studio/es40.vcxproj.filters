@@ -180,6 +180,9 @@
     <ClCompile Include="..\gui\sdl.cpp">
       <Filter>Source Files\gui</Filter>
     </ClCompile>
+    <ClCompile Include="..\gui\sdl_media.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
     <ClCompile Include="..\gui\scancodes.cpp">
       <Filter>Source Files\gui</Filter>
     </ClCompile>
@@ -420,6 +423,9 @@
       <Filter>Header Files\gui</Filter>
     </ClInclude>
     <ClInclude Include="..\gui\sdlkeys.h">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\gui\sdl_media.h">
       <Filter>Header Files\gui</Filter>
     </ClInclude>
     <ClInclude Include="..\gui\sdl_fonts.h">

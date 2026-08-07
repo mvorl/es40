@@ -78,15 +78,13 @@
 #if defined(HAVE_SDL)
 #include "gui.h"
 #include "keymap.h"
+#include "sdl_media.h"
 #include "../VGA.h"
 #include "../System.h"
 
   //#include "../AliM1543C.h"
 #include "../Keyboard.h"
 #include "../Configurator.h"
-
-#include "../Disk.h"
-#include "../DiskFile.h"
 
 #define _MULTI_THREAD
 
@@ -168,8 +166,15 @@ static bool         sdl_swallow_end_release = false;
 static bool         sdl_swallow_home_release = false;
 static bool         sdl_swallow_pageup_release = false;
 static bool         sdl_swallow_pagedown_release = false;
-static const char*  sdl_title = "ES40 Emulator - Ctrl+Alt+End sends Ctrl+Alt+Del - Ctrl+Alt+Home resets window";
-static const char*  sdl_title_grabbed = "ES40 Emulator - Ctrl+F10 releases mouse - Ctrl+Alt+End sends Ctrl+Alt+Del - Ctrl+Alt+Home resets window";
+static const char*  sdl_title = "ES40 Emulator - Ctrl+F11 media - Ctrl+Alt+End sends Ctrl+Alt+Del - Ctrl+Alt+Home resets window";
+static const char*  sdl_title_grabbed = "ES40 Emulator - Ctrl+F10 releases mouse - Ctrl+F11 media - Ctrl+Alt+End sends C+A+Del - Ctrl+Alt+Home resets window";
+
+static bool sdl_toggle_keys_released()
+{
+	const bool* keys = SDL_GetKeyboardState(NULL);
+	return !(SDL_GetModState() & SDL_KMOD_CTRL) &&
+		(!keys || (!keys[SDL_SCANCODE_F10] && !keys[SDL_SCANCODE_F11]));
+}
 
 bx_sdl_gui_c::bx_sdl_gui_c(CConfigurator* cfg)
 {
@@ -388,6 +393,18 @@ void bx_sdl_gui_c::handle_events(void)
 
 	while (SDL_PollEvent(&sdl_event))
 	{
+		// Ctrl+F10/F11 explicitly release the guest modifiers and then swallow
+		// the corresponding host releases.  Let's not let repeat key reopen or
+		// immediately activate the popup in the meantime.
+		if (sdl_swallow_keys && sdl_event.type == SDL_EVENT_KEY_DOWN &&
+			sdl_toggle_keys_released())
+			sdl_swallow_keys = false;
+		if (sdl_swallow_keys && sdl_event.type == SDL_EVENT_KEY_DOWN)
+			continue;
+		if (!(sdl_swallow_keys && sdl_event.type == SDL_EVENT_KEY_UP) &&
+			sdl_media_handle_event(&sdl_event))
+			continue;
+
 		switch (sdl_event.type)
 		{
 		case SDL_EVENT_WINDOW_EXPOSED:
@@ -529,11 +546,6 @@ void bx_sdl_gui_c::handle_events(void)
 				sdl_swallow_keys = true;  // eat subsequent releases
 				break;
 			}
-#ifdef _WIN32
-			extern void win32_select_file(HWND hwnd);
-#else
-			extern void sdl_select_file(SDL_Window*);
-#endif
 			if (sdl_event.key.key == SDLK_F11 && (sdl_event.key.mod & SDL_KMOD_CTRL))
 			{
 				theKeyboard->gen_scancode(BX_KEY_CTRL_L | BX_KEY_RELEASED);
@@ -542,11 +554,7 @@ void bx_sdl_gui_c::handle_events(void)
 				if (sdl_grab)
 					bx_gui->mouse_enabled_changed(false);
 
-#ifdef _WIN32
-				win32_select_file((HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(sdl_window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
-#else
-				sdl_select_file(sdl_window);
-#endif
+				sdl_select_media(sdl_window);
 
 				sdl_swallow_keys = true;  // eat subsequent releases
 				break;
@@ -618,8 +626,8 @@ void bx_sdl_gui_c::handle_events(void)
 
 			if (sdl_swallow_keys)
 			{
-				// hanlde dealing with ctrl+f10 escape
-				if (!(SDL_GetModState() & SDL_KMOD_CTRL))
+				// Wait for both halves of Ctrl+F10/F11, regardless of release order.
+				if (sdl_toggle_keys_released())
 					sdl_swallow_keys = false;
 				break;  
 			}
@@ -656,6 +664,12 @@ void bx_sdl_gui_c::handle_events(void)
 				FAILURE(Graceful, "User requested shutdown");
 		}
 	}
+
+	// A native popup/file dialog can intercept the Ctrl release instead
+	// of the emulator.  Clear the latch from the SDL modifier state so 
+	// the next guest key is not needlessly discarded.
+	if (sdl_swallow_keys && sdl_toggle_keys_released())
+		sdl_swallow_keys = false;
 }
 
 /**
@@ -840,6 +854,7 @@ void bx_sdl_gui_c::mouse_enabled_changed_specific(bool val)
 
 void bx_sdl_gui_c::exit(void)
 {
+	sdl_media_shutdown();
 	if (sdl_texture) {
 		SDL_DestroyTexture(sdl_texture);
 		sdl_texture = NULL;

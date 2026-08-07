@@ -36,7 +36,7 @@ if (NOT ES40_DISABLE_SDL)
     if (NOT SDL3_DIR)
         set(SDL3_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../SDL3/cmake")
     endif()
-    find_package(SDL3 REQUIRED)
+    find_package(SDL3 3.2.0 REQUIRED)
 endif()
 
 set(ES40_HAVE_PCAP FALSE)
@@ -326,6 +326,8 @@ if (NOT ES40_DISABLE_SDL)
 
     list(APPEND ES40_SOURCES
         src/gui/sdl.cpp
+        src/gui/sdl_media.cpp
+        src/gui/sdl_media.h
         )
     
     if (WIN32)

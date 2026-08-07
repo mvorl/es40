@@ -2239,6 +2239,7 @@
     <ClCompile Include="..\SCSIBus.cpp" />
     <ClCompile Include="..\SCSIDevice.cpp" />
     <ClCompile Include="..\gui\sdl.cpp" />
+    <ClCompile Include="..\gui\sdl_media.cpp" />
     <ClCompile Include="..\Serial.cpp" />
     <ClCompile Include="..\StdAfx.cpp" />
     <ClCompile Include="..\LSI53C1020.cpp" />
@@ -2327,6 +2328,7 @@
     <ClInclude Include="..\SCSIDevice.h" />
     <ClInclude Include="..\gui\sdl_fonts.h" />
     <ClInclude Include="..\gui\sdlkeys.h" />
+    <ClInclude Include="..\gui\sdl_media.h" />
     <ClInclude Include="..\Serial.h" />
     <ClInclude Include="..\StdAfx.h" />
     <ClInclude Include="..\LSI53C1020.h" />

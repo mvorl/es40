@@ -107,6 +107,8 @@ es40_SOURCES = AliM1543C.cpp \
        gui/keymap.cpp \
        gui/scancodes.cpp \
        gui/sdl.cpp \
+	gui/sdl_media.cpp \
+	gui/sdl_media.h \
 	base/Exception.cpp
 
 if ENABLE_ASMJIT
