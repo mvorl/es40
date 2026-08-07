@@ -276,8 +276,7 @@ SafeOp classify(uint32_t ins, bool pal_block)
     case 0x09: return OP_LDAH;  // load address high (Ra = Rb + (disp16 << 16))
     case 0x19: {                // HW_MFPR: read IPR -> Ra. PALmode-only (else OPCDEC).
       // ISUM (fn 0x0d) reads async interrupt lines -- compiled via log/replay. Only the IPRs
-      // jit_hw_mfpr implements compile: an unknown function must reach the interpreter's
-      // UNKNOWN2 (OPCDEC trap), which the helper's keep-Ra default would silently skip.
+      // jit_hw_mfpr implements compile; an unknown index interprets (read-zero + warn-once).
       if (!pal_block) return OP_NONE;
       const uint32_t fn = (ins >> 8) & 0xff;
       const bool known = ((fn & 0xc0) == 0x40)                                   // PCTX group

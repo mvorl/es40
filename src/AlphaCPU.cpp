@@ -2106,7 +2106,8 @@ u64 CAlphaCPU::jit_hw_mfpr(CAlphaCPU* cpu, u32 ins, u64 cur)
 	case 0xc2: return state.fault_va;                        // VA
 	case 0xc3: return cpu->va_form(state.va_form_va, false); // VA_FORM
 	}
-	return cur;   // unknown IPR: DO_HW_MFPR's UNKNOWN2 leaves Ra unchanged
+	(void)cur;
+	return 0;     // unknown IPR: read-zero, matching DO_HW_MFPR (classify() never compiles these)
 }
 
 /* HW_MTPR (PALmode): the IPR write selected by `function` (value = Rb). Mirrors DO_HW_MTPR
