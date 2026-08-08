@@ -137,6 +137,8 @@ CJitEngine::CJitEngine(int cpu_id) : m_cpu_id(cpu_id), m_recorded(0), m_code_byt
   m_bail_link = m_jmp_attempt = m_jmp_hit = 0;
   m_fresh_cold = m_fresh_tag = m_fresh_asn = m_fresh_phys = m_fresh_hash = 0;
   m_trace_formed = m_trace_entered = m_trace_exits = m_trace_stale = 0;
+  m_licm_same = m_licm_diff = 0; m_licm_next = 0;
+  memset(m_licm_pool, 0, sizeof(m_licm_pool));
   memset(m_term_op, 0, sizeof(m_term_op));
   memset(m_pal_func, 0, sizeof(m_pal_func));
   memset(m_mtpr_func, 0, sizeof(m_mtpr_func));
@@ -548,6 +550,10 @@ uint64_t CJitEngine::note_exec(uint32_t native_instr, uint32_t interp_instr, uin
     printf("[JIT][STATS][CPU%d] traces: formed %llu | entered %llu | exits %llu | stale %llu (windowed)\n",
            m_cpu_id, (unsigned long long) m_trace_formed, (unsigned long long) m_trace_entered,
            (unsigned long long) m_trace_exits, (unsigned long long) m_trace_stale);
+  if (m_licm_same || m_licm_diff)   // region memops re-hitting the page they hit last time
+    printf("[JIT][STATS][CPU%d] licm-probe: same-page %llu | new-page %llu (%.1f%% invariant)\n",
+           m_cpu_id, (unsigned long long) m_licm_same, (unsigned long long) m_licm_diff,
+           100.0 * (double) m_licm_same / (double) (m_licm_same + m_licm_diff));
   { uint64_t fh[6] = {0}, mh[6] = {0}, tm = 0;   // link-fanout: thrashing source blocks + cumulative misses, bucketed by #distinct successors
     for (int i = 0; i < kCacheEntries; ++i) {
       if (!m_blocks[i].valid || m_blocks[i].link_misses == 0) continue;
@@ -618,6 +624,7 @@ uint64_t CJitEngine::note_exec(uint32_t native_instr, uint32_t interp_instr, uin
   m_bail_link = m_jmp_attempt = m_jmp_hit = 0;
   m_fresh_cold = m_fresh_tag = m_fresh_asn = m_fresh_phys = m_fresh_hash = 0;
   m_trace_formed = m_trace_entered = m_trace_exits = m_trace_stale = 0;
+  m_licm_same = m_licm_diff = 0;
   const auto stat_end = std::chrono::steady_clock::now();
   m_stat_wall_last_ns = (uint64_t) std::chrono::duration_cast<std::chrono::nanoseconds>(
       stat_end.time_since_epoch()).count();   // next window's throughput delta starts after this I/O

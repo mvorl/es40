@@ -305,6 +305,12 @@ public:
   struct RegAlloc {
     int host[32];                                  // host x86 reg id for guest GPR r, or -1 (memory)
     int rax_holds;                                 // guest GPR whose value currently lives in rax (value-forward), or -1
+    int vol_bind;                                  // guest GPR held in a CALLER-saved host reg for the
+                                                   // region (or -1); call sites spill/reload it around helpers
+#ifdef JIT_STATS
+    uint64_t* licm_slots;   // per-memop "page last seen" slots (null = don't probe)
+    uint32_t  licm_n, licm_max;
+#endif
     int host_of(int r) const { return host[r]; }
   };
 
@@ -404,6 +410,9 @@ private:
   uint64_t m_bail_link, m_jmp_attempt, m_jmp_hit;   // windowed: link-miss bails, jit_indirect attempts/hits
   uint64_t m_fresh_cold, m_fresh_tag, m_fresh_asn, m_fresh_phys, m_fresh_hash;  // windowed: record() step-4 fresh-compile reason
   uint64_t m_trace_formed, m_trace_entered, m_trace_exits, m_trace_stale;       // windowed: trace tier activity (M1+)
+  uint64_t m_licm_same, m_licm_diff;   // region memops hitting the same page as last time
+  uint64_t m_licm_pool[4096];          // per-memop last-page slots (shared pool; collisions just blur the stat)
+  uint32_t m_licm_next;
   uint64_t m_term_op[64];                       // cumulative: opcode that ended a block's compiled prefix
   uint64_t m_pal_func[256];                     // cumulative: CALL_PAL function code that ended a block
   uint64_t m_mtpr_func[256];                    // cumulative: HW_MTPR (0x1d) IPR index that ended a block

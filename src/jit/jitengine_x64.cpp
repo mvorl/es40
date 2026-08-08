@@ -528,6 +528,11 @@ static int helper_index(const CJitEngine::HelperSet& hs, const void* fn)
 // Currently reproduces the direct emitter exactly, INSTR delegates to emit_op.
 static constexpr bool RegionIR = true;
 
+// cache the region's hottest unpinned guest GPR in R8 (caller-saved; spilled/reloaded only
+// around helper calls, stored back when leaving the region).
+static constexpr bool RegionCacheReg = false;   // measured flat: the mandatory spill/unbind at every
+                                                // helper call cancels the load saved per use
+
 struct RegionOp {
   enum Kind : uint8_t { BLOCK_ENTER, INSTR, BLOCK_END, GUARD };
   Kind     kind;
@@ -545,6 +550,8 @@ struct ColdMemStub {
   asmjit::Label done;       // the block's shared bail exit
   void*         helper;     // jit_read / jit_write / jit_fp_read / jit_fp_write
   int           hidx = -1;  // helper's HelperSet index for the table call; -1 = imm64 fallback
+  int           vol_bind = -1;  // region-cached guest GPR (caller-saved host) to spill/reload
+  int           vol_host = -1;  // ...its host reg id
   int           size_bits;  // LOAD/STORE operand size
   uint32_t      descr;      // FPMEM only: (fmt<<16)|size
   int           ra;         // LOAD dest / STORE value guest reg
@@ -563,6 +570,10 @@ static void emit_cold_mem_stub(asmjit::x86::Assembler& a, const uint8_t* gpa,
   auto aq = [&](int k) { return x86::gpq(gpa[k]); };
   auto ad = [&](int k) { return x86::gpd(gpa[k]); };
   a.bind(s.slow);
+  // the region-cached GPR's host reg is an ABI arg reg so we spill before using, and read
+  // the store value from regs[] when it IS that reg (placement overwrites it). restore after.
+  if (s.vol_bind >= 0) a.mov(x86::qword_ptr(x86::rbx, s.vol_bind * 8), x86::gpq((uint32_t) s.vol_host));
+  const bool val_in_vol = (s.vol_bind >= 0 && s.pin == s.vol_host);
   a.mov(aq(0), x86::rbp);                                       // cpu
   if (aq(1).id() != x86::rdx.id()) a.mov(aq(1), x86::rdx);      // va (precomputed in RDX)
   switch (s.kind) {
@@ -571,9 +582,9 @@ static void emit_cold_mem_stub(asmjit::x86::Assembler& a, const uint8_t* gpa,
       a.mov(ad(2), imm((uint32_t) s.size_bits));
       break;
     case ColdMemStub::STORE:                                    // jit_write(cpu, va, size, value)
-      if (s.ra == 31)      a.xor_(ad(3), ad(3));                // value (R31 == 0)
-      else if (s.pin >= 0) a.mov(aq(3), x86::gpq((uint32_t) s.pin));
-      else                 a.mov(aq(3), x86::qword_ptr(x86::rbx, s.slot * 8));
+      if (s.ra == 31)                    a.xor_(ad(3), ad(3));  // value (R31 == 0)
+      else if (s.pin >= 0 && !val_in_vol) a.mov(aq(3), x86::gpq((uint32_t) s.pin));
+      else                                a.mov(aq(3), x86::qword_ptr(x86::rbx, s.slot * 8));
       a.mov(ad(2), imm((uint32_t) s.size_bits));
       break;
     case ColdMemStub::FPMEM:                                    // jit_fp_read/write(cpu, va, fa, descr)
@@ -584,6 +595,7 @@ static void emit_cold_mem_stub(asmjit::x86::Assembler& a, const uint8_t* gpa,
   if (s.hidx >= 0 && off.helpers)
     a.call(x86::qword_ptr(x86::rbp, (int32_t) (off.helpers + s.hidx * 8)));   // via the CPU-resident table
   else { a.mov(x86::rax, imm((uint64_t) s.helper)); a.call(x86::rax); }
+  if (s.vol_bind >= 0) a.mov(x86::gpq((uint32_t) s.vol_host), x86::qword_ptr(x86::rbx, s.vol_bind * 8));
   Label ok = a.new_label();
   a.test(x86::eax, x86::eax);
   a.jz(ok);
@@ -714,7 +726,39 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
         // overwrite RDX while JA_VA (the only register-sourced argument) still needs it.
         enum JitArgKind { JA_CPU, JA_GP, JA_GPZ, JA_VA, JA_OUT, JA_R10, JA_I32, JA_I64 };
         struct JitArg { JitArgKind k; uint64_t v; };
+#ifdef JIT_STATS
+        // does this memop hit the same page as its last execution? how much loop-invariant 
+        // page validation LICM could hoist? 
+        // Stats-only; RDX = va, RAX/RCX dead here.
+        auto emit_licm_probe = [&]() {
+            if (!regalloc.licm_slots || regalloc.licm_n >= regalloc.licm_max) return;
+            uint64_t* slot = &regalloc.licm_slots[regalloc.licm_n++];
+            Label hit = a.new_label(), end = a.new_label();
+            a.mov(x86::rax, x86::rdx);
+            a.and_(x86::rax, imm(-0x2000));
+            a.mov(x86::rcx, imm((uint64_t) slot));
+            a.cmp(x86::qword_ptr(x86::rcx), x86::rax);
+            a.je(hit);
+            a.mov(x86::qword_ptr(x86::rcx), x86::rax);
+            a.mov(x86::rax, imm((uint64_t) &m_licm_diff));
+            a.inc(x86::qword_ptr(x86::rax));
+            a.jmp(end);
+            a.bind(hit);
+            a.mov(x86::rax, imm((uint64_t) &m_licm_same));
+            a.inc(x86::qword_ptr(x86::rax));
+            a.bind(end);
+            };
+#endif
         auto emit_call = [&](void* fn, std::initializer_list<JitArg> as) {
+            // R8 (the region-cached GPR) is an ABI ARG register on both platforms, so spill it
+            // and unbind before using so arg reads must come from regs[], not a reg that
+            // placement is about to overwrite. Rebound & restore after the call.
+            const int vb = regalloc.vol_bind;
+            const int vh = (vb >= 0) ? regalloc.host[vb] : -1;
+            if (vb >= 0) {
+                a.mov(x86::qword_ptr(x86::rbx, vb * 8), x86::gpq((uint32_t) vh));
+                regalloc.host[vb] = -1;
+            }
             auto place = [&](int k, const JitArg& s) {
                 switch (s.k) {
                 case JA_CPU: a.mov(aq(k), x86::rbp);                              break;  // cpu
@@ -732,8 +776,9 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             k = 0;     for (const JitArg& s : as) { if (s.k == JA_I32 || s.k == JA_I64) place(k, s); ++k; }
             const int hi = helper_index(hs, fn);
             if (hi >= 0 && m_off.helpers)
-                a.call(x86::qword_ptr(x86::rbp, (int32_t)(m_off.helpers + hi * 8)));   // via the CPU-resident table 
+                a.call(x86::qword_ptr(x86::rbp, (int32_t)(m_off.helpers + hi * 8)));   // via the CPU-resident table
             else { a.mov(x86::rax, imm((uint64_t)fn)); a.call(x86::rax); }
+            if (vb >= 0) { regalloc.host[vb] = vh; a.mov(x86::gpq((uint32_t) vh), x86::qword_ptr(x86::rbx, vb * 8)); }
             };
 
         // Memory-format loads: va = regs[Rb] + disp16.
@@ -745,6 +790,9 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             if (rb == 31)  a.mov(x86::rdx, imm(disp));         // va -> RDX
             else { mov_from_reg(x86::rdx, rb); if (disp) a.add(x86::rdx, imm(disp)); }
             if (op == OP_LDQ_U) a.and_(x86::rdx, imm(~(uint64_t)7));   // LDQ_U: force 8-byte alignment
+#ifdef JIT_STATS
+            emit_licm_probe();
+#endif
 
 #ifdef JIT_VERIFY
             // Slow path: jit_read(cpu, va, size, &out); on fault bail to `done` returning i
@@ -800,6 +848,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 s.ra = ra;  s.pin = pin_id(ra);
                 s.slot = (pal_block && ((ra & 0xc) == 0x4)) ? ra + 32 : ra;   // PALshadow remap (see reg())
                 s.i = i;    s.fault_pc = b->tag + 4 * (uint64_t) i;
+                s.vol_bind = regalloc.vol_bind; s.vol_host = (s.vol_bind >= 0) ? regalloc.host[s.vol_bind] : -1;
                 cold.push_back(s);
             }
 #endif
@@ -817,6 +866,9 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             if (rb == 31)  a.mov(x86::rdx, imm(disp));                       // va -> RDX (preserved for helper)
             else { mov_from_reg(x86::rdx, rb); if (disp) a.add(x86::rdx, imm(disp)); }
             if (op == OP_STQ_U) a.and_(x86::rdx, imm(~(uint64_t)7));        // STQ_U: force 8-byte alignment
+#ifdef JIT_STATS
+            emit_licm_probe();
+#endif
 
 #ifdef JIT_VERIFY
             {
@@ -865,6 +917,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 s.ra = ra;  s.pin = pin_id(ra);
                 s.slot = (pal_block && ((ra & 0xc) == 0x4)) ? ra + 32 : ra;   // PALshadow remap (see reg())
                 s.i = i;    s.fault_pc = b->tag + 4 * (uint64_t) i;
+                s.vol_bind = regalloc.vol_bind; s.vol_host = (s.vol_bind >= 0) ? regalloc.host[s.vol_bind] : -1;
                 cold.push_back(s);
             }
 #endif
@@ -890,6 +943,9 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
 
             if (rb == 31)  a.mov(x86::rdx, imm(disp));                       // va -> RDX (preserved for helper)
             else { mov_from_reg(x86::rdx, rb); if (disp) a.add(x86::rdx, imm(disp)); }
+#ifdef JIT_STATS
+            emit_licm_probe();
+#endif
 
             auto emit_helper = [&]() {
                 emit_call(isload ? fp_read_helper : fp_write_helper,
@@ -946,6 +1002,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 s.hidx = helper_index(hs, s.helper);
                 s.descr = descr;  s.ra = fa;  s.pin = -1;  s.slot = 0;   // helper owns the f[] access
                 s.i = i;          s.fault_pc = b->tag + 4 * (uint64_t) i;
+                s.vol_bind = regalloc.vol_bind; s.vol_host = (s.vol_bind >= 0) ? regalloc.host[s.vol_bind] : -1;
                 cold.push_back(s);
             }
 #endif
@@ -1920,6 +1977,10 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   RegAlloc ra;
   for (int r = 0; r < 32; ++r) ra.host[r] = -1;
   ra.rax_holds = -1;
+  ra.vol_bind = -1;
+#ifdef JIT_STATS
+  ra.licm_slots = nullptr; ra.licm_n = ra.licm_max = 0;   // probe regions only, not blocks
+#endif
   ra.host[kGlobalPins[0]] = (int) x86::r12.id();
   ra.host[kGlobalPins[1]] = (int) x86::r13.id();
   ra.host[kGlobalPins[2]] = (int) x86::r15.id();
@@ -2144,6 +2205,22 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
 #endif
   }
 
+  // RLE: keep the region's hottest unpinned guest GPR live in R8 (caller-saved) 
+  // deletes one regs[] load per use. convention is unchanged: one store when leaving. 
+  // Excludes pinned regs and r4-7/r20-23 (pin routing skips PALshadow).
+  int vol_reg = -1;
+  if (RegionCacheReg) {
+    uint32_t acc2[32] = {};
+    for (uint32_t bi = 0; bi < n_blocks; ++bi)
+      count_gpr_access((const uint32_t*) (dram + blocks[bi]->phys), blocks[bi]->prefix_len, acc2);
+    acc2[31] = 0;
+    for (int r = 0; r < 32; ++r) if ((r & 0xc) == 0x4) acc2[r] = 0;
+    for (int k = 0; k < n_pins; ++k) acc2[pin_guest[k]] = 0;
+    uint32_t bestc = 3;                                  // > 3 uses to pay its load + exit store
+    for (int r = 0; r < 32; ++r) if (acc2[r] > bestc) { bestc = acc2[r]; vol_reg = r; }
+  }
+  const bool vol_sync = (vol_reg >= 0);
+
   CodeHolder code;
   if (code.init(((JitRuntime*) m_rt)->environment()) != Error::kOk) return;
   x86::Assembler a(&code);
@@ -2162,6 +2239,7 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   a.mov(x86::qword_ptr(x86::rsp, 40), imm(0));         // chain count := 0 (reclaimed r14 -> stack slot)
   for (int k = 0; k < n_pins; ++k)                     // load the trace's pin set from regs[]
     a.mov(x86::gpq((uint32_t) pin_hosts[k]), x86::qword_ptr(x86::rbx, pin_guest[k] * 8));
+  if (vol_sync) a.mov(x86::r8, x86::qword_ptr(x86::rbx, vol_reg * 8));   // region-cached GPR
 
   Label done = a.new_label();   // shared side-exit/return: EAX preset to the instr count, state.pc live
   Label body = a.new_label();   // loop re-entry (after the prologue; pins + count stay live across iterations)
@@ -2180,7 +2258,7 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   // adapter syncs them to regs[] and loads the trace set, then falls into body.
   size_t chain_off = 0;
   if (TraceChainIn) {
-    if (pins_differ) a.jmp(body);        // the C entry (trace pins already loaded) skips the adapter
+    if (pins_differ || vol_sync) a.jmp(body);   // the C entry (already loaded) skips the adapter
     Label chain_in = a.new_label();
     a.bind(chain_in);
     chain_off = code.code_size();
@@ -2193,6 +2271,7 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
       for (int k = 0; k < n_pins; ++k)
         a.mov(x86::gpq((uint32_t) pin_hosts[k]), x86::qword_ptr(x86::rbx, pin_guest[k] * 8));
     }
+    if (vol_sync) a.mov(x86::r8, x86::qword_ptr(x86::rbx, vol_reg * 8));   // M2 region-cached GPR
   }
 #endif
   a.bind(body);
@@ -2201,7 +2280,13 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   RegAlloc ra;
   for (int r = 0; r < 32; ++r) ra.host[r] = -1;
   ra.rax_holds = -1;
+  ra.vol_bind = -1;
+#ifdef JIT_STATS
+  { const uint32_t left = (uint32_t) (sizeof(m_licm_pool) / sizeof(m_licm_pool[0])) - m_licm_next;
+    ra.licm_slots = m_licm_pool + m_licm_next; ra.licm_n = 0; ra.licm_max = left > 64 ? 64 : left; }
+#endif
   for (int k = 0; k < n_pins; ++k) ra.host[pin_guest[k]] = pin_hosts[k];
+  if (vol_sync) { ra.host[vol_reg] = (int) x86::r8.id(); ra.vol_bind = vol_reg; }
 
   std::vector<ColdMemStub> cold;   // outlined memop slow paths, emitted after the epilogue
 
@@ -2330,9 +2415,11 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
       }
       a.mov(x86::gpq(gpa[0]), x86::rbp);
       a.mov(x86::gpq(gpa[1]), x86::r10);
+      if (vol_sync) a.mov(x86::qword_ptr(x86::rbx, vol_reg * 8), x86::r8);   // the call clobbers R8
       { const int hi = helper_index(hs, hs.indirect_helper);
         if (hi >= 0 && m_off.helpers) a.call(x86::qword_ptr(x86::rbp, (int32_t) (m_off.helpers + hi * 8)));
         else { a.mov(x86::rax, imm((uint64_t) hs.indirect_helper)); a.call(x86::rax); } }
+      if (vol_sync) a.mov(x86::r8, x86::qword_ptr(x86::rbx, vol_reg * 8));   // reload for the miss path
       a.test(x86::rax, x86::rax); a.jz(jmiss);
       a.jmp(x86::rax);                                    // HIT: tail into the target block's body
       a.bind(jmiss);
@@ -2368,6 +2455,7 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
       a.test(x86::r10, imm(1)); a.jz(ok);
       a.cmp(x86::byte_ptr(x86::rbp, m_off.sde), imm(0)); a.je(stub_ret);
       a.bind(ok); }
+    if (vol_sync) a.mov(x86::qword_ptr(x86::rbx, vol_reg * 8), x86::r8);   // commit before leaving
     if (pins_differ) {   // adapter: trace pins -> regs[], then the global block convention
       for (int k = 0; k < n_pins; ++k) a.mov(x86::qword_ptr(x86::rbx, pin_guest[k] * 8), x86::gpq((uint32_t) pin_hosts[k]));
       a.mov(x86::r12, x86::qword_ptr(x86::rbx, 26 * 8)); a.mov(x86::r13, x86::qword_ptr(x86::rbx, 16 * 8));
@@ -2400,6 +2488,7 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   a.bind(done);
   for (int k = 0; k < n_pins; ++k)                     // sync the trace's pin set back to regs[]
     a.mov(x86::qword_ptr(x86::rbx, pin_guest[k] * 8), x86::gpq((uint32_t) pin_hosts[k]));
+  if (vol_sync) a.mov(x86::qword_ptr(x86::rbx, vol_reg * 8), x86::r8);   // region-cached GPR
 #ifndef JIT_VERIFY
   a.bind(done_nosync);   // chain paths whose adapter already synced land here
 #endif
@@ -2415,6 +2504,10 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   for (const ColdMemStub& s : cold)
     emit_cold_mem_stub(a, gpa, m_off, s);
 
+#ifdef JIT_STATS
+  m_licm_next += ra.licm_n;
+  if (m_licm_next + 64 > (uint32_t) (sizeof(m_licm_pool) / sizeof(m_licm_pool[0]))) m_licm_next = 0;   // wrap
+#endif
   const size_t csz = code.code_size();
   JitFn fn = nullptr;
   if (((JitRuntime*) m_rt)->add(&fn, &code) != Error::kOk) return;
