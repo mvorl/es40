@@ -224,22 +224,23 @@ bool CFloppyController::get_geometry(int drive, SFloppyGeometry* geometry)
 		int cylinders;
 		int heads;
 		int sectors;
+		u8 data_rate;
 		off_t_large byte_size;
 	};
 
 	static const SGeometryEntry geometries[] = {
-		{ 40, 1,  8,  40 * 1 *  8 * 512 }, // 160K
-		{ 40, 1,  9,  40 * 1 *  9 * 512 }, // 180K
-		{ 40, 2,  8,  40 * 2 *  8 * 512 }, // 320K
-		{ 40, 2,  9,  40 * 2 *  9 * 512 }, // 360K
-		{ 40, 2, 10,  40 * 2 * 10 * 512 }, // 400K
-		{ 80, 2,  8,  80 * 2 *  8 * 512 }, // 640K
-		{ 80, 2,  9,  80 * 2 *  9 * 512 }, // 720K
-		{ 80, 2, 10,  80 * 2 * 10 * 512 }, // 800K
-		{ 80, 2, 15,  80 * 2 * 15 * 512 }, // 1.2M
-		{ 80, 2, 18,  80 * 2 * 18 * 512 }, // 1.44M
-		{ 80, 2, 21,  80 * 2 * 21 * 512 }, // 1.68M (DMF)
-		{ 80, 2, 36,  80 * 2 * 36 * 512 }, // 2.88M
+		{ 40, 1,  8, 2, 40 * 1 *  8 * 512 }, // 160K,  250 Kb/s
+		{ 40, 1,  9, 2, 40 * 1 *  9 * 512 }, // 180K,  250 Kb/s
+		{ 40, 2,  8, 2, 40 * 2 *  8 * 512 }, // 320K,  250 Kb/s
+		{ 40, 2,  9, 2, 40 * 2 *  9 * 512 }, // 360K,  250 Kb/s
+		{ 40, 2, 10, 2, 40 * 2 * 10 * 512 }, // 400K,  250 Kb/s
+		{ 80, 2,  8, 2, 80 * 2 *  8 * 512 }, // 640K,  250 Kb/s
+		{ 80, 2,  9, 2, 80 * 2 *  9 * 512 }, // 720K,  250 Kb/s
+		{ 80, 2, 10, 2, 80 * 2 * 10 * 512 }, // 800K,  250 Kb/s
+		{ 80, 2, 15, 0, 80 * 2 * 15 * 512 }, // 1.2M,  500 Kb/s
+		{ 80, 2, 18, 0, 80 * 2 * 18 * 512 }, // 1.44M, 500 Kb/s
+		{ 80, 2, 21, 0, 80 * 2 * 21 * 512 }, // 1.68M, 500 Kb/s (DMF)
+		{ 80, 2, 36, 3, 80 * 2 * 36 * 512 }, // 2.88M, 1 Mb/s
 	};
 
 	CDisk* disk = FDISK(drive);
@@ -303,6 +304,7 @@ bool CFloppyController::get_geometry(int drive, SFloppyGeometry* geometry)
 
 	geometry->heads = geometries[best].heads;
 	geometry->sectors = geometries[best].sectors;
+	geometry->data_rate = geometries[best].data_rate;
 	off_t_large cylinder_size =
 		(off_t_large)geometry->heads * geometry->sectors * 512;
 	off_t_large cylinders = extended_cylinders > 0 ? extended_cylinders :
@@ -317,7 +319,7 @@ bool CFloppyController::get_geometry(int drive, SFloppyGeometry* geometry)
 }
 
 void CFloppyController::prepare_rw_result(int drive, int head, int eot,
-	const SFloppyGeometry& geometry, bool multi_track, bool flat_eot,
+	const SFloppyGeometry& geometry, bool multi_track,
 	bool result_is_next, size_t count)
 {
 	int sectors = (int)(count / 512);
@@ -327,56 +329,25 @@ void CFloppyController::prepare_rw_result(int drive, int head, int eot,
 		address_advances--;
 	int last_head = head;
 
-	if (flat_eot) {
-		bool flattened_sector_number = state.cmd_parms[4] > geometry.sectors;
-		int logical_sector = state.cmd_parms[4];
-		if (!flattened_sector_number)
-			logical_sector += state.cmd_parms[3] * geometry.sectors;
-
-		for (int i = 0; i < address_advances; i++) {
-			last_head = (logical_sector - 1) / geometry.sectors;
-			if (last_head >= geometry.heads)
-				last_head = geometry.heads - 1;
-			logical_sector++;
-			if (logical_sector > eot) {
-				logical_sector = 1;
+	for (int i = 0; i < address_advances; i++) {
+		last_head = state.cmd_parms[3];
+		state.cmd_parms[4]++;
+		if (state.cmd_parms[4] > eot) {
+			state.cmd_parms[4] = 1;
+			if (multi_track) {
+				state.cmd_parms[3]++;
+				if (state.cmd_parms[3] >= geometry.heads) {
+					state.cmd_parms[3] = 0;
+					state.cmd_parms[2]++;
+				}
+			} else {
+				// Table 5-6: MT=0 advances C but leaves H unchanged.
 				state.cmd_parms[2]++;
 			}
 		}
-		if (!result_is_next || ended_in_partial_sector) {
-			last_head = (logical_sector - 1) / geometry.sectors;
-			if (last_head >= geometry.heads)
-				last_head = geometry.heads - 1;
-		}
-
-		if (flattened_sector_number) {
-			state.cmd_parms[3] = 0;
-			state.cmd_parms[4] = (u8)logical_sector;
-		} else {
-			state.cmd_parms[3] = (u8)((logical_sector - 1) / geometry.sectors);
-			state.cmd_parms[4] = (u8)(((logical_sector - 1) % geometry.sectors) + 1);
-		}
-	} else {
-		for (int i = 0; i < address_advances; i++) {
-			last_head = state.cmd_parms[3];
-			state.cmd_parms[4]++;
-			if (state.cmd_parms[4] > eot) {
-				state.cmd_parms[4] = 1;
-				if (multi_track) {
-					state.cmd_parms[3]++;
-					if (state.cmd_parms[3] >= geometry.heads) {
-						state.cmd_parms[3] = 0;
-						state.cmd_parms[2]++;
-					}
-				} else {
-					// Table 5-6: MT=0 advances C but leaves H unchanged.
-					state.cmd_parms[2]++;
-				}
-			}
-		}
-		if (!result_is_next || ended_in_partial_sector)
-			last_head = state.cmd_parms[3];
 	}
+	if (!result_is_next || ended_in_partial_sector)
+		last_head = state.cmd_parms[3];
 
 	state.cmd_res[0] = drive | (last_head << 2);
 	state.cmd_res[1] = 0;
@@ -388,14 +359,89 @@ void CFloppyController::prepare_rw_result(int drive, int head, int eot,
 	state.drive[drive].seeking = 1;
 }
 
+bool CFloppyController::format_track(int drive, int head, u8 sector_size,
+	u8 sector_count, u8 fill, const u8* sector_ids, size_t id_bytes)
+{
+	u8 result_cylinder = drive >= 0 && drive < 2 ?
+		(u8)state.drive[drive].cylinder : 0;
+	auto set_result = [&](u8 st0, u8 st1, const u8* id) {
+		state.cmd_res[0] = st0;
+		state.cmd_res[1] = st1;
+		state.cmd_res[2] = 0;
+		state.cmd_res[3] = id ? id[0] : result_cylinder;
+		state.cmd_res[4] = id ? id[1] : (u8)head;
+		state.cmd_res[5] = id ? id[2] : 1;
+		state.cmd_res[6] = id ? id[3] : sector_size;
+	};
+
+	CDisk* disk = drive >= 0 && drive < 2 ? FDISK(drive) : NULL;
+	if (disk == NULL || !disk->media_present()) {
+		set_result(0x40 | ST0_NR | (head << 2) | drive, 0, NULL);
+		return false;
+	}
+	if (disk->ro()) {
+		set_result(0x40 | (head << 2) | drive, ST1_WP, NULL);
+		return false;
+	}
+
+	SFloppyGeometry geometry;
+	if (!get_geometry(drive, &geometry) || sector_size != 2 ||
+		sector_count == 0 || sector_count > geometry.sectors ||
+		sector_ids == NULL ||
+		id_bytes < (size_t)sector_count * 4 ||
+		state.drive[drive].cylinder < 0 ||
+		state.drive[drive].cylinder >= geometry.cylinders ||
+		head < 0 || head >= geometry.heads) {
+		set_result(0x40 | (head << 2) | drive, ST1_ND, NULL);
+		return false;
+	}
+
+	u8 sector_data[512];
+	memset(sector_data, fill, sizeof(sector_data));
+	const u8* last_id = NULL;
+	for (unsigned i = 0; i < sector_count; i++) {
+		const u8* id = sector_ids + i * 4;
+		last_id = id;
+
+		// Raw images cannot preserve deliberately unusual C/H ID fields or
+		// physical interleave.  R still identifies the logical sector to fill;
+		// C/H are retained in the result packet, matching normal formatters.
+		if (id[2] < 1 || id[2] > geometry.sectors || id[3] != 2) {
+			set_result(0x40 | (head << 2) | drive, ST1_ND, id);
+			return false;
+		}
+
+		off_t_large sector_index =
+			((off_t_large)state.drive[drive].cylinder * geometry.heads + head) *
+			geometry.sectors + id[2] - 1;
+		off_t_large offset = sector_index * 512;
+		if (offset < 0 || offset > geometry.byte_size - 512 ||
+			offset > disk->get_byte_size() - 512 ||
+			!disk->seek_byte(offset) ||
+			disk->write_bytes(sector_data, sizeof(sector_data)) != sizeof(sector_data)) {
+			set_result(0x40 | (head << 2) | drive, ST1_ND, id);
+			return false;
+		}
+	}
+
+	disk->flush();
+	set_result((head << 2) | drive, 0, last_id);
+	return true;
+}
+
 void CFloppyController::finish_pio_transfer(bool ok)
 {
 	CDisk* disk = FDISK(state.pio.drive);
 	bool was_write = state.pio.write;
+	bool was_format = state.pio.format;
 	u32 transferred = state.pio.pos;
 	u32 requested = state.pio.size;
 
-	if (ok && was_write) {
+	if (ok && was_format) {
+		ok = format_track(state.pio.drive, state.pio.head,
+			state.pio.format_n, state.pio.format_sc, state.pio.format_fill,
+			state.pio.data, state.pio.size);
+	} else if (ok && was_write) {
 		u32 first_size = state.pio.first_size <= state.pio.size ?
 			state.pio.first_size : state.pio.size;
 		u32 second_size = state.pio.size - first_size;
@@ -411,6 +457,10 @@ void CFloppyController::finish_pio_transfer(bool ok)
 
 	state.pio.active = false;
 	state.pio.write = false;
+	state.pio.format = false;
+	state.pio.format_n = 0;
+	state.pio.format_sc = 0;
+	state.pio.format_fill = 0;
 	state.pio.offset = 0;
 	state.pio.second_offset = 0;
 	state.pio.size = 0;
@@ -422,14 +472,15 @@ void CFloppyController::finish_pio_transfer(bool ok)
 	state.cmd_res_ptr = 0;
 	state.cmd_res_max = 7;
 
-	if (!ok) {
+	if (!ok && !was_format) {
 		state.cmd_res[0] = (state.cmd_res[0] & (ST0_DS | ST0_HA)) | 0x40;
 		state.cmd_res[1] = ST1_ND;
 		state.cmd_res[2] = 0;
 	}
 
 	FDC_DEBUG("FDC [PIO]: %s %s (%u/%u bytes)\n",
-		was_write ? "write" : "read", ok ? "complete" : "failed",
+		was_format ? "format" : (was_write ? "write" : "read"),
+		ok ? "complete" : "failed",
 		transferred, requested);
 
 	clear_interrupt();
@@ -552,7 +603,8 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 			int cmd = state.cmd_parms[0] & 0x1F;
 			state.cmd_res_max = cmdinfo[cmd].returns;
 			//printf("FDC: parm_ptr: %d, parms: %d\n", state.cmd_parms_ptr, cmdinfo[cmd].parms);
-			if (state.cmd_parms_ptr == cmdinfo[cmd].parms)
+			if (cmdinfo[cmd].parms == 0 ||
+				state.cmd_parms_ptr == cmdinfo[cmd].parms)
 			{
 				FDC_DEBUG("FDC: command %s(", cmdinfo[cmd].name.c_str());
 				for (int i = 1; i < state.cmd_parms_ptr; i++)
@@ -577,7 +629,11 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 					int drive_idx = state.cmd_parms[1] & 3;
 					int head = (state.cmd_parms[1] >> 2) & 1;
 					CDisk* disk = drive_idx < 2 ? FDISK(drive_idx) : NULL;
-					u8 st3 = 0x08; // 82077AA ST3 bit 3 always reads one.
+					// The M1543C defines ST3 bit 5 as fixed one and bit 3 as
+					// fixed zero.  OpenVMS treats bit 5 as the legacy READY bit;
+					// returning it clear makes an otherwise present disk appear
+					// offline.
+					u8 st3 = 0x20;
 					if (drive_idx < 2 && state.drive[drive_idx].cylinder == 0)
 						st3 |= 0x10; // Track 0
 					st3 |= (head << 2);
@@ -637,28 +693,26 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 					SFloppyGeometry geometry;
 					get_geometry(drive_idx, &geometry);
 					off_t_large media_size = disk->get_byte_size();
+					if (state.datarate != geometry.data_rate) {
+						FDC_DEBUG("FDC [%s]: data-rate mismatch: controller=%s, media=%s\n",
+							state.dma ? "DMA" : "PIO",
+							datarate_name[state.datarate].c_str(),
+							datarate_name[geometry.data_rate].c_str());
+						// At the wrong clock rate no valid ID address mark can be
+						// decoded from the medium. Density probes depend on this
+						// failure before trying the next supported data rate.
+						fail_rw(ST1_MAM);
+						break;
+					}
 					if (eot == 0)
 						eot = geometry.sectors;
 
-					// Some firmware treats EOT as a flattened whole-cylinder sector
-					// number (for example 36 on 2x18 media).  Preserve that convention
-					// while using normal CHS for standard per-track commands.
-					bool flat_eot = eot > geometry.sectors &&
-						eot <= geometry.sectors * geometry.heads;
-					int logical_sector = sector;
-					if (flat_eot && logical_sector <= geometry.sectors)
-						logical_sector += head * geometry.sectors;
-					int pos;
-					if (flat_eot)
-						pos = cyl * geometry.heads * geometry.sectors + logical_sector - 1;
-					else
-						pos = (cyl * geometry.heads + head) * geometry.sectors + sector - 1;
+					int pos =
+						(cyl * geometry.heads + head) * geometry.sectors + sector - 1;
 
 					bool mt = (state.cmd_parms[0] & 0x80) ? true : false;
 					int sectors_to_read = 0;
-					if (flat_eot) {
-						sectors_to_read = eot - logical_sector + 1;
-					} else if (mt && head == 0 && geometry.heads > 1) {
+					if (mt && head == 0 && geometry.heads > 1) {
 						sectors_to_read = (eot - sector + 1) + eot;
 					} else {
 						sectors_to_read = eot - sector + 1;
@@ -681,22 +735,13 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 					FDC_DEBUG("FDC [%s]: Transfer size requested = %zu bytes (%zu sectors)\n",
 						state.dma ? "DMA" : "PIO", count, count/512);
 
-					bool sector_valid = false;
-					if (flat_eot) {
-						// Accept both H=1/R=1..SPT and the legacy H=0/R=SPT+1..
-						// flattened representation, but never combine both forms.
-						sector_valid = sector >= 1 &&
-							(sector <= geometry.sectors || head == 0) &&
-							logical_sector >= 1 && logical_sector <= eot;
-					} else {
-						sector_valid = sector >= 1 && sector <= geometry.sectors &&
-							eot >= sector && eot <= geometry.sectors;
-					}
+					bool sector_valid = sector >= 1 && sector <= geometry.sectors &&
+						eot >= sector && eot <= geometry.sectors;
 
 					off_t_large byte_offset = (off_t_large)pos * 512;
 					size_t first_count = count;
 					off_t_large second_offset = 0;
-					if (sector_valid && !flat_eot && mt && head == 0 &&
+					if (sector_valid && mt && head == 0 &&
 						geometry.heads > 1 && eot < geometry.sectors) {
 						size_t first_track_count = (size_t)(eot - sector + 1) * 512;
 						if (first_track_count < count) {
@@ -736,12 +781,13 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 						// terminator.  The M1543 reports abnormal termination/End of
 						// Track and advances result CHRN to the next logical sector.
 						prepare_rw_result(drive_idx, head, eot, geometry,
-							mt, flat_eot, true, count);
+							mt, true, count);
 						state.cmd_res[0] =
 							(state.cmd_res[0] & (ST0_DS | ST0_HA)) | 0x40;
 						state.cmd_res[1] = ST1_EOC;
 						state.pio.active = true;
 						state.pio.write = cmd == 5;
+						state.pio.format = false;
 						state.pio.drive = (u8)drive_idx;
 						state.pio.head = (u8)head;
 						state.pio.offset = byte_offset;
@@ -842,13 +888,84 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 
 					if (io_ok) {
 						prepare_rw_result(drive_idx, head, eot, geometry,
-							mt, flat_eot, true, count);
+							mt, true, count);
 						do_interrupt();
 					} else {
 						fail_rw(ST1_ND);
 					}
 				}
 				break;
+
+				case 13: // Format Track
+				{
+					// Command parameters are HDS/DS, N, SC, GPL and the fill byte.
+					// The execution phase then supplies SC four-byte C/H/R/N IDs.
+					int drive_idx = state.cmd_parms[1] & 0x03;
+					int head = (state.cmd_parms[1] >> 2) & 1;
+					u8 sector_size = state.cmd_parms[2];
+					u8 sector_count = state.cmd_parms[3];
+					u8 fill = state.cmd_parms[5];
+					CDisk* disk = drive_idx < 2 ? FDISK(drive_idx) : NULL;
+
+					auto fail_format = [&](u8 st0, u8 st1) {
+						state.cmd_res[0] = st0;
+						state.cmd_res[1] = st1;
+						state.cmd_res[2] = 0;
+						state.cmd_res[3] = drive_idx < 2 ?
+							(u8)state.drive[drive_idx].cylinder : 0;
+						state.cmd_res[4] = (u8)head;
+						state.cmd_res[5] = 1;
+						state.cmd_res[6] = sector_size;
+						do_interrupt();
+					};
+
+					if (disk == NULL || !disk->media_present()) {
+						fail_format(0x40 | ST0_NR | (head << 2) | drive_idx, 0);
+						break;
+					}
+					if (disk->ro()) {
+						fail_format(0x40 | (head << 2) | drive_idx, ST1_WP);
+						break;
+					}
+					if (sector_size != 2 || sector_count == 0) {
+						fail_format(0x40 | (head << 2) | drive_idx, ST1_ND);
+						break;
+					}
+
+					size_t id_bytes = (size_t)sector_count * 4;
+					if (state.dma) {
+						if (theDMA->get_transfer_size(2) < id_bytes) {
+							fail_format(0x40 | (head << 2) | drive_idx, ST1_OR);
+							break;
+						}
+
+						u8 sector_ids[256 * 4];
+						memset(sector_ids, 0, sizeof(sector_ids));
+						theDMA->recv_data(2, sector_ids, id_bytes);
+						format_track(drive_idx, head, sector_size, sector_count,
+							fill, sector_ids, id_bytes);
+						do_interrupt();
+					} else {
+						state.pio.active = true;
+						state.pio.write = true;
+						state.pio.format = true;
+						state.pio.drive = (u8)drive_idx;
+						state.pio.head = (u8)head;
+						state.pio.format_n = sector_size;
+						state.pio.format_sc = sector_count;
+						state.pio.format_fill = fill;
+						state.pio.size = (u32)id_bytes;
+						state.pio.first_size = 0;
+						state.pio.pos = 0;
+						state.cmd_res_ptr = 0;
+						state.cmd_res_max = 0;
+						state.status.rqm = true;
+						state.status.dio = false;
+						state.status.nondma = true;
+						do_interrupt();
+					}
+					break;
+				}
 
 				case 7: // recalibrate
 				{
@@ -887,6 +1004,20 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 						state.cmd_res[2] = 0;
 						state.cmd_res[3] = drive_idx < 2 ?
 							state.drive[drive_idx].cylinder : 0;
+						state.cmd_res[4] = head;
+						state.cmd_res[5] = 1;
+						state.cmd_res[6] = 2;
+						do_interrupt();
+						break;
+					}
+					SFloppyGeometry geometry;
+					get_geometry(drive_idx, &geometry);
+					if (state.datarate != geometry.data_rate)
+					{
+						state.cmd_res[0] = 0x40 | (head << 2) | drive_idx;
+						state.cmd_res[1] = ST1_MAM;
+						state.cmd_res[2] = 0;
+						state.cmd_res[3] = state.drive[drive_idx].cylinder;
 						state.cmd_res[4] = head;
 						state.cmd_res[5] = 1;
 						state.cmd_res[6] = 2;
@@ -942,13 +1073,19 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 					break;
 
 				default:
-					printf("Unhandled floppy command: %d = %s\n", cmd, cmdinfo[cmd].name.c_str());
-					exit(1);
+					FDC_DEBUG("FDC: unsupported command %d = %s\n",
+						cmd, cmdinfo[cmd].name.c_str());
+					// An unsupported opcode terminates in the result phase with
+					// ST0's invalid-command indication; guest input must never
+					// terminate the emulator process.
+					state.cmd_res[0] = 0x80;
+					state.cmd_res_max = 1;
+					break;
 				}
 
 
 				state.status.rqm = 1;
-				if (cmdinfo[cmd].returns > 0 && !state.pio.active) {
+				if (state.cmd_res_max > 0 && !state.pio.active) {
 					state.status.dio = 1;
 				}
 				state.cmd_parms_ptr = 0;

@@ -159,7 +159,10 @@
 //#define DEBUG_UNALIGN
 
 // Define if you want to enable FDC debugging/tracing
-//#define DEBUG_FDC
+#define DEBUG_FDC
+
+// Define if you want to enable ISA DMA debugging/tracing
+#define DEBUG_DMA
 
 // Define for a periodic per-CPU pc/icount dump on stderr (hang triage:
 // icount advancing = guest/CPU livelock, frozen = host deadlock)

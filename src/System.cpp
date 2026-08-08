@@ -1067,6 +1067,12 @@ void CSystem::WriteMem(u64 address, int dsize, u64 data, CSystemComponent* sourc
 				return;
 			}
 
+			// OpenVMS's floppy path retains an Intel 82357/EISA high-count-byte
+			// clear even on the M1543C non-EISA machine.
+			// The M1543C does not document port 405h so we can safely swallow
+			if (io_port == U64(0x405) && dsize == 8 && (data & 0xff) == 0)
+				return;
+
 			// Unused PCI I/O space
 			if (source)
 				printf("Write to unknown IO port %" PRIx64 " (dsize=%d data=%" PRIx64 ") on PCI 0 from %s\n",

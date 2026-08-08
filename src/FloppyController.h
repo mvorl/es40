@@ -100,6 +100,7 @@ private:
     int cylinders;
     int heads;
     int sectors;
+    u8 data_rate;
     off_t_large byte_size;
   };
 
@@ -109,8 +110,10 @@ private:
   u8 get_status();
   bool get_geometry(int drive, SFloppyGeometry* geometry);
   void prepare_rw_result(int drive, int head, int eot,
-    const SFloppyGeometry& geometry, bool multi_track, bool flat_eot,
+    const SFloppyGeometry& geometry, bool multi_track,
     bool result_is_next, size_t count);
+  bool format_track(int drive, int head, u8 sector_size, u8 sector_count,
+    u8 fill, const u8* sector_ids, size_t id_bytes);
   void finish_pio_transfer(bool ok);
 
   std::recursive_mutex controller_mutex;
@@ -149,8 +152,12 @@ private:
     struct {
       bool active;
       bool write;
+      bool format;
       u8 drive;
       u8 head;
+      u8 format_n;
+      u8 format_sc;
+      u8 format_fill;
       off_t_large offset;
       off_t_large second_offset;
       u32 size;
