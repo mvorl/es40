@@ -794,15 +794,29 @@ int main(int argc, char* argv[])
 	 * ALi IDE Disks                *
 	 * **************************** */
 
+	cout << "\nWARNING: IDE disk emulation is not well maintained and has seen "
+		"little ongoing support.\n"
+		"Use IDE disks only when absolutely necessary. For OS booting and "
+		"installation,\n"
+		"select 'none' here, then choose 'scsi' later to add the Symbios "
+		"53C810,\n"
+		"the most tested and proven SCSI controller.\n\n";
+
 	 /* Use a ShrinkingChoiceQuestion; once
 	  * a disk position has been used, it
 	  * can't be used again.
 	  */
 	ShrinkingChoiceQuestion ide_q;
-	ide_q.setQuestion("Do you want to add any disks to the IDE controller?");
+	ide_q.setQuestion("Do you want to add any disks to the built-in IDE controller?");
 	ide_q.setDefault("none");
-	ide_q.setExplanation("The IDE controller is mandatory. You can skip this, and set up a SCSI controller, too.");
-	ide_q.addAnswer("none", "", "stop adding disks");
+	ide_q.setExplanation(
+		"The built-in IDE controller is always present, but attaching IDE "
+		"disks is discouraged because IDE emulation is not well maintained "
+		"and has seen little ongoing support. Choose 'none' unless IDE is "
+		"absolutely necessary. For OS booting and installation, later choose "
+		"'scsi' to add the Symbios 53C810, the most tested and proven SCSI "
+		"controller.");
+	ide_q.addAnswer("none", "", "leave the IDE controller empty (recommended)");
 	ide_q.addAnswer("0.0", "disk0.0", "primary master");
 	ide_q.addAnswer("0.1", "disk0.1", "primary slave");
 	ide_q.addAnswer("1.0", "disk1.0", "secondary master");
@@ -901,7 +915,8 @@ int main(int argc, char* argv[])
 #if defined(HAVE_PCAP) || defined(HAVE_TAP_NET)
 	card_q.addAnswer("nic", "dec21143", "DEC 21143 Network Interface (1 max)");
 #endif
-	card_q.addAnswer("scsi", "sym53c810", "Symbios 53C810 narrow SCSI controller");
+	card_q.addAnswer("scsi", "sym53c810",
+		"Symbios 53C810 narrow SCSI controller (most tested/proven for OS boot/install)");
 	card_q.addAnswer("lsi scsi", "lsi53c1020",
 		"LSI 53C1020 Fusion-MPT Ultra320 SCSI controller NOT SRM BOOT CAPABLE");
 	card_q.addAnswer("es1370 audio", "es1370", "ES1370 Audio card (works only with Windows NT 4.0)");
