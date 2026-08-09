@@ -1157,11 +1157,12 @@ void CConfigurator::initialize()
 	}
 
 	// Synthesize mandatory system hardware omitted from the configuration.
-	// Missing serial ports use null_attach (bit-bucket) mode; the FDC
-	// is chipset integrated and always exists. 
+	// Missing serial ports use null_attach (bit-bucket) mode; the IDE and
+	// floppy controllers are chipset integrated and always exist.
 	if (myFlags & IS_CS)
 	{
 		bool have_serial[2] = { false, false };
+		bool have_ide = false;
 		bool have_fdc0 = false;
 		for (i = 0; i < iNumChildren; i++)
 		{
@@ -1173,12 +1174,36 @@ void CConfigurator::initialize()
 				if (number >= 0 && number < 2)
 					have_serial[number] = true;
 			}
+			else if (!strcmp(pChildren[i]->get_myValue(), "ali_ide"))
+			{
+				have_ide = true;
+			}
 			else if (!strcmp(pChildren[i]->get_myValue(), "floppy") &&
 				!strncmp(pChildren[i]->get_myName(), "fdc", 3) &&
 				atoi(&pChildren[i]->get_myName()[3]) == 0)
 			{
 				have_fdc0 = true;
 			}
+		}
+
+		if (!have_ide)
+		{
+			if (iNumChildren >= CFG_MAX_CHILDREN)
+				FAILURE(Configuration,
+					"No room to add the default IDE controller configuration");
+
+			printf("%%SYS-I-DEFAULTIDE: IDE controller is not configured; "
+				"adding the built-in controller at pci0.15 with no drives.\n");
+
+			char* ide_name;
+			CHECK_ALLOCATION(ide_name = (char*)malloc(9));
+			strcpy(ide_name, "pci0.15");
+			char* ide_value;
+			CHECK_ALLOCATION(ide_value = (char*)malloc(8));
+			strcpy(ide_value, "ali_ide");
+			char ide_text[] = "";
+			pChildren[iNumChildren++] = new CConfigurator(this, ide_name,
+				ide_value, ide_text, 0);
 		}
 
 		if (!have_fdc0)
