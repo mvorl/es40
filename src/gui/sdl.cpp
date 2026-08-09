@@ -95,9 +95,38 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <cctype>
+#include <string>
 #include <SDL3/SDL.h>
 
 #include "sdl_fonts.h"
+
+enum
+{
+	SDL_HOTKEY_MOD_CTRL = 1u << 0,
+	SDL_HOTKEY_MOD_ALT = 1u << 1,
+	SDL_HOTKEY_MOD_SHIFT = 1u << 2,
+	SDL_HOTKEY_MOD_GUI = 1u << 3,
+	// AltGr/Mode and Level5 are deliberately not configurable today, but
+	// they must participate in exact matching so they cannot accidentally
+	// satisfy a Ctrl+Alt binding.
+	SDL_HOTKEY_MOD_UNSUPPORTED = 1u << 31
+};
+
+struct sdl_hotkey_binding
+{
+	const char* config_name = NULL;
+	SDL_Keycode key = SDLK_UNKNOWN;
+	unsigned modifiers = 0;
+	bool enabled = false;
+	std::string display;
+
+	bool matches(const SDL_KeyboardEvent& event) const;
+};
+
+static unsigned sdl_hotkey_modifiers(SDL_Keymod modifiers);
+static sdl_hotkey_binding parse_sdl_hotkey(CConfigurator* cfg,
+	const char* config_name, const char* default_value);
 
 /**
  * \brief GUI implementation using SDL3.
@@ -128,8 +157,28 @@ private:
 	double         mouse_speed = 1.0;
 	bool           mouse_invert_x = false;
 	bool           mouse_invert_y = false;
+	sdl_hotkey_binding hotkey_mouse_capture;
+	sdl_hotkey_binding hotkey_media;
+	sdl_hotkey_binding hotkey_ctrl_alt_delete;
+	sdl_hotkey_binding hotkey_reset_window;
+	sdl_hotkey_binding hotkey_scale_up;
+	sdl_hotkey_binding hotkey_scale_down;
+	std::string    window_title;
+	std::string    window_title_grabbed;
+	u32            guest_key_by_scancode[SDL_SCANCODE_COUNT] = {};
+	bool           guest_key_pressed[SDL_SCANCODE_COUNT] = {};
+	bool           swallowed_hotkey_releases[SDL_SCANCODE_COUNT] = {};
 	void           reset_window_size();
 	void           adjust_window_scale(int delta);
+	void           load_hotkeys();
+	void           build_window_titles();
+	void           suppress_hotkey_releases(const SDL_KeyboardEvent& event,
+		const sdl_hotkey_binding& binding, bool release_guest_modifiers);
+	void           release_guest_key(SDL_Scancode scancode);
+	void           release_all_guest_keys();
+	void           send_guest_ctrl_alt_delete();
+	void           clear_hotkey_release_state();
+	void           reconcile_hotkey_release_state();
 };
 
 // declare one instance of the gui object and call macro to insert the
@@ -161,19 +210,174 @@ static int          sdl_mouse_button_state = 0;
 // events so multipliers < 1.0 don't drop slow movement.
 static double       sdl_mouse_accum_x = 0.0;
 static double       sdl_mouse_accum_y = 0.0;
-static bool         sdl_swallow_keys = false;
-static bool         sdl_swallow_end_release = false;
-static bool         sdl_swallow_home_release = false;
-static bool         sdl_swallow_pageup_release = false;
-static bool         sdl_swallow_pagedown_release = false;
-static const char*  sdl_title = "ES40 Emulator - Ctrl+F11 media - Ctrl+Alt+End sends Ctrl+Alt+Del - Ctrl+Alt+Home resets window";
-static const char*  sdl_title_grabbed = "ES40 Emulator - Ctrl+F10 releases mouse - Ctrl+F11 media - Ctrl+Alt+End sends C+A+Del - Ctrl+Alt+Home resets window";
 
-static bool sdl_toggle_keys_released()
+static std::string trim_hotkey_text(const std::string& value)
 {
-	const bool* keys = SDL_GetKeyboardState(NULL);
-	return !(SDL_GetModState() & SDL_KMOD_CTRL) &&
-		(!keys || (!keys[SDL_SCANCODE_F10] && !keys[SDL_SCANCODE_F11]));
+	size_t first = 0;
+	while (first < value.size() &&
+		std::isspace((unsigned char)value[first]))
+		first++;
+
+	size_t last = value.size();
+	while (last > first && std::isspace((unsigned char)value[last - 1]))
+		last--;
+
+	return value.substr(first, last - first);
+}
+
+static bool hotkey_text_equals(const std::string& lhs, const char* rhs)
+{
+	if (!rhs || lhs.size() != strlen(rhs))
+		return false;
+
+	for (size_t i = 0; i < lhs.size(); i++)
+	{
+		if (std::tolower((unsigned char)lhs[i]) !=
+			std::tolower((unsigned char)rhs[i]))
+			return false;
+	}
+	return true;
+}
+
+static bool parse_hotkey_modifier(const std::string& token,
+	unsigned* modifier)
+{
+	if (hotkey_text_equals(token, "ctrl") ||
+		hotkey_text_equals(token, "control"))
+		*modifier = SDL_HOTKEY_MOD_CTRL;
+	else if (hotkey_text_equals(token, "alt") ||
+		hotkey_text_equals(token, "option"))
+		*modifier = SDL_HOTKEY_MOD_ALT;
+	else if (hotkey_text_equals(token, "shift"))
+		*modifier = SDL_HOTKEY_MOD_SHIFT;
+	else if (hotkey_text_equals(token, "gui") ||
+		hotkey_text_equals(token, "super") ||
+		hotkey_text_equals(token, "win") ||
+		hotkey_text_equals(token, "windows") ||
+		hotkey_text_equals(token, "cmd") ||
+		hotkey_text_equals(token, "command") ||
+		hotkey_text_equals(token, "meta"))
+		*modifier = SDL_HOTKEY_MOD_GUI;
+	else
+		return false;
+
+	return true;
+}
+
+static std::string normalize_hotkey_key_name(const std::string& name)
+{
+	if (hotkey_text_equals(name, "pgup")) return "PageUp";
+	if (hotkey_text_equals(name, "pgdn") ||
+		hotkey_text_equals(name, "pagedn")) return "PageDown";
+	if (hotkey_text_equals(name, "esc")) return "Escape";
+	if (hotkey_text_equals(name, "del")) return "Delete";
+	if (hotkey_text_equals(name, "ins")) return "Insert";
+	if (hotkey_text_equals(name, "keypadplus") ||
+		hotkey_text_equals(name, "kpplus")) return "Keypad +";
+	if (hotkey_text_equals(name, "keypadminus") ||
+		hotkey_text_equals(name, "kpminus")) return "Keypad -";
+	return name;
+}
+
+static bool is_hotkey_modifier_key(SDL_Keycode key)
+{
+	return key == SDLK_LCTRL || key == SDLK_RCTRL ||
+		key == SDLK_LALT || key == SDLK_RALT ||
+		key == SDLK_LSHIFT || key == SDLK_RSHIFT ||
+		key == SDLK_LGUI || key == SDLK_RGUI;
+}
+
+static unsigned sdl_hotkey_modifiers(SDL_Keymod modifiers)
+{
+	unsigned result = 0;
+	if (modifiers & SDL_KMOD_CTRL) result |= SDL_HOTKEY_MOD_CTRL;
+	if (modifiers & SDL_KMOD_ALT) result |= SDL_HOTKEY_MOD_ALT;
+	if (modifiers & SDL_KMOD_SHIFT) result |= SDL_HOTKEY_MOD_SHIFT;
+	if (modifiers & SDL_KMOD_GUI) result |= SDL_HOTKEY_MOD_GUI;
+	if (modifiers & (SDL_KMOD_MODE | SDL_KMOD_LEVEL5))
+		result |= SDL_HOTKEY_MOD_UNSUPPORTED;
+	return result;
+}
+
+bool sdl_hotkey_binding::matches(const SDL_KeyboardEvent& event) const
+{
+	return enabled && event.key == key &&
+		sdl_hotkey_modifiers(event.mod) == modifiers;
+}
+
+static sdl_hotkey_binding parse_sdl_hotkey(CConfigurator* cfg,
+	const char* config_name, const char* default_value)
+{
+	sdl_hotkey_binding binding;
+	binding.config_name = config_name;
+
+	const char* configured = cfg->get_text_value(config_name, default_value);
+	std::string value = trim_hotkey_text(configured ? configured : "");
+	if (hotkey_text_equals(value, "none"))
+	{
+		binding.display = "none";
+		return binding;
+	}
+	if (value.empty())
+	{
+		printf("%%SDL-W-HOTKEY: %s has an empty binding; action disabled.\n",
+			config_name);
+		binding.display = "none";
+		return binding;
+	}
+
+	std::string key_name = value;
+	unsigned modifiers = 0;
+	for (;;)
+	{
+		size_t separator = key_name.find('+');
+		if (separator == std::string::npos)
+			break;
+
+		std::string token = trim_hotkey_text(key_name.substr(0, separator));
+		unsigned modifier = 0;
+		if (!parse_hotkey_modifier(token, &modifier))
+			break;
+		if (modifiers & modifier)
+		{
+			printf("%%SDL-W-HOTKEY: %s has invalid binding \"%s\"; "
+				"action disabled.\n", config_name, value.c_str());
+			binding.display = "none";
+			return binding;
+		}
+		modifiers |= modifier;
+		key_name = trim_hotkey_text(key_name.substr(separator + 1));
+	}
+
+	key_name = normalize_hotkey_key_name(trim_hotkey_text(key_name));
+	if (key_name.empty())
+	{
+		printf("%%SDL-W-HOTKEY: %s has invalid binding \"%s\"; "
+			"action disabled.\n", config_name, value.c_str());
+		binding.display = "none";
+		return binding;
+	}
+
+	SDL_ClearError();
+	SDL_Keycode key = SDL_GetKeyFromName(key_name.c_str());
+	if (key == SDLK_UNKNOWN || is_hotkey_modifier_key(key))
+	{
+		printf("%%SDL-W-HOTKEY: %s has invalid binding \"%s\"; "
+			"action disabled.\n", config_name, value.c_str());
+		binding.display = "none";
+		return binding;
+	}
+
+	binding.key = key;
+	binding.modifiers = modifiers;
+	binding.enabled = true;
+	if (modifiers & SDL_HOTKEY_MOD_CTRL) binding.display += "Ctrl+";
+	if (modifiers & SDL_HOTKEY_MOD_ALT) binding.display += "Alt+";
+	if (modifiers & SDL_HOTKEY_MOD_SHIFT) binding.display += "Shift+";
+	if (modifiers & SDL_HOTKEY_MOD_GUI) binding.display += "GUI+";
+	const char* display_key = SDL_GetKeyName(key);
+	binding.display += (display_key && *display_key) ? display_key : key_name;
+	return binding;
 }
 
 bx_sdl_gui_c::bx_sdl_gui_c(CConfigurator* cfg)
@@ -182,16 +386,100 @@ bx_sdl_gui_c::bx_sdl_gui_c(CConfigurator* cfg)
 	bx_keymap = new bx_keymap_c(cfg);
 }
 
+void bx_sdl_gui_c::load_hotkeys()
+{
+	hotkey_mouse_capture = parse_sdl_hotkey(myCfg,
+		"hotkey.mouse_capture", "Ctrl+F10");
+	hotkey_media = parse_sdl_hotkey(myCfg,
+		"hotkey.media", "Ctrl+F11");
+	hotkey_ctrl_alt_delete = parse_sdl_hotkey(myCfg,
+		"hotkey.ctrl_alt_delete", "Ctrl+Alt+End");
+	hotkey_reset_window = parse_sdl_hotkey(myCfg,
+		"hotkey.reset_window", "Ctrl+Alt+Home");
+	hotkey_scale_up = parse_sdl_hotkey(myCfg,
+		"hotkey.scale_up", "Ctrl+PageUp");
+	hotkey_scale_down = parse_sdl_hotkey(myCfg,
+		"hotkey.scale_down", "Ctrl+PageDown");
+
+	sdl_hotkey_binding* bindings[] = {
+		&hotkey_mouse_capture,
+		&hotkey_media,
+		&hotkey_ctrl_alt_delete,
+		&hotkey_reset_window,
+		&hotkey_scale_up,
+		&hotkey_scale_down
+	};
+	const size_t binding_count = sizeof(bindings) / sizeof(bindings[0]);
+	bool active[] = {
+		hotkey_mouse_capture.enabled,
+		hotkey_media.enabled,
+		hotkey_ctrl_alt_delete.enabled,
+		hotkey_reset_window.enabled,
+		hotkey_scale_up.enabled && vid_scale_change_enable,
+		hotkey_scale_down.enabled && vid_scale_change_enable
+	};
+	bool duplicate[sizeof(bindings) / sizeof(bindings[0])] = {};
+	for (size_t i = 0; i < binding_count; i++)
+	{
+		if (!active[i])
+			continue;
+		for (size_t j = i + 1; j < binding_count; j++)
+		{
+			if (active[j] &&
+				bindings[i]->key == bindings[j]->key &&
+				bindings[i]->modifiers == bindings[j]->modifiers)
+			{
+				printf("%%SDL-W-HOTKEY: %s and %s both use \"%s\"; "
+					"both actions disabled.\n",
+					bindings[i]->config_name, bindings[j]->config_name,
+					bindings[i]->display.c_str());
+				duplicate[i] = true;
+				duplicate[j] = true;
+			}
+		}
+	}
+	for (size_t i = 0; i < binding_count; i++)
+	{
+		if (duplicate[i])
+		{
+			bindings[i]->enabled = false;
+			bindings[i]->display = "none";
+		}
+	}
+}
+
+void bx_sdl_gui_c::build_window_titles()
+{
+	auto append_hint = [](std::string& title,
+		const sdl_hotkey_binding& binding, const char* description)
+	{
+		if (binding.enabled)
+		{
+			title += " - ";
+			title += binding.display;
+			title += " ";
+			title += description;
+		}
+	};
+
+	window_title = "ES40 Emulator";
+	append_hint(window_title, hotkey_media, "media");
+	append_hint(window_title, hotkey_ctrl_alt_delete, "sends C+A+Del");
+	append_hint(window_title, hotkey_reset_window, "resets window");
+
+	window_title_grabbed = "ES40 Emulator";
+	append_hint(window_title_grabbed, hotkey_mouse_capture, "releases mouse");
+	append_hint(window_title_grabbed, hotkey_media, "media");
+	append_hint(window_title_grabbed, hotkey_ctrl_alt_delete, "sends C+A+Del");
+	append_hint(window_title_grabbed, hotkey_reset_window, "resets window");
+}
+
 void bx_sdl_gui_c::specific_init(unsigned x_tilesize, unsigned y_tilesize)
 {
 	if (!SDL_Init(SDL_INIT_VIDEO))
 	{
 		FAILURE_1(SDL, "Unable to initialize SDL3 video subsystem: %s", SDL_GetError());
 	}
-
-	// Create the initial window + renderer + texture at 640x480.
-	// dimension_update() will recreate the texture if the resolution changes.
-	dimension_update(640, 480);
 
 	// SDL3: key repeat is handled by the OS; no SDL_EnableKeyRepeat().
 
@@ -215,6 +503,13 @@ void bx_sdl_gui_c::specific_init(unsigned x_tilesize, unsigned y_tilesize)
 
 	this->mouse_invert_x = myCfg->get_bool_value("mouse.invert_x", false);
 	this->mouse_invert_y = myCfg->get_bool_value("mouse.invert_y", false);
+	load_hotkeys();
+	build_window_titles();
+	clear_hotkey_release_state();
+
+	// Create the initial window + renderer + texture at 640x480.
+	// dimension_update() will recreate the texture if the resolution changes.
+	dimension_update(640, 480);
 
 	new_gfx_api = 1;
 }
@@ -387,6 +682,89 @@ static u32 sdl_scan_to_bx_key(SDL_Scancode sym)
 	}
 }
 
+void bx_sdl_gui_c::release_guest_key(SDL_Scancode scancode)
+{
+	if (scancode > SDL_SCANCODE_UNKNOWN &&
+		scancode < SDL_SCANCODE_COUNT && guest_key_pressed[scancode])
+	{
+		theKeyboard->gen_scancode(
+			guest_key_by_scancode[scancode] | BX_KEY_RELEASED);
+		guest_key_pressed[scancode] = false;
+	}
+}
+
+void bx_sdl_gui_c::release_all_guest_keys()
+{
+	for (int i = 0; i < SDL_SCANCODE_COUNT; i++)
+		release_guest_key((SDL_Scancode)i);
+}
+
+void bx_sdl_gui_c::clear_hotkey_release_state()
+{
+	memset(swallowed_hotkey_releases, 0,
+		sizeof(swallowed_hotkey_releases));
+}
+
+void bx_sdl_gui_c::reconcile_hotkey_release_state()
+{
+	const bool* keys = SDL_GetKeyboardState(NULL);
+	if (!keys)
+		return;
+
+	for (int i = 0; i < SDL_SCANCODE_COUNT; i++)
+	{
+		if (swallowed_hotkey_releases[i] && !keys[i])
+			swallowed_hotkey_releases[i] = false;
+	}
+}
+
+void bx_sdl_gui_c::suppress_hotkey_releases(
+	const SDL_KeyboardEvent& event, const sdl_hotkey_binding& binding,
+	bool release_guest_modifiers)
+{
+	if (event.scancode > SDL_SCANCODE_UNKNOWN &&
+		event.scancode < SDL_SCANCODE_COUNT)
+		swallowed_hotkey_releases[event.scancode] = true;
+
+	if (!release_guest_modifiers)
+		return;
+
+	const bool* keys = SDL_GetKeyboardState(NULL);
+	auto suppress_modifier = [this, keys](SDL_Scancode left,
+		SDL_Scancode right)
+	{
+		SDL_Scancode scancodes[2] = { left, right };
+		for (int i = 0; i < 2; i++)
+		{
+			SDL_Scancode scancode = scancodes[i];
+			if ((keys && keys[scancode]) || guest_key_pressed[scancode])
+			{
+				swallowed_hotkey_releases[scancode] = true;
+				release_guest_key(scancode);
+			}
+		}
+	};
+
+	if (binding.modifiers & SDL_HOTKEY_MOD_CTRL)
+		suppress_modifier(SDL_SCANCODE_LCTRL, SDL_SCANCODE_RCTRL);
+	if (binding.modifiers & SDL_HOTKEY_MOD_ALT)
+		suppress_modifier(SDL_SCANCODE_LALT, SDL_SCANCODE_RALT);
+	if (binding.modifiers & SDL_HOTKEY_MOD_SHIFT)
+		suppress_modifier(SDL_SCANCODE_LSHIFT, SDL_SCANCODE_RSHIFT);
+	if (binding.modifiers & SDL_HOTKEY_MOD_GUI)
+		suppress_modifier(SDL_SCANCODE_LGUI, SDL_SCANCODE_RGUI);
+}
+
+void bx_sdl_gui_c::send_guest_ctrl_alt_delete()
+{
+	theKeyboard->gen_scancode(BX_KEY_CTRL_L);
+	theKeyboard->gen_scancode(BX_KEY_ALT_L);
+	theKeyboard->gen_scancode(BX_KEY_DELETE);
+	theKeyboard->gen_scancode(BX_KEY_DELETE | BX_KEY_RELEASED);
+	theKeyboard->gen_scancode(BX_KEY_ALT_L | BX_KEY_RELEASED);
+	theKeyboard->gen_scancode(BX_KEY_CTRL_L | BX_KEY_RELEASED);
+}
+
 void bx_sdl_gui_c::handle_events(void)
 {
 	u32 key_event;
@@ -394,15 +772,40 @@ void bx_sdl_gui_c::handle_events(void)
 	sdl_media_pump();
 	while (SDL_PollEvent(&sdl_event))
 	{
-		// Ctrl+F10/F11 explicitly release the guest modifiers and then swallow
-		// the corresponding host releases.  Let's not let repeat key reopen or
-		// immediately activate the popup in the meantime.
-		if (sdl_swallow_keys && sdl_event.type == SDL_EVENT_KEY_DOWN &&
-			sdl_toggle_keys_released())
-			sdl_swallow_keys = false;
-		if (sdl_swallow_keys && sdl_event.type == SDL_EVENT_KEY_DOWN)
+		// GUI hotkeys consume their trigger key and, for actions that release
+		// guest modifiers, the corresponding physical modifier releases. Keep
+		// this ahead of the media popup so a remapped media hotkey also closes it.
+		if (sdl_event.type == SDL_EVENT_KEY_UP)
+		{
+			// The media popup has its own release tracker for dialog keys. Let it
+			// clear that state before the global tracker consumes a release shared
+			// with the media-toggle chord.
+			bool media_release_handled = sdl_media_handle_event(&sdl_event);
+			if (sdl_event.key.scancode > SDL_SCANCODE_UNKNOWN &&
+				sdl_event.key.scancode < SDL_SCANCODE_COUNT &&
+				swallowed_hotkey_releases[sdl_event.key.scancode])
+			{
+				swallowed_hotkey_releases[sdl_event.key.scancode] = false;
+				continue;
+			}
+			if (media_release_handled)
+				continue;
+		}
+
+		if (sdl_event.type == SDL_EVENT_KEY_DOWN &&
+			hotkey_media.matches(sdl_event.key))
+		{
+			if (!sdl_event.key.repeat)
+			{
+				suppress_hotkey_releases(sdl_event.key, hotkey_media, true);
+				if (sdl_grab)
+					bx_gui->mouse_enabled_changed(false);
+				sdl_select_media(sdl_window);
+			}
 			continue;
-		if (!(sdl_swallow_keys && sdl_event.type == SDL_EVENT_KEY_UP) &&
+		}
+
+		if (sdl_event.type != SDL_EVENT_KEY_UP &&
 			sdl_media_handle_event(&sdl_event))
 			continue;
 
@@ -493,79 +896,63 @@ void bx_sdl_gui_c::handle_events(void)
 			break;
 		case SDL_EVENT_WINDOW_FOCUS_LOST:
 		{
+			release_all_guest_keys();
+			clear_hotkey_release_state();
 			if (sdl_grab)
 				bx_gui->mouse_enabled_changed(false);
 			break;
 		}
 		case SDL_EVENT_KEY_DOWN:
-			if (sdl_event.key.key == SDLK_END &&
-				(sdl_event.key.mod & SDL_KMOD_CTRL) &&
-				(sdl_event.key.mod & SDL_KMOD_ALT))
+			if (hotkey_ctrl_alt_delete.matches(sdl_event.key))
 			{
-				theKeyboard->gen_scancode(BX_KEY_DELETE);
-				theKeyboard->gen_scancode(BX_KEY_DELETE | BX_KEY_RELEASED);
-				sdl_swallow_end_release = true;
-				break;
-			}
-
-			// Ctrl+Alt+Home: reset window to last GPU-driven size
-			if (sdl_event.key.key == SDLK_HOME &&
-				(sdl_event.key.mod & SDL_KMOD_CTRL) &&
-				(sdl_event.key.mod & SDL_KMOD_ALT))
-			{
-				reset_window_size();
-				sdl_swallow_home_release = true;
-				break;
-			}
-
-			// Ctrl+PageUp / Ctrl+PageDown: runtime scale adjust (gated by config)
-			if (vid_scale_change_enable &&
-				(sdl_event.key.mod & SDL_KMOD_CTRL) &&
-				!(sdl_event.key.mod & SDL_KMOD_ALT))
-			{
-				if (sdl_event.key.key == SDLK_PAGEUP)
+				if (!sdl_event.key.repeat)
 				{
-					adjust_window_scale(+1);
-					sdl_swallow_pageup_release = true;
-					break;
+					suppress_hotkey_releases(sdl_event.key,
+						hotkey_ctrl_alt_delete, true);
+					send_guest_ctrl_alt_delete();
 				}
-				if (sdl_event.key.key == SDLK_PAGEDOWN)
+				break;
+			}
+
+			if (hotkey_reset_window.matches(sdl_event.key))
+			{
+				if (!sdl_event.key.repeat)
 				{
-					adjust_window_scale(-1);
-					sdl_swallow_pagedown_release = true;
-					break;
+					suppress_hotkey_releases(sdl_event.key,
+						hotkey_reset_window, false);
+					reset_window_size();
 				}
+				break;
 			}
 
-			// Ctrl+F10: toggle mouse capture
-			if (sdl_event.key.key == SDLK_F10 && (sdl_event.key.mod & SDL_KMOD_CTRL))
+			// Runtime scale adjustment remains gated by video.scale_change_enable.
+			if (vid_scale_change_enable && hotkey_scale_up.matches(sdl_event.key))
 			{
-				theKeyboard->gen_scancode(BX_KEY_CTRL_L | BX_KEY_RELEASED);
-				theKeyboard->gen_scancode(BX_KEY_CTRL_R | BX_KEY_RELEASED);
-
-				bx_gui->mouse_enabled_changed(!sdl_grab);
-				sdl_swallow_keys = true;  // eat subsequent releases
+				if (!sdl_event.key.repeat)
+					suppress_hotkey_releases(sdl_event.key,
+						hotkey_scale_up, false);
+				adjust_window_scale(+1);
 				break;
 			}
-			if (sdl_event.key.key == SDLK_F11 && (sdl_event.key.mod & SDL_KMOD_CTRL))
+			if (vid_scale_change_enable && hotkey_scale_down.matches(sdl_event.key))
 			{
-				theKeyboard->gen_scancode(BX_KEY_CTRL_L | BX_KEY_RELEASED);
-				theKeyboard->gen_scancode(BX_KEY_CTRL_R | BX_KEY_RELEASED);
-				
-				if (sdl_grab)
-					bx_gui->mouse_enabled_changed(false);
-
-				sdl_select_media(sdl_window);
-
-				sdl_swallow_keys = true;  // eat subsequent releases
+				if (!sdl_event.key.repeat)
+					suppress_hotkey_releases(sdl_event.key,
+						hotkey_scale_down, false);
+				adjust_window_scale(-1);
 				break;
 			}
-			if (sdl_swallow_keys)
-				break;  // swallow any key-down during toggle
 
-			// Filter out ScrollLock (fullscreen toggle prev.) and invalid keys
-			if (sdl_event.key.key == SDLK_SCROLLLOCK)
+			if (hotkey_mouse_capture.matches(sdl_event.key))
+			{
+				if (!sdl_event.key.repeat)
+				{
+					suppress_hotkey_releases(sdl_event.key,
+						hotkey_mouse_capture, true);
+					bx_gui->mouse_enabled_changed(!sdl_grab);
+				}
 				break;
+			}
 
 			// convert sym -> bochs code
 			if (!myCfg->get_bool_value("keyboard.use_mapping", false))
@@ -588,52 +975,33 @@ void bx_sdl_gui_c::handle_events(void)
 			if (key_event == BX_KEY_UNHANDLED)
 				break;
 
+			if (sdl_event.key.scancode > SDL_SCANCODE_UNKNOWN &&
+				sdl_event.key.scancode < SDL_SCANCODE_COUNT &&
+				!guest_key_pressed[sdl_event.key.scancode])
+			{
+				guest_key_by_scancode[sdl_event.key.scancode] = key_event;
+				guest_key_pressed[sdl_event.key.scancode] = true;
+			}
 			theKeyboard->gen_scancode(key_event);
 
 			// Locks: generate immediate press+release pair
 			if ((key_event == BX_KEY_NUM_LOCK) || (key_event == BX_KEY_CAPS_LOCK))
 			{
 				theKeyboard->gen_scancode(key_event | BX_KEY_RELEASED);
+				if (sdl_event.key.scancode > SDL_SCANCODE_UNKNOWN &&
+					sdl_event.key.scancode < SDL_SCANCODE_COUNT)
+					guest_key_pressed[sdl_event.key.scancode] = false;
 			}
 			break;
 
 		case SDL_EVENT_KEY_UP:
-			if (sdl_event.key.key == SDLK_SCROLLLOCK)
-				break;
-
-			if (sdl_swallow_end_release && sdl_event.key.key == SDLK_END)
+			if (sdl_event.key.scancode > SDL_SCANCODE_UNKNOWN &&
+				sdl_event.key.scancode < SDL_SCANCODE_COUNT &&
+				guest_key_pressed[sdl_event.key.scancode])
 			{
-				sdl_swallow_end_release = false;
-				break;
+				key_event = guest_key_by_scancode[sdl_event.key.scancode];
 			}
-
-			if (sdl_swallow_home_release && sdl_event.key.key == SDLK_HOME)
-			{
-				sdl_swallow_home_release = false;
-				break;
-			}
-
-			if (sdl_swallow_pageup_release && sdl_event.key.key == SDLK_PAGEUP)
-			{
-				sdl_swallow_pageup_release = false;
-				break;
-			}
-
-			if (sdl_swallow_pagedown_release && sdl_event.key.key == SDLK_PAGEDOWN)
-			{
-				sdl_swallow_pagedown_release = false;
-				break;
-			}
-
-			if (sdl_swallow_keys)
-			{
-				// Wait for both halves of Ctrl+F10/F11, regardless of release order.
-				if (sdl_toggle_keys_released())
-					sdl_swallow_keys = false;
-				break;  
-			}
-
-			if (!myCfg->get_bool_value("keyboard.use_mapping", false))
+			else if (!myCfg->get_bool_value("keyboard.use_mapping", false))
 			{
 				key_event = sdl_scan_to_bx_key(sdl_event.key.scancode);
 			}
@@ -658,6 +1026,9 @@ void bx_sdl_gui_c::handle_events(void)
 			}
 
 			theKeyboard->gen_scancode(key_event | BX_KEY_RELEASED);
+			if (sdl_event.key.scancode > SDL_SCANCODE_UNKNOWN &&
+				sdl_event.key.scancode < SDL_SCANCODE_COUNT)
+				guest_key_pressed[sdl_event.key.scancode] = false;
 			break;
 
 		case SDL_EVENT_QUIT:
@@ -666,11 +1037,9 @@ void bx_sdl_gui_c::handle_events(void)
 		}
 	}
 
-	// A native popup/file dialog can intercept the Ctrl release instead
-	// of the emulator.  Clear the latch from the SDL modifier state so 
-	// the next guest key is not needlessly discarded.
-	if (sdl_swallow_keys && sdl_toggle_keys_released())
-		sdl_swallow_keys = false;
+	// Native popups can intercept releases. Reconcile against SDL's current
+	// physical keyboard state so a later normal press is never swallowed.
+	reconcile_hotkey_release_state();
 }
 
 /**
@@ -735,7 +1104,7 @@ void bx_sdl_gui_c::dimension_update(unsigned x, unsigned y, unsigned fheight,
 
 	if (!sdl_window)
 	{
-		sdl_window = SDL_CreateWindow(sdl_title,
+		sdl_window = SDL_CreateWindow(window_title.c_str(),
 			(int)scaled_x, (int)scaled_y, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
 		if (!sdl_window)
 		{
@@ -781,7 +1150,7 @@ void bx_sdl_gui_c::dimension_update(unsigned x, unsigned y, unsigned fheight,
 	half_res_y = y / 2;
 
 	// Remember the actual OS-pixel size we just drove the window to,
-	// so Ctrl+Alt+Home can snap back here after a manual resize.
+	// so the reset-window hotkey can snap back here after a manual resize.
 	last_driven_w = (int)scaled_x;
 	last_driven_h = (int)scaled_y;
 }
@@ -836,7 +1205,7 @@ void bx_sdl_gui_c::mouse_enabled_changed_specific(bool val)
 		{
 			SDL_SetWindowKeyboardGrab(sdl_window, true);
 			SDL_SetWindowRelativeMouseMode(sdl_window, true);
-			SDL_SetWindowTitle(sdl_window, sdl_title_grabbed);
+			SDL_SetWindowTitle(sdl_window, window_title_grabbed.c_str());
 		}
 	}
 	else
@@ -846,7 +1215,7 @@ void bx_sdl_gui_c::mouse_enabled_changed_specific(bool val)
 		{
 			SDL_SetWindowKeyboardGrab(sdl_window, false);
 			SDL_SetWindowRelativeMouseMode(sdl_window, false);
-			SDL_SetWindowTitle(sdl_window, sdl_title);
+			SDL_SetWindowTitle(sdl_window, window_title.c_str());
 		}
 	}
 

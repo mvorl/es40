@@ -162,6 +162,53 @@ using namespace std;
 #include "MultipleChoiceQuestion.h"
 #include "ShrinkingChoiceQuestion.h"
 
+struct SDLHotkeyPrompt
+{
+	const char* config_name;
+	const char* description;
+	const char* default_binding;
+};
+
+static const SDLHotkeyPrompt sdl_hotkey_prompts[] = {
+	{ "hotkey.mouse_capture", "Mouse capture", "Ctrl+F10" },
+	{ "hotkey.media", "Removable media selector", "Ctrl+F11" },
+	{ "hotkey.ctrl_alt_delete", "Send Ctrl+Alt+Delete to the guest", "Ctrl+Alt+End" },
+	{ "hotkey.reset_window", "Reset window size", "Ctrl+Alt+Home" },
+	{ "hotkey.scale_up", "Increase runtime window scale", "Ctrl+PageUp" },
+	{ "hotkey.scale_down", "Decrease runtime window scale", "Ctrl+PageDown" }
+};
+
+static string trim_answer(const string& value)
+{
+	size_t first = value.find_first_not_of(" \t\r\n");
+	if (first == string::npos)
+		return "";
+	size_t last = value.find_last_not_of(" \t\r\n");
+	return value.substr(first, last - first + 1);
+}
+
+static string ask_hotkey_override(const SDLHotkeyPrompt& prompt)
+{
+	FreeTextQuestion hotkey_q;
+	hotkey_q.setQuestion(string(prompt.description) + " hotkey override "
+		"(runtime default " + prompt.default_binding +
+		"; Enter keeps default; 'none' disables)");
+	hotkey_q.setExplanation(
+		"Enter a modifier-first key combination such as Ctrl+F8 or "
+		"Command+Shift+M, without surrounding quotes. Press Enter to use the "
+		"runtime default, or enter 'none' to disable this keyboard binding. "
+		"Each effective binding must be unique.");
+
+	for (;;)
+	{
+		string answer = trim_answer(hotkey_q.ask());
+		if (answer.find('"') == string::npos)
+			return answer;
+
+		cout << "\nA hotkey override cannot contain a double quote.\n\n";
+	}
+}
+
 /**
  * Add disks for a controller to the configuration file.
  *
@@ -535,15 +582,53 @@ int main(int argc, char* argv[])
 			"If enabled, the display scale ratio can be adjusted on the fly "
 			"while the emulator is running, without restarting. The change is "
 			"not persisted back to this config file.\n"
-			"Currently the assigned keys are fixed:\n"
+			"The runtime defaults are:\n"
 			"  Ctrl+PageUp   - increase scale by 1 (clamped at 8x)\n"
 			"  Ctrl+PageDown - decrease scale by 1 (clamped at 1x)\n"
-			"These key assignments may become user-configurable in the future.");
+			"Optional overrides are offered below. These two bindings take effect "
+			"only when runtime display scale changes are enabled.");
 		vid_scale_change_enable_q.addAnswer("no", "false", "Disable runtime scale change hotkeys.");
-		vid_scale_change_enable_q.addAnswer("yes", "true", "Enable Ctrl+PageUp / Ctrl+PageDown to adjust scaling at runtime.");
+		vid_scale_change_enable_q.addAnswer("yes", "true", "Enable the configurable scale hotkeys.");
 		vid_scale_change_enable_q.setDefault("no");
 
 		os << "  video.scale_change_enable = " << vid_scale_change_enable_q.ask() << ";\n";
+
+		if (gui_q.getAnswer() == "sdl")
+		{
+			cout << "\nSDL GUI runtime hotkey defaults:\n";
+			for (size_t i = 0;
+				i < sizeof(sdl_hotkey_prompts) / sizeof(sdl_hotkey_prompts[0]); i++)
+			{
+				cout << "  " << sdl_hotkey_prompts[i].description << ": "
+					<< sdl_hotkey_prompts[i].default_binding << "\n";
+			}
+			cout << "\n";
+
+			MultipleChoiceQuestion customize_hotkeys_q;
+			customize_hotkeys_q.setQuestion("Would you like to customize the SDL GUI keyboard shortcuts?");
+			customize_hotkeys_q.setExplanation(
+				"Choose 'yes' to enter optional overrides. At each hotkey prompt, "
+				"leave the answer blank to keep the built-in default or enter "
+				"'none' to disable that keyboard binding.");
+			customize_hotkeys_q.addAnswer("no", "no", "Use runtime defaults; write no hotkey settings.");
+			customize_hotkeys_q.addAnswer("yes", "yes", "Review all six shortcuts; Enter keeps each runtime default, and none disables it.");
+			customize_hotkeys_q.setDefault("no");
+
+			if (customize_hotkeys_q.ask() == "yes")
+			{
+				for (size_t i = 0;
+					i < sizeof(sdl_hotkey_prompts) / sizeof(sdl_hotkey_prompts[0]); i++)
+				{
+					string answer = ask_hotkey_override(sdl_hotkey_prompts[i]);
+					if (!answer.empty())
+					{
+						os << "  " << sdl_hotkey_prompts[i].config_name
+							<< " = \"" << answer << "\";\n";
+					}
+				}
+			}
+		}
+		os << "\n";
 
 		os << "}\n\n";
 	}
