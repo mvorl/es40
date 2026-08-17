@@ -398,6 +398,11 @@
     case 0xc1:  /* CC_CTL */                                                     \
       state.cc_ena = (state.r[REG_2] >> 32) & 1;                                 \
       state.cc = (u32) (state.r[REG_2] & U64(0xfffffff0));                       \
+      cc_last_read = state.cc;  /* counter rewritten: rebase the rpcc_read floor \
+                                   epoch or the next read would jump/false-borrow \
+                                   against the old counter value */              \
+      cc_borrow = 0;                                                             \
+      cc_wall_remainder = 0;                                                     \
       break;                                                                     \
                                                                             \
     case 0xc4:  /* VA_CTL */                                                     \

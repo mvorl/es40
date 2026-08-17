@@ -464,6 +464,7 @@ private:
   // CPU frequency regardless of how fast/bursty the JIT runs. This is the last sync timestamp;
   // the delta since it (when cc_ena) is added to state.cc at each sync point, then it's reset to now.
   std::chrono::steady_clock::time_point cc_last_sync;
+  u64                                   cc_wall_remainder = 0; // fractional cycle numerator, / 1e9
 
   // Advance the wall-clock cc to now. Called at batch boundaries AND on every guest RPCC read.
   void sync_cc_wallclock()
@@ -477,8 +478,36 @@ private:
     {
       if (cc_delta > std::chrono::seconds(1))   // cap (not drop) odd deltas, as at batch top
         cc_delta = std::chrono::seconds(1);
-      state.cc += (u64)std::chrono::duration_cast<std::chrono::nanoseconds>(cc_delta).count() * cpu_hz / 1000000000ULL;
+      const u64 ns = (u64)std::chrono::duration_cast<std::chrono::nanoseconds>(cc_delta).count();
+      // Carry sub-cycle precision across frequent syncs.  
+      const u64 scaled = ns * cpu_hz + cc_wall_remainder;
+      u64 add = scaled / 1000000000ULL;
+      cc_wall_remainder = scaled % 1000000000ULL;
+      // Repay any rpcc_read floor-borrow by WITHHOLDING wall progress, never by subtracting
+      if (cc_borrow)
+      {
+        const u64 repay = cc_borrow < add ? cc_borrow : add;
+        add -= repay;
+        cc_borrow -= repay;
+      }
+      state.cc += add;
     }
+  }
+
+  // RPCC read with a forward-progress guarantee. Real EV6 RPCC advances every cycle
+  static constexpr u64 kRpccCollisionStep = 1;
+  u64 cc_last_read = 0;
+  u64 cc_borrow = 0;
+  u64 rpcc_read()
+  {
+    sync_cc_wallclock();
+    if (state.cc_ena && state.cc <= cc_last_read)
+    {
+      cc_borrow += cc_last_read + kRpccCollisionStep - state.cc;
+      state.cc = cc_last_read + kRpccCollisionStep;
+    }
+    cc_last_read = state.cc;
+    return ((u64) state.cc_offset) << 32 | (state.cc & U64(0xffffffff));
   }
 
   // DRAM fast-path cache

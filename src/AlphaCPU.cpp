@@ -408,8 +408,11 @@ void CAlphaCPU::run()
 #ifdef ES40_JIT
 			jit_run(2000);
 #else
-			for (int i = 0; i < 2000; i++)
-				execute();
+			// execute() now owns a 512-instruction batch. Calling it 2,000 times
+			// here accidentally turned one scheduler turn into ~1M instructions,
+			// starving peer CPUs and device workers during native-PAL SMP handoffs.
+			execute();
+			CThread::yield();
 #endif
 			if (cSystem && cSystem->IsSystemResetRequested())
 			{
@@ -489,6 +492,9 @@ void CAlphaCPU::init()
 {
 	memset(&state, 0, sizeof(state));
 	last_dtb_virt[0] = last_dtb_virt[1] = 0;
+	cc_last_read = 0;   // rpcc_read floor state tracks state.cc -- reset together
+	cc_borrow = 0;
+	cc_wall_remainder = 0;
 
 	cpu_hz = myCfg->get_num_value("speed", true, 500000000);
 	idle_nap_enabled = myCfg->get_bool_value("idle_nap", false);
@@ -617,6 +623,9 @@ void CAlphaCPU::ResetForSystemReset()
 
 	memset(&state, 0, sizeof(state));
 	last_dtb_virt[0] = last_dtb_virt[1] = 0;
+	cc_last_read = 0;   // rpcc_read floor state tracks state.cc -- reset together
+	cc_borrow = 0;
+	cc_wall_remainder = 0;
 	state.iProcNum = savedProcNum;
 
 	cpu_hz = myCfg->get_num_value("speed", true, 500000000);
@@ -1630,8 +1639,7 @@ u64 CAlphaCPU::jit_misc(CAlphaCPU* cpu, u32 sel)
 	switch (sel)
 	{
 	case 0:                                            // RPCC: Ra = cc_offset : cc[31:0]
-		cpu->sync_cc_wallclock();                      // live read: no stale batch-start cc (NetBSD PCC timecounter)
-		return ((u64)cpu->state.cc_offset << 32) | (cpu->state.cc & U64(0xffffffff));
+		return cpu->rpcc_read();                       // live read (NetBSD PCC timecounter) + collision progress
 	case 1:                                            // RC: Ra = bIntrFlag; bIntrFlag = false
 	{
 		u64 v = cpu->state.bIntrFlag ? 1 : 0;
@@ -3452,6 +3460,13 @@ int CAlphaCPU::RestoreState(FILE* f)
 
 	printf("%s: %d bytes restored.\n", devid_string, (int)ss);
 	last_dtb_virt[0] = last_dtb_virt[1] = 0;
+	// The floor/debt state is intentionally not part of the legacy save-state
+	// format.  Rebase it to the restored architectural counter and a fresh host
+	// epoch so a restore cannot create a false jump or bill paused wall time.
+	cc_last_read = state.cc;
+	cc_borrow = 0;
+	cc_wall_remainder = 0;
+	cc_last_sync = std::chrono::steady_clock::now();
 
 	return 0;
 }
