@@ -579,13 +579,14 @@ inline u64 fsqrt64(u64 asig, s32 exp)
       } else {                                                                  \
         if (virt2phys(_dpc_va, &phys_address, flags, NULL, ins))                \
           ES40_EXECUTE_END();                                                   \
-        _dpc.virt_page = _dpc_vp;                                               \
         _dpc.phys_base = phys_address & ~U64(0x1FFF);                           \
-        _dpc.host_base = ((phys_address | U64(0x1FFF)) < dram_size)                 \
-                         ? ((u64) dram_ptr + (phys_address & ~U64(0x1FFF))) : 0;    \
+        _dpc.host_bias = ((phys_address | U64(0x1FFF)) < dram_size)                 \
+                         ? ((u64) dram_ptr + (phys_address & ~U64(0x1FFF))           \
+                            - _dpc_vp) : 0;                                         \
+        _dpc.virt_page = _dpc.host_bias ? _dpc_vp : ~U64(0);                    \
         _dpc.cm        = state.cm;                                              \
         _dpc.asn       = state.asn0;                                            \
-        _dpc.valid     = true;                                                  \
+        _dpc.valid     = _dpc.host_bias != 0;                                   \
       }                                                                         \
     } else {                                                                    \
       /* PAL privileged access (NO_CHECK, VPTE, ALT, etc) — skip cache */       \

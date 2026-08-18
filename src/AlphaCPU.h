@@ -534,18 +534,21 @@ private:
   struct SDataPageCache {
     u64  virt_page;   // va & ~0x1FFF
     u64  phys_base;   // pa & ~0x1FFF
-    u64  host_base;   // dram_ptr + phys_base for DRAM pages, 0 for MMIO (JIT inline fast path)
-    int  cm;          // current mode (CM) at fill time
-    int  asn;         // data ASN (asn0) at fill time
+    u64  host_bias;   // dram_ptr + phys_base - virt_page for DRAM, 0 for MMIO (host = bias + va)
+    u8   cm;          // current mode (CM) at fill time
+    u8   asn;         // data ASN (asn0) at fill time
     bool valid;
   } data_page_cache[2][kDpcEntries];  // [rw][dpc_index(va)]; [0]=read, [1]=write
+  static_assert(sizeof(SDataPageCache) == 32, "DPC slots stay power-of-two for JIT shift indexing");
 
   inline void flush_data_page_cache() {
     for (int i = 0; i < kDpcEntries; i++) {
       data_page_cache[0][i].valid = false;
       data_page_cache[1][i].valid = false;
-      data_page_cache[0][i].host_base = 0;   // valid==false => host_base==0, so the JIT can drop its valid load
-      data_page_cache[1][i].host_base = 0;
+      data_page_cache[0][i].virt_page = ~U64(0); // impossible for an 8KB-aligned page
+      data_page_cache[1][i].virt_page = ~U64(0);
+      data_page_cache[0][i].host_bias = 0;   // valid==false => host_bias==0, so the JIT can drop its valid load
+      data_page_cache[1][i].host_bias = 0;
     }
   }
 
@@ -581,7 +584,7 @@ private:
   // HW_MTPR (PALmode): store value (Rb) to the side-effect-free IPR named by function.
   static void jit_hw_mtpr(CAlphaCPU* cpu, u32 function, u64 value);
   // Indirect jump (JMP/HW_RET): look up the target block; return its chained re-entry or null.
-  static void* jit_indirect(CAlphaCPU* cpu, u64 target);
+  static void* jit_indirect(CAlphaCPU* cpu, u64 target, void* link_cache);
   // MISC (0x18) state reads: sel 0=RPCC (cycle counter), 1=RC, 2=RS (read interrupt flag +
   // clear/set). Value the verify can't re-derive -> replayed from the load log like a load.
   static u64 jit_misc(CAlphaCPU* cpu, u32 sel);

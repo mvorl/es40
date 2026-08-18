@@ -42,6 +42,7 @@
 #endif
 
 #include <cstdint>
+#include <vector>
 #include "../config_debug.h"   // JIT_VERIFY
 #ifdef JIT_STATS
 // host cycle counter for the JIT_STATS wall-time split: TSC on x86-64, CNTVCT_EL0 on ARM64
@@ -193,7 +194,7 @@ public:
   // Byte offsets (from the CAlphaCPU*) of the fields the inline load fast path reads,
   // so compiled code can touch them via [rsi + offset]. Filled once by set_offsets().
   struct JitOffsets {
-    uint32_t dpc_valid, dpc_virt_page, dpc_phys_base, dpc_host_base, dpc_cm, dpc_asn;  // offsets of READ slot [0][0]
+    uint32_t dpc_valid, dpc_virt_page, dpc_phys_base, dpc_host_bias, dpc_cm, dpc_asn;  // offsets of READ slot [0][0]
     uint32_t dpc_stride, dpc_mask;   // direct-mapped page cache: per-slot byte stride, index mask
     uint32_t dpc_write_row;          // byte distance from read cache [0] to write cache [1] (store fast path)
     uint32_t state_cm, state_asn0, dram_ptr, dram_size, state_pc;
@@ -259,6 +260,7 @@ public:
   inline void demote_trace(TraceFragment* tf) {
     tf->valid = false; tf->chain_entry = nullptr; tf->underrun = 0;
     ++m_vgen_cur;
+    invalidate_links();
     note_trace_stale();
   }
   inline void note_trace_stale() {   // always defined (callable from trace_ok); counts only under JIT_STATS
@@ -305,8 +307,11 @@ public:
   struct RegAlloc {
     int host[32];                                  // host x86 reg id for guest GPR r, or -1 (memory)
     int rax_holds;                                 // guest GPR whose value currently lives in rax (value-forward), or -1
-    int vol_bind;                                  // guest GPR held in a CALLER-saved host reg for the
-                                                   // region (or -1); call sites spill/reload it around helpers
+    int vol_bind;                                  // guest GPRs held in caller-saved R8/R9 (or -1);
+    int vol_bind2;                                 // call sites spill/reload them around helpers
+    bool dpc_live;                                 // previous guest op left RDX/R10/R11 = va/bias/slot
+    int dpc_base, dpc_disp;
+    bool dpc_write, dpc_force_align;
 #ifdef JIT_STATS
     uint64_t* licm_slots;   // per-memop "page last seen" slots (null = don't probe)
     uint32_t  licm_n, licm_max;
@@ -332,9 +337,11 @@ public:
   // ITB-generation counter for the indirect-chain staleness check (jit_indirect). Bumped on every
   // I-stream TB invalidate (tbia/tbiap/tbis, ACCESS_EXEC) ... those can remap a code page WITHOUT
   // flushing the JIT, so a chained block could run stale bytes.
-  inline void     note_itb_invalidate() { ++m_itb_gen; ++m_vgen_cur; }
+  inline void     note_itb_invalidate() { ++m_itb_gen; ++m_vgen_cur; invalidate_links(); }
   // Combined validation epoch, maintained (not summed) so the emitted chain guard reads ONE qword.
   inline uint64_t vgen() const          { return m_vgen_cur; }
+  void note_link_patch(LinkSlot* slots) { m_active_links.push_back(slots); }
+  void invalidate_links();
 
   // Bail-cause counters (JIT_STATS): why a compiled chain returned to the dispatcher -- a branch/
   // fall-through cached-link miss vs a computed-jump (jit_indirect) miss. Empty when stats are off,
@@ -388,6 +395,7 @@ private:
   uint64_t m_itb_gen = 0; // current ITB generation (bumped on every I-stream TB invalidate)
   uint64_t m_flush_gen = 0; // current icache-flush generation (bumped by flush(); lazy IC_FLUSH/IMB)
   uint64_t m_vgen_cur = 0;  // maintained epoch = itb + flush + non-global-flush bumps 
+  std::vector<LinkSlot*> m_active_links; // patched block/trace exits to clear on an epoch change
   uint64_t m_code_bytes;  // compiled bytes since last reclaim (see flush())
   bool     m_reclaim_pending = false;   // flush() hit kReclaimBytes; reclaim at the next dispatch boundary
   void*    m_rt;          // asmjit::JitRuntime*

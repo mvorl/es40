@@ -261,11 +261,13 @@
                                                                             \
     case 0x09:  /* CM */                                                         \
       state.cm = (int) (state.r[REG_2] >> 3) & 3;                                \
+      flush_data_page_cache();                                                   \
       state.check_int = true;                                                    \
       break;                                                                     \
                                                                             \
     case 0x0b:  /* IER_CM */                                                     \
       state.cm = (int) (state.r[REG_2] >> 3) & 3;                                \
+      flush_data_page_cache();                                                   \
       state.check_int = true;                                                    \
       [[fallthrough]];                                                           \
     case 0x0a:  /* IER */                                                        \

@@ -127,6 +127,11 @@ static bool host_has_popcnt() {
   return ok;
 }
 
+static bool host_has_bmi2() {
+  static const bool ok = asmjit::CpuInfo::host().features().x86().has_bmi2();
+  return ok;
+}
+
 // Safe = goto-free, register-only operate-format ops (no trap, memory, or branch).
 // pal_block enables PALmode-only ops (HW_MFPR): outside PALmode they'd OPCDEC, so only
 // compile them when the block is PALmode (the dispatcher keys blocks by PC bit 0).
@@ -550,8 +555,10 @@ struct ColdMemStub {
   asmjit::Label done;       // the block's shared bail exit
   void*         helper;     // jit_read / jit_write / jit_fp_read / jit_fp_write
   int           hidx = -1;  // helper's HelperSet index for the table call; -1 = imm64 fallback
-  int           vol_bind = -1;  // region-cached guest GPR (caller-saved host) to spill/reload
-  int           vol_host = -1;  // ...its host reg id
+  int           vol_bind = -1;  // caller-saved guest GPR pins to spill/reload around the helper
+  int           vol_host = -1;
+  int           vol_bind2 = -1;
+  int           vol_host2 = -1;
   int           size_bits;  // LOAD/STORE operand size
   uint32_t      descr;      // FPMEM only: (fmt<<16)|size
   int           ra;         // LOAD dest / STORE value guest reg
@@ -572,8 +579,11 @@ static void emit_cold_mem_stub(asmjit::x86::Assembler& a, const uint8_t* gpa,
   a.bind(s.slow);
   // the region-cached GPR's host reg is an ABI arg reg so we spill before using, and read
   // the store value from regs[] when it IS that reg (placement overwrites it). restore after.
-  if (s.vol_bind >= 0) a.mov(x86::qword_ptr(x86::rbx, s.vol_bind * 8), x86::gpq((uint32_t) s.vol_host));
-  const bool val_in_vol = (s.vol_bind >= 0 && s.pin == s.vol_host);
+  if (s.vol_bind >= 0)  a.mov(x86::qword_ptr(x86::rbx, s.vol_bind * 8),  x86::gpq((uint32_t) s.vol_host));
+  if (s.vol_bind2 >= 0) a.mov(x86::qword_ptr(x86::rbx, s.vol_bind2 * 8), x86::gpq((uint32_t) s.vol_host2));
+  if (s.kind != ColdMemStub::FPMEM) a.mov(x86::qword_ptr(x86::rsp, 48), x86::rdx); // preserve VA for DPC reuse
+  const bool val_in_vol = (s.vol_bind >= 0 && s.pin == s.vol_host)
+                       || (s.vol_bind2 >= 0 && s.pin == s.vol_host2);
   a.mov(aq(0), x86::rbp);                                       // cpu
   if (aq(1).id() != x86::rdx.id()) a.mov(aq(1), x86::rdx);      // va (precomputed in RDX)
   switch (s.kind) {
@@ -595,7 +605,8 @@ static void emit_cold_mem_stub(asmjit::x86::Assembler& a, const uint8_t* gpa,
   if (s.hidx >= 0 && off.helpers)
     a.call(x86::qword_ptr(x86::rbp, (int32_t) (off.helpers + s.hidx * 8)));   // via the CPU-resident table
   else { a.mov(x86::rax, imm((uint64_t) s.helper)); a.call(x86::rax); }
-  if (s.vol_bind >= 0) a.mov(x86::gpq((uint32_t) s.vol_host), x86::qword_ptr(x86::rbx, s.vol_bind * 8));
+  if (s.vol_bind >= 0)  a.mov(x86::gpq((uint32_t) s.vol_host),  x86::qword_ptr(x86::rbx, s.vol_bind * 8));
+  if (s.vol_bind2 >= 0) a.mov(x86::gpq((uint32_t) s.vol_host2), x86::qword_ptr(x86::rbx, s.vol_bind2 * 8));
   Label ok = a.new_label();
   a.test(x86::eax, x86::eax);
   a.jz(ok);
@@ -605,6 +616,29 @@ static void emit_cold_mem_stub(asmjit::x86::Assembler& a, const uint8_t* gpa,
   a.add(x86::eax, x86::dword_ptr(x86::rsp, 40));                // + earlier chained iterations
   a.jmp(s.done);
   a.bind(ok);
+  if (s.kind != ColdMemStub::FPMEM) {
+    // Recreate the hot path's {VA, slot, host bias} contract before joining the next
+    // instruction. jit_read/jit_write filled the matching DRAM DPC entry on success.
+    a.mov(x86::rdx, x86::qword_ptr(x86::rsp, 48));
+    uint32_t shift = 0;
+    while ((1u << shift) < off.dpc_stride) ++shift;
+    if ((1u << shift) == off.dpc_stride && shift <= 13) {
+      if (host_has_bmi2())
+        a.rorx(x86::r11, x86::rdx, imm(13 - shift));
+      else {
+        a.mov(x86::r11, x86::rdx);
+        if (shift != 13) a.shr(x86::r11, imm(13 - shift));
+      }
+      a.and_(x86::r11, imm((uint64_t)off.dpc_mask << shift));
+    } else {
+      a.mov(x86::r11, x86::rdx);
+      a.shr(x86::r11, imm(13)); a.and_(x86::r11, imm(off.dpc_mask));
+      a.imul(x86::r11, x86::r11, imm(off.dpc_stride));
+    }
+    const int row = (s.kind == ColdMemStub::STORE) ? (int)off.dpc_write_row : 0;
+    a.mov(x86::r10, x86::qword_ptr(x86::rbp, x86::r11, 0, row + (int)off.dpc_host_bias));
+
+  }
   if (s.kind == ColdMemStub::LOAD) {
     // Result extraction + dest write must leave RAX = r[ra] to uphold the fast path's
     // value-forward contract at `join` (the next op may reuse RAX as Ra).
@@ -654,6 +688,14 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
     bool islit = ((ins >> 12) & 1) != 0;
     uint32_t lit = (ins >> 13) & 0xFF;
     SafeOp op = classify(ins, pal_block);
+
+    // A directly adjacent ordinary memory op can reuse the previous op's translated page.
+    const bool prev_dpc_live = regalloc.dpc_live;
+    const int  prev_dpc_base = regalloc.dpc_base;
+    const int  prev_dpc_disp = regalloc.dpc_disp;
+    const bool prev_dpc_write = regalloc.dpc_write;
+    const bool prev_dpc_force_align = regalloc.dpc_force_align;
+    regalloc.dpc_live = false;
 
     do {
         // MISC (0x18) barriers/hints: emit an mfence for TRAPB/EXCB/MB/WMB (x86's seq_cst fence, to
@@ -708,9 +750,18 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             else if (rb == 31) a.xor_(x86::ecx, x86::ecx);
             else               mov_from_reg(x86::rcx, rb);
             };
+        auto test_ra = [&](bool low_bit) {
+            if (ra == 31) { a.xor_(x86::eax, x86::eax); return; } // ZF=1, SF=OF=0
+            const int p = pin_id(ra);
+            if (p >= 0) {
+                const x86::Gp src = x86::gpq((uint32_t)p);
+                if (low_bit) a.test(src, imm(1)); else a.test(src, src);
+            } else {
+                if (low_bit) a.test(reg(ra), imm(1)); else a.cmp(reg(ra), imm(0));
+            }
+        };
         // op2 as a DIRECT ALU source, folding away the mov-to-rcx: literal imm, R31 -> 0, a pinned host
-        // reg, or the regs[] memory slot -- all valid `OP rax, <src>` sources. emit_alu2 uses it for the
-        // simple accumulate-into-rax ops (rax stays the dest, so no aliasing concern).
+        // reg, or the regs[] memory slot -- all valid two-operand ALU sources.
         auto op2op = [&]() -> Operand {
             if (islit)    return imm(lit);
             if (rb == 31) return imm(0);
@@ -718,7 +769,38 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             if (p >= 0)   return x86::gpq((uint32_t) p);
             return reg(rb);
             };
-        auto emit_alu2 = [&](uint32_t instId) { op1_rax(); a.emit(instId, x86::rax, op2op()); };
+        bool result_in_dest = false;
+        auto emit_alu2 = [&](uint32_t instId) {
+            const int dp = pin_id(rc);
+            // Keep the result in its long-lived host pin when possible. 
+            const bool clobbers_op2 = !islit && rb != 31 && rc == rb && rc != ra;
+            if (rc != 31 && dp >= 0 && !clobbers_op2) {
+                const x86::Gp dst = x86::gpq((uint32_t)dp);
+                const int ap = (ra == 31) ? -1 : pin_id(ra);
+                if (ra == 31) a.xor_(x86::gpd((uint32_t)dp), x86::gpd((uint32_t)dp));
+                else if (ap != dp) mov_from_reg(dst, ra);
+                a.emit(instId, dst, op2op());
+                result_in_dest = true;
+            } else {
+                op1_rax();
+                a.emit(instId, x86::rax, op2op());
+            }
+        };
+        auto emit_compare = [&](uint32_t setId) {
+            op1_rax();
+            a.emit(x86::Inst::kIdCmp, x86::rax, op2op());
+            const int dp = pin_id(rc);
+            if (rc != 31 && dp >= 0) {
+                const x86::Gp db = x86::gpb((uint32_t)dp);
+                const x86::Gp dd = x86::gpd((uint32_t)dp);
+                a.emit(setId, db);
+                a.movzx(dd, db);
+                result_in_dest = true;
+            } else {
+                a.emit(setId, x86::al);
+                a.movzx(x86::eax, x86::al);
+            }
+        };
 
         // ABI-native helper call.
         // Each JitArg names an argument source; the k # source is placed in arg register k (aq/ad).
@@ -754,10 +836,16 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             // and unbind before using so arg reads must come from regs[], not a reg that
             // placement is about to overwrite. Rebound & restore after the call.
             const int vb = regalloc.vol_bind;
+            const int vb2 = regalloc.vol_bind2;
             const int vh = (vb >= 0) ? regalloc.host[vb] : -1;
+            const int vh2 = (vb2 >= 0) ? regalloc.host[vb2] : -1;
             if (vb >= 0) {
                 a.mov(x86::qword_ptr(x86::rbx, vb * 8), x86::gpq((uint32_t) vh));
                 regalloc.host[vb] = -1;
+            }
+            if (vb2 >= 0) {
+                a.mov(x86::qword_ptr(x86::rbx, vb2 * 8), x86::gpq((uint32_t) vh2));
+                regalloc.host[vb2] = -1;
             }
             auto place = [&](int k, const JitArg& s) {
                 switch (s.k) {
@@ -779,7 +867,44 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 a.call(x86::qword_ptr(x86::rbp, (int32_t)(m_off.helpers + hi * 8)));   // via the CPU-resident table
             else { a.mov(x86::rax, imm((uint64_t)fn)); a.call(x86::rax); }
             if (vb >= 0) { regalloc.host[vb] = vh; a.mov(x86::gpq((uint32_t) vh), x86::qword_ptr(x86::rbx, vb * 8)); }
+            if (vb2 >= 0) { regalloc.host[vb2] = vh2; a.mov(x86::gpq((uint32_t) vh2), x86::qword_ptr(x86::rbx, vb2 * 8)); }
             };
+
+        auto emit_dpc_offset = [&]() {
+            uint32_t shift = 0;
+            while ((1u << shift) < m_off.dpc_stride) ++shift;
+            if ((1u << shift) == m_off.dpc_stride && shift <= 13) {
+                // ((va >> 13) & mask) << shift == (va >> (13-shift)) & (mask << shift).
+                // Doing this with the extraction saves two instructions on every
+                // inline memory access.
+                if (host_has_bmi2())
+                    a.rorx(x86::r11, x86::rdx, imm(13 - shift));
+                else {
+                    a.mov(x86::r11, x86::rdx);
+                    if (shift != 13) a.shr(x86::r11, imm(13 - shift));
+                }
+                a.and_(x86::r11, imm((uint64_t)m_off.dpc_mask << shift));
+            }
+            else {
+                a.mov(x86::r11, x86::rdx);
+                a.shr(x86::r11, imm(13));
+                a.and_(x86::r11, imm(m_off.dpc_mask));
+                a.imul(x86::r11, x86::r11, imm(m_off.dpc_stride));
+            }
+            };
+        auto emit_address = [&](int disp) {
+            if (rb == 31) {
+                a.mov(x86::rdx, imm(disp));
+                return;
+            }
+            const int bp = pin_id(rb);
+            if (bp >= 0)
+                a.lea(x86::rdx, x86::ptr(x86::gpq((uint32_t)bp), disp));
+            else {
+                mov_from_reg(x86::rdx, rb);
+                if (disp) a.add(x86::rdx, imm(disp));
+            }
+        };
 
         // Memory-format loads: va = regs[Rb] + disp16.
         if (op == OP_LDQ || op == OP_LDL || op == OP_LDBU || op == OP_LDWU || op == OP_LDQ_U) {
@@ -787,9 +912,17 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             const int disp = (int)(int16_t)(ins & 0xFFFF);
             const int size_bits = (op == OP_LDQ || op == OP_LDQ_U) ? 64 : (op == OP_LDL) ? 32 : (op == OP_LDWU) ? 16 : 8;
             const int amask = (size_bits / 8) - 1;
-            if (rb == 31)  a.mov(x86::rdx, imm(disp));         // va -> RDX
-            else { mov_from_reg(x86::rdx, rb); if (disp) a.add(x86::rdx, imm(disp)); }
-            if (op == OP_LDQ_U) a.and_(x86::rdx, imm(~(uint64_t)7));   // LDQ_U: force 8-byte alignment
+            const bool force_align = (op == OP_LDQ_U);
+            const uint64_t tag_mask = ~(uint64_t)0x1fff | (force_align ? 0 : (uint64_t)amask);
+            const int dpc_delta = disp - prev_dpc_disp;
+            const bool reuse_dpc = prev_dpc_live && !prev_dpc_write && prev_dpc_base == rb
+                && prev_dpc_force_align == force_align && (!force_align || (dpc_delta & 7) == 0);
+            if (reuse_dpc) {
+                if (dpc_delta) a.add(x86::rdx, imm(dpc_delta));  // previous effective VA + displacement delta
+            } else {
+                emit_address(disp);                             // va -> RDX
+                if (force_align) a.and_(x86::rdx, imm(~(uint64_t)7));
+            }
 #ifdef JIT_STATS
             emit_licm_probe();
 #endif
@@ -820,25 +953,36 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             // (preserved); R11 = slot byte offset = dpc_index(va)*stride; RAX/R10 scratch.
             Label slow = a.new_label();
             Label ldone = a.new_label();
-            a.test(x86::dl, imm(amask));                                      a.jnz(slow);
-            a.mov(x86::r11, x86::rdx);
-            a.shr(x86::r11, imm(13));
-            a.and_(x86::r11, imm(m_off.dpc_mask));                            // r11 = dpc_index(va)
-            a.imul(x86::r11, x86::r11, imm(m_off.dpc_stride));                // r11 = slot byte offset
+            Label dpc_ready = a.new_label();
+            if (reuse_dpc) {
+                // R10/R11 still name the preceding site's host bias/page. If this VA remains on
+                // that page and is naturally aligned, retain its host bias; otherwise perform
+                // the fixed-site lookup.
+                a.mov(x86::rax, x86::rdx);
+                a.and_(x86::rax, imm(tag_mask));
+                a.cmp(x86::qword_ptr(x86::rbp, x86::r11, 0, m_off.dpc_virt_page), x86::rax);
+                a.je(dpc_ready);
+            }
+            emit_dpc_offset();
             a.mov(x86::r10, x86::rdx);
-            a.and_(x86::r10, imm(-0x2000));                                   // r10 = va & ~0x1FFF
-            a.cmp(x86::qword_ptr(x86::rbp, x86::r11, 0, m_off.dpc_virt_page), x86::r10);  a.jne(slow);
-            a.mov(x86::rax, x86::qword_ptr(x86::rbp, m_off.state_cm));                    // rax = {cm, asn0} (adjacent in state)
-            a.cmp(x86::qword_ptr(x86::rbp, x86::r11, 0, m_off.dpc_cm), x86::rax);         a.jne(slow);   // vs slot {cm, asn}
-            a.mov(x86::r10, x86::qword_ptr(x86::rbp, x86::r11, 0, m_off.dpc_host_base));  // r10 = host page base (0 = MMIO/none)
-            a.test(x86::r10, x86::r10);                                      a.jz(slow);  // MMIO/straddle: device read via helper
-            a.mov(x86::rax, x86::rdx);
-            a.and_(x86::rax, imm(0x1FFF));                                   // rax = page offset
-            if (op == OP_LDQ || op == OP_LDQ_U) a.mov(x86::rax, x86::qword_ptr(x86::r10, x86::rax));  // LDQ/LDQ_U: full quad
-            else if (op == OP_LDL)  a.movsxd(x86::rax, x86::dword_ptr(x86::r10, x86::rax));
-            else if (op == OP_LDWU) a.movzx(x86::eax, x86::word_ptr(x86::r10, x86::rax));   // BWX: zero-extend
-            else                    a.movzx(x86::eax, x86::byte_ptr(x86::r10, x86::rax));   // LDBU
-            mov_to_reg(ra, x86::rax);
+            a.and_(x86::r10, imm(tag_mask));
+            a.cmp(x86::qword_ptr(x86::rbp, x86::r11, 0, m_off.dpc_virt_page), x86::r10); a.jne(slow);
+            a.mov(x86::r10, x86::qword_ptr(x86::rbp, x86::r11, 0, m_off.dpc_host_bias));
+            a.bind(dpc_ready);
+            const int dp = pin_id(ra);
+            if (dp >= 0) {
+                const x86::Gp dq = x86::gpq((uint32_t)dp), dd = x86::gpd((uint32_t)dp);
+                if (op == OP_LDQ || op == OP_LDQ_U) a.mov(dq, x86::qword_ptr(x86::r10, x86::rdx));
+                else if (op == OP_LDL)  a.movsxd(dq, x86::dword_ptr(x86::r10, x86::rdx));
+                else if (op == OP_LDWU) a.movzx(dd, x86::word_ptr(x86::r10, x86::rdx));
+                else                    a.movzx(dd, x86::byte_ptr(x86::r10, x86::rdx));
+            } else {
+                if (op == OP_LDQ || op == OP_LDQ_U) a.mov(x86::rax, x86::qword_ptr(x86::r10, x86::rdx));  // LDQ/LDQ_U: full quad
+                else if (op == OP_LDL)  a.movsxd(x86::rax, x86::dword_ptr(x86::r10, x86::rdx));
+                else if (op == OP_LDWU) a.movzx(x86::eax, x86::word_ptr(x86::r10, x86::rdx));   // BWX: zero-extend
+                else                    a.movzx(x86::eax, x86::byte_ptr(x86::r10, x86::rdx));   // LDBU
+                mov_to_reg(ra, x86::rax);
+            }
             a.bind(ldone);   // fast path falls through; the slow path is a cold-tail stub jumping back here
             {
                 ColdMemStub s{};
@@ -849,8 +993,15 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 s.slot = (pal_block && ((ra & 0xc) == 0x4)) ? ra + 32 : ra;   // PALshadow remap (see reg())
                 s.i = i;    s.fault_pc = b->tag + 4 * (uint64_t) i;
                 s.vol_bind = regalloc.vol_bind; s.vol_host = (s.vol_bind >= 0) ? regalloc.host[s.vol_bind] : -1;
+                s.vol_bind2 = regalloc.vol_bind2; s.vol_host2 = (s.vol_bind2 >= 0) ? regalloc.host[s.vol_bind2] : -1;
                 cold.push_back(s);
             }
+            // A load that replaces its own address base cannot feed the next address.
+            regalloc.dpc_live = (ra != rb);
+            regalloc.dpc_base = rb;
+            regalloc.dpc_disp = disp;
+            regalloc.dpc_write = false;
+            regalloc.dpc_force_align = force_align;
 #endif
             continue;
         }
@@ -863,9 +1014,17 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             const int disp = (int)(int16_t)(ins & 0xFFFF);
             const int size_bits = (op == OP_STQ || op == OP_STQ_U) ? 64 : (op == OP_STL) ? 32 : (op == OP_STW) ? 16 : 8;
             const int amask = (size_bits / 8) - 1;
-            if (rb == 31)  a.mov(x86::rdx, imm(disp));                       // va -> RDX (preserved for helper)
-            else { mov_from_reg(x86::rdx, rb); if (disp) a.add(x86::rdx, imm(disp)); }
-            if (op == OP_STQ_U) a.and_(x86::rdx, imm(~(uint64_t)7));        // STQ_U: force 8-byte alignment
+            const bool force_align = (op == OP_STQ_U);
+            const uint64_t tag_mask = ~(uint64_t)0x1fff | (force_align ? 0 : (uint64_t)amask);
+            const int dpc_delta = disp - prev_dpc_disp;
+            const bool reuse_dpc = prev_dpc_live && prev_dpc_write && prev_dpc_base == rb
+                && prev_dpc_force_align == force_align && (!force_align || (dpc_delta & 7) == 0);
+            if (reuse_dpc) {
+                if (dpc_delta) a.add(x86::rdx, imm(dpc_delta));              // previous effective VA + displacement delta
+            } else {
+                emit_address(disp);                                          // va -> RDX (preserved for helper)
+                if (force_align) a.and_(x86::rdx, imm(~(uint64_t)7));
+            }
 #ifdef JIT_STATS
             emit_licm_probe();
 #endif
@@ -887,27 +1046,36 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             // (preserved for the helper); R11 = write-cache slot byte offset; RAX/R10/R9 scratch.
             Label slow = a.new_label();
             Label sdone = a.new_label();
-            a.test(x86::dl, imm(amask));                                      a.jnz(slow);
-            a.mov(x86::r11, x86::rdx);
-            a.shr(x86::r11, imm(13));
-            a.and_(x86::r11, imm(m_off.dpc_mask));                            // r11 = dpc_index(va)
-            a.imul(x86::r11, x86::r11, imm(m_off.dpc_stride));                // r11 = slot byte offset
-            a.add(x86::r11, imm(m_off.dpc_write_row));                        // -> write cache [1]
+            Label dpc_ready = a.new_label();
+            if (reuse_dpc) {
+                // The preceding store's write-cache translation remains valid on the same page.
+                a.mov(x86::rax, x86::rdx);
+                a.and_(x86::rax, imm(tag_mask));
+                a.cmp(x86::qword_ptr(x86::rbp, x86::r11, 0,
+                    m_off.dpc_write_row + m_off.dpc_virt_page), x86::rax);
+                a.je(dpc_ready);
+            }
+            emit_dpc_offset();
             a.mov(x86::r10, x86::rdx);
-            a.and_(x86::r10, imm(-0x2000));                                   // r10 = va & ~0x1FFF
-            a.cmp(x86::qword_ptr(x86::rbp, x86::r11, 0, m_off.dpc_virt_page), x86::r10);  a.jne(slow);
-            a.mov(x86::rax, x86::qword_ptr(x86::rbp, m_off.state_cm));                    // rax = {cm, asn0} (adjacent in state)
-            a.cmp(x86::qword_ptr(x86::rbp, x86::r11, 0, m_off.dpc_cm), x86::rax);         a.jne(slow);   // vs slot {cm, asn}
-            a.mov(x86::r10, x86::qword_ptr(x86::rbp, x86::r11, 0, m_off.dpc_host_base));  // r10 = host page base (0 = MMIO/none)
-            a.test(x86::r10, x86::r10);                                      a.jz(slow);  // MMIO/straddle: device write via helper
-            a.mov(x86::rax, x86::rdx);
-            a.and_(x86::rax, imm(0x1FFF));                                   // rax = page offset
-            if (ra == 31)  a.xor_(x86::r9d, x86::r9d);                        // value -> R9 (R31 == 0)
-            else           mov_from_reg(x86::r9, ra);
-            if (op == OP_STQ || op == OP_STQ_U) a.mov(x86::qword_ptr(x86::r10, x86::rax), x86::r9);   // full quad
-            else if (op == OP_STL)                   a.mov(x86::dword_ptr(x86::r10, x86::rax), x86::r9d);
-            else if (op == OP_STW)                   a.mov(x86::word_ptr(x86::r10, x86::rax), x86::r9w);
-            else                                     a.mov(x86::byte_ptr(x86::r10, x86::rax), x86::r9b);   // STB
+            a.and_(x86::r10, imm(tag_mask));
+            a.cmp(x86::qword_ptr(x86::rbp, x86::r11, 0,
+                m_off.dpc_write_row + m_off.dpc_virt_page), x86::r10); a.jne(slow);
+            a.mov(x86::r10, x86::qword_ptr(x86::rbp, x86::r11, 0,
+                m_off.dpc_write_row + m_off.dpc_host_bias));
+            a.bind(dpc_ready);
+            const int sp = (ra == 31) ? -1 : pin_id(ra);
+            if (sp >= 0) {
+                if (op == OP_STQ || op == OP_STQ_U) a.mov(x86::qword_ptr(x86::r10, x86::rdx), x86::gpq((uint32_t)sp));
+                else if (op == OP_STL) a.mov(x86::dword_ptr(x86::r10, x86::rdx), x86::gpd((uint32_t)sp));
+                else if (op == OP_STW) a.mov(x86::word_ptr(x86::r10, x86::rdx), x86::gpw((uint32_t)sp));
+                else                   a.mov(x86::byte_ptr(x86::r10, x86::rdx), x86::gpb((uint32_t)sp));
+            } else {
+                if (ra == 31) a.xor_(x86::eax, x86::eax); else mov_from_reg(x86::rax, ra);
+                if (op == OP_STQ || op == OP_STQ_U) a.mov(x86::qword_ptr(x86::r10, x86::rdx), x86::rax);
+                else if (op == OP_STL) a.mov(x86::dword_ptr(x86::r10, x86::rdx), x86::eax);
+                else if (op == OP_STW) a.mov(x86::word_ptr(x86::r10, x86::rdx), x86::ax);
+                else                   a.mov(x86::byte_ptr(x86::r10, x86::rdx), x86::al);
+            }
             a.bind(sdone);   // fast path falls through; the slow path is a cold-tail stub jumping back here
             {
                 ColdMemStub s{};
@@ -918,8 +1086,14 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 s.slot = (pal_block && ((ra & 0xc) == 0x4)) ? ra + 32 : ra;   // PALshadow remap (see reg())
                 s.i = i;    s.fault_pc = b->tag + 4 * (uint64_t) i;
                 s.vol_bind = regalloc.vol_bind; s.vol_host = (s.vol_bind >= 0) ? regalloc.host[s.vol_bind] : -1;
+                s.vol_bind2 = regalloc.vol_bind2; s.vol_host2 = (s.vol_bind2 >= 0) ? regalloc.host[s.vol_bind2] : -1;
                 cold.push_back(s);
             }
+            regalloc.dpc_live = true;
+            regalloc.dpc_base = rb;
+            regalloc.dpc_disp = disp;
+            regalloc.dpc_write = true;
+            regalloc.dpc_force_align = force_align;
 #endif
             continue;
         }
@@ -941,8 +1115,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
 
             if (isload && fa == 31) continue;   // LDT/LDS f31: interp skips the read (NOP)
 
-            if (rb == 31)  a.mov(x86::rdx, imm(disp));                       // va -> RDX (preserved for helper)
-            else { mov_from_reg(x86::rdx, rb); if (disp) a.add(x86::rdx, imm(disp)); }
+            emit_address(disp);                                              // va -> RDX (preserved for helper)
 #ifdef JIT_STATS
             emit_licm_probe();
 #endif
@@ -972,27 +1145,19 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             a.cmp(x86::byte_ptr(x86::rbp, m_off.fpen), imm(0));                          a.je(slow);   // fpen==0 -> FEN trap
             a.mov(x86::qword_ptr(x86::rbp, m_off.exc_sum), imm(0));                                    // exc_sum = 0
             a.test(x86::dl, imm(7));                                                     a.jnz(slow);  // 8-byte aligned
-            a.mov(x86::r11, x86::rdx);
-            a.shr(x86::r11, imm(13));
-            a.and_(x86::r11, imm(m_off.dpc_mask));
-            a.imul(x86::r11, x86::r11, imm(m_off.dpc_stride));
-            if (!isload) a.add(x86::r11, imm(m_off.dpc_write_row));                                    // store -> write cache [1]
+            emit_dpc_offset();
+            const int dpc_row = isload ? 0 : (int)m_off.dpc_write_row;
             a.mov(x86::r10, x86::rdx);
             a.and_(x86::r10, imm(-0x2000));
-            a.cmp(x86::qword_ptr(x86::rbp, x86::r11, 0, m_off.dpc_virt_page), x86::r10); a.jne(slow);
-            a.mov(x86::rax, x86::qword_ptr(x86::rbp, m_off.state_cm));                   // rax = {cm, asn0} (adjacent in state)
-            a.cmp(x86::qword_ptr(x86::rbp, x86::r11, 0, m_off.dpc_cm), x86::rax);        a.jne(slow);   // vs slot {cm, asn}
-            a.mov(x86::r10, x86::qword_ptr(x86::rbp, x86::r11, 0, m_off.dpc_host_base));  // r10 = host page base (0 = MMIO/none)
-            a.test(x86::r10, x86::r10);                                                  a.jz(slow);   // MMIO/straddle -> helper
-            a.mov(x86::rax, x86::rdx);
-            a.and_(x86::rax, imm(0x1FFF));                                               // rax = page offset
+            a.cmp(x86::qword_ptr(x86::rbp, x86::r11, 0, dpc_row + (int)m_off.dpc_virt_page), x86::r10); a.jne(slow);
+            a.mov(x86::r10, x86::qword_ptr(x86::rbp, x86::r11, 0, dpc_row + (int)m_off.dpc_host_bias));
             if (isload) {                                                               // LDT: f[fa] = MEM[phys]
-                a.mov(x86::rax, x86::qword_ptr(x86::r10, x86::rax));
+                a.mov(x86::rax, x86::qword_ptr(x86::r10, x86::rdx));
                 a.mov(x86::qword_ptr(x86::rbp, m_off.f_base + fa * 8), x86::rax);
             }
             else {                                                                    // STT: MEM[phys] = f[fa]
-                a.mov(x86::r9, x86::qword_ptr(x86::rbp, m_off.f_base + fa * 8));
-                a.mov(x86::qword_ptr(x86::r10, x86::rax), x86::r9);
+                a.mov(x86::rax, x86::qword_ptr(x86::rbp, m_off.f_base + fa * 8));
+                a.mov(x86::qword_ptr(x86::r10, x86::rdx), x86::rax);
             }
             a.bind(fdone);   // fast path falls through; the slow path is a cold-tail stub jumping back here
             {
@@ -1003,6 +1168,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 s.descr = descr;  s.ra = fa;  s.pin = -1;  s.slot = 0;   // helper owns the f[] access
                 s.i = i;          s.fault_pc = b->tag + 4 * (uint64_t) i;
                 s.vol_bind = regalloc.vol_bind; s.vol_host = (s.vol_bind >= 0) ? regalloc.host[s.vol_bind] : -1;
+                s.vol_bind2 = regalloc.vol_bind2; s.vol_host2 = (s.vol_bind2 >= 0) ? regalloc.host[s.vol_bind2] : -1;
                 cold.push_back(s);
             }
 #endif
@@ -1015,8 +1181,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
         if (op == OP_STL_C || op == OP_STQ_C) {
             const int disp = (int)(int16_t)(ins & 0xFFFF);
             const int size_bits = (op == OP_STQ_C) ? 64 : 32;
-            if (rb == 31)  a.mov(x86::rdx, imm(disp));                       // va -> RDX
-            else { mov_from_reg(x86::rdx, rb); if (disp) a.add(x86::rdx, imm(disp)); }
+            emit_address(disp);                                              // va -> RDX
             emit_call(stc_helper, { {JA_CPU, 0}, {JA_VA, 0}, {JA_I32, (uint64_t)size_bits}, {JA_GP, (uint64_t)ra} });  // jit_stc(cpu, va, size, value)
             Label nobail = a.new_label();
             a.test(x86::eax, imm(0x100));                                   // 0x100 = translation-fault bail
@@ -1037,8 +1202,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             if (ra == 31) continue;                                  // R31 dest discards the read
             const int disp = (int)((int32_t)(ins << 20) >> 20);    // sign-extend 12-bit displacement
             const int size_bits = (op == OP_HW_LDL || op == OP_HW_LDL_WCHK) ? 32 : 64;
-            if (rb == 31)  a.mov(x86::rdx, imm(disp));               // address (phys, or virtual for VPTE) -> RDX
-            else { mov_from_reg(x86::rdx, rb); if (disp) a.add(x86::rdx, imm(disp)); }
+            emit_address(disp);                                      // address (phys, or virtual for VPTE) -> RDX
             // func 5 -> jit_read_vpte (kernel-checked virtual read); else jit_read_phys
             emit_call(op == OP_HW_LDQ_VPTE ? read_vpte_helper : op == OP_HW_LDL_WCHK ? read_wchk_helper : hw_ld_helper,
                 { {JA_CPU, 0}, {JA_VA, 0}, {JA_I32, (uint64_t)size_bits}, {JA_OUT, 0} });
@@ -1064,8 +1228,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
         if (op == OP_LDL_L || op == OP_LDQ_L) {
             const int disp = (int)(int16_t)(ins & 0xFFFF);
             const int size_bits = (op == OP_LDQ_L) ? 64 : 32;
-            if (rb == 31)  a.mov(x86::rdx, imm(disp));               // va -> RDX
-            else { mov_from_reg(x86::rdx, rb); if (disp) a.add(x86::rdx, imm(disp)); }
+            emit_address(disp);                                      // va -> RDX
             emit_call(read_locked_helper, { {JA_CPU, 0}, {JA_VA, 0}, {JA_I32, (uint64_t)size_bits}, {JA_OUT, 0} });  // jit_read_locked(cpu, va, size, &out)
             Label ok = a.new_label();
             a.test(x86::eax, x86::eax);
@@ -1105,8 +1268,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
         if (op == OP_HW_STL || op == OP_HW_STQ) {
             const int disp = (int)((int32_t)(ins << 20) >> 20);    // sign-extend 12-bit displacement
             const int size_bits = (op == OP_HW_STQ) ? 64 : 32;
-            if (rb == 31)  a.mov(x86::rdx, imm(disp));               // phys addr -> RDX
-            else { mov_from_reg(x86::rdx, rb); if (disp) a.add(x86::rdx, imm(disp)); }
+            emit_address(disp);                                      // phys addr -> RDX
             emit_call(hw_st_helper, { {JA_CPU, 0}, {JA_VA, 0}, {JA_I32, (uint64_t)size_bits}, {JA_GPZ, (uint64_t)ra} });  // jit_write_phys(cpu, phys, size, value)
             Label ok = a.new_label();
             a.test(x86::eax, x86::eax);
@@ -1125,9 +1287,23 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             if (ra == 31) continue;
             int64_t d = (int64_t)(int16_t)(ins & 0xFFFF);
             if (op == OP_LDAH) d <<= 16;
-            if (rb == 31)  a.mov(x86::rax, imm(d));
-            else { mov_from_reg(x86::rax, rb); if (d) a.add(x86::rax, imm(d)); }
-            mov_to_reg(ra, x86::rax);
+            const int dp = pin_id(ra), bp = (rb == 31) ? -1 : pin_id(rb);
+            if (dp >= 0) {
+                const x86::Gp dst = x86::gpq((uint32_t)dp);
+                if (rb == 31) a.mov(dst, imm(d));
+                else {
+                    if (dp != bp) mov_from_reg(dst, rb);
+                    if (d) a.add(dst, imm(d));
+                }
+            } else if (ra == rb) {
+                // The unpinned in-place form can update the canonical regs[] slot directly.
+                if (d) a.add(reg(ra), imm(d));
+            } else {
+                if (rb == 31) a.mov(x86::rax, imm(d));
+                else if (bp >= 0 && d) a.lea(x86::rax, x86::ptr(x86::gpq((uint32_t)bp), (int32_t)d));
+                else { mov_from_reg(x86::rax, rb); if (d) a.add(x86::rax, imm(d)); }
+                mov_to_reg(ra, x86::rax);
+            }
             continue;
         }
 
@@ -1607,12 +1783,9 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 a.mov(x86::r10, imm(tgt));
             }
             else {                                           // conditional: PC = cond ? target : fall
-                if (ra == 31) a.xor_(x86::eax, x86::eax);
-                else          mov_from_reg(x86::rax, ra);
                 a.mov(x86::r10, imm(fall));
                 a.mov(x86::r11, imm(tgt));
-                if (op == OP_BLBC || op == OP_BLBS) a.test(x86::rax, imm(1));
-                else                                a.test(x86::rax, x86::rax);
+                test_ra(op == OP_BLBC || op == OP_BLBS);
                 switch (op) {
                 case OP_BEQ:  a.cmovz(x86::r10, x86::r11);  break;
                 case OP_BNE:  a.cmovnz(x86::r10, x86::r11); break;
@@ -1635,22 +1808,22 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
         if (op == OP_CMOV) {
             if (rc == 31) continue;
             const uint32_t f = (ins >> 5) & 0x7f;
-            op1_rax();                                  // rax = Ra (condition operand)
             op2_rcx();                                  // rcx = op2 (Rb or literal -- the moved value)
-            mov_from_reg(x86::r10, rc);                 // r10 = current Rc (kept when the condition fails)
-            if (f == 0x14 || f == 0x16) a.test(x86::rax, imm(1));    // CMOVLBS/LBC: test the low bit
-            else                        a.test(x86::rax, x86::rax);  // others: test the full value
+            test_ra(f == 0x14 || f == 0x16);
+            const int dp = pin_id(rc);
+            const x86::Gp dst = (dp >= 0) ? x86::gpq((uint32_t)dp) : x86::r10;
+            if (dp < 0) mov_from_reg(dst, rc);           // current Rc (kept when the condition fails)
             switch (f) {
-            case 0x24: a.cmovz(x86::r10, x86::rcx);  break;   // CMOVEQ  (Ra == 0)
-            case 0x26: a.cmovnz(x86::r10, x86::rcx); break;   // CMOVNE  (Ra != 0)
-            case 0x44: a.cmovs(x86::r10, x86::rcx);  break;   // CMOVLT  (Ra <  0)
-            case 0x46: a.cmovns(x86::r10, x86::rcx); break;   // CMOVGE  (Ra >= 0)
-            case 0x64: a.cmovle(x86::r10, x86::rcx); break;   // CMOVLE  (Ra <= 0)
-            case 0x66: a.cmovg(x86::r10, x86::rcx);  break;   // CMOVGT  (Ra >  0)
-            case 0x14: a.cmovnz(x86::r10, x86::rcx); break;   // CMOVLBS (Ra & 1)
-            case 0x16: a.cmovz(x86::r10, x86::rcx);  break;   // CMOVLBC (!(Ra & 1))
+            case 0x24: a.cmovz(dst, x86::rcx);  break;   // CMOVEQ  (Ra == 0)
+            case 0x26: a.cmovnz(dst, x86::rcx); break;   // CMOVNE  (Ra != 0)
+            case 0x44: a.cmovs(dst, x86::rcx);  break;   // CMOVLT  (Ra <  0)
+            case 0x46: a.cmovns(dst, x86::rcx); break;   // CMOVGE  (Ra >= 0)
+            case 0x64: a.cmovle(dst, x86::rcx); break;   // CMOVLE  (Ra <= 0)
+            case 0x66: a.cmovg(dst, x86::rcx);  break;   // CMOVGT  (Ra >  0)
+            case 0x14: a.cmovnz(dst, x86::rcx); break;   // CMOVLBS (Ra & 1)
+            case 0x16: a.cmovz(dst, x86::rcx);  break;   // CMOVLBC (!(Ra & 1))
             }
-            mov_to_reg(rc, x86::r10);
+            if (dp < 0) mov_to_reg(rc, dst);
             continue;
         }
 
@@ -1779,11 +1952,11 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             a.mov(x86::eax, imm(2));
             break;
 
-        case OP_CMPEQ:  op1_rax(); op2_rcx(); a.cmp(x86::rax, x86::rcx); a.sete(x86::al);  a.movzx(x86::eax, x86::al); break;
-        case OP_CMPLT:  op1_rax(); op2_rcx(); a.cmp(x86::rax, x86::rcx); a.setl(x86::al);  a.movzx(x86::eax, x86::al); break;
-        case OP_CMPLE:  op1_rax(); op2_rcx(); a.cmp(x86::rax, x86::rcx); a.setle(x86::al); a.movzx(x86::eax, x86::al); break;
-        case OP_CMPULT: op1_rax(); op2_rcx(); a.cmp(x86::rax, x86::rcx); a.setb(x86::al);  a.movzx(x86::eax, x86::al); break;
-        case OP_CMPULE: op1_rax(); op2_rcx(); a.cmp(x86::rax, x86::rcx); a.setbe(x86::al); a.movzx(x86::eax, x86::al); break;
+        case OP_CMPEQ:  emit_compare(x86::Inst::kIdSete);  break;
+        case OP_CMPLT:  emit_compare(x86::Inst::kIdSetl);  break;
+        case OP_CMPLE:  emit_compare(x86::Inst::kIdSetle); break;
+        case OP_CMPULT: emit_compare(x86::Inst::kIdSetb);  break;
+        case OP_CMPULE: emit_compare(x86::Inst::kIdSetbe); break;
 
         case OP_CMPBGE:   // 8 parallel unsigned byte compares (Ra.byte[i] >= op2.byte[i]) -> bit i; bits 63:8 = 0
             op1_rax(); op2_rcx();
@@ -1817,7 +1990,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
         default: break;
         }
 
-        if (rc != 31) mov_to_reg(rc, x86::rax);
+        if (rc != 31 && !result_in_dest) mov_to_reg(rc, x86::rax);
     } while (0);
 }
 
@@ -1951,6 +2124,8 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   a.mov(x86::r13, x86::qword_ptr(x86::rbx, 16 * 8));   // R16 (a0)
   a.mov(x86::r15, x86::qword_ptr(x86::rbx, 27 * 8));   // R27 (PV)
   a.mov(x86::r14, x86::qword_ptr(x86::rbx, 30 * 8));   // R30 (SP) -- reclaimed r14
+  a.mov(x86::r8,  x86::qword_ptr(x86::rbx, 17 * 8));   // R17 (a1), caller-saved global pin
+  a.mov(x86::r9,  x86::qword_ptr(x86::rbx, 19 * 8));   // R19 (a3), caller-saved global pin
 #ifdef _WIN32
   a.mov(x86::rsi, x86::qword_ptr(x86::rbx, 29 * 8));   // R29 (GP)
   a.mov(x86::rdi, x86::qword_ptr(x86::rbx,  0 * 8));   // R0 (v0)
@@ -1977,7 +2152,11 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   RegAlloc ra;
   for (int r = 0; r < 32; ++r) ra.host[r] = -1;
   ra.rax_holds = -1;
-  ra.vol_bind = -1;
+  ra.vol_bind = 17;
+  ra.vol_bind2 = 19;
+  ra.dpc_live = false;
+  ra.dpc_base = ra.dpc_disp = 0;
+  ra.dpc_write = ra.dpc_force_align = false;
 #ifdef JIT_STATS
   ra.licm_slots = nullptr; ra.licm_n = ra.licm_max = 0;   // probe regions only, not blocks
 #endif
@@ -1985,6 +2164,8 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   ra.host[kGlobalPins[1]] = (int) x86::r13.id();
   ra.host[kGlobalPins[2]] = (int) x86::r15.id();
   ra.host[30] = (int) x86::r14.id();                  // SP (reclaimed r14), all platforms
+  ra.host[17] = (int) x86::r8.id();                   // a1/a3 use volatile pins; helpers spill/reload them
+  ra.host[19] = (int) x86::r9.id();
 #ifdef _WIN32
   ra.host[29] = (int) x86::rsi.id();                  // GP (Win64)
   ra.host[0]  = (int) x86::rdi.id();                  // v0 (Win64)
@@ -2014,24 +2195,27 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   // current epoch. Otherwise record a patch request (m_link_from = this block) and fall back. 
   auto emit_chain = [&](Label& lbl) {
     Label miss = a.new_label();
-    // PAL/SDE guard once -- depends on the target (R10) + SDE, not the slot: a PALmode target's shadow
-    // remap assumes SDE, so if R10 is PAL and !SDE no cached slot may chain in.
-    { Label ok = a.new_label();
-      a.test(x86::r10, imm(1));                            a.jz(ok);
-      a.cmp(x86::byte_ptr(x86::rbp, m_off.sde), imm(0));   a.je(miss);   // PALmode + !SDE: don't
-      a.bind(ok); }
-    // Current epoch once, reused by every slot: ONE maintained qword (m_vgen_cur).
-    a.mov(x86::rdx, imm((uint64_t) &m_vgen_cur));
-    a.mov(x86::r11, x86::qword_ptr(x86::rdx));                 // r11 = current epoch
-    // Poly-link: walk the cached successor snapshots, 2-successor cache both
+    // A direct branch/fall-through preserves the source PC's PAL bit. CALL_PAL is the
+    // exception.
+    if (pal_block) {
+      a.cmp(x86::byte_ptr(x86::rbp, m_off.sde), imm(0)); a.je(miss);
+    } else if (terminator_branch && (words[plen - 1] >> 26) == 0x00) {
+      Label nonpal = a.new_label();
+      a.test(x86::r10, imm(1)); a.jz(nonpal);
+      a.cmp(x86::byte_ptr(x86::rbp, m_off.sde), imm(0)); a.je(miss);
+      a.bind(nonpal);
+    }
+    // Epoch changes proactively clear every patched LinkSlot, so body!=0 is the
+    // staleness proof.
+    // Poly-link: walk the cached successor snapshots, 2-successor cache both.
     for (int sl = 0; sl < kLinkSlots; ++sl) {
       Label nxt = (sl + 1 < kLinkSlots) ? a.new_label() : miss;
       if (sl == 0) a.mov(x86::rax, imm((uint64_t) &b->link[0]));
       else         a.add(x86::rax, imm((uint32_t) sizeof(LinkSlot)));
-      a.mov(x86::rcx, x86::qword_ptr(x86::rax, (int32_t) offsetof(LinkSlot, body)));   // snapshot body
-      a.test(x86::rcx, x86::rcx);                                               a.jz(nxt);   // empty slot
-      a.cmp(x86::qword_ptr(x86::rax, (int32_t) offsetof(LinkSlot, tag)),  x86::r10); a.jne(nxt);   // not this exit's target
-      a.cmp(x86::qword_ptr(x86::rax, (int32_t) offsetof(LinkSlot, vgen)), x86::r11); a.jne(nxt);   // stale: re-patch via dispatcher
+      a.cmp(x86::qword_ptr(x86::rax, (int32_t) offsetof(LinkSlot, tag)), x86::r10); a.jne(nxt);   // not this exit's target
+      // Invalid slots carry the impossible tag ~0. A matching tag therefore proves body
+      // was published. Removed redundant test. 
+      a.mov(x86::rcx, x86::qword_ptr(x86::rax, (int32_t) offsetof(LinkSlot, body)));
       a.jmp(x86::rcx);                                                 // HIT: tail in (shared frame)
       if (sl + 1 < kLinkSlots) a.bind(nxt);
     }
@@ -2050,12 +2234,35 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 #ifndef JIT_VERIFY
     Label exit_chain = a.new_label();
     emit_gate(exit_chain);                                        // budget/interrupt: bail to dispatcher
+    // Per-site PIC: returns and most computed calls are stable at a given instruction.
+    { Label pic_miss = a.new_label();
+      { Label pic_ok = a.new_label();
+        a.test(x86::r10, imm(1)); a.jz(pic_ok);
+        a.cmp(x86::byte_ptr(x86::rbp, m_off.sde), imm(0)); a.je(exit_chain);
+        a.bind(pic_ok);
+      }
+      for (int sl = 0; sl < kLinkSlots; ++sl) {
+        Label next = (sl + 1 < kLinkSlots) ? a.new_label() : pic_miss;
+        const int off = sl * (int) sizeof(LinkSlot);
+        a.mov(x86::rax, imm((uint64_t) &b->link[0]));
+        a.cmp(x86::qword_ptr(x86::rax, off + (int) offsetof(LinkSlot, tag)), x86::r10); a.jne(next);
+        a.mov(x86::rcx, x86::qword_ptr(x86::rax, off + (int) offsetof(LinkSlot, body)));
+        a.jmp(x86::rcx);
+        if (sl + 1 < kLinkSlots) a.bind(next);
+      }
+      a.bind(pic_miss);
+    }
+    a.mov(x86::qword_ptr(x86::rbx, 17 * 8), x86::r8);
+    a.mov(x86::qword_ptr(x86::rbx, 19 * 8), x86::r9);
     a.mov(aq(0), x86::rbp);                                       // cpu    (arg 0)
     a.mov(aq(1), x86::r10);                                       // target (arg 1) == state.pc
+    a.mov(aq(2), imm((uint64_t) &b->link[0]));                    // per-site target cache
     { const int hi = helper_index(hs, indirect_helper);           // jit_indirect(cpu, target) -> body | 0
       if (hi >= 0 && m_off.helpers)
         a.call(x86::qword_ptr(x86::rbp, (int32_t) (m_off.helpers + hi * 8)));
       else { a.mov(x86::rax, imm((uint64_t) indirect_helper)); a.call(x86::rax); } }
+    a.mov(x86::r8, x86::qword_ptr(x86::rbx, 17 * 8));
+    a.mov(x86::r9, x86::qword_ptr(x86::rbx, 19 * 8));
     a.test(x86::rax, x86::rax);                              a.jz(exit_chain);
     a.jmp(x86::rax);                                              // HIT: tail into the target's body
     a.bind(exit_chain);
@@ -2101,6 +2308,8 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   a.mov(x86::qword_ptr(x86::rbx, 16 * 8), x86::r13);   // R16 (a0)
   a.mov(x86::qword_ptr(x86::rbx, 27 * 8), x86::r15);   // R27 (PV)
   a.mov(x86::qword_ptr(x86::rbx, 30 * 8), x86::r14);   // R30 (SP)
+  a.mov(x86::qword_ptr(x86::rbx, 17 * 8), x86::r8);    // caller-saved global pins
+  a.mov(x86::qword_ptr(x86::rbx, 19 * 8), x86::r9);
 #ifdef _WIN32
   a.mov(x86::qword_ptr(x86::rbx, 29 * 8), x86::rsi);   // R29 (GP)
   a.mov(x86::qword_ptr(x86::rbx,  0 * 8), x86::rdi);   // R0 (v0)
@@ -2281,6 +2490,10 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   for (int r = 0; r < 32; ++r) ra.host[r] = -1;
   ra.rax_holds = -1;
   ra.vol_bind = -1;
+  ra.vol_bind2 = -1;
+  ra.dpc_live = false;
+  ra.dpc_base = ra.dpc_disp = 0;
+  ra.dpc_write = ra.dpc_force_align = false;
 #ifdef JIT_STATS
   { const uint32_t left = (uint32_t) (sizeof(m_licm_pool) / sizeof(m_licm_pool[0])) - m_licm_next;
     ra.licm_slots = m_licm_pool + m_licm_next; ra.licm_n = 0; ra.licm_max = left > 64 ? 64 : left; }
@@ -2415,6 +2628,7 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
       }
       a.mov(x86::gpq(gpa[0]), x86::rbp);
       a.mov(x86::gpq(gpa[1]), x86::r10);
+      a.xor_(x86::gpd(gpa[2]), x86::gpd(gpa[2]));                 // no per-site cache for trace final exits yet
       if (vol_sync) a.mov(x86::qword_ptr(x86::rbx, vol_reg * 8), x86::r8);   // the call clobbers R8
       { const int hi = helper_index(hs, hs.indirect_helper);
         if (hi >= 0 && m_off.helpers) a.call(x86::qword_ptr(x86::rbp, (int32_t) (m_off.helpers + hi * 8)));

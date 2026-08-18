@@ -521,7 +521,7 @@ void CAlphaCPU::init()
 		o.dpc_valid = (uint32_t)((char*)&data_page_cache[0][0].valid - (char*)this);
 		o.dpc_virt_page = (uint32_t)((char*)&data_page_cache[0][0].virt_page - (char*)this);
 		o.dpc_phys_base = (uint32_t)((char*)&data_page_cache[0][0].phys_base - (char*)this);
-		o.dpc_host_base = (uint32_t)((char*)&data_page_cache[0][0].host_base - (char*)this);
+		o.dpc_host_bias = (uint32_t)((char*)&data_page_cache[0][0].host_bias - (char*)this);
 		o.dpc_cm = (uint32_t)((char*)&data_page_cache[0][0].cm - (char*)this);
 		o.dpc_asn = (uint32_t)((char*)&data_page_cache[0][0].asn - (char*)this);
 		o.dpc_stride = (uint32_t)sizeof(data_page_cache[0][0]);
@@ -961,6 +961,7 @@ void CAlphaCPU::jit_run(int budget)
 				// in-frame next time. Hook-before-block ordering makes traces win the patch.
 				if (m_link_from && t->chain_entry) { m_jit->note_link_bail();
 					CJitEngine::LinkSlot* lf = (CJitEngine::LinkSlot*)m_link_from;
+					m_jit->note_link_patch(lf);
 					const CJitEngine::LinkSlot snap = { t->head_tag, t->vgen, t->chain_entry };
 					int found = -1;
 					for (int i = 0; i < CJitEngine::kLinkSlots; ++i) if (lf[i].body && lf[i].tag == t->head_tag) found = i;
@@ -1133,6 +1134,7 @@ void CAlphaCPU::jit_run(int budget)
 				state.i_ctl_spe = (int)s[17]; state.i_ctl_va_mode = (int)s[18];
 				state.i_ctl_vptb = s[19]; state.i_ctl_other = s[20];
 				state.cm = (int)s[21]; state.sir = (int)s[22];
+				flush_data_page_cache();
 				state.aster = (int)s[23]; state.astrr = (int)s[24];
 				state.fpen = (int)s[25]; state.ppcen = (int)s[26];
 				};
@@ -1305,6 +1307,7 @@ void CAlphaCPU::jit_run(int budget)
 				state.i_ctl_spe = ictl_spe_pre; state.i_ctl_va_mode = ictl_vam_pre;
 				state.i_ctl_vptb = ictl_vptb_pre; state.i_ctl_other = ictl_other_pre;
 				state.cm = cm_pre; state.sir = sir_pre;                      // ...and CM/SIRR
+				flush_data_page_cache();
 				state.aster = aster_pre; state.astrr = astrr_pre;            // ...and the PCTX read-backs (a
 				state.fpen = fpen_pre; state.ppcen = ppcen_pre;              // HW_MFPR PCTX reads these live)
 				const u64 interp_pc = state.pc;   // interpreter is authoritative for the PC
@@ -1362,6 +1365,7 @@ void CAlphaCPU::jit_run(int budget)
 						state.i_ctl_spe = ictl_spe_pre; state.i_ctl_va_mode = ictl_vam_pre;
 						state.i_ctl_vptb = ictl_vptb_pre; state.i_ctl_other = ictl_other_pre;
 						state.cm = cm_pre; state.sir = sir_pre;
+						flush_data_page_cache();
 						state.aster = aster_pre; state.astrr = astrr_pre;
 						state.fpen = fpen_pre; state.ppcen = ppcen_pre;
 						state.exc_sum = exc_sum_pre; state.fpcr = fpcr_pre;   // else the trace inherits the
@@ -1440,6 +1444,7 @@ void CAlphaCPU::jit_run(int budget)
 			// Tag-keyed: an existing entry for this target MUST be refreshed in place.
 			if (m_link_from) { m_jit->note_link_bail();   // (fanout stats retired with the generic LinkSlot* target)
 				CJitEngine::LinkSlot* lf = (CJitEngine::LinkSlot*)m_link_from;
+				m_jit->note_link_patch(lf);
 				const CJitEngine::LinkSlot snap = { b->tag, b->vgen, b->jit_body };
 				int found = -1;   // poly-link: refresh the existing entry for this tag, else round-robin insert
 				for (int i = 0; i < CJitEngine::kLinkSlots; ++i) if (lf[i].body && lf[i].tag == b->tag) found = i;
@@ -1541,12 +1546,13 @@ int CAlphaCPU::jit_read(CAlphaCPU* cpu, u64 va, int size_bits, u64* out)
 		if (!e.access[0][cpu->state.cm]) return 1;                            // protection (ACV)
 		if (e.fault[0]) return 1;                                             // fault-on-read (FOR)
 		phys = e.phys | (va & e.keep_mask);
-		dpc.virt_page = vp;
 		dpc.phys_base = phys & ~U64(0x1FFF);
-		dpc.host_base = ((phys | U64(0x1FFF)) < cpu->dram_size) ? ((u64)cpu->dram_ptr + (phys & ~U64(0x1FFF))) : 0;
-		dpc.cm = cpu->state.cm;
-		dpc.asn = cpu->state.asn0;
-		dpc.valid = true;
+		dpc.host_bias = ((phys | U64(0x1FFF)) < cpu->dram_size)
+			? ((u64)cpu->dram_ptr + (phys & ~U64(0x1FFF)) - vp) : 0;
+		dpc.virt_page = dpc.host_bias ? vp : ~U64(0);
+		dpc.cm = (u8)cpu->state.cm;
+		dpc.asn = (u8)cpu->state.asn0;
+		dpc.valid = dpc.host_bias != 0;
 	}
 
 	// DRAM only: bail on MMIO so the interpreter does device reads (side effects + ordering). This
@@ -1776,12 +1782,13 @@ int CAlphaCPU::jit_read_locked(CAlphaCPU* cpu, u64 va, int size_bits, u64* out)
 		if (!e.access[0][cpu->state.cm]) return 1;                            // protection (ACV)
 		if (e.fault[0]) return 1;                                             // fault-on-read (FOR)
 		phys = e.phys | (va & e.keep_mask);
-		dpc.virt_page = vp;
 		dpc.phys_base = phys & ~U64(0x1FFF);
-		dpc.host_base = ((phys | U64(0x1FFF)) < cpu->dram_size) ? ((u64)cpu->dram_ptr + (phys & ~U64(0x1FFF))) : 0;
-		dpc.cm = cpu->state.cm;
-		dpc.asn = cpu->state.asn0;
-		dpc.valid = true;
+		dpc.host_bias = ((phys | U64(0x1FFF)) < cpu->dram_size)
+			? ((u64)cpu->dram_ptr + (phys & ~U64(0x1FFF)) - vp) : 0;
+		dpc.virt_page = dpc.host_bias ? vp : ~U64(0);
+		dpc.cm = (u8)cpu->state.cm;
+		dpc.asn = (u8)cpu->state.asn0;
+		dpc.valid = dpc.host_bias != 0;
 	}
 
 	if (phys >= cpu->dram_size)                // MMIO: interpreter handles the I/O-space locked path
@@ -1955,12 +1962,13 @@ int CAlphaCPU::jit_write(CAlphaCPU* cpu, u64 va, int size_bits, u64 value)
 		if (!e.access[1][cpu->state.cm]) return 1;                            // protection (ACV)
 		if (e.fault[1]) return 1;                                             // fault-on-write (FOW)
 		phys = e.phys | (va & e.keep_mask);
-		dpc.virt_page = vp;
 		dpc.phys_base = phys & ~U64(0x1FFF);
-		dpc.host_base = ((phys | U64(0x1FFF)) < cpu->dram_size) ? ((u64)cpu->dram_ptr + (phys & ~U64(0x1FFF))) : 0;
-		dpc.cm = cpu->state.cm;
-		dpc.asn = cpu->state.asn0;
-		dpc.valid = true;
+		dpc.host_bias = ((phys | U64(0x1FFF)) < cpu->dram_size)
+			? ((u64)cpu->dram_ptr + (phys & ~U64(0x1FFF)) - vp) : 0;
+		dpc.virt_page = dpc.host_bias ? vp : ~U64(0);
+		dpc.cm = (u8)cpu->state.cm;
+		dpc.asn = (u8)cpu->state.asn0;
+		dpc.valid = dpc.host_bias != 0;
 	}
 
 	if (phys < cpu->dram_size)
@@ -2037,12 +2045,13 @@ u64 CAlphaCPU::jit_stc(CAlphaCPU* cpu, u64 va, int size_bits, u64 value)
 		if (!e.access[1][cpu->state.cm]) return U64(0x100);                  // protection (ACV)
 		if (e.fault[1]) return U64(0x100);                                   // fault-on-write (FOW)
 		phys = e.phys | (va & e.keep_mask);
-		dpc.virt_page = vp;
 		dpc.phys_base = phys & ~U64(0x1FFF);
-		dpc.host_base = ((phys | U64(0x1FFF)) < cpu->dram_size) ? ((u64)cpu->dram_ptr + (phys & ~U64(0x1FFF))) : 0;
-		dpc.cm = cpu->state.cm;
-		dpc.asn = cpu->state.asn0;
-		dpc.valid = true;
+		dpc.host_bias = ((phys | U64(0x1FFF)) < cpu->dram_size)
+			? ((u64)cpu->dram_ptr + (phys & ~U64(0x1FFF)) - vp) : 0;
+		dpc.virt_page = dpc.host_bias ? vp : ~U64(0);
+		dpc.cm = (u8)cpu->state.cm;
+		dpc.asn = (u8)cpu->state.asn0;
+		dpc.valid = dpc.host_bias != 0;
 	}
 
 	u64 expected = 0;
@@ -2152,10 +2161,12 @@ void CAlphaCPU::jit_hw_mtpr(CAlphaCPU* cpu, u32 function, u64 value)
 	case 0x13: cpu->flush_icache(); break;                                      // IC_FLUSH (lazy flush + deferred reclaim)
 	case 0x09:                                                                   // CM (current mode)
 		cpu->state.cm = (int)(value >> 3) & 3;
+		cpu->flush_data_page_cache();
 		cpu->state.check_int = true;
 		break;
 	case 0x0b:                                                                   // IER_CM: write CM, then fall into IER
 		cpu->state.cm = (int)(value >> 3) & 3;
+		cpu->flush_data_page_cache();
 		cpu->state.check_int = true;
 		[[fallthrough]];
 	case 0x0a:                                                                   // IER
@@ -2195,24 +2206,42 @@ void CAlphaCPU::jit_hw_mtpr(CAlphaCPU* cpu, u32 function, u64 value)
 // asn/asm_global) and return its chained re-entry point if it's compiled and runnable in the current
 // context; else null, so the compiled jump bails to the dispatcher. Keying on the actual target lets
 // any number of distinct targets chain without the old single-slot link thrashing on varying jumps.
-void* CAlphaCPU::jit_indirect(CAlphaCPU* cpu, u64 target)
+void* CAlphaCPU::jit_indirect(CAlphaCPU* cpu, u64 target, void* link_cache)
 {
 	cpu->m_jit->note_jmp_attempt();
 	CJitEngine::JitBlock* b = cpu->m_jit->lookup(target, (u32)cpu->state.asn);
 	if (!b || !b->jit_body) return nullptr;
+	auto hit = [&](void* body) -> void* {
+		if (link_cache)
+		{
+			auto* links = (CJitEngine::LinkSlot*)link_cache;
+			cpu->m_jit->note_link_patch(links);
+			const CJitEngine::LinkSlot snap = { target, cpu->m_jit->vgen(), body };
+			int found = -1;
+			for (int i = 0; i < CJitEngine::kLinkSlots; ++i)
+				if (links[i].body && links[i].tag == target) found = i;
+			if (found >= 0) links[found] = snap;
+			else {
+				for (int i = CJitEngine::kLinkSlots - 1; i > 0; --i) links[i] = links[i - 1];
+				links[0] = snap;
+			}
+		}
+		cpu->m_jit->note_jmp_hit();
+		return body;
+	};
 	if (target & 1)
 	{
 		// PALmode target: the I-stream is physically addressed (not paged), so no remap / no stale
 		// risk. A PALmode block's shadow-register remap assumes SDE -- honor the dispatcher's guard.
 		if (!cpu->state.sde) return nullptr;
-		cpu->m_jit->note_jmp_hit(); return b->jit_body;
+		return hit(b->jit_body);
 	}
 	// Native target. FAST PATH: validated under the current epoch (lookup proved flush-fresh, so a
 	// vgen mismatch here means an ITB invalidate) -- chain with no re-translation.
 	const u64 gen = cpu->m_jit->vgen();
 	if (b->vgen == gen)
 	{
-		cpu->m_jit->note_jmp_hit(); return b->jit_body;
+		return hit(b->jit_body);
 	}
 	// SLOW PATH (only right after an ITB invalidate): the in-frame chain bypasses the dispatcher's
 	// `b->phys == start_phys` staleness check (see the hot-path). Virtual+ASN keying can't see a 
@@ -2232,7 +2261,7 @@ void* CAlphaCPU::jit_indirect(CAlphaCPU* cpu, u64 target)
 		return nullptr;
 	}
 	b->vgen = gen;                                             // re-validated -> fast path henceforth
-	cpu->m_jit->note_jmp_hit(); return b->jit_body;
+	return hit(b->jit_body);
 }
 #endif
 

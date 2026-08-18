@@ -102,6 +102,7 @@ static void big_free(void* p, size_t bytes)
 
 CJitEngine::CJitEngine(int cpu_id) : m_cpu_id(cpu_id), m_recorded(0), m_code_bytes(0), m_rt(nullptr)
 {
+  m_active_links.reserve(4096);
   // flush() is lazy (gen bump), so the slots must start zeroed -- all big_alloc paths return
   // zeroed pages. Compiled code embeds absolute addresses into m_blocks..
   bool blk_lp = false, trc_lp = false;
@@ -239,7 +240,9 @@ CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uin
   b.flush_gen = m_flush_gen;
   b.code = nullptr;
   b.jit_body = nullptr;   // not compiled yet -> cached links to us must miss until compile
-  for (int i = 0; i < kLinkSlots; ++i) b.link[i] = {};   // no cached successors yet
+  for (int i = 0; i < kLinkSlots; ++i) {
+    b.link[i].tag = ~uint64_t(0); b.link[i].vgen = 0; b.link[i].body = nullptr;
+  }   // no cached successors yet
 #ifdef JIT_STATS
   b.link_misses = 0; b.link_fanout = 0;   // instrumentation: reset successor-fanout tracking on (re)use
 #endif
@@ -363,6 +366,7 @@ void CJitEngine::trace_selftest()
 // (never while its compiled code could be executing); runtimes are per-CPU.
 void CJitEngine::reclaim_code()
 {
+  invalidate_links();
   //printf("[JIT][CPU%d] code reclaim: %llu MB freed\n", m_cpu_id,
   //       (unsigned long long) (m_code_bytes >> 20));
   delete (asmjit::JitRuntime*) m_rt;
@@ -376,7 +380,11 @@ void CJitEngine::reclaim_code()
     m_blocks[i].compiled = false;
     // Link snapshots hold raw body pointers into the runtime just freed. The epoch alone can't be
     // trusted.
-    for (int sl = 0; sl < kLinkSlots; ++sl) m_blocks[i].link[sl] = {};
+    for (int sl = 0; sl < kLinkSlots; ++sl) {
+      m_blocks[i].link[sl].tag = ~uint64_t(0);
+      m_blocks[i].link[sl].vgen = 0;
+      m_blocks[i].link[sl].body = nullptr;
+    }
   }
   // Traces hold JitFns into the runtime we just deleted -- drop them too, or a post-reclaim trace
   // dispatch jumps through a freed pointer. trace_lookup keys on valid, so clearing it is enough.
@@ -389,6 +397,7 @@ void CJitEngine::flush()
   // lookup() and revalidate_flushed() re-hashes their source bytes before they run again.
   ++m_flush_gen;
   ++m_vgen_cur;
+  invalidate_links();
   if (m_rt && m_code_bytes >= kReclaimBytes)
     m_reclaim_pending = true;   // DEFER: reclaim frees all code -- unsafe from a compiled IC_FLUSH;
                                 // reclaim_if_pending() does it at the next dispatch boundary.
@@ -404,6 +413,7 @@ void CJitEngine::flush_non_global()
   // The chain guard reads link SNAPSHOTS, not the successor's live jit_body, so the soft drop
   // below is invisible to it so need to invalidate every cached edge by epoch instead. 
   ++m_vgen_cur;
+  invalidate_links();
   for (int i = 0; i < kCacheEntries; ++i) {
     if (!m_blocks[i].asm_global) {
       m_blocks[i].valid = false;
@@ -415,6 +425,17 @@ void CJitEngine::flush_non_global()
     for (uint32_t s = 0; s < m_traces[i].n_segs; ++s)
       if (!m_traces[i].segs[s].asm_global) { m_traces[i].valid = false; note_trace_stale(); break; }
   }
+}
+
+void CJitEngine::invalidate_links()
+{
+  for (LinkSlot* links : m_active_links)
+    for (int sl = 0; sl < kLinkSlots; ++sl) {
+      links[sl].tag = ~uint64_t(0);
+      links[sl].vgen = 0;
+      links[sl].body = nullptr;
+    }
+  m_active_links.clear();
 }
 #ifdef JIT_VERIFY
 uint64_t CJitEngine::verify_compare(uint64_t blk_virt, const uint64_t* interp, const uint64_t* jit,
