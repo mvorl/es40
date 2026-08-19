@@ -43,7 +43,7 @@
 #include <asmjit/core.h>
 
 void CJitEngine::emit_op(void*, const uint8_t*, void*, const HelperSet&,
-                         bool, JitBlock*, uint32_t, uint32_t, RegAlloc&, void*) {}
+                         bool, JitBlock*, uint32_t, uint32_t, RegAlloc&, void*, bool) {}
 
 void CJitEngine::compile_block(JitBlock* b, const uint8_t*, uint64_t, void*, void*, void*,
     void*, void*, void*, void*, void*, void*, void*, void*, void*, void*, void*, void*,
