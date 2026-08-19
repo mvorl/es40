@@ -331,7 +331,8 @@ public:
   // cold: opaque std::vector<ColdMemStub>* collecting outlined memop slow paths;
   // the caller emits them after its epilogue - helper calls stay out of hot path
   void emit_op(void* a, const uint8_t* gpa, void* done, const HelperSet& hs,
-               bool pal_block, JitBlock* b, uint32_t ins, uint32_t i, RegAlloc& regalloc, void* cold);
+               bool pal_block, JitBlock* b, uint32_t ins, uint32_t i, RegAlloc& regalloc,
+               void* cold, bool defer_pc = false);
 
   // compile an N-block trace into slot t (reuses emit_op per block; blocks fused with a guard -> side-exit
   // between them). n_blocks==1 is the single-block case; the exit returns to the dispatcher.

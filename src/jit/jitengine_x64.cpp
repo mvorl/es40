@@ -660,7 +660,8 @@ static void emit_cold_mem_stub(asmjit::x86::Assembler& a, const uint8_t* gpa,
 }
 
 void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const HelperSet& hs,
-    bool pal_block, JitBlock* b, uint32_t ins, uint32_t i, RegAlloc& regalloc, void* cold_ptr)
+    bool pal_block, JitBlock* b, uint32_t ins, uint32_t i,
+    RegAlloc& regalloc, void* cold_ptr, bool defer_pc)
 {
     using namespace asmjit;
     x86::Assembler& a = *(x86::Assembler*)a_ptr;
@@ -1736,7 +1737,12 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             a.and_(x86::r10, imm(~(uint64_t)3));                       // target = Rb & ~3 (clear low 2)
             if (b->tag & 3) a.or_(x86::r10, imm(b->tag & 3));           // DO_JMP: mode bits come from the current pc
             if (ra != 31) { a.mov(x86::rax, imm(ret & ~(uint64_t)3)); mov_to_reg(ra, x86::rax); }  // return addr = PC & ~3 (DO_JMP)
-            a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);  // state.pc = target
+#ifdef JIT_VERIFY
+            a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
+#else
+            if (!defer_pc || pal_block)
+                a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
+#endif
             continue;
         }
 
@@ -1746,7 +1752,12 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             if (rb == 31) a.xor_(x86::r10d, x86::r10d);
             else          mov_from_reg(x86::r10, rb);
             a.and_(x86::r10, imm(~(uint64_t)2));                       // target = Rb & ~2 (clear bit 1)
-            a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);  // state.pc = target
+#ifdef JIT_VERIFY
+            a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
+#else
+            if (!defer_pc || pal_block)
+                a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
+#endif
             continue;
         }
 
@@ -1771,9 +1782,15 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             a.mov(x86::rax, imm(cpc));                                  // EXC_ADDR = CALL_PAL address
             a.mov(x86::qword_ptr(x86::rbp, m_off.exc_addr), x86::rax);
             a.movzx(x86::eax, x86::byte_ptr(x86::rbp, m_off.sde));      // SDE (0/1)
+            a.mov(x86::rcx, imm(ret));
+            if (const int p23 = pin_id(23); p23 >= 0) {
+                // With SDE clear CALL_PAL writes ordinary R23. 
+                // With SDE set, the destination is shadow R55.
+                a.test(x86::eax, x86::eax);
+                a.cmovz(x86::gpq((uint32_t)p23), x86::rcx);
+            }
             a.shl(x86::eax, imm(5));                                    // * 32
             a.add(x86::eax, imm(23));                                   // R23 index: 23, or 55 if SDE
-            a.mov(x86::rcx, imm(ret));
             a.mov(x86::qword_ptr(x86::rbx, x86::rax, 3), x86::rcx);     // r[idx] = return address
             a.mov(x86::r10, x86::qword_ptr(x86::rbp, m_off.pal_base));
             a.or_(x86::r10, imm(voff));                                 // r10 = pal_base | entry offset
@@ -1814,7 +1831,8 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             case OP_FBGT: a.cmovg(x86::r10, x86::r11);  break;
             default: break;
             }
-            a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
+            if (!defer_pc || pal_block)
+                a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
             a.jmp(cont);
             a.bind(bail);
             set_pc(b->tag + 4 * (uint64_t)i);                    // resume this instruction in the interpreter
@@ -1847,7 +1865,8 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 default: break;
                 }
             }
-            a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
+            if (!defer_pc || pal_block)
+                a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
             continue;
         }
 
@@ -2192,11 +2211,12 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   a.inc(x86::qword_ptr(x86::rax));                // RAX is dead at body entry -- the first op reloads it
 #endif
 
-  // The compiled block computes its own next PC into state.pc at every exit (the
-  // foundation for branch compilation and block linking). R10 is scratch here.
+  // Successful non-PAL exits keep their next PC in R10 while chaining. 
+  // PAL code publishes immediately.
   auto set_pc = [&](uint64_t pc_val) {
     a.mov(x86::r10, imm(pc_val));
-    a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
+    if (pal_block)
+      a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
   };
 
   // Block register allocator: callee-saved and volatile guest pins remain live across chains.
@@ -2228,7 +2248,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 
   std::vector<ColdMemStub> cold;   // outlined memop slow paths, emitted after the epilogue
   for (uint32_t i = 0; i < plen; ++i)
-      emit_op(&a, gpa, &done, hs, pal_block, b, words[i], i, ra, &cold);
+      emit_op(&a, gpa, &done, hs, pal_block, b, words[i], i, ra, &cold, true);
 
   // Epilogue. Count this block's instructions, then chain into the next block (staying
   // in native code) or return to the dispatcher.
@@ -2289,13 +2309,14 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   };
 #endif
   if (terminator_jmp) {
-    // Computed jump (JMP / HW_RET): R10 holds the register target (already written to state.pc).
+    // Computed jump (JMP / HW_RET): R10 holds the register target. Publish it only on return to 
+    // dispatch OR calling cold resolution. 
     // Chain in-frame via jit_indirect -- the dispatcher's own block-cache lookup -- tailing into
     // the target's compiled body when it's live + runnable here. Unlike the old single-slot link
     // this keys on the ACTUAL target, so it handles all targets with no thrash on varying jumps.
     a.add(x86::r13, imm(plen));
 #ifndef JIT_VERIFY
-    Label exit_chain = a.new_label();
+    Label exit_chain = a.new_label(), exit_pc_ready = a.new_label();
     emit_gate(exit_chain);                                        // budget/interrupt: bail to dispatcher
     // Per-site PIC: returns and most computed calls are stable at a given instruction.
     { Label pic_miss = a.new_label();
@@ -2318,6 +2339,9 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
       }
       a.bind(pic_miss);
     }
+    // The resolver is a helper boundary and may clobber R10. A hot PIC hit above
+    // chains without touching architectural state.pc.
+    a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
     a.mov(x86::qword_ptr(x86::rbx, 22 * 8), x86::r8);
     a.mov(x86::qword_ptr(x86::rbx, 23 * 8), x86::r9);
     a.mov(aq(0), x86::rbp);                                       // cpu    (arg 0)
@@ -2329,12 +2353,14 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
       else { a.mov(x86::rax, imm((uint64_t) indirect_helper)); a.call(x86::rax); } }
     a.mov(x86::r8, x86::qword_ptr(x86::rbx, 22 * 8));
     a.mov(x86::r9, x86::qword_ptr(x86::rbx, 23 * 8));
-    a.test(x86::rax, x86::rax);                              a.jz(exit_chain);
+    a.test(x86::rax, x86::rax);                              a.jz(exit_pc_ready);
     a.jmp(x86::rax);                                              // HIT: tail into the target's body
     a.bind(exit_chain);
+    a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
+    a.bind(exit_pc_ready);
 #endif
   } else if (terminator_branch) {
-    a.add(x86::r13, imm(plen));   // R10 still holds the next PC (branch wrote state.pc + R10)
+    a.add(x86::r13, imm(plen));   // R10 still holds the branch's next PC
 #ifndef JIT_VERIFY
     // Gate thinning: the budget/interrupt gate is needed only where a chain can REVISIT code.
     // PC strictly increases through fall-throughs and forward branches, so every guest cycle
@@ -2356,6 +2382,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     emit_chain(exit_chain);
     a.bind(exit_chain);
 #endif
+    a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
   } else {
     set_pc(b->tag + 4 * (uint64_t) plen);   // straight-line fall-through to the next block
     a.add(x86::r13, imm(plen));
@@ -2365,6 +2392,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     emit_chain(exit_chain);
     a.bind(exit_chain);
 #endif
+    a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
   }
   a.mov(x86::eax, x86::r13d);                      // total instructions completed across the chain
   a.bind(done);                 // bail jumps here with EAX already set
