@@ -2145,6 +2145,8 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 
   // Full-word portion of OpenVMS byte-search routine.
   bool word_scan_fused = false;
+  bool byte_scan_fused = false;
+  bool tail_scan_fused = false;
 #if defined(_WIN32) && !defined(JIT_VERIFY)
   if (!pal_block && plen == 5 && phys + 10u * 4u <= page_end && phys + 10u * 4u <= dram_size) {
     static const uint32_t word_scan[10] = {
@@ -2152,6 +2154,27 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
       0x40011120, 0x40211401, 0xf81ffff8, 0x40011400, 0xe4000007
     };
     word_scan_fused = memcmp(words, word_scan, sizeof(word_scan)) == 0;
+  }
+  // Inner byte-search loop.
+  // R23 contains the aligned source word
+  // Compare from R1&7 until R27 matches, R0 reaches zero, or R1 reaches the next word.
+  if (!pal_block && plen == 3 && phys + 8u * 4u <= page_end && phys + 8u * 4u <= dram_size) {
+    static const uint32_t byte_scan[8] = {
+      0x4ae100d8, 0x43780536, 0xe6c0001e,
+      0x40003520, 0x40203401, 0xe400001b,
+      0x4420f016, 0xf6dffff8
+    };
+    byte_scan_fused = memcmp(words, byte_scan, sizeof(byte_scan)) == 0;
+  }
+  // End of the inner loop search.
+  // R23 remains the loaded word and R0 is the remaining byte count.
+  // Each mismatch executes the 3 op update block.
+  if (!pal_block && plen == 3 && phys + 6u * 4u <= page_end && phys + 6u * 4u <= dram_size) {
+    static const uint32_t tail_scan[6] = {
+      0x4ae100d8, 0x431b0538, 0xe7000003,
+      0x40003120, 0x40203401, 0xf41ffffa
+    };
+    tail_scan_fused = memcmp(words, tail_scan, sizeof(tail_scan)) == 0;
   }
 #endif
 #ifdef JIT_REGPROF
@@ -2357,6 +2380,130 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     a.bind(normal);
 #endif
   }
+  if (tail_scan_fused) {
+#ifdef _WIN32
+    Label normal = a.new_label(), no_match = a.new_label(), commit = a.new_label();
+
+    a.mov(x86::rax, x86::qword_ptr(x86::rbp, m_off.jit_budget));
+    a.sub(x86::rax, x86::r13);
+    a.cmp(x86::rax, imm(48)); a.jb(normal);
+    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0)); a.jne(normal);
+    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_timers), imm(0)); a.jne(normal);
+    a.cmp(x86::rdi, imm(1)); a.jb(normal);
+    a.cmp(x86::rdi, imm(8)); a.ja(normal);
+    a.mov(x86::rax, x86::rsi); a.cmp(x86::rax, imm(255)); a.ja(normal);
+
+    // Compare the R0 live lanes beginning at R1&7.
+    a.mov(x86::rdx, x86::r12); a.and_(x86::edx, imm(7));
+    a.mov(x86::r10d, imm(8)); a.sub(x86::r10, x86::rdx);
+    a.cmp(x86::rdi, x86::r10); a.ja(normal);             // never read beyond the loaded word
+    a.movq(x86::xmm0, x86::r9);
+    a.mov(x86::eax, x86::esi); a.imul(x86::eax, x86::eax, imm(0x01010101));
+    a.movd(x86::xmm1, x86::eax); a.pshufd(x86::xmm1, x86::xmm1, imm(0));
+    a.pcmpeqb(x86::xmm0, x86::xmm1); a.pmovmskb(x86::eax, x86::xmm0);
+    a.mov(x86::ecx, x86::edx); a.shr(x86::eax, x86::cl);
+    a.mov(x86::ecx, x86::edi); a.mov(x86::edx, imm(1));
+    a.shl(x86::edx, x86::cl); a.dec(x86::edx); a.and_(x86::eax, x86::edx);
+    a.test(x86::eax, x86::eax); a.jz(no_match);
+
+    // k mismatches followed by a match, each mismatch consumes six guest ops;
+    // the comparison block's three are added by the shared epilogue.
+    a.bsf(x86::eax, x86::eax);
+    a.sub(x86::rdi, x86::rax); a.add(x86::r12, x86::rax);
+    a.mov(x86::qword_ptr(x86::rbx, 24 * 8), imm(0));
+    a.imul(x86::rax, x86::rax, imm(6)); a.add(x86::r13, x86::rax);
+    set_pc(b->tag + 0x18);
+    a.jmp(commit);
+
+    a.bind(no_match);
+    // Count end: preserve the final byte except search result in R24.
+    a.mov(x86::rax, x86::r12); a.and_(x86::eax, imm(7));
+    a.add(x86::rax, x86::rdi); a.dec(x86::rax); a.shl(x86::eax, imm(3));
+    a.mov(x86::ecx, x86::eax); a.mov(x86::rax, x86::r9); a.shr(x86::rax, x86::cl);
+    a.and_(x86::eax, imm(255)); a.sub(x86::rax, x86::rsi);
+    a.mov(x86::qword_ptr(x86::rbx, 24 * 8), x86::rax);
+    a.mov(x86::rax, x86::rdi); a.imul(x86::rax, x86::rax, imm(6));
+    a.sub(x86::rax, imm(3)); a.add(x86::r13, x86::rax);
+    a.add(x86::r12, x86::rdi); a.xor_(x86::edi, x86::edi);
+    set_pc(b->tag + 0x18);
+
+    a.bind(commit);
+    a.jmp(fused_done);
+    a.bind(normal);
+#endif
+  }
+  if (byte_scan_fused) {
+#ifdef _WIN32
+    Label normal = a.new_label(), no_match = a.new_label(), exhausted = a.new_label();
+    Label commit = a.new_label();
+
+    // The collapsed path accounts for at most 64 guest instructions. 
+    // Keep it in sync with expected length. 
+    a.mov(x86::rax, x86::qword_ptr(x86::rbp, m_off.jit_budget));
+    a.sub(x86::rax, x86::r13);
+    a.cmp(x86::rax, imm(64)); a.jb(normal);
+    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0)); a.jne(normal);
+    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_timers), imm(0)); a.jne(normal);
+    a.test(x86::rdi, x86::rdi); a.jz(normal);               // R0==0 would wrap on mismatch
+    a.mov(x86::rax, x86::rsi); a.cmp(x86::rax, imm(255)); a.ja(normal);
+
+    // remaining = 8-(R1&7); count = min(R0, remaining).
+    a.mov(x86::rdx, x86::r12); a.and_(x86::edx, imm(7));
+    a.mov(x86::r10d, imm(8)); a.sub(x86::r10, x86::rdx);
+    a.mov(x86::r11, x86::rdi);
+    a.cmp(x86::r11, x86::r10); a.cmova(x86::r11, x86::r10);
+
+    // Compare the loaded word with the search byte, then discard before
+    // R1 and beyond the count.
+    a.movq(x86::xmm0, x86::r9);
+    a.mov(x86::eax, x86::esi); a.imul(x86::eax, x86::eax, imm(0x01010101));
+    a.movd(x86::xmm1, x86::eax); a.pshufd(x86::xmm1, x86::xmm1, imm(0));
+    a.pcmpeqb(x86::xmm0, x86::xmm1); a.pmovmskb(x86::eax, x86::xmm0);
+    a.mov(x86::ecx, x86::edx); a.shr(x86::eax, x86::cl);
+    a.mov(x86::ecx, x86::r11d); a.mov(x86::edx, imm(1));
+    a.shl(x86::edx, x86::cl); a.dec(x86::edx); a.and_(x86::eax, x86::edx);
+    a.test(x86::eax, x86::eax); a.jz(no_match);
+
+    a.bsf(x86::eax, x86::eax);                              // preceding mismatches, 0..7
+    a.sub(x86::rdi, x86::rax); a.add(x86::r12, x86::rax);
+    a.mov(x86::qword_ptr(x86::rbx, 24 * 8), x86::rsi);      // matching extracted byte
+    a.xor_(x86::r8d, x86::r8d);                             // R22 = R27-R24 = 0
+    a.shl(x86::rax, imm(3)); a.add(x86::r13, x86::rax);     // eight instructions/mismatch
+    set_pc(b->tag + 0x84);                                  // loop's common return
+    a.jmp(commit);
+
+    a.bind(no_match);
+    // Recreate the final tested byte in R24 before updating R1.
+    a.mov(x86::rax, x86::r12); a.and_(x86::eax, imm(7));
+    a.add(x86::rax, x86::r11); a.dec(x86::rax); a.shl(x86::eax, imm(3));
+    a.mov(x86::ecx, x86::eax); a.mov(x86::rax, x86::r9); a.shr(x86::rax, x86::cl);
+    a.and_(x86::eax, imm(255));
+    a.mov(x86::qword_ptr(x86::rbx, 24 * 8), x86::rax);
+    a.sub(x86::rdi, x86::r11); a.add(x86::r12, x86::r11);
+    a.cmp(x86::r11, x86::r10); a.jb(exhausted);
+    a.cmp(x86::rdi, imm(0)); a.je(exhausted);                // BEQ wins if count and boundary coincide
+
+    // Word boundary after N mismatches: 8*N guest instructions. 
+    // Epilogue is first 3. 
+    a.xor_(x86::r8d, x86::r8d);
+    a.mov(x86::rax, x86::r11); a.shl(x86::rax, imm(3)); a.sub(x86::rax, imm(3));
+    a.add(x86::r13, x86::rax);
+    set_pc(b->tag + 0x20);
+    a.jmp(commit);
+
+    a.bind(exhausted);
+    // R0 became zero before the boundary test: 8*N-2 instructions. 
+    // R22 keeps the subtraction from the final byte comparison.
+    a.mov(x86::r8, x86::rsi); a.sub(x86::r8, x86::rax);
+    a.mov(x86::rax, x86::r11); a.shl(x86::rax, imm(3)); a.sub(x86::rax, imm(5));
+    a.add(x86::r13, x86::rax);
+    set_pc(b->tag + 0x84);
+
+    a.bind(commit);
+    a.jmp(fused_done);
+    a.bind(normal);
+#endif
+  }
   for (uint32_t i = 0; i < plen; ++i) {
       emit_op(&a, gpa, &done, hs, pal_block, b, words[i], i, ra, &cold, true);
   }
@@ -2479,7 +2626,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     // contains a backward branch or a computed jump.
     const uint32_t lw = words[plen - 1];
     const uint32_t lop = lw >> 26;
-    const bool gate_exit = word_scan_fused
+    const bool gate_exit = word_scan_fused || byte_scan_fused || tail_scan_fused
                         || !(lop >= 0x30 && lop <= 0x3f) || (((lw >> 20) & 1) != 0);
     Label exit_chain = a.new_label();
     if (gate_exit) {
@@ -2553,7 +2700,8 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   b->code = fn;
   b->jit_body = (void*) ((uint8_t*) (void*) fn + body_off);   // chained re-entry (past prologue)
   b->body_off = (uint32_t) body_off;                          // to restore jit_body on revalidate
-  const uint32_t hash_len = word_scan_fused ? 10u : b->n_instr;
+  const uint32_t hash_len = byte_scan_fused ? 8u : tail_scan_fused ? 6u
+                          : word_scan_fused ? 10u : b->n_instr;
   b->src_sum  = src_hash(dram + phys, hash_len);              // include every word the fusion depends on
   b->hash_len = hash_len;                                     // freeze the hash extent (n_instr drifts)
   b->prefix_len = plen;
