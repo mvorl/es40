@@ -2143,11 +2143,29 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 
   if (plen == 0) return;
 
+  // counted-substring outer loop. 
+  // Most candidates fail on byte zero. If we're lucky. That's a good outcome.
+  // Recognize the instruction sequence and scan those first bytes 16 at a time. 
+  // Potential 22 guest instruction shortcut. 
+  bool counted_scan_fused = false;
   // Full-word portion of OpenVMS byte-search routine.
   bool word_scan_fused = false;
   bool byte_scan_fused = false;
   bool tail_scan_fused = false;
 #if defined(_WIN32) && !defined(JIT_VERIFY)
+  if (!pal_block && plen == 6 && phys + 39u * 4u <= page_end && phys + 39u * 4u <= dram_size) {
+    static const uint32_t head[15] = {
+      0x40020536, 0x47e0341c, 0x400203b7, 0x46df04dc, 0x4797041c, 0xe3800022,
+      0x2ffe0000, 0x2ffe0000, 0x2ae10000, 0x2b830000, 0x40003120, 0x20630001,
+      0x20210001, 0x42fc0536, 0xf6c00011
+    };
+    static const uint32_t mismatch[7] = {
+      0x40c03126, 0x47e40400, 0x47e50401, 0x20e70001,
+      0x47e60402, 0x47e70403, 0xc3ffffd9
+    };
+    counted_scan_fused = memcmp(words, head, sizeof(head)) == 0
+                      && memcmp(words + 32, mismatch, sizeof(mismatch)) == 0;
+  }
   if (!pal_block && plen == 5 && phys + 10u * 4u <= page_end && phys + 10u * 4u <= dram_size) {
     static const uint32_t word_scan[10] = {
       0xa6e10000, 0x42fc01f6, 0x439701f8, 0x46d80016, 0xf6c00028,
@@ -2504,6 +2522,101 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     a.bind(normal);
 #endif
   }
+  if (counted_scan_fused) {
+#ifdef _WIN32
+    Label normal = a.new_label(), scan = a.new_label(), scalar = a.new_label();
+    Label scalar_loop = a.new_label(), found = a.new_label(), commit = a.new_label();
+
+    // Require room for the maximum 16-candidate batch. 
+    a.mov(x86::rax, x86::qword_ptr(x86::rbp, m_off.jit_budget));
+    a.sub(x86::rax, x86::r13);
+    a.cmp(x86::rax, imm(16 * 22)); a.jb(normal);
+    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0)); a.jne(normal);
+    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_timers), imm(0)); a.jne(normal);
+
+    // candidates = R6 - R4 + 1, capped at 16 and at the current 8 KB haystack page.
+    a.mov(x86::rdx, x86::qword_ptr(x86::rbx, 6 * 8));
+    a.sub(x86::rdx, x86::qword_ptr(x86::rbx, 4 * 8)); a.jb(normal);
+    a.inc(x86::rdx);
+    a.mov(x86::rax, imm(16));
+    a.cmp(x86::rdx, x86::rax); a.cmova(x86::rdx, x86::rax);
+    a.mov(x86::rcx, x86::qword_ptr(x86::rbx, 7 * 8));
+    a.mov(x86::rax, x86::rcx); a.and_(x86::eax, imm(0x1fff));
+    a.mov(x86::r10d, imm(0x2000)); a.sub(x86::r10, x86::rax);
+    a.cmp(x86::rdx, x86::r10); a.cmova(x86::rdx, x86::r10);
+
+    // Resolve the needle (R5) and haystack (R7/RCX) read-cache slots. 
+    // The usual DPC tag check suffices. Miss? Go back to normal block.
+    auto fused_bias = [&](const x86::Gp& va, const x86::Gp& bias) {
+      a.mov(x86::r10, va); a.and_(x86::r10, imm(~(uint64_t)0x1fff));
+      if (host_has_bmi2()) a.rorx(x86::rax, va, imm(8));  // stride=32: ((va>>13)&63)<<5
+      else { a.mov(x86::rax, va); a.shr(x86::rax, imm(8)); }
+      a.and_(x86::rax, imm(0x7e0));
+      a.cmp(x86::qword_ptr(x86::rbp, x86::rax, 0, m_off.dpc_virt_page), x86::r10);
+      a.jne(normal);
+      a.mov(bias, x86::qword_ptr(x86::rbp, x86::rax, 0, m_off.dpc_host_bias));
+    };
+    a.mov(x86::rax, x86::qword_ptr(x86::rbx, 5 * 8));
+    fused_bias(x86::rax, x86::r10);
+    a.mov(x86::qword_ptr(x86::rsp, 48), x86::r10);
+    fused_bias(x86::rcx, x86::r11);
+    a.mov(x86::r10, x86::qword_ptr(x86::rsp, 48));
+
+    // Broadcast needle[0], then locate the next equal byte. 
+    // If no vector matches, send the whole 16-byte groups and resume outer-loop head.
+    a.mov(x86::rax, x86::qword_ptr(x86::rbx, 5 * 8));
+    a.movzx(x86::eax, x86::byte_ptr(x86::r10, x86::rax));
+    a.imul(x86::eax, x86::eax, imm(0x01010101));
+    a.movd(x86::xmm0, x86::eax); a.pshufd(x86::xmm0, x86::xmm0, imm(0));
+    a.cmp(x86::rdx, imm(16)); a.jb(scalar);
+    a.bind(scan);
+    a.movdqu(x86::xmm1, x86::oword_ptr(x86::r11, x86::rcx));
+    a.pcmpeqb(x86::xmm1, x86::xmm0); a.pmovmskb(x86::eax, x86::xmm1);
+    a.test(x86::eax, x86::eax); a.jnz(found);
+    a.add(x86::rcx, imm(16)); a.sub(x86::rdx, imm(16));
+    a.cmp(x86::rdx, imm(16)); a.jae(scan);
+    a.bind(scalar);
+    a.movd(x86::eax, x86::xmm0);              // AL = needle[0]
+    a.test(x86::rdx, x86::rdx); a.jz(commit);
+    a.bind(scalar_loop);
+    a.cmp(x86::byte_ptr(x86::r11, x86::rcx), x86::al); a.je(found);
+    a.inc(x86::rcx); a.dec(x86::rdx); a.jnz(scalar_loop);
+    a.jmp(commit);
+    a.bind(found);
+    // Vector hits carry a nonzero mask. scalar hits arrive with EAX holding only needle[0].
+    // Distinguish by remaining>=16 (outer hasn't subbed yet).
+    { Label scalar_found = a.new_label();
+      a.cmp(x86::rdx, imm(16)); a.jb(scalar_found);
+      a.bsf(x86::eax, x86::eax); a.add(x86::rcx, x86::rax);
+      a.bind(scalar_found); }
+    a.cmp(x86::rcx, x86::qword_ptr(x86::rbx, 7 * 8)); a.je(normal);
+
+    a.bind(commit);
+    // Reproduce N mismatch continuations: R6-=N R7+=N R0/R1/R2/R3=R4/R5/R6/R7.
+    a.mov(x86::rax, x86::qword_ptr(x86::rbx, 5 * 8));
+    a.movzx(x86::r9d, x86::byte_ptr(x86::r10, x86::rax));         // R23 = needle byte
+    a.movzx(x86::eax, x86::byte_ptr(x86::r11, x86::rcx, 0, -1)); // R28 = last mismatch
+    a.mov(x86::qword_ptr(x86::rbx, 28 * 8), x86::rax);
+    a.mov(x86::r8, x86::r9); a.sub(x86::r8, x86::rax);           // R22 = R23 - R28
+#ifdef JIT_STATS
+    a.mov(x86::r10, imm((uint64_t)&m_licm_same)); a.inc(x86::qword_ptr(x86::r10));
+#endif
+    a.mov(x86::rax, x86::rcx); a.sub(x86::rax, x86::qword_ptr(x86::rbx, 7 * 8));
+    a.mov(x86::r10, x86::qword_ptr(x86::rbx, 6 * 8)); a.sub(x86::r10, x86::rax);
+    a.mov(x86::qword_ptr(x86::rbx, 6 * 8), x86::r10);
+    a.mov(x86::qword_ptr(x86::rbx, 2 * 8), x86::r10);
+    a.mov(x86::qword_ptr(x86::rbx, 7 * 8), x86::rcx);
+    a.mov(x86::qword_ptr(x86::rbx, 3 * 8), x86::rcx);
+    a.mov(x86::rdi, x86::qword_ptr(x86::rbx, 4 * 8));
+    a.mov(x86::r12, x86::qword_ptr(x86::rbx, 5 * 8));
+    a.imul(x86::rax, x86::rax, imm(22)); a.sub(x86::rax, imm(6));
+    a.add(x86::r13, x86::rax);
+    set_pc(b->tag);
+    a.jmp(fused_done);
+
+    a.bind(normal);
+#endif
+  }
   for (uint32_t i = 0; i < plen; ++i) {
       emit_op(&a, gpa, &done, hs, pal_block, b, words[i], i, ra, &cold, true);
   }
@@ -2626,7 +2739,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     // contains a backward branch or a computed jump.
     const uint32_t lw = words[plen - 1];
     const uint32_t lop = lw >> 26;
-    const bool gate_exit = word_scan_fused || byte_scan_fused || tail_scan_fused
+    const bool gate_exit = counted_scan_fused || word_scan_fused || byte_scan_fused || tail_scan_fused
                         || !(lop >= 0x30 && lop <= 0x3f) || (((lw >> 20) & 1) != 0);
     Label exit_chain = a.new_label();
     if (gate_exit) {
@@ -2700,8 +2813,8 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   b->code = fn;
   b->jit_body = (void*) ((uint8_t*) (void*) fn + body_off);   // chained re-entry (past prologue)
   b->body_off = (uint32_t) body_off;                          // to restore jit_body on revalidate
-  const uint32_t hash_len = byte_scan_fused ? 8u : tail_scan_fused ? 6u
-                          : word_scan_fused ? 10u : b->n_instr;
+  const uint32_t hash_len = counted_scan_fused ? 39u : byte_scan_fused ? 8u
+                          : tail_scan_fused ? 6u : word_scan_fused ? 10u : b->n_instr;
   b->src_sum  = src_hash(dram + phys, hash_len);              // include every word the fusion depends on
   b->hash_len = hash_len;                                     // freeze the hash extent (n_instr drifts)
   b->prefix_len = plen;
