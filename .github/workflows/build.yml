@@ -357,17 +357,21 @@ jobs:
           }
 
           if (-not $isNoNetwork) {
-            # Fetch latest Npcap SDK and place it under C:\dev\npcap-sdk
-          $npcapIndex = Invoke-WebRequest -Uri "https://npcap.com/dist/" -UseBasicParsing
-          $npcapMatches = [regex]::Matches($npcapIndex.Content, 'npcap-sdk-[0-9]+(?:\.[0-9]+)*\.zip')
-          if ($npcapMatches.Count -eq 0) { throw "Could not find any npcap-sdk zip in npcap dist index." }
-
-          $npcapName = ($npcapMatches | ForEach-Object { $_.Value } | Select-Object -Unique | Select-Object -First 1)
-          $npcapUrl = "https://npcap.com/dist/$npcapName"
+            # Fetch the pinned Npcap SDK and place it under C:\dev\npcap-sdk
+          # GitHub releases contain source snapshots, not the binary SDK.
+          # Pin the current SDK and avoid the unreliable dist directory index.
+          $npcapSdkVersion = "1.16"
+          $npcapUrl = "https://npcap.com/dist/npcap-sdk-$npcapSdkVersion.zip"
 
           $npcapZip = Join-Path $env:RUNNER_TEMP "npcap-sdk.zip"
           $npcapExtract = Join-Path $env:RUNNER_TEMP "npcap-sdk"
-          Invoke-WebRequest -Uri $npcapUrl -OutFile $npcapZip
+          & curl.exe --fail --location --silent --show-error --http1.1 `
+            --retry 5 --retry-all-errors --retry-delay 5 `
+            --connect-timeout 20 --max-time 180 `
+            --output $npcapZip $npcapUrl
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to download Npcap SDK $npcapSdkVersion."
+          }
           Expand-Archive -Path $npcapZip -DestinationPath $npcapExtract -Force
 
           $npcapTarget = "C:\dev\npcap-sdk"
