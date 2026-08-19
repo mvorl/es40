@@ -2215,6 +2215,7 @@ u8 CSystem::tig_read(u32 a)
 		return state.tig.ModInfo;
 	case 0x300003c0:  // ttcr
 		return state.tig.HaltA;
+	case 0x30000440:  // clr_irq4: IRQ4 latch clear; our IRQ4 is level-driven
 	case 0x30000480:  // clr_pwr_flt_det
 		return 0;
 	case 0x300005c0:  // ev6_halt
@@ -2266,6 +2267,7 @@ void CSystem::tig_write(u32 a, u8 data)
 		tig_update_halt_lines();
 		return;
 
+	case 0x30000440:  // clr_irq4: IRQ4 latch clear; our IRQ4 is level-driven
 	case 0x30000480:  // clr_pwr_flt_det
 		return;
 
