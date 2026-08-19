@@ -433,6 +433,25 @@ void CDPR::init()
  **/
 CDPR::~CDPR()
 {
+	FlushIfDirty();
+}
+
+void CDPR::FlushIfDirty()
+{
+	if (!dirty) return;
+	SaveStateF(myCfg->get_text_value("rom.dpr", "dpr.rom"), false);
+	dirty = false;
+}
+
+/**
+ * Flush the dirty buffer once writes have been quiet for a couple seconds.
+ **/
+void CDPR::check_state()
+{
+	const time_t QUIESCE_SECS = 2;
+	if (!dirty) return;
+	if (time(nullptr) - last_dirty < QUIESCE_SECS) return;
+	FlushIfDirty();
 }
 u64 CDPR::ReadMem(int index, u64 address, int dsize)
 {
@@ -471,6 +490,8 @@ void CDPR::WriteMem(int index, u64 address, int dsize, u64 data)
 	// 03:        write to OCP
 	// F0:        update RMC flash
 	state.ram[a] = (char)data;
+	dirty = true;
+	last_dirty = time(nullptr);
 	switch (a)
 	{
 	case 0xff:
@@ -652,7 +673,7 @@ void CDPR::WriteMem(int index, u64 address, int dsize, u64 data)
 /**
  * Save state to a DPR rom file.
  **/
-void CDPR::SaveStateF(char* fn)
+void CDPR::SaveStateF(char* fn, bool verbose)
 {
 	FILE* ff;
 	ff = fopen(fn, "wb");
@@ -660,7 +681,8 @@ void CDPR::SaveStateF(char* fn)
 	{
 		SaveState(ff);
 		fclose(ff);
-		printf("%%DPR-I-SAVEST: DPR state saved to %s\n", fn);
+		if (verbose)
+			printf("%%DPR-I-SAVEST: DPR state saved to %s\n", fn);
 	}
 	else
 	{
