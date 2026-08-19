@@ -698,7 +698,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
     uint32_t lit = (ins >> 13) & 0xFF;
     SafeOp op = classify(ins, pal_block);
 
-    // A directly adjacent ordinary memory op can reuse the previous op's translated page.
+    // A nearby ordinary memory op can reuse the previous op's translated page.
     const bool prev_dpc_live = regalloc.dpc_live;
     const int  prev_dpc_base = regalloc.dpc_base;
     const int  prev_dpc_disp = regalloc.dpc_disp;
@@ -706,28 +706,44 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
     const bool prev_dpc_force_align = regalloc.dpc_force_align;
     regalloc.dpc_live = false;
 
+    // Preserve the address-cache working for operations that leave
+    // RDX (VA), R11 (slot), and R10 (bias) untouched. 
+    auto preserve_dpc = [&]() {
+        regalloc.dpc_live = prev_dpc_live;
+        regalloc.dpc_base = prev_dpc_base;
+        regalloc.dpc_disp = prev_dpc_disp;
+        regalloc.dpc_write = prev_dpc_write;
+        regalloc.dpc_force_align = prev_dpc_force_align;
+        };
+
     do {
         // MISC (0x18) barriers/hints: emit an mfence for TRAPB/EXCB/MB/WMB (x86's seq_cst fence, to
         // preserve the guest's MP memory ordering, matching DO_*'s atomic_thread_fence), nothing for
         // the prefetch/cache hints -- then keep going so the block extends straight past them.
-        if (op == OP_NOP)    continue;
+        if (op == OP_NOP)    { preserve_dpc(); continue; }
         if (op == OP_MFENCE) { a.mfence(); continue; }
 
         // A result aimed at R31 is an architectural no-op, so emit nothing for it.
         const uint32_t raw_opcode = ins >> 26;
-        if (rc == 31 && ((raw_opcode >= 0x10 && raw_opcode <= 0x13) || raw_opcode == 0x1c))
+        if (rc == 31 && ((raw_opcode >= 0x10 && raw_opcode <= 0x13) || raw_opcode == 0x1c)) {
+            preserve_dpc();
             continue;
+        }
 
         // LDA/LDAH also cannot trap and write through Ra rather than Rc.
-        if (ra == 31 && (op == OP_LDA || op == OP_LDAH))
+        if (ra == 31 && (op == OP_LDA || op == OP_LDAH)) {
+            preserve_dpc();
             continue;
+        }
 
         // Ordinary LD stuff to R31 interpreter just discards in the interp: 
         // no translation, fault, or MMIO read occurs. 
         // Locked loads are excluded because they must still establish load-lock state.
         if (ra == 31 && (op == OP_LDBU || op == OP_LDWU || op == OP_LDL
-                     || op == OP_LDQ || op == OP_LDQ_U))
+                     || op == OP_LDQ || op == OP_LDQ_U)) {
+            preserve_dpc();
             continue;
+        }
 
         // Value-forwarding: rax may still hold the guest reg the previous op computed. Capture that for
         // op1_rax's reuse, then default-invalidate; only mov_to_reg(_, rax) below re-marks what rax holds.
@@ -2069,6 +2085,10 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
         }
 
         if (rc != 31 && !result_in_dest) mov_to_reg(rc, x86::rax);
+        if ((op == OP_ADDL || op == OP_SUBL || op == OP_ADDQ || op == OP_SUBQ
+             || op == OP_AND || op == OP_BIS || op == OP_XOR)
+            && rc != prev_dpc_base)
+            preserve_dpc();
     } while (0);
 }
 
