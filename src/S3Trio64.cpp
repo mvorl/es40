@@ -2381,7 +2381,7 @@ void CS3Trio64::update_linear_mapping()
 	lfb_active = s3_lfb_enabled(m_crtc_map.read_byte(0x58));
 	lfb_size = s3_lfb_size_from_cr58(m_crtc_map.read_byte(0x58));
 	lfb_base = s3_lfb_base_from_regs();
-#if S3_LFB_TRACE
+#ifdef S3_LFB_TRACE
 	printf("LFB (BAR-only): CR58=%02x base=%08x size=%x active=%d\n",
 		m_crtc_map.read_byte(0x58), lfb_base, lfb_size, lfb_active);
 #endif
@@ -3611,7 +3611,7 @@ u64 CS3Trio64::ReadMem(int index, u64 address, int dsize)
 		case 8: {
 			u64 v = *(u32*)(vga.memory + off);
 			v |= (u64) * (u32*)(vga.memory + off + 4) << 32;
-#if S3_LFB_TRACE
+#ifdef S3_LFB_TRACE
 			printf("%s: LFB R size=%d @%llx => %08" PRIx64 " (off=%llx)\n",
 				devid_string, dsize, (unsigned long long)address,
 				v, (unsigned long long)(address - lfb_base));
@@ -3658,7 +3658,7 @@ void CS3Trio64::WriteMem(int index, u64 address, int dsize, u64 data)
 		// Write little-endian into linear VRAM
 		switch (dsize)
 		{
-#if S3_LFB_TRACE
+#ifdef S3_LFB_TRACE
 			printf("%s: LFB W size=%d @%llx <= %08" PRIx64 " (off=%llx)\n",
 				devid_string, dsize, (unsigned long long)address,
 				data, (unsigned long long)(address));
@@ -3734,10 +3734,12 @@ void CS3Trio64::trace_lfb_if_changed(const char* reason) {
 		base != lfb_trace_base_prev ||
 		sz != lfb_trace_size_prev) {
 
+#ifdef S3_LFB_TRACE
 		printf("%s: LFB %s - MSE=%d CR58=%02x base=%08x size=%x (reason=%s)\n",
 			devid_string, eff ? "ACTIVE(BAR)" : "INACTIVE(BAR)",
 			(int)pci_mem_enable, m_crtc_map.read_byte(0x58),
 			base, sz, reason ? reason : "n/a");
+#endif
 
 		lfb_trace_initialized = true;
 		lfb_trace_enabled_prev = eff;
@@ -3750,10 +3752,10 @@ void CS3Trio64::trace_lfb_if_changed(const char* reason) {
 void CS3Trio64::lfb_recalc_and_cache()
 {
 	// COMMAND bit 1 (Memory Space Enable)
-	const u32 cmd = config_read(0, 0x04, 2);            // 16-bit read is enough for COMMAND
+	const u32 cmd = config_read(0, 0x04, 16);            // 16-bit read is enough for COMMAND
 
 	// BAR0: 32-bit memory BAR, mask off attribute bits
-	const u32 bar0 = config_read(0, 0x10, 4) & 0xFFFFFFF0u;
+	const u32 bar0 = config_read(0, 0x10, 32) & 0xFFFFFFF0u;
 
 	pci_mem_enable = (cmd & 0x0002) != 0; // saner, i think...
 
