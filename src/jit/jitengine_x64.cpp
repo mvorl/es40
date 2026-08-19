@@ -704,6 +704,15 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
         if (op == OP_NOP)    continue;
         if (op == OP_MFENCE) { a.mfence(); continue; }
 
+        // A result aimed at R31 is an architectural no-op, so emit nothing for it.
+        const uint32_t raw_opcode = ins >> 26;
+        if (rc == 31 && ((raw_opcode >= 0x10 && raw_opcode <= 0x13) || raw_opcode == 0x1c))
+            continue;
+
+        // LDA/LDAH also cannot trap and write through Ra rather than Rc.
+        if (ra == 31 && (op == OP_LDA || op == OP_LDAH))
+            continue;
+
         // Value-forwarding: rax may still hold the guest reg the previous op computed. Capture that for
         // op1_rax's reuse, then default-invalidate; only mov_to_reg(_, rax) below re-marks what rax holds.
         const int prev_rax = regalloc.rax_holds;
