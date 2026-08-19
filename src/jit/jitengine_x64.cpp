@@ -722,6 +722,13 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
         if (ra == 31 && (op == OP_LDA || op == OP_LDAH))
             continue;
 
+        // Ordinary LD stuff to R31 interpreter just discards in the interp: 
+        // no translation, fault, or MMIO read occurs. 
+        // Locked loads are excluded because they must still establish load-lock state.
+        if (ra == 31 && (op == OP_LDBU || op == OP_LDWU || op == OP_LDL
+                     || op == OP_LDQ || op == OP_LDQ_U))
+            continue;
+
         // Value-forwarding: rax may still hold the guest reg the previous op computed. Capture that for
         // op1_rax's reuse, then default-invalidate; only mov_to_reg(_, rax) below re-marks what rax holds.
         const int prev_rax = regalloc.rax_holds;
@@ -2047,11 +2054,14 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             if (ra == 31) a.xor_(x86::eax, x86::eax);
             else          mov_from_reg32(x86::eax, ra);   // shadow-remapped (was a raw rbx read)
             if (sh) a.shl(x86::eax, imm(sh));            // scale in 32-bit: (Ra<<sh)[31:0] == ((RAV<<sh)+..)[31:0]
-            if (islit)         a.mov(x86::ecx, imm(lit));
-            else if (rb == 31) a.xor_(x86::ecx, x86::ecx);
-            else               mov_from_reg32(x86::ecx, rb);
-            if (issub) a.sub(x86::eax, x86::ecx);
-            else       a.add(x86::eax, x86::ecx);
+            if (islit) {
+                if (issub) a.sub(x86::eax, imm(lit));
+                else       a.add(x86::eax, imm(lit));
+            } else if (rb != 31) {
+                mov_from_reg32(x86::ecx, rb);
+                if (issub) a.sub(x86::eax, x86::ecx);
+                else       a.add(x86::eax, x86::ecx);
+            }
             a.movsxd(x86::rax, x86::eax);
             break;
         }
