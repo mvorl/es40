@@ -571,8 +571,8 @@ inline u64 fsqrt64(u64 asig, s32 exp)
       int _dpc_rw = (flags) & ACCESS_WRITE;                                     \
       u64 _dpc_vp = _dpc_va & ~U64(0x1FFF);                                     \
       SDataPageCache& _dpc = data_page_cache[_dpc_rw][dpc_index(_dpc_va)];      \
-      if (_dpc.valid                                                            \
-          && _dpc.virt_page == _dpc_vp                                          \
+      if (_dpc.virt_page == _dpc_vp                                             \
+          && _dpc.valid                                                         \
           && _dpc.cm  == state.cm                                              \
           && _dpc.asn == state.asn0) {                                          \
         phys_address = _dpc.phys_base | (_dpc_va & U64(0x1FFF));                \

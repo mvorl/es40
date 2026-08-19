@@ -542,14 +542,26 @@ private:
   static_assert(sizeof(SDataPageCache) == 32, "DPC slots stay power-of-two for JIT shift indexing");
 
   inline void flush_data_page_cache() {
-    for (int i = 0; i < kDpcEntries; i++) {
-      data_page_cache[0][i].valid = false;
-      data_page_cache[1][i].valid = false;
-      data_page_cache[0][i].virt_page = ~U64(0); // impossible for an 8KB-aligned page
+    // The generated and helper hit paths compare virt_page before using the slot. An all-ones
+    // tag cannot equal an 8 KB-aligned virtual page, so a bulk fill invalidates both rows 
+    // and avoids excessive stores on native-PAL translation flushes.
+    memset(data_page_cache, 0xff, sizeof(data_page_cache));
+  }
+  inline void invalidate_data_page_cache(u64 virt, u64 match_mask) {
+    // The common GH=0 mapping occupies exactly one direct-mapped slot. Clearing only its
+    // read/write tags avoids a full cache sweep.
+    constexpr u64 gh0_match = U64(0x0000ffffffffe000);
+    if (match_mask == gh0_match) {
+      const u64 i = dpc_index(virt);
+      data_page_cache[0][i].virt_page = ~U64(0);
       data_page_cache[1][i].virt_page = ~U64(0);
-      data_page_cache[0][i].host_bias = 0;   // valid==false => host_bias==0, so the JIT can drop its valid load
-      data_page_cache[1][i].host_bias = 0;
+      return;
     }
+    // A granularity-hint entry can cover multiple cache indices. 
+    for (int rw = 0; rw < 2; ++rw)
+      for (int i = 0; i < kDpcEntries; ++i)
+        if (!((data_page_cache[rw][i].virt_page ^ virt) & match_mask))
+          data_page_cache[rw][i].virt_page = ~U64(0);
   }
 
   // ASN switch: bump the chain epoch so compiled chain edges revalidate through the asn-keyed

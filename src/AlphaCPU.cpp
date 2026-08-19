@@ -1529,7 +1529,7 @@ int CAlphaCPU::jit_read(CAlphaCPU* cpu, u64 va, int size_bits, u64* out)
 	u64 phys;
 	const u64 vp = va & ~U64(0x1FFF);
 	SDataPageCache& dpc = cpu->data_page_cache[0][dpc_index(va)];   // direct-mapped by virt page
-	if (dpc.valid && dpc.virt_page == vp && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
+	if (dpc.virt_page == vp && dpc.valid && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
 	{
 		phys = dpc.phys_base | (va & U64(0x1FFF));
 	}
@@ -1770,7 +1770,7 @@ int CAlphaCPU::jit_read_locked(CAlphaCPU* cpu, u64 va, int size_bits, u64* out)
 	u64 phys;
 	const u64 vp = va & ~U64(0x1FFF);
 	SDataPageCache& dpc = cpu->data_page_cache[0][dpc_index(va)];
-	if (dpc.valid && dpc.virt_page == vp && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
+	if (dpc.virt_page == vp && dpc.valid && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
 	{
 		phys = dpc.phys_base | (va & U64(0x1FFF));
 	}
@@ -1947,7 +1947,7 @@ int CAlphaCPU::jit_write(CAlphaCPU* cpu, u64 va, int size_bits, u64 value)
 	u64 phys;
 	const u64 vp = va & ~U64(0x1FFF);
 	SDataPageCache& dpc = cpu->data_page_cache[1][dpc_index(va)];   // direct-mapped by virt page
-	if (dpc.valid && dpc.virt_page == vp && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
+	if (dpc.virt_page == vp && dpc.valid && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
 	{
 		phys = dpc.phys_base | (va & U64(0x1FFF));
 	}
@@ -2033,7 +2033,7 @@ u64 CAlphaCPU::jit_stc(CAlphaCPU* cpu, u64 va, int size_bits, u64 value)
 	u64 phys;
 	const u64 vp = va & ~U64(0x1FFF);
 	SDataPageCache& dpc = cpu->data_page_cache[1][dpc_index(va)];
-	if (dpc.valid && dpc.virt_page == vp && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
+	if (dpc.virt_page == vp && dpc.valid && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
 	{
 		phys = dpc.phys_base | (va & U64(0x1FFF));
 	}
@@ -4152,6 +4152,14 @@ void CAlphaCPU::add_tb(u64 virt, u64 pte_phys, u64 pte_flags, int flags, int asn
 			state.next_tb[t] = 0;
 	}
 
+	if (t == TB_INDEX_DATA)
+	{
+		// Invalidate both the entry being replaced and the mapping being installed. 
+		if (state.tb[t][i].valid)
+			invalidate_data_page_cache(state.tb[t][i].virt, state.tb[t][i].match_mask);
+		invalidate_data_page_cache(virt, match_mask);
+	}
+
 	state.tb[t][i].match_mask = match_mask;
 	state.tb[t][i].keep_mask = keep_mask;
 	state.tb[t][i].virt = virt & match_mask;
@@ -4175,9 +4183,6 @@ void CAlphaCPU::add_tb(u64 virt, u64 pte_phys, u64 pte_flags, int flags, int asn
 #ifdef ES40_JIT
 	if (itb_remap && m_jit) m_jit->note_itb_invalidate();   // code page remapped in place -> chains re-validate
 #endif
-
-	if (t == TB_INDEX_DATA)
-		flush_data_page_cache();
 
 #if defined(DEBUG_TB_)
 #if defined(IDB)
@@ -4331,19 +4336,25 @@ void CAlphaCPU::tbis(u64 virt, int flags)
 
 void CAlphaCPU::tbis_d(u64 virt, int asn)
 {
-	int i;
+	bool found = false;
 
-	for (i = 0; i < TB_ENTRIES; i++)
+	for (int i = 0; i < TB_ENTRIES; i++)
 	{
 		if (state.tb[TB_INDEX_DATA][i].valid
 			&& !((state.tb[TB_INDEX_DATA][i].virt ^ virt) & state.tb[TB_INDEX_DATA][i].match_mask)
 			&& (state.tb[TB_INDEX_DATA][i].asm_bit || state.tb[TB_INDEX_DATA][i].asn == asn))
 		{
+			invalidate_data_page_cache(state.tb[TB_INDEX_DATA][i].virt,
+				state.tb[TB_INDEX_DATA][i].match_mask);
 			state.tb[TB_INDEX_DATA][i].valid = false;
+			found = true;
 		}
 	}
 
-	flush_data_page_cache();
+	// If the architectural TB entry was already evicted, an old GH=0 DPC line for this page can
+	// still exist. Retire its direct slot as well.
+	if (!found)
+		invalidate_data_page_cache(virt, GH_0_MATCH);
 }
 
 //\}
