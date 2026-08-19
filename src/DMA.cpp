@@ -381,10 +381,15 @@ int CDMA::SaveState(FILE* f)
 {
 	long  ss = sizeof(state);
 
-	fwrite(&dma_magic1, sizeof(u32), 1, f);
-	fwrite(&ss, sizeof(long), 1, f);
-	fwrite(&state, sizeof(state), 1, f);
-	fwrite(&dma_magic2, sizeof(u32), 1, f);
+	if (fwrite(&dma_magic1, sizeof(u32), 1, f) != 1 ||
+		fwrite(&ss, sizeof(long), 1, f) != 1 ||
+		fwrite(&state, sizeof(state), 1, f) != 1 ||
+		fwrite(&dma_magic2, sizeof(u32), 1, f) != 1)
+	{
+		printf("dma: error writing state file!\n");
+		return -1;
+	}
+
 	printf("dma: %ld bytes saved.\n", ss);
 	return 0;
 }
@@ -394,10 +399,11 @@ int CDMA::SaveState(FILE* f)
  **/
 int CDMA::RestoreState(FILE* f)
 {
-	long    ss;
-	u32     m1;
-	u32     m2;
+	long    ss = 0;
+	u32     m1 = 0;
+	u32     m2 = 0;
 	size_t  r;
+	SDMA_state restored = {};
 
 	r = fread(&m1, sizeof(u32), 1, f);
 	if (r != 1)
@@ -412,20 +418,20 @@ int CDMA::RestoreState(FILE* f)
 		return -1;
 	}
 
-	fread(&ss, sizeof(long), 1, f);
+	r = fread(&ss, sizeof(long), 1, f);
 	if (r != 1)
 	{
 		printf("dma: unexpected end of file!\n");
 		return -1;
 	}
 
-	if (ss != sizeof(state))
+	if (ss != sizeof(restored))
 	{
 		printf("dma: STRUCT SIZE does not match!\n");
 		return -1;
 	}
 
-	fread(&state, sizeof(state), 1, f);
+	r = fread(&restored, sizeof(restored), 1, f);
 	if (r != 1)
 	{
 		printf("dma: unexpected end of file!\n");
@@ -441,10 +447,11 @@ int CDMA::RestoreState(FILE* f)
 
 	if (m2 != dma_magic2)
 	{
-		printf("dma: MAGIC 1 does not match!\n");
+		printf("dma: MAGIC 2 does not match!\n");
 		return -1;
 	}
 
+	state = restored;
 	printf("dma: %ld bytes restored.\n", ss);
 	return 0;
 }
