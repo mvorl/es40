@@ -199,7 +199,7 @@ public:
     uint32_t dpc_valid, dpc_virt_page, dpc_phys_base, dpc_host_bias, dpc_cm, dpc_asn;  // offsets of READ slot [0][0]
     uint32_t dpc_stride, dpc_mask;   // direct-mapped page cache: per-slot byte stride, index mask
     uint32_t dpc_write_row;          // byte distance from read cache [0] to write cache [1] (store fast path)
-    uint32_t state_cm, state_asn0, dram_ptr, dram_size, state_pc;
+    uint32_t state_cm, state_asn0, dram_ptr, dram_size, state_pc, state_current_pc;
     uint32_t fpen, exc_sum, fpcr, f_base;   // FP inline path: FPSTART gate + FPCR (rounding/INE) + f[] base (f[i] = f_base + i*8)
     // For chaining: the budget ceiling and the interrupt-poll flags the compiled epilogue
     // checks before jumping on; link_from is where the epilogue records a link-patch request.

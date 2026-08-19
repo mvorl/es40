@@ -101,8 +101,7 @@ enum SafeOp {
   OP_LDA, OP_LDAH,               // load-address: Ra = Rb + disp16 (<<16 for LDAH); pure ALU
   OP_HW_MFPR,                    // HW_MFPR (0x19), PALmode only: Ra = IPR[(ins>>8)&0xff] via helper
   OP_HW_LDL, OP_HW_LDQ,          // HW_LD (0x1b) physical func 0/1, PALmode only: Ra = phys[Rb+disp12]
-  OP_HW_LDQ_VPTE,                // HW_LD (0x1b) func 5: virtual PTE fetch, access-checked vs KERNEL mode
-  OP_HW_LDL_WCHK,                // HW_LD (0x1b) func 0xa: longword virtual read + write-check (WrChk)
+  OP_HW_LD_VIRT,                 // HW_LD virtual funcs 4/5,8-15: current/VPTE/alternate mode, optional WrChk
   OP_HW_MTPR,                    // HW_MTPR (0x1d) side-effect-free IPRs, PALmode only: IPR[fn] = Rb
   OP_HW_MTPR_TERM,               // HW_MTPR I_CTL (0x11): writes SDE/SPE/VA mode -> terminate, re-dispatch past it
   OP_HW_STL, OP_HW_STQ,          // HW_ST (0x1f) physical func 0/1, PALmode only: phys[Rb+disp12] = Ra
@@ -310,21 +309,13 @@ SafeOp classify(uint32_t ins, bool pal_block)
                       || fn == 0x2a || fn == 0x2b || fn == 0xc0 || fn == 0xc2 || fn == 0xc3;
       return known ? OP_HW_MFPR : OP_NONE;
     }
-    case 0x1b: {                // HW_LD: read phys[Rb+disp12] -> Ra. PALmode-only. Compile the
-      // physical forms (func 0/1), the quad VPTE fetch (func 5, kernel-checked -- jit_read_vpte),
-      // and the longword virtual WrChk (func 0xa, jit_read_wchk). Locked + alt forms interpret.
+    case 0x1b: {                // HW_LD, PALmode-only. Physical locked forms still interpret;
+      // all side-effect-free virtual forms use the generic translation helper.
       if (!pal_block) return OP_NONE;
       const uint32_t f = (ins >> 12) & 0xf;
       if (f == 0) return OP_HW_LDL;
       if (f == 1) return OP_HW_LDQ;
-      if (f == 5) {             // Ra==31: nothing to log/replay -> interpret
-        if (((ins >> 21) & 0x1f) == 31) return OP_NONE;
-        return OP_HW_LDQ_VPTE;
-      }
-      if (f == 10) {            // func 0xa (HRM TYPE 1012): longword virtual read + WrChk -- jit_read_wchk
-        if (((ins >> 21) & 0x1f) == 31) return OP_NONE;   // Ra==31: probe-only, interpret for the fault
-        return OP_HW_LDL_WCHK;
-      }
+      if (f == 4 || f == 5 || f >= 8) return OP_HW_LD_VIRT;
       return OP_NONE;
     }
     case 0x1d: {                // HW_MTPR (PALmode): compile the pure-store IPRs, the TB fills
@@ -561,6 +552,7 @@ struct ColdMemStub {
   int           vol_bind2 = -1;
   int           vol_host2 = -1;
   int           size_bits;  // LOAD/STORE operand size
+  uint32_t      ins;        // LOAD/STORE instruction word (fault metadata)
   uint32_t      descr;      // FPMEM only: (fmt<<16)|size
   int           ra;         // LOAD dest / STORE value guest reg
   int           pin;        // host reg id bound to `ra`, or -1 = the regs[] memory slot
@@ -582,21 +574,25 @@ static void emit_cold_mem_stub(asmjit::x86::Assembler& a, const uint8_t* gpa,
   // the store value from regs[] when it IS that reg (placement overwrites it). restore after.
   if (s.vol_bind >= 0)  a.mov(x86::qword_ptr(x86::rbx, s.vol_bind * 8),  x86::gpq((uint32_t) s.vol_host));
   if (s.vol_bind2 >= 0) a.mov(x86::qword_ptr(x86::rbx, s.vol_bind2 * 8), x86::gpq((uint32_t) s.vol_host2));
-  if (s.kind != ColdMemStub::FPMEM) a.mov(x86::qword_ptr(x86::rsp, 48), x86::rdx); // preserve VA for DPC reuse
+  if (s.kind != ColdMemStub::FPMEM) {
+    a.mov(x86::qword_ptr(x86::rsp, 48), x86::rdx); // preserve VA for DPC reuse
+    a.mov(x86::r10, imm(s.fault_pc));
+    a.mov(x86::qword_ptr(x86::rbp, off.state_current_pc), x86::r10);
+  }
   const bool val_in_vol = (s.vol_bind >= 0 && s.pin == s.vol_host)
                        || (s.vol_bind2 >= 0 && s.pin == s.vol_host2);
   a.mov(aq(0), x86::rbp);                                       // cpu
   if (aq(1).id() != x86::rdx.id()) a.mov(aq(1), x86::rdx);      // va (precomputed in RDX)
   switch (s.kind) {
-    case ColdMemStub::LOAD:                                     // jit_read(cpu, va, size, &out)
+    case ColdMemStub::LOAD:                                     // jit_read(cpu, va, descr, &out)
       a.lea(aq(3), x86::qword_ptr(x86::rsp, 32));               // &out slot
-      a.mov(ad(2), imm((uint32_t) s.size_bits));
+      a.mov(aq(2), imm(((uint64_t)s.ins << 32) | (uint32_t)s.size_bits));
       break;
-    case ColdMemStub::STORE:                                    // jit_write(cpu, va, size, value)
+    case ColdMemStub::STORE:                                    // jit_write(cpu, va, descr, value)
       if (s.ra == 31)                    a.xor_(ad(3), ad(3));  // value (R31 == 0)
       else if (s.pin >= 0 && !val_in_vol) a.mov(aq(3), x86::gpq((uint32_t) s.pin));
       else                                a.mov(aq(3), x86::qword_ptr(x86::rbx, s.slot * 8));
-      a.mov(ad(2), imm((uint32_t) s.size_bits));
+      a.mov(aq(2), imm(((uint64_t)s.ins << 32) | (uint32_t)s.size_bits));
       break;
     case ColdMemStub::FPMEM:                                    // jit_fp_read/write(cpu, va, fa, descr)
       a.mov(ad(2), imm((uint32_t) s.ra));
@@ -608,14 +604,24 @@ static void emit_cold_mem_stub(asmjit::x86::Assembler& a, const uint8_t* gpa,
   else { a.mov(x86::rax, imm((uint64_t) s.helper)); a.call(x86::rax); }
   if (s.vol_bind >= 0)  a.mov(x86::gpq((uint32_t) s.vol_host),  x86::qword_ptr(x86::rbx, s.vol_bind * 8));
   if (s.vol_bind2 >= 0) a.mov(x86::gpq((uint32_t) s.vol_host2), x86::qword_ptr(x86::rbx, s.vol_bind2 * 8));
-  Label ok = a.new_label();
+  Label ok = a.new_label(), trapped = a.new_label();
   a.test(x86::eax, x86::eax);
   a.jz(ok);
+  if (s.kind != ColdMemStub::FPMEM) {
+    a.cmp(x86::eax, imm(2));
+    a.je(trapped);
+  }
   a.mov(x86::r10, imm(s.fault_pc));                             // fault: resume at this op
   a.mov(x86::qword_ptr(x86::rbp, off.state_pc), x86::r10);
   a.mov(x86::eax, imm(s.i));                                    // this iteration: i instrs done
   a.add(x86::eax, x86::dword_ptr(x86::rsp, 40));                // + earlier chained iterations
   a.jmp(s.done);
+  if (s.kind != ColdMemStub::FPMEM) {
+    a.bind(trapped);                                             // fault delivered: keep PAL entry PC
+    a.mov(x86::eax, imm(s.i + 1));                               // count the faulting instruction once
+    a.add(x86::eax, x86::dword_ptr(x86::rsp, 40));
+    a.jmp(s.done);
+  }
   a.bind(ok);
   if (s.kind != ColdMemStub::FPMEM) {
     // Recreate the hot path's {VA, slot, host bias} contract before joining the next
@@ -1000,6 +1006,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 s.kind = ColdMemStub::LOAD;  s.slow = slow;  s.join = ldone;  s.done = done;
                 s.helper = read_helper;      s.hidx = helper_index(hs, read_helper);
                 s.size_bits = size_bits;
+                s.ins = ins;
                 s.ra = ra;  s.pin = pin_id(ra);
                 s.slot = (b->pal_shadow && ((ra & 0xc) == 0x4)) ? ra + 32 : ra;   // PALshadow remap (see reg())
                 s.i = i;    s.fault_pc = b->tag + 4 * (uint64_t) i;
@@ -1093,6 +1100,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 s.kind = ColdMemStub::STORE;  s.slow = slow;  s.join = sdone;  s.done = done;
                 s.helper = write_helper;      s.hidx = helper_index(hs, write_helper);
                 s.size_bits = size_bits;
+                s.ins = ins;
                 s.ra = ra;  s.pin = pin_id(ra);
                 s.slot = (b->pal_shadow && ((ra & 0xc) == 0x4)) ? ra + 32 : ra;   // PALshadow remap (see reg())
                 s.i = i;    s.fault_pc = b->tag + 4 * (uint64_t) i;
@@ -1206,31 +1214,52 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             continue;
         }
 
-        // HW_LD physical (PALmode func 0/1): Ra = phys[Rb + disp12], no translation. jit_read_phys
-        // does the aligned DRAM read (or replays in verify, bails on MMIO so the interpreter does the
-        // ordered device read). disp is 12-bit here, not the 16-bit memory-format displacement.
-        if (op == OP_HW_LDL || op == OP_HW_LDQ || op == OP_HW_LDQ_VPTE || op == OP_HW_LDL_WCHK) {
-            if (ra == 31) continue;                                  // R31 dest discards the read
+        // HW_LD (PALmode): physical func 0/1 uses jit_read_phys; virtual funcs 4/5 and 8-15
+        // use jit_read_vpte with their VPTE/ALT/WrChk flags. disp is a 12-bit displacement.
+        if (op == OP_HW_LDL || op == OP_HW_LDQ || op == OP_HW_LD_VIRT) {
+            if (ra == 31 && op != OP_HW_LD_VIRT) continue;            // virtual R31 forms are fault probes
             const int disp = (int)((int32_t)(ins << 20) >> 20);    // sign-extend 12-bit displacement
-            const int size_bits = (op == OP_HW_LDL || op == OP_HW_LDL_WCHK) ? 32 : 64;
-            emit_address(disp);                                      // address (phys, or virtual for VPTE) -> RDX
-            // func 5 -> jit_read_vpte (kernel-checked virtual read); else jit_read_phys
-            emit_call(op == OP_HW_LDQ_VPTE ? read_vpte_helper : op == OP_HW_LDL_WCHK ? read_wchk_helper : hw_ld_helper,
-                { {JA_CPU, 0}, {JA_VA, 0}, {JA_I32, (uint64_t)size_bits}, {JA_OUT, 0} });
-            Label ok = a.new_label();
+            const uint32_t hwf = (ins >> 12) & 0xf;
+            const int size_bits = (hwf & 1) ? 64 : 32;
+            uint32_t descr = (uint32_t)size_bits;
+            if (hwf == 4 || hwf == 5) descr |= 0x100;       // VPTE: kernel access mode
+            if (hwf >= 12) descr |= 0x200;                  // ALT: DTB alternate mode
+            if (hwf == 10 || hwf == 11 || hwf == 14 || hwf == 15) descr |= 0x400; // WrChk
+            emit_address(disp);                             // physical or virtual address -> RDX
+            if (op == OP_HW_LD_VIRT) {
+                a.mov(x86::r10, imm(b->tag + 4 * (uint64_t)i));
+                a.mov(x86::qword_ptr(x86::rbp, m_off.state_current_pc), x86::r10);
+            }
+            emit_call(op == OP_HW_LD_VIRT ? read_vpte_helper : hw_ld_helper,
+                { {JA_CPU, 0}, {JA_VA, 0},
+                  {op == OP_HW_LD_VIRT ? JA_I64 : JA_I32,
+                   op == OP_HW_LD_VIRT ? ((uint64_t)ins << 32) | descr : descr}, {JA_OUT, 0} });
+            Label ok = a.new_label(), trapped = a.new_label();
             a.test(x86::eax, x86::eax);
             a.jz(ok);
+            if (op == OP_HW_LD_VIRT) {
+                a.cmp(x86::eax, imm(2));
+                a.je(trapped);
+            }
             set_pc(b->tag + 4 * (uint64_t)i);                       // resume at the faulting HW_LD
-            a.mov(x86::eax, imm(i));                                  // this iteration: i instrs done
-            a.add(x86::eax, x86::dword_ptr(x86::rsp, 40));                               // + earlier chained iterations
+            a.mov(x86::eax, imm(i));
+            a.add(x86::eax, x86::dword_ptr(x86::rsp, 40));
             a.jmp(done);
+            if (op == OP_HW_LD_VIRT) {
+                a.bind(trapped);                                      // fault delivered: keep PAL entry PC
+                a.mov(x86::eax, imm(i + 1));                          // count the HW_LD exactly once
+                a.add(x86::eax, x86::dword_ptr(x86::rsp, 40));
+                a.jmp(done);
+            }
             a.bind(ok);
             // HW_LDL SIGN-extends the longword to canonical form (QEMU gen_hw_ld uses MO_LESL; the EV68CB
             // HRM is silent but the Alpha longword-canonical rule applies, same as LDL). NOTE: the interp's
             // DO_HW_LDL zero-extends -- that is the bug, fixed in cpu_pal.h to match this.
-            if (op == OP_HW_LDL || op == OP_HW_LDL_WCHK) a.movsxd(x86::rax, x86::dword_ptr(x86::rsp, 32));
-            else                 a.mov(x86::rax, x86::qword_ptr(x86::rsp, 32));   // HW_LDQ / VPTE: full quad
-            mov_to_reg(ra, x86::rax);
+            if (ra != 31) {
+                if (size_bits == 32) a.movsxd(x86::rax, x86::dword_ptr(x86::rsp, 32));
+                else                 a.mov(x86::rax, x86::qword_ptr(x86::rsp, 32));
+                mov_to_reg(ra, x86::rax);
+            }
             continue;
         }
 
@@ -1240,12 +1269,21 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             const int disp = (int)(int16_t)(ins & 0xFFFF);
             const int size_bits = (op == OP_LDQ_L) ? 64 : 32;
             emit_address(disp);                                      // va -> RDX
-            emit_call(read_locked_helper, { {JA_CPU, 0}, {JA_VA, 0}, {JA_I32, (uint64_t)size_bits}, {JA_OUT, 0} });  // jit_read_locked(cpu, va, size, &out)
-            Label ok = a.new_label();
+            a.mov(x86::r10, imm(b->tag + 4 * (uint64_t)i));
+            a.mov(x86::qword_ptr(x86::rbp, m_off.state_current_pc), x86::r10);
+            emit_call(read_locked_helper, { {JA_CPU, 0}, {JA_VA, 0},
+                {JA_I64, ((uint64_t)ins << 32) | (uint32_t)size_bits}, {JA_OUT, 0} });  // jit_read_locked(cpu, va, descr, &out)
+            Label ok = a.new_label(), trapped = a.new_label();
             a.test(x86::eax, x86::eax);
             a.jz(ok);
+            a.cmp(x86::eax, imm(2));
+            a.je(trapped);
             set_pc(b->tag + 4 * (uint64_t)i);                       // resume at the faulting LDx_L
             a.mov(x86::eax, imm(i));
+            a.add(x86::eax, x86::dword_ptr(x86::rsp, 40));
+            a.jmp(done);
+            a.bind(trapped);                                        // fault delivered: keep native-PAL entry PC
+            a.mov(x86::eax, imm(i + 1));                            // count the LDx_L exactly once
             a.add(x86::eax, x86::dword_ptr(x86::rsp, 40));
             a.jmp(done);
             a.bind(ok);

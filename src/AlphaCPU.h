@@ -577,14 +577,16 @@ private:
   void jit_run(int budget);    // drives the ES40_JIT lane via the interpreter
   void jit_flush_blocks();     // invalidate all discovered JIT blocks
   void jit_flush_blocks_asm(); // invalidate only !asm_global blocks (preserve global PAL across ASN flush)
-  // Compiled-block memory helpers: load size_bits from va into *out / store value to va.
-  // Return 0 on success, 1 on fault/unaligned (caller bails to the interpreter).
-  static int jit_read(CAlphaCPU* cpu, u64 va, int size_bits, u64* out);
+  // Compiled-block memory helpers. descr[7:0] is the transfer size; production integer
+  // memops also put the instruction word in descr[63:32], allowing the helper to deliver
+  // a translation fault once. Return 0 on success, 1 to retry in the interpreter, or 2
+  // when the architectural fault was already delivered and state.pc is its PAL entry.
+  static int jit_read(CAlphaCPU* cpu, u64 va, u64 descr, u64* out);
   static int jit_read_phys(CAlphaCPU* cpu, u64 phys, int size_bits, u64* out);  // HW_LD physical: no translation
-  static int jit_read_locked(CAlphaCPU* cpu, u64 va, int size_bits, u64* out);  // LDx_L: load + establish LL/SC lock
-  static int jit_read_vpte(CAlphaCPU* cpu, u64 va, int size_bits, u64* out);    // HW_LD VPTE: kernel-checked virtual read
+  static int jit_read_locked(CAlphaCPU* cpu, u64 va, u64 descr, u64* out);  // LDx_L: load + establish LL/SC lock
+  static int jit_read_vpte(CAlphaCPU* cpu, u64 va, u64 descr, u64* out);    // HW_LD virtual: translated read / direct native-PAL fault
   static int jit_read_wchk(CAlphaCPU* cpu, u64 va, int size_bits, u64* out);    // HW_LD func 0xa: longword virtual + WrChk
-  static int jit_write(CAlphaCPU* cpu, u64 va, int size_bits, u64 value);
+  static int jit_write(CAlphaCPU* cpu, u64 va, u64 descr, u64 value);
   static int jit_write_phys(CAlphaCPU* cpu, u64 phys, int size_bits, u64 value);  // HW_ST physical: no translation
   static int jit_fp_read(CAlphaCPU* cpu, u64 va, u32 fa, u32 descr);   // LDS/LDT: f[fa] = convert(MEM[va])
   static int jit_fp_write(CAlphaCPU* cpu, u64 va, u32 fa, u32 descr);  // STS/STT: MEM[va] = convert(f[fa])

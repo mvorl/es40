@@ -532,6 +532,7 @@ void CAlphaCPU::init()
 		o.dram_ptr = (uint32_t)((char*)&dram_ptr - (char*)this);
 		o.dram_size = (uint32_t)((char*)&dram_size - (char*)this);
 		o.state_pc = (uint32_t)((char*)&state.pc - (char*)this);
+		o.state_current_pc = (uint32_t)((char*)&state.current_pc - (char*)this);
 		o.jit_budget = (uint32_t)((char*)&m_jit_budget - (char*)this);
 		o.check_int = (uint32_t)((char*)&state.check_int - (char*)this);
 		o.check_timers = (uint32_t)((char*)&state.check_timers - (char*)this);
@@ -1190,9 +1191,10 @@ void CAlphaCPU::jit_run(int budget)
 				const int lra = (ins >> 21) & 0x1F;
 				// HW_LD physical (0x1b, func 0/1) is a load too: the compiled form replays through
 				// this same vlog, but its address is physical (untranslated) with a 12-bit disp.
-				// Func 5 (quad VPTE) too -- its logged va is virtual, jit_read_vpte's replay key.
+				// Virtual forms too, logged va is jit_read_vpte's replay key.
+				const u32 hwld_func = (ins >> 12) & 0xf;
 				const bool is_hwld = (opc == 0x1b) &&
-					((((ins >> 12) & 0xf) <= 1) || (((ins >> 12) & 0xf) == 5) || (((ins >> 12) & 0xf) == 10));
+					(hwld_func <= 1 || hwld_func == 4 || hwld_func == 5 || hwld_func >= 8);
 				// RPCC/RC/RS (MISC 0x18) and ISUM (HW_MFPR 0x19 fn 0x0d) read CPU state the verify can't
 				// re-derive; the compiled forms pull their value from this same load log (jit_misc /
 				// jit_hw_mfpr replay it), so log them like loads.
@@ -1541,34 +1543,42 @@ void CAlphaCPU::jit_run(int budget)
 	}
 }
 
-// JIT load helper (static). Reads size_bits from virtual address va into *out,
-// mirroring DATA_PHYS_NT's normal-read fast path. Returns 0 on success, or 1 on a
-// translation fault / unaligned access - the caller bails to the interpreter
-int CAlphaCPU::jit_read(CAlphaCPU* cpu, u64 va, int size_bits, u64* out)
+// JIT load helper (static). descr[7:0] is size_bits; production integer loads also
+// carry the instruction in descr[63:32]. That lets a cold translation path enter PAL
+// exactly once instead of returning to execute() to repeat the faulting instruction.
+int CAlphaCPU::jit_read(CAlphaCPU* cpu, u64 va, u64 descr, u64* out)
 {
+	const int size_bits = (int)(descr & 0xff);
+	const u32 ins = (u32)(descr >> 32);
 	const u64 amask = (u64)(size_bits / 8) - 1;
-	if (va & amask) return 1;                 // unaligned: let the interpreter handle it
+	// The interp handles an unaligned access in place unless it crosses the effective translation page.
+	if ((va & amask) && ((va & U64(0x1fff)) + amask > U64(0x1fff))) return 1;
 
 	u64 phys;
 	const u64 vp = va & ~U64(0x1FFF);
-	SDataPageCache& dpc = cpu->data_page_cache[0][dpc_index(va)];   // direct-mapped by virt page
+	SDataPageCache& dpc = cpu->data_page_cache[0][dpc_index(va)];
 	if (dpc.virt_page == vp && dpc.valid && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
 	{
 		phys = dpc.phys_base | (va & U64(0x1FFF));
 	}
 	else
 	{
-		// Side-effect-free TB fast path. NOT virt2phys - that walks the page table and
-		// vectors faults as a side effect, which (re-done by the interpreter after we
-		// bail) corrupts state. Bail on a TB miss or any access fault and let the 
-		// interpreter do the side-effect translation ~  it fills this cache so the next 
-		// compiled run hits. Mirrors virt2phys's read path.
-		const int i = cpu->FindTBEntry(va, ACCESS_READ);
-		if (i < 0) return 1;                                                  // TB miss
-		const auto& e = cpu->state.tb[TB_INDEX_DATA][i];
-		if (!e.access[0][cpu->state.cm]) return 1;                            // protection (ACV)
-		if (e.fault[0]) return 1;                                             // fault-on-read (FOR)
-		phys = e.phys | (va & e.keep_mask);
+		if (ins && !cpu->m_jit_vreplay)
+		{
+			// The emitted cold stub installed state.current_pc before this call. 
+			// A nonzero result means virt2phys has already selected native-PAL fault.
+			if (cpu->virt2phys(va, &phys, ACCESS_READ, nullptr, ins)) return 2;
+		}
+		else
+		{
+			// Verify/FP callers do not carry an instruction word and retain the old
+			// side-effect-free retry contract.
+			const int i = cpu->FindTBEntry(va, ACCESS_READ);
+			if (i < 0) return 1;
+			const auto& e = cpu->state.tb[TB_INDEX_DATA][i];
+			if (!e.access[0][cpu->state.cm] || e.fault[0]) return 1;
+			phys = e.phys | (va & e.keep_mask);
+		}
 		dpc.phys_base = phys & ~U64(0x1FFF);
 		dpc.host_bias = ((phys | U64(0x1FFF)) < cpu->dram_size)
 			? ((u64)cpu->dram_ptr + (phys & ~U64(0x1FFF)) - vp) : 0;
@@ -1785,10 +1795,12 @@ int CAlphaCPU::jit_fltv(CAlphaCPU* cpu, u32 ins)
 
 // JIT load-locked helper (static). LDx_L: the verify-checked load PLUS cpu_lock -- the LL/SC
 // exclusive monitor. cpu_lock is per-CPU + atomic + idempotent.
-int CAlphaCPU::jit_read_locked(CAlphaCPU* cpu, u64 va, int size_bits, u64* out)
+int CAlphaCPU::jit_read_locked(CAlphaCPU* cpu, u64 va, u64 descr, u64* out)
 {
+	const int size_bits = (int)(descr & 0xff);
+	const u32 ins = (u32)(descr >> 32);
 	const u64 amask = (u64)(size_bits / 8) - 1;
-	if (va & amask) return 1;                 // unaligned: let the interpreter handle it
+	if ((va & amask) && ((va & U64(0x1fff)) + amask > U64(0x1fff))) return 1;
 
 	u64 phys;
 	const u64 vp = va & ~U64(0x1FFF);
@@ -1799,12 +1811,21 @@ int CAlphaCPU::jit_read_locked(CAlphaCPU* cpu, u64 va, int size_bits, u64* out)
 	}
 	else
 	{
-		const int i = cpu->FindTBEntry(va, ACCESS_READ);
-		if (i < 0) return 1;                                                  // TB miss
-		const auto& e = cpu->state.tb[TB_INDEX_DATA][i];
-		if (!e.access[0][cpu->state.cm]) return 1;                            // protection (ACV)
-		if (e.fault[0]) return 1;                                             // fault-on-read (FOR)
-		phys = e.phys | (va & e.keep_mask);
+		if (ins && !cpu->m_jit_vreplay)
+		{
+			// The emitter installed current_pc. Translation faults enter native PAL here.
+			if (cpu->virt2phys(va, &phys, ACCESS_READ, nullptr, ins)) return 2;
+		}
+		else
+		{
+			// Differential replay retains the side-effect-free lookup used by the
+			// interpreter.
+			const int i = cpu->FindTBEntry(va, ACCESS_READ);
+			if (i < 0) return 1;
+			const auto& e = cpu->state.tb[TB_INDEX_DATA][i];
+			if (!e.access[0][cpu->state.cm] || e.fault[0]) return 1;
+			phys = e.phys | (va & e.keep_mask);
+		}
 		dpc.phys_base = phys & ~U64(0x1FFF);
 		dpc.host_bias = ((phys | U64(0x1FFF)) < cpu->dram_size)
 			? ((u64)cpu->dram_ptr + (phys & ~U64(0x1FFF)) - vp) : 0;
@@ -1839,31 +1860,58 @@ int CAlphaCPU::jit_read_locked(CAlphaCPU* cpu, u64 va, int size_bits, u64* out)
 	return 0;
 }
 
-// JIT HW_LD VPTE helper (static). HW_LD func 5 (the DTBMISS PTE fetch): a virtual read access-
-// checked vs KERNEL, not cm (DO_HW_LDQ case 5). Side-effect-free TB probe; bails on miss so the
-// interpreter vectors the double miss. Skips the data_page_cache (keyed by current cm).
-int CAlphaCPU::jit_read_vpte(CAlphaCPU* cpu, u64 va, int size_bits, u64* out)
+// Virtual HW_LD helper. "descr" carries the instruction plus transfer size/VPTE/ALT/WrChk flags.
+// normal build will deliver translation faults directly; verify retains a side-effect-free replay probe.
+int CAlphaCPU::jit_read_vpte(CAlphaCPU* cpu, u64 va, u64 descr, u64* out)
 {
+	const int size_bits = (int)(descr & 0xff);
+	const bool vpte = (descr & 0x100) != 0;
+	const bool alt = (descr & 0x200) != 0;
+	const bool wchk = (descr & 0x400) != 0;
+	const u32 ins = (u32)(descr >> 32);
 	const u64 amask = (u64)(size_bits / 8) - 1;
-	if (va & amask) return 1;                 // unaligned: let the interpreter handle it
+	// HW_LD translates the original VA, then its no-trap physical access rounds the
+	// resulting physical address down.
 
-	const int i = cpu->FindTBEntry(va, ACCESS_READ);
-	if (i < 0) return 1;                                                  // TB miss (double miss)
-	const auto& e = cpu->state.tb[TB_INDEX_DATA][i];
-	if (!e.access[0][0]) return 1;            // protection: kernel read access
-	if (e.fault[0]) return 1;                 // fault-on-read (FOR)
-	const u64 phys = e.phys | (va & e.keep_mask);
+	u64 phys;
+	const int flags = ACCESS_READ | (vpte ? VPTE : 0) | (alt ? ALT : 0) | (wchk ? WRCHK : 0);
+	if (ins && !cpu->m_jit_vreplay)
+	{
+		// The emitter installed current_pc. A nonzero result has already selected the
+		// native-PAL DTB/access-fault entry.
+		if (cpu->virt2phys(va, &phys, flags, nullptr, ins)) return 2;
+	}
+	else
+	{
+		// The reference interpreter already completed this instruction before verify replay.
+		const int i = cpu->FindTBEntry(va, ACCESS_READ);
+		if (i < 0) return 1;
+		const auto& e = cpu->state.tb[TB_INDEX_DATA][i];
+		const int cm = vpte ? 0 : alt ? cpu->state.alt_cm : cpu->state.cm;
+		if (!e.access[0][cm] || e.fault[0]) return 1;
+		if (wchk && (!e.access[1][cm] || e.fault[1])) return 1;
+		phys = e.phys | (va & e.keep_mask);
+	}
+
+	phys &= ~amask;
 
 	if (phys >= cpu->dram_size)               // MMIO: bail before the replay (mirrors jit_read)
 		return 1;
 
 	if (cpu->m_jit_vreplay)
 	{
+		// Virtual HW_LD to R31 is a fault/access probe: Translation and MMIO checks 
+		// still matter, but its discarded value has no slot.
+		if (((ins >> 21) & 0x1f) == 31)
+		{
+			*out = 0;
+			return 0;
+		}
 		if (va != cpu->m_jit_vaddr[cpu->m_jit_vlog_i])
 		{
 			static int n = 0;
 			if (n++ < 50)
-				printf("[JIT] VPTE ADDR MISMATCH: compiled va=%016llx interp va=%016llx\n",
+				printf("[JIT] HW_LD VIRT ADDR MISMATCH: compiled va=%016llx interp va=%016llx\n",
 					(unsigned long long) va, (unsigned long long) cpu->m_jit_vaddr[cpu->m_jit_vlog_i]);
 		}
 		*out = cpu->m_jit_vlog[cpu->m_jit_vlog_i++];
@@ -1943,12 +1991,13 @@ int CAlphaCPU::jit_read_phys(CAlphaCPU* cpu, u64 phys, int size_bits, u64* out)
 	return 0;
 }
 
-// JIT store helper (static). Writes size_bits of value to virtual address va, mirroring
-// jit_read's side-effect-free translation. Returns 0 on success, 1 on fault/unaligned.
-int CAlphaCPU::jit_write(CAlphaCPU* cpu, u64 va, int size_bits, u64 value)
+// JIT store helper: the descriptor and three-way return contract match jit_read.
+int CAlphaCPU::jit_write(CAlphaCPU* cpu, u64 va, u64 descr, u64 value)
 {
+	const int size_bits = (int)(descr & 0xff);
+	const u32 ins = (u32)(descr >> 32);
 	const u64 amask = (u64)(size_bits / 8) - 1;
-	if (va & amask) return 1;                 // unaligned: let the interpreter handle it
+	if ((va & amask) && ((va & U64(0x1fff)) + amask > U64(0x1fff))) return 1;
 
 	// Verify: the interpreter pass already performed (and recorded) this store. Compare
 	// rather than write -- stores change memory, not GPRs, so the differential GPR check
@@ -1969,22 +2018,25 @@ int CAlphaCPU::jit_write(CAlphaCPU* cpu, u64 va, int size_bits, u64 value)
 
 	u64 phys;
 	const u64 vp = va & ~U64(0x1FFF);
-	SDataPageCache& dpc = cpu->data_page_cache[1][dpc_index(va)];   // direct-mapped by virt page
+	SDataPageCache& dpc = cpu->data_page_cache[1][dpc_index(va)];
 	if (dpc.virt_page == vp && dpc.valid && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
 	{
 		phys = dpc.phys_base | (va & U64(0x1FFF));
 	}
 	else
 	{
-		// Side-effect-free TB fast path on the write cache [1]; bail on a TB miss or access
-		// fault so the interpreter does the side-effecting translation (filling this cache,
-		// so the next compiled run hits). NOT virt2phys -- it vectors faults as a side effect.
-		const int i = cpu->FindTBEntry(va, ACCESS_WRITE);
-		if (i < 0) return 1;                                                  // TB miss
-		const auto& e = cpu->state.tb[TB_INDEX_DATA][i];
-		if (!e.access[1][cpu->state.cm]) return 1;                            // protection (ACV)
-		if (e.fault[1]) return 1;                                             // fault-on-write (FOW)
-		phys = e.phys | (va & e.keep_mask);
+		if (ins && !cpu->m_jit_vreplay)
+		{
+			if (cpu->virt2phys(va, &phys, ACCESS_WRITE, nullptr, ins)) return 2;
+		}
+		else
+		{
+			const int i = cpu->FindTBEntry(va, ACCESS_WRITE);
+			if (i < 0) return 1;
+			const auto& e = cpu->state.tb[TB_INDEX_DATA][i];
+			if (!e.access[1][cpu->state.cm] || e.fault[1]) return 1;
+			phys = e.phys | (va & e.keep_mask);
+		}
 		dpc.phys_base = phys & ~U64(0x1FFF);
 		dpc.host_bias = ((phys | U64(0x1FFF)) < cpu->dram_size)
 			? ((u64)cpu->dram_ptr + (phys & ~U64(0x1FFF)) - vp) : 0;
