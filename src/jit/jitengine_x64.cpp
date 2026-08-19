@@ -2387,9 +2387,8 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
     if (b->prefix_len == 0 || b->phys + (uint64_t) b->prefix_len * 4 > dram_size) return;
   }
 
-  // regalloc: pick the TRACE'S hottest guest GPRs for the pin registers. A trace
-  // is entered only by fresh call (no chained re-entry), so the prologue-load/done-sync pair
-  // fully owns the binding
+  // Regalloc: pick the trace's hottest guest GPRs for its callee-saved pins. A fresh
+  // call loads them here; the chained entry below first converts the global block convention.
 #ifdef _WIN32
   const int pin_hosts[6] = { (int) x86::r12.id(), (int) x86::r13.id(), (int) x86::r15.id(),
                              (int) x86::r14.id(), (int) x86::rsi.id(), (int) x86::rdi.id() };
@@ -2476,10 +2475,17 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   // adapter syncs them to regs[] and loads the trace set, then falls into body.
   size_t chain_off = 0;
   if (TraceChainIn) {
-    if (pins_differ || vol_sync) a.jmp(body);   // the C entry (already loaded) skips the adapter
+    // no live global-pin convention in R8/R9. skip the chain adapter so its
+    // caller-saved register contents cannot leak into guest state.
+    a.jmp(body);
     Label chain_in = a.new_label();
     a.bind(chain_in);
     chain_off = code.code_size();
+    // Block chains keep R17/R19 live in caller-saved R8/R9.
+    // The trace does not so publish them before any trace pin loads or ordinary
+    // regs[] accesses.
+    a.mov(x86::qword_ptr(x86::rbx, 17 * 8), x86::r8);
+    a.mov(x86::qword_ptr(x86::rbx, 19 * 8), x86::r9);
     if (pins_differ) {
       a.mov(x86::qword_ptr(x86::rbx, 26 * 8), x86::r12); a.mov(x86::qword_ptr(x86::rbx, 16 * 8), x86::r13);
       a.mov(x86::qword_ptr(x86::rbx, 27 * 8), x86::r15); a.mov(x86::qword_ptr(x86::rbx, 30 * 8), x86::r14);
@@ -2644,6 +2650,8 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
         else { a.mov(x86::rax, imm((uint64_t) hs.indirect_helper)); a.call(x86::rax); } }
       if (vol_sync) a.mov(x86::r8, x86::qword_ptr(x86::rbx, vol_reg * 8));   // reload for the miss path
       a.test(x86::rax, x86::rax); a.jz(jmiss);
+      a.mov(x86::r8, x86::qword_ptr(x86::rbx, 17 * 8));
+      a.mov(x86::r9, x86::qword_ptr(x86::rbx, 19 * 8));
       a.jmp(x86::rax);                                    // HIT: tail into the target block's body
       a.bind(jmiss);
       a.mov(x86::eax, x86::dword_ptr(x86::rsp, 40));
@@ -2696,6 +2704,9 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
       a.test(x86::rcx, x86::rcx);                                                  a.jz(nxt);
       a.cmp(x86::qword_ptr(x86::r11, off + (int) offsetof(LinkSlot, tag)), x86::r10);  a.jne(nxt);
       a.cmp(x86::qword_ptr(x86::r11, off + (int) offsetof(LinkSlot, vgen)), x86::rdx); a.jne(nxt);
+      // Complete the global block convention only on a hit.
+      a.mov(x86::r8, x86::qword_ptr(x86::rbx, 17 * 8));
+      a.mov(x86::r9, x86::qword_ptr(x86::rbx, 19 * 8));
       a.jmp(x86::rcx);                                    // HIT: tail into the block body
       if (sl + 1 < kLinkSlots) a.bind(nxt);
     }

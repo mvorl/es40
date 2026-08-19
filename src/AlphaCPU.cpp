@@ -963,9 +963,12 @@ void CAlphaCPU::jit_run(int budget)
 					CJitEngine::LinkSlot* lf = (CJitEngine::LinkSlot*)m_link_from;
 					m_jit->note_link_patch(lf);
 					const CJitEngine::LinkSlot snap = { t->head_tag, t->vgen, t->chain_entry };
-					int found = -1;
-					for (int i = 0; i < CJitEngine::kLinkSlots; ++i) if (lf[i].body && lf[i].tag == t->head_tag) found = i;
+					int found = -1, empty = -1;
+					for (int i = 0; i < CJitEngine::kLinkSlots; ++i)
+						if (lf[i].body && lf[i].tag == t->head_tag) found = i;
+						else if (!lf[i].body && empty < 0) empty = i;
 					if (found >= 0) lf[found] = snap;
+					else if (empty >= 0) lf[empty] = snap;
 					else { for (int i = CJitEngine::kLinkSlots - 1; i > 0; --i) lf[i] = lf[i-1]; lf[0] = snap; }
 					m_link_from = nullptr; }
 				m_jit_budget = budget;   // ceiling for the trace (its loads/bails honor it like a block)
@@ -1056,7 +1059,17 @@ void CAlphaCPU::jit_run(int budget)
 				  const u32* aw = (const u32*)((const u8*)dram_ptr + cur->phys);
 				  const u32 lop = aw[cur->prefix_len - 1]; const u32 lopc = lop >> 26;
 				  u64 spc = 0;
-				  if (lopc == 0x30 || lopc == 0x34 || (lopc >= 0x38 && lopc <= 0x3f)) {   // PC-relative: static taken target
+				  if (lopc >= 0x38 && lopc <= 0x3f) {
+				    // A conditional's static target is often the loop exit.
+					// Prefer the successor this block exit took most recently
+					// fall back to the static edge before linking.
+				    for (int li = 0; li < CJitEngine::kLinkSlots; ++li)
+				      if (cur->link[li].body) { spc = cur->link[li].tag; break; }
+				    if (!spc) {
+				      const int64_t disp = (int64_t)((uint64_t)(lop & 0x1FFFFF) << 43) >> 43;
+				      spc = (((cur->tag & ~U64(1)) + 4 * (u64)(cur->prefix_len - 1)) + 4 + (u64)(disp * 4)) | (cur->tag & 1);
+				    }
+				  } else if (lopc == 0x30 || lopc == 0x34) {   // unconditional PC-relative target
 				    const int64_t disp = (int64_t)((uint64_t)(lop & 0x1FFFFF) << 43) >> 43;
 				    spc = (((cur->tag & ~U64(1)) + 4 * (u64)(cur->prefix_len - 1)) + 4 + (u64)(disp * 4)) | (cur->tag & 1);
 				  } else if (TraceLinkFusion && lopc == 0x1a) {
@@ -1067,7 +1080,7 @@ void CAlphaCPU::jit_run(int budget)
 				  if (spc == b->tag) { closes = true; break; }   // back-edge to the head -> compile_trace closes the loop
 				  CJitEngine::JitBlock* succ = m_jit->lookup(spc, start_asn);
 				  if (!succ || succ == b || !succ->code || succ->prefix_len == 0) break;
-					  u64 sp; if (!live_exec_phys(spc, &sp) || sp != succ->phys) break;   // successor remapped since compile -> stale, don't fuse
+				  u64 sp; if (!live_exec_phys(spc, &sp) || sp != succ->phys) break;   // successor remapped since compile -> stale, don't fuse
 				  bool dup = false; for (u32 j = 0; j < nb; ++j) if (blist[j] == succ) { dup = true; break; }
 				  if (dup) break;
 				  blist[nb++] = succ; cur = succ;
@@ -1446,9 +1459,12 @@ void CAlphaCPU::jit_run(int budget)
 				CJitEngine::LinkSlot* lf = (CJitEngine::LinkSlot*)m_link_from;
 				m_jit->note_link_patch(lf);
 				const CJitEngine::LinkSlot snap = { b->tag, b->vgen, b->jit_body };
-				int found = -1;   // poly-link: refresh the existing entry for this tag, else round-robin insert
-				for (int i = 0; i < CJitEngine::kLinkSlots; ++i) if (lf[i].body && lf[i].tag == b->tag) found = i;
+				int found = -1, empty = -1;   // preserve the first-observed edge in slot 0 while space remains
+				for (int i = 0; i < CJitEngine::kLinkSlots; ++i)
+					if (lf[i].body && lf[i].tag == b->tag) found = i;
+					else if (!lf[i].body && empty < 0) empty = i;
 				if (found >= 0) lf[found] = snap;
+				else if (empty >= 0) lf[empty] = snap;
 				else { for (int i = CJitEngine::kLinkSlots - 1; i > 0; --i) lf[i] = lf[i-1]; lf[0] = snap; }
 				m_link_from = nullptr; }
 			m_jit_budget = budget;   // ceiling for compiled chains (epilogue stops at it)
@@ -2217,10 +2233,12 @@ void* CAlphaCPU::jit_indirect(CAlphaCPU* cpu, u64 target, void* link_cache)
 			auto* links = (CJitEngine::LinkSlot*)link_cache;
 			cpu->m_jit->note_link_patch(links);
 			const CJitEngine::LinkSlot snap = { target, cpu->m_jit->vgen(), body };
-			int found = -1;
+			int found = -1, empty = -1;
 			for (int i = 0; i < CJitEngine::kLinkSlots; ++i)
 				if (links[i].body && links[i].tag == target) found = i;
+				else if (!links[i].body && empty < 0) empty = i;
 			if (found >= 0) links[found] = snap;
+			else if (empty >= 0) links[empty] = snap;
 			else {
 				for (int i = CJitEngine::kLinkSlots - 1; i > 0; --i) links[i] = links[i - 1];
 				links[0] = snap;
