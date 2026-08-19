@@ -2194,9 +2194,21 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   // in native code) or return to the dispatcher.
 #ifndef JIT_VERIFY
   // Gate the chain: stop if we've hit the budget ceiling or an interrupt/timer is pending
+  // Interrupts are architecturally deferred while the target remains in PALmode.
   auto emit_gate = [&](Label& lbl) {
     a.mov(x86::rax, x86::qword_ptr(x86::rsp, 40)); a.cmp(x86::rax, x86::qword_ptr(x86::rbp, m_off.jit_budget)); a.jge(lbl);
-    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0));     a.jne(lbl);
+    if (!pal_block) {
+      // Direct branches and JMP preserve the source mode. CALL_PAL may (always?) enter
+      // PALmode. taking one pass on that cold race stays simple.
+      a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0)); a.jne(lbl);
+    } else if (terminator_jmp && (words[plen - 1] >> 26) == 0x1e) {
+      // HW_RET can leave PALmode. If an interrupt became pending in the handler,
+      // return to the dispatcher.
+      Label deferred = a.new_label();
+      a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0)); a.je(deferred);
+      a.test(x86::r10, imm(1)); a.jz(lbl);
+      a.bind(deferred);
+    }
     a.cmp(x86::byte_ptr(x86::rbp, m_off.check_timers), imm(0));  a.jne(lbl);
   };
   // Cached direct link: tail straight into our cached successor's body via its SNAPSHOT

@@ -1014,11 +1014,11 @@ void CAlphaCPU::jit_run(int budget)
 					(unsigned long long) b->phys, (unsigned long long) start_phys);
 		}
 
-		// Run the compiled safe prefix natively when available -- but not while an
-		// interrupt or delayed timer is pending. Compiled blocks don't run the
-		// per-instruction polls, so run the interpreter.
+		// Run the compiled safe prefix natively when available. A pending interrupt
+		// is deliverable only outside PALmode (execute() applies the same rule), while
+		// delayed timers still require the interpreter's per-instruction poll.
 		if (b && b->code && b->phys == start_phys && (int)b->prefix_len <= budget
-			&& !state.check_int && !state.check_timers
+			&& (!state.check_int || (b->tag & 1)) && !state.check_timers
 			&& (!(b->tag & 1) || b->pal_shadow == (bool)state.sde))
 		{
 			b->vgen = m_jit->vgen();   // phys validated + lookup proved flush-fresh: refresh the chain epoch
