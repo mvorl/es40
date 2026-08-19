@@ -895,6 +895,7 @@ void CAlphaCPU::jit_run(int budget)
 	{
 		const u64 start_virt = state.pc;
 		const u32 start_asn = (u32)state.asn;
+		const bool start_pal_shadow = (start_virt & 1) && state.sde;
 
 		// Resolve the block's physical start side-effect-free (FAKE = no fault, no TB fill) so
 		// execute() stays the sole I-stream fetcher; covers superpage/KSEG (no TB entry). phys
@@ -949,7 +950,8 @@ void CAlphaCPU::jit_run(int budget)
 			for (uint32_t s = 1; s < tf->n_segs; ++s) { u64 sp; if (!live_exec_phys(tf->segs[s].guest_pc, &sp) || sp != tf->segs[s].phys_pc) { m_jit->note_trace_stale(); return false; } }
 			return true;
 		};
-		if (have_phys && m_jit->traces_enabled() && !state.check_int && !state.check_timers)
+		if (have_phys && !(start_virt & 1) && m_jit->traces_enabled()
+			&& !state.check_int && !state.check_timers)
 		{
 			CJitEngine::TraceFragment* t = m_jit->trace_lookup(start_virt, start_asn);
 			if (t && t->underrun >= 64) { m_jit->demote_trace(t); t = nullptr; }   // R3b: stopped looping -> net tax
@@ -995,9 +997,11 @@ void CAlphaCPU::jit_run(int budget)
 #endif
 
 		// Hot path: virtual+ASN lookup, phys-validated (skipped on a translation miss).
-		CJitEngine::JitBlock* b = have_phys ? m_jit->lookup(start_virt, start_asn) : nullptr;
+		CJitEngine::JitBlock* b = have_phys
+			? m_jit->lookup(start_virt, start_asn, start_pal_shadow) : nullptr;
 		if (have_phys && !b)   // lazy-flushed survivor? hash-revalidate in place (no interpreted pass)
-			b = m_jit->revalidate_flushed(start_virt, start_asn, start_phys, (const uint8_t*)dram_ptr);
+			b = m_jit->revalidate_flushed(start_virt, start_asn, start_pal_shadow,
+				start_phys, (const uint8_t*)dram_ptr);
 
 		// A valid block whose phys no longer matches = a page remap the virtual key can't see.
 		// The cold path below re-records it; log it -- it's the smoking gun for stale-chain bugs.
@@ -1015,14 +1019,15 @@ void CAlphaCPU::jit_run(int budget)
 		// per-instruction polls, so run the interpreter.
 		if (b && b->code && b->phys == start_phys && (int)b->prefix_len <= budget
 			&& !state.check_int && !state.check_timers
-			&& (!(b->tag & 1) || state.sde))   // PALmode block: its shadow-register remap assumes SDE
+			&& (!(b->tag & 1) || b->pal_shadow == (bool)state.sde))
 		{
 			b->vgen = m_jit->vgen();   // phys validated + lookup proved flush-fresh: refresh the chain epoch
 #ifdef JIT_TRACES
 			// after a block has dispatched 8x, promote it to a single-block trace (a
 			// future trace head). Dispatch-counted for now -- it undercounts chained loops, but they
 			// still surface here when a chain breaks
-			if (m_jit->traces_enabled() && ++b->hot == 8 && !m_jit->trace_lookup(start_virt, start_asn))
+			if (!(b->tag & 1) && m_jit->traces_enabled() && ++b->hot == 8
+				&& !m_jit->trace_lookup(start_virt, start_asn))
 			{
 				const CJitEngine::HelperSet hs = {
 					(void*)&CAlphaCPU::jit_read,        (void*)&CAlphaCPU::jit_write,
@@ -1078,7 +1083,7 @@ void CAlphaCPU::jit_run(int budget)
 				    if (!spc || (spc & 1) != (cur->tag & 1)) break;   // no observed successor / mode change
 				  } else break;                                       // breaker terminator: don't cross
 				  if (spc == b->tag) { closes = true; break; }   // back-edge to the head -> compile_trace closes the loop
-				  CJitEngine::JitBlock* succ = m_jit->lookup(spc, start_asn);
+				  CJitEngine::JitBlock* succ = m_jit->lookup(spc, start_asn, false);
 				  if (!succ || succ == b || !succ->code || succ->prefix_len == 0) break;
 				  u64 sp; if (!live_exec_phys(spc, &sp) || sp != succ->phys) break;   // successor remapped since compile -> stale, don't fuse
 				  bool dup = false; for (u32 j = 0; j < nb; ++j) if (blist[j] == succ) { dup = true; break; }
@@ -1458,7 +1463,8 @@ void CAlphaCPU::jit_run(int budget)
 			if (m_link_from) { m_jit->note_link_bail();   // (fanout stats retired with the generic LinkSlot* target)
 				CJitEngine::LinkSlot* lf = (CJitEngine::LinkSlot*)m_link_from;
 				m_jit->note_link_patch(lf);
-				const CJitEngine::LinkSlot snap = { b->tag, b->vgen, b->jit_body };
+				const CJitEngine::LinkSlot snap = { b->tag,
+					b->vgen | (b->pal_shadow ? (U64(1) << 63) : 0), b->jit_body };
 				int found = -1, empty = -1;   // preserve the first-observed edge in slot 0 while space remains
 				for (int i = 0; i < CJitEngine::kLinkSlots; ++i)
 					if (lf[i].body && lf[i].tag == b->tag) found = i;
@@ -1517,7 +1523,8 @@ void CAlphaCPU::jit_run(int budget)
 		// Record only translatable block starts (a translation miss left have_phys false).
 		if (have_phys && state.pc != expected)
 		{
-			CJitEngine::JitBlock* nb = m_jit->record(start_virt, start_phys, start_asn, start_asm, n, (const uint8_t*)dram_ptr);
+			CJitEngine::JitBlock* nb = m_jit->record(start_virt, start_phys, start_asn,
+				start_pal_shadow, start_asm, n, (const uint8_t*)dram_ptr);
 			if (!nb->compiled)
 				m_jit->compile_block(nb, (const uint8_t*)dram_ptr, dram_size,
 					(void*)&CAlphaCPU::jit_read, (void*)&CAlphaCPU::jit_write,
@@ -2225,14 +2232,16 @@ void CAlphaCPU::jit_hw_mtpr(CAlphaCPU* cpu, u32 function, u64 value)
 void* CAlphaCPU::jit_indirect(CAlphaCPU* cpu, u64 target, void* link_cache)
 {
 	cpu->m_jit->note_jmp_attempt();
-	CJitEngine::JitBlock* b = cpu->m_jit->lookup(target, (u32)cpu->state.asn);
+	CJitEngine::JitBlock* b = cpu->m_jit->lookup(target, (u32)cpu->state.asn,
+		(target & 1) && cpu->state.sde);
 	if (!b || !b->jit_body) return nullptr;
 	auto hit = [&](void* body) -> void* {
 		if (link_cache)
 		{
 			auto* links = (CJitEngine::LinkSlot*)link_cache;
 			cpu->m_jit->note_link_patch(links);
-			const CJitEngine::LinkSlot snap = { target, cpu->m_jit->vgen(), body };
+			const CJitEngine::LinkSlot snap = { target,
+				cpu->m_jit->vgen() | (b->pal_shadow ? (U64(1) << 63) : 0), body };
 			int found = -1, empty = -1;
 			for (int i = 0; i < CJitEngine::kLinkSlots; ++i)
 				if (links[i].body && links[i].tag == target) found = i;
@@ -2250,8 +2259,7 @@ void* CAlphaCPU::jit_indirect(CAlphaCPU* cpu, u64 target, void* link_cache)
 	if (target & 1)
 	{
 		// PALmode target: the I-stream is physically addressed (not paged), so no remap / no stale
-		// risk. A PALmode block's shadow-register remap assumes SDE -- honor the dispatcher's guard.
-		if (!cpu->state.sde) return nullptr;
+		// risk. lookup selected the body whose register-bank mapping matches the live SDE state.
 		return hit(b->jit_body);
 	}
 	// Native target. FAST PATH: validated under the current epoch (lookup proved flush-fresh, so a

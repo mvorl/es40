@@ -113,18 +113,20 @@ public:
   struct LinkSlot
   {
     uint64_t tag;    // this exit's target virtual PC (entries are keyed, so a hit is correct for that PC)
-    uint64_t vgen;   // validation epoch at patch time 
+    uint64_t vgen;   // low 63 bits: validation epoch; bit 63: target PAL shadow variant
     void*    body;   // successor's chained entry point at patch time; null = empty slot
   };
 
-  // FIELD ORDER IS LOAD-BEARING: everything lookup() reads -- tag, asn, asm_global, valid,
-  // flush_gen -- is packed into the first 40 bytes so a way costs ONE cache line to test.
+  // FIELD ORDER IS LOAD-BEARING: everything lookup() reads -- tag, asn, asm_global,
+  // pal_shadow, valid, flush_gen -- is packed into the first 40 bytes so a way costs ONE
+  // cache line to test.
   struct JitBlock
   {
     uint64_t tag;         // start VIRTUAL PC (validity tag / key)
     uint64_t phys;        // start physical PC (source bytes for compilation)
     uint32_t asn;         // address space number (key; ignored when asm_global)
     bool     asm_global;  // global (ASM) page: matches any ASN, like the icache
+    bool     pal_shadow;  // PALmode variant: true maps R4-7/R20-23 to the shadow bank
     uint32_t n_instr;     // instructions in the straight-line block
     bool     valid;
     uint64_t flush_gen;   // icache-flush generation at which the code bytes were last hash-validated;
@@ -228,19 +230,23 @@ public:
 
   // Does this way hold the block for (virt_pc, asn)? A global (ASM) block matches any ASN,
   // mirroring the icache's hit rule. 
-  static inline bool way_keyed(const JitBlock& b, uint64_t virt_pc, uint32_t asn)
+  static inline bool way_keyed(const JitBlock& b, uint64_t virt_pc, uint32_t asn,
+                               bool pal_shadow)
   {
-    return (b.valid || b.code) && b.tag == virt_pc && (b.asm_global || b.asn == asn);
+    return (b.valid || b.code) && b.tag == virt_pc && (b.asm_global || b.asn == asn)
+        && (!(virt_pc & 1) || b.pal_shadow == pal_shadow);
   }
 
   // Virtual+ASN keyed: no translation on the dispatch hot path. flush_gen-stale blocks
   // miss here; revalidate_flushed() resurrects them after a source-hash check.
-  inline JitBlock* lookup(uint64_t virt_pc, uint32_t asn)
+  inline JitBlock* lookup(uint64_t virt_pc, uint32_t asn, bool pal_shadow)
   {
     JitBlock* const set = set_base(virt_pc);
     for (int w = 0; w < kWays; ++w) {
       JitBlock& b = set[w];
-      if (b.valid && b.flush_gen == m_flush_gen && b.tag == virt_pc && (b.asm_global || b.asn == asn))
+      if (b.valid && b.flush_gen == m_flush_gen && b.tag == virt_pc
+          && (b.asm_global || b.asn == asn)
+          && (!(virt_pc & 1) || b.pal_shadow == pal_shadow))
         return &b;
     }
     return nullptr;
@@ -294,9 +300,11 @@ public:
   bool trace_ok(TraceFragment* t, uint64_t head_live_phys, const uint8_t* dram);
 
   // Lazy-flush survivor: hash-revalidate the slot in place (no interpreted pass, no re-record).
-  JitBlock* revalidate_flushed(uint64_t virt_pc, uint32_t asn, uint64_t phys_pc, const uint8_t* dram);
+  JitBlock* revalidate_flushed(uint64_t virt_pc, uint32_t asn, bool pal_shadow,
+                               uint64_t phys_pc, const uint8_t* dram);
 
-  JitBlock* record(uint64_t virt_pc, uint64_t phys_pc, uint32_t asn, bool asm_global, uint32_t n_instr, const uint8_t* dram);
+  JitBlock* record(uint64_t virt_pc, uint64_t phys_pc, uint32_t asn, bool pal_shadow,
+                   bool asm_global, uint32_t n_instr, const uint8_t* dram);
   void compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_size, void* read_helper, void* write_helper, void* opcdec_helper, void* hw_mfpr_helper, void* hw_ld_helper, void* hw_mtpr_helper, void* hw_st_helper, void* indirect_helper, void* read_locked_helper, void* stc_helper, void* misc_helper, void* read_vpte_helper, void* read_wchk_helper, void* itof_helper, void* ftoi_helper, void* fltl_helper, void* fp_read_helper, void* fp_write_helper, void* fltv_helper);
   void flush();
 

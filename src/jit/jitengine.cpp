@@ -170,7 +170,9 @@ CJitEngine::~CJitEngine()
 #endif
 }
 
-CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uint32_t asn, bool asm_global, uint32_t n_instr, const uint8_t* dram)
+CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uint32_t asn,
+                                         bool pal_shadow, bool asm_global, uint32_t n_instr,
+                                         const uint8_t* dram)
 {
   JitBlock* const set = set_base(virt_pc);
 
@@ -178,7 +180,7 @@ CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uin
   // OWN way instead of evicting the first one's compiled block.
   JitBlock* hit = nullptr;
   for (int w = 0; w < kWays; ++w)
-    if (way_keyed(set[w], virt_pc, asn)) { hit = &set[w]; break; }
+    if (way_keyed(set[w], virt_pc, asn, pal_shadow)) { hit = &set[w]; break; }
 
   if (hit) {
     JitBlock& b = *hit;
@@ -235,6 +237,7 @@ CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uin
   b.phys = phys_pc;
   b.asn = asn;
   b.asm_global = asm_global;
+  b.pal_shadow = pal_shadow;
   b.n_instr = n_instr;
   b.valid = true;
   b.flush_gen = m_flush_gen;
@@ -260,7 +263,9 @@ CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uin
 // Lazy-flush survivor: the dispatcher calls this on a lookup miss, with the LIVE physical it just
 // translated. If the slot matches and its source bytes still hash the same, restamp and return it
 // straight to the hot path 
-CJitEngine::JitBlock* CJitEngine::revalidate_flushed(uint64_t virt_pc, uint32_t asn, uint64_t phys_pc, const uint8_t* dram)
+CJitEngine::JitBlock* CJitEngine::revalidate_flushed(uint64_t virt_pc, uint32_t asn,
+                                                      bool pal_shadow, uint64_t phys_pc,
+                                                      const uint8_t* dram)
 {
   // Resurrect BOTH lazy-flush survivors (flush(): valid, flush_gen-stale) AND flush_non_global() drops
   // (valid cleared). The source-hash below is the guard, matching record()'s revalidate path
@@ -270,7 +275,8 @@ CJitEngine::JitBlock* CJitEngine::revalidate_flushed(uint64_t virt_pc, uint32_t 
   JitBlock* keyed = nullptr;
   JitBlock* const set = set_base(virt_pc);
   for (int w = 0; w < kWays; ++w)
-    if (set[w].code && set[w].tag == virt_pc && (set[w].asm_global || set[w].asn == asn))
+    if (set[w].code && set[w].tag == virt_pc && (set[w].asm_global || set[w].asn == asn)
+        && (!(virt_pc & 1) || set[w].pal_shadow == pal_shadow))
       { keyed = &set[w]; break; }
   if (!keyed)
     return nullptr;

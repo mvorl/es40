@@ -679,6 +679,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
         a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
         };
     auto pin_id = [&](int r) -> int {        // r -> its bound host reg id, or -1 = the state.r[] memory slot
+        if (b->pal_shadow && ((r & 0xc) == 0x4)) return -1;
         return regalloc.host_of(r);
         };
 
@@ -721,12 +722,12 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
         auto reg = [&](int r) {
             // PALshadow (RREG, AlphaCPU.h): in a PALmode block with SDE set, R4-7 and R20-23 map to
             // the shadow bank r[r+32]. 
-            int idx = (pal_block && ((r & 0xc) == 0x4)) ? r + 32 : r;
+            int idx = (b->pal_shadow && ((r & 0xc) == 0x4)) ? r + 32 : r;
             return x86::qword_ptr(x86::rbx, idx * 8);
             };
         // 32-bit (low-dword) view with the SAME shadow remap, for the 32-bit ALU ops (ADDL/SUBL).
         auto reg32 = [&](int r) {
-            int idx = (pal_block && ((r & 0xc) == 0x4)) ? r + 32 : r;
+            int idx = (b->pal_shadow && ((r & 0xc) == 0x4)) ? r + 32 : r;
             return x86::dword_ptr(x86::rbx, idx * 8);
             };
         // Pin-aware reg access: route through the pinned x86 reg when r is pinned, else the regs[]
@@ -999,7 +1000,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 s.helper = read_helper;      s.hidx = helper_index(hs, read_helper);
                 s.size_bits = size_bits;
                 s.ra = ra;  s.pin = pin_id(ra);
-                s.slot = (pal_block && ((ra & 0xc) == 0x4)) ? ra + 32 : ra;   // PALshadow remap (see reg())
+                s.slot = (b->pal_shadow && ((ra & 0xc) == 0x4)) ? ra + 32 : ra;   // PALshadow remap (see reg())
                 s.i = i;    s.fault_pc = b->tag + 4 * (uint64_t) i;
                 s.vol_bind = regalloc.vol_bind; s.vol_host = (s.vol_bind >= 0) ? regalloc.host[s.vol_bind] : -1;
                 s.vol_bind2 = regalloc.vol_bind2; s.vol_host2 = (s.vol_bind2 >= 0) ? regalloc.host[s.vol_bind2] : -1;
@@ -1092,7 +1093,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 s.helper = write_helper;      s.hidx = helper_index(hs, write_helper);
                 s.size_bits = size_bits;
                 s.ra = ra;  s.pin = pin_id(ra);
-                s.slot = (pal_block && ((ra & 0xc) == 0x4)) ? ra + 32 : ra;   // PALshadow remap (see reg())
+                s.slot = (b->pal_shadow && ((ra & 0xc) == 0x4)) ? ra + 32 : ra;   // PALshadow remap (see reg())
                 s.i = i;    s.fault_pc = b->tag + 4 * (uint64_t) i;
                 s.vol_bind = regalloc.vol_bind; s.vol_host = (s.vol_bind >= 0) ? regalloc.host[s.vol_bind] : -1;
                 s.vol_bind2 = regalloc.vol_bind2; s.vol_host2 = (s.vol_bind2 >= 0) ? regalloc.host[s.vol_bind2] : -1;
@@ -2019,7 +2020,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   if (b->n_instr == 0 || phys + (uint64_t) b->n_instr * 4 > dram_size) return;
   const uint32_t* words = (const uint32_t*) (dram + phys);   // x86 LE == Alpha LE
 
-  // PALmode blocks (PC bit 0) remap R4-7/R20-23 to the shadow bank (see RREG); reg() applies it.
+  // PALmode blocks (PC bit 0) use the register-bank mapping captured in b->pal_shadow
   const bool pal_block = (b->tag & 1) != 0;
 
   // Stop at the 8 KB page boundary: past it the next instruction's physical
@@ -2204,15 +2205,9 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   // current epoch. Otherwise record a patch request (m_link_from = this block) and fall back. 
   auto emit_chain = [&](Label& lbl) {
     Label miss = a.new_label();
-    // A direct branch/fall-through preserves the source PC's PAL bit. CALL_PAL is the
-    // exception.
+    // A PAL body has a fixed register-bank mapping.
     if (pal_block) {
-      a.cmp(x86::byte_ptr(x86::rbp, m_off.sde), imm(0)); a.je(miss);
-    } else if (terminator_branch && (words[plen - 1] >> 26) == 0x00) {
-      Label nonpal = a.new_label();
-      a.test(x86::r10, imm(1)); a.jz(nonpal);
-      a.cmp(x86::byte_ptr(x86::rbp, m_off.sde), imm(0)); a.je(miss);
-      a.bind(nonpal);
+      a.cmp(x86::byte_ptr(x86::rbp, m_off.sde), imm(b->pal_shadow ? 1 : 0)); a.jne(miss);
     }
     // Epoch changes proactively clear every patched LinkSlot, so body!=0 is the
     // staleness proof.
@@ -2222,6 +2217,13 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
       if (sl == 0) a.mov(x86::rax, imm((uint64_t) &b->link[0]));
       else         a.add(x86::rax, imm((uint32_t) sizeof(LinkSlot)));
       a.cmp(x86::qword_ptr(x86::rax, (int32_t) offsetof(LinkSlot, tag)), x86::r10); a.jne(nxt);   // not this exit's target
+      if (!pal_block && terminator_branch && (words[plen - 1] >> 26) == 0x00) {
+        // CALL_PAL may enter either register-bank variant.
+        // Match the variant recorded in this link against the live SDE state.
+        a.mov(x86::rcx, x86::qword_ptr(x86::rax, (int32_t) offsetof(LinkSlot, vgen)));
+        a.shr(x86::rcx, imm(63));
+        a.cmp(x86::cl, x86::byte_ptr(x86::rbp, m_off.sde)); a.jne(nxt);
+      }
       // Invalid slots carry the impossible tag ~0. A matching tag therefore proves body
       // was published. Removed redundant test. 
       a.mov(x86::rcx, x86::qword_ptr(x86::rax, (int32_t) offsetof(LinkSlot, body)));
@@ -2245,16 +2247,19 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     emit_gate(exit_chain);                                        // budget/interrupt: bail to dispatcher
     // Per-site PIC: returns and most computed calls are stable at a given instruction.
     { Label pic_miss = a.new_label();
-      { Label pic_ok = a.new_label();
-        a.test(x86::r10, imm(1)); a.jz(pic_ok);
-        a.cmp(x86::byte_ptr(x86::rbp, m_off.sde), imm(0)); a.je(exit_chain);
-        a.bind(pic_ok);
-      }
       for (int sl = 0; sl < kLinkSlots; ++sl) {
         Label next = (sl + 1 < kLinkSlots) ? a.new_label() : pic_miss;
         const int off = sl * (int) sizeof(LinkSlot);
         a.mov(x86::rax, imm((uint64_t) &b->link[0]));
         a.cmp(x86::qword_ptr(x86::rax, off + (int) offsetof(LinkSlot, tag)), x86::r10); a.jne(next);
+        if ((words[plen - 1] >> 26) == 0x1e) {
+          Label mode_ok = a.new_label();
+          a.test(x86::r10, imm(1)); a.jz(mode_ok);
+          a.mov(x86::rcx, x86::qword_ptr(x86::rax, off + (int) offsetof(LinkSlot, vgen)));
+          a.shr(x86::rcx, imm(63));
+          a.cmp(x86::cl, x86::byte_ptr(x86::rbp, m_off.sde)); a.jne(next);
+          a.bind(mode_ok);
+        }
         a.mov(x86::rcx, x86::qword_ptr(x86::rax, off + (int) offsetof(LinkSlot, body)));
         a.jmp(x86::rcx);
         if (sl + 1 < kLinkSlots) a.bind(next);
@@ -2629,10 +2634,6 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
       a.mov(x86::rax, x86::qword_ptr(x86::rsp, 40)); a.cmp(x86::rax, x86::qword_ptr(x86::rbp, m_off.jit_budget)); a.jge(jref);
       a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0));    a.jne(jref);
       a.cmp(x86::byte_ptr(x86::rbp, m_off.check_timers), imm(0)); a.jne(jref);
-      { Label ok = a.new_label();
-        a.test(x86::r10, imm(1)); a.jz(ok);
-        a.cmp(x86::byte_ptr(x86::rbp, m_off.sde), imm(0)); a.je(jref);
-        a.bind(ok); }
       if (pins_differ) {
         for (int k = 0; k < n_pins; ++k) a.mov(x86::qword_ptr(x86::rbx, pin_guest[k] * 8), x86::gpq((uint32_t) pin_hosts[k]));
         a.mov(x86::r12, x86::qword_ptr(x86::rbx, 26 * 8)); a.mov(x86::r13, x86::qword_ptr(x86::rbx, 16 * 8));
@@ -2682,10 +2683,6 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
     a.mov(x86::rax, x86::qword_ptr(x86::rsp, 40)); a.cmp(x86::rax, x86::qword_ptr(x86::rbp, m_off.jit_budget)); a.jge(stub_ret);
     a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0));    a.jne(stub_ret);
     a.cmp(x86::byte_ptr(x86::rbp, m_off.check_timers), imm(0)); a.jne(stub_ret);
-    { Label ok = a.new_label();
-      a.test(x86::r10, imm(1)); a.jz(ok);
-      a.cmp(x86::byte_ptr(x86::rbp, m_off.sde), imm(0)); a.je(stub_ret);
-      a.bind(ok); }
     if (vol_sync) a.mov(x86::qword_ptr(x86::rbx, vol_reg * 8), x86::r8);   // commit before leaving
     if (pins_differ) {   // adapter: trace pins -> regs[], then the global block convention
       for (int k = 0; k < n_pins; ++k) a.mov(x86::qword_ptr(x86::rbx, pin_guest[k] * 8), x86::gpq((uint32_t) pin_hosts[k]));
@@ -2703,7 +2700,15 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
       a.mov(x86::rcx, x86::qword_ptr(x86::r11, off + (int) offsetof(LinkSlot, body)));
       a.test(x86::rcx, x86::rcx);                                                  a.jz(nxt);
       a.cmp(x86::qword_ptr(x86::r11, off + (int) offsetof(LinkSlot, tag)), x86::r10);  a.jne(nxt);
-      a.cmp(x86::qword_ptr(x86::r11, off + (int) offsetof(LinkSlot, vgen)), x86::rdx); a.jne(nxt);
+      a.mov(x86::rax, x86::qword_ptr(x86::r11, off + (int) offsetof(LinkSlot, vgen)));
+      a.mov(x86::rcx, x86::rax); a.btr(x86::rcx, imm(63));
+      a.cmp(x86::rcx, x86::rdx); a.jne(nxt);
+      { Label mode_ok = a.new_label();
+        a.test(x86::r10, imm(1)); a.jz(mode_ok);
+        a.shr(x86::rax, imm(63));
+        a.cmp(x86::al, x86::byte_ptr(x86::rbp, m_off.sde)); a.jne(nxt);
+        a.bind(mode_ok); }
+      a.mov(x86::rcx, x86::qword_ptr(x86::r11, off + (int) offsetof(LinkSlot, body)));
       // Complete the global block convention only on a hit.
       a.mov(x86::r8, x86::qword_ptr(x86::rbx, 17 * 8));
       a.mov(x86::r9, x86::qword_ptr(x86::rbx, 19 * 8));
