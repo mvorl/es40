@@ -385,6 +385,9 @@ void CAliM1543C::init()
 		state.toy_stored_data[i] = 0;
 	state.toy_offset = 0;
 
+	// restore cmos/mc146818 state from TOY backing file. 
+	restore_toy_nvram();
+
 	// The MC146818 is battery-backed: register A keeps its divider/rate across power
 	// cycles, so on real hardware the 1024Hz periodic tick runs from power-on. SRM's
 	// boot-CPU speed calibration (at "lowering IPL", BEFORE it programs the RTC at
@@ -1140,6 +1143,57 @@ u8 CAliM1543C::isapnp_data_read(u32 /*address*/)
 }
 
 /**
+ * Restore CMOS/TOY NVRAM contents from the file named by the "rom.toy"
+ * setting (default "toy.rom", like rom.dpr / rom.flash). The file is the
+ * raw 256-byte CMOS image.
+ **/
+void CAliM1543C::restore_toy_nvram()
+{
+	char* fn = myCfg->get_myParent()->get_text_value("rom.toy", "toy.rom");
+
+	FILE* f = fopen(fn, "rb");
+	if (!f)
+	{
+		printf("%%ALI-I-NOTOYFILE: %s not found; starting with blank CMOS (created on exit).\n", fn);
+		return;
+	}
+
+	size_t n = fread(state.toy_stored_data, 1, 256, f);
+	fclose(f);
+	if (n != 256)
+	{
+		printf("%%ALI-W-BADTOYFILE: %s is not a 256-byte CMOS image; ignored.\n", fn);
+		memset(state.toy_stored_data, 0, 256);
+		return;
+	}
+
+	printf("%%ALI-I-TOYRESTORED: CMOS contents restored from %s.\n", fn);
+}
+
+/**
+ * Save CMOS/TOY NVRAM contents to the rom.toy file (default "toy.rom").
+ **/
+void CAliM1543C::save_toy_nvram(bool verbose)
+{
+	static bool warned = false;
+	char* fn = myCfg->get_myParent()->get_text_value("rom.toy", "toy.rom");
+
+	FILE* f = fopen(fn, "wb");
+	if (!f)
+	{
+		if (!warned || verbose)
+			printf("%%ALI-W-TOYSAVEFAIL: can't write CMOS contents to %s.\n", fn);
+		warned = true;
+		return;
+	}
+
+	fwrite(state.toy_stored_data, 1, 256, f);
+	fclose(f);
+	if (verbose)
+		printf("%%ALI-I-TOYSAVED: CMOS contents saved to %s.\n", fn);
+}
+
+/**
  * Read time-of-year clock ports (70h-73h).
  **/
 u8 CAliM1543C::toy_read(u32 address)
@@ -1390,6 +1444,7 @@ void CAliM1543C::toy_write(u32 address, u8 data)
 				state.toy_offset = (long)(set_time - host_now);
 		}
 		state.toy_stored_data[state.toy_access_ports[0] & 0x7f] = (u8)data;
+		save_toy_nvram();
 		break;
 
 	case 2:
@@ -1398,6 +1453,7 @@ void CAliM1543C::toy_write(u32 address, u8 data)
 
 	case 3:
 		state.toy_stored_data[0x80 + (state.toy_access_ports[2] & 0x7f)] = (u8)data;
+		save_toy_nvram();
 		break;
 	}
 }

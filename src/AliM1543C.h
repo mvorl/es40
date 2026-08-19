@@ -179,6 +179,10 @@ public:
   void          init();
   void          start_threads();
   void          stop_threads();
+
+  // Battery-backed CMOS/TOY NVRAM file persistence (sys0 rom.toy)
+  void          save_toy_nvram(bool verbose = false);
+  void          restore_toy_nvram();
 private:
   CThread* myThread;
   CMutex* myRegLock;

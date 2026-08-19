@@ -916,6 +916,19 @@ void edit_tsunami(const char *title)
 #endif
          "Location of the DPR EEPROM image.",
          validation_file},
+        {"rom.toy file",
+#if defined(_WIN32)
+         "rom\\toy.rom",
+#elif defined(__VMS)
+         "[.ROM]TOY.ROM",
+#else
+         "rom/toy.rom",
+#endif
+         "Location of the CMOS/TOY NVRAM image.\n"
+         "Preserves SRM CMOS settings (such as heap_expand)\n"
+         "across emulator restarts, like the battery-backed\n"
+         "CMOS on real hardware.",
+         validation_file},
         {"memory.bits", "256M",
          "Amount of RAM memory.\n"
          "Your system should have enough free memory\n"

@@ -708,7 +708,19 @@ int main(int argc, char* argv[])
 	rom_q.setDefault("rom/dpr.rom");
 #endif
 
-	os << "  rom.dpr = \"" << rom_q.ask() << "\";\n\n";
+	os << "  rom.dpr = \"" << rom_q.ask() << "\";\n";
+
+	rom_q.setQuestion("Where should the CMOS/TOY NVRAM image be saved?");
+	rom_q.setExplanation("Preserves SRM console CMOS settings across emulator restarts, like the battery-backed CMOS on real hardware.");
+#if defined(_WIN32)
+	rom_q.setDefault("rom\\toy.rom");
+#elif defined(__VMS)
+	rom_q.setDefault("[.ROM]TOY.ROM");
+#else
+	rom_q.setDefault("rom/toy.rom");
+#endif
+
+	os << "  rom.toy = \"" << rom_q.ask() << "\";\n\n";
 
 	/* **************************** *
 	 * CPU's                        *

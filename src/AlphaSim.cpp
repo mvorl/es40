@@ -196,6 +196,7 @@
 #include "System.h"
 #include "Flash.h"
 #include "DPR.h"
+#include "AliM1543C.h"
 #include "banner.h"
 
 #include "lockstep.h"
@@ -463,6 +464,8 @@ int main(int argc, char* argv[])
 		// save flash and dpr rom only if not terminated with a fatal error
 		theSROM->SaveStateF();
 		theDPR->SaveStateF();
+		if (theAli)
+			theAli->save_toy_nvram(true);
 
 #if defined(PROFILE)
 		{
