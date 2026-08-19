@@ -2158,10 +2158,10 @@ u64 CAlphaCPU::jit_hw_mfpr(CAlphaCPU* cpu, u32 ins, u64 cur)
 }
 
 /* HW_MTPR (PALmode): the IPR write selected by `function` (value = Rb). Mirrors DO_HW_MTPR
- * (cpu_pal.h) verbatim. Pure stores are verify-compared via the IPR snapshot; the TB fills
- * forward to add_tb_i/_d (idempotent, so the verify double-run is safe); the check_int=true kick
+ * (cpu_pal.h) verbatim. Pure stores are verify-compared via the IPR snapshot; TB fills and
+ * single-entry invalidates forward to their idempotent helpers; the check_int=true kick
  * (IER/CM/SIRR/AST) can only force an interrupt poll, never suppress one. The 0x40-7f ASN write
- * (bit 0) is excluded -- classify() never compiles it (it flushes the dpc + bumps the asn epoch). */
+ * (bit 0) is excluded -- classify() never compiles it (it flushes the DPC + bumps the ASN epoch). */
 void CAlphaCPU::jit_hw_mtpr(CAlphaCPU* cpu, u32 function, u64 value)
 {
 	// 0x40-0x7f bitmask group: ASTER/ASTRR/PPCEN/FPEN field stores (+check_int for the AST bits). The
@@ -2216,10 +2216,12 @@ void CAlphaCPU::jit_hw_mtpr(CAlphaCPU* cpu, u32 function, u64 value)
 	case 0x14: cpu->state.pctr_ctl = value & U64(0xffffffffffffffdf); break;     // PCTR_CTL
 	case 0x20: cpu->last_dtb_virt[0] = value; break;                             // DTB_TAG0
 	case 0x21: cpu->add_tb_d(cpu->last_dtb_virt[0], value, 0); break;            // DTB_PTE0 (DTB fill)
+	case 0x24: cpu->tbis_d(value, cpu->state.asn0); break;                       // DTB_IS0
 	case 0x26: cpu->state.alt_cm = (int)(value & 3); break;                     // DTB_ALTMODE
 	case 0x29: cpu->state.dc_ctl = value; break;                                 // DC_CTL
 	case 0xa0: cpu->last_dtb_virt[1] = value; break;                             // DTB_TAG1
 	case 0xa1: cpu->add_tb_d(cpu->last_dtb_virt[1], value, 1); break;            // DTB_PTE1 (DTB fill)
+	case 0xa4: cpu->tbis_d(value, cpu->state.asn1); break;                       // DTB_IS1
 	case 0xc0: cpu->state.cc_offset = (u32)(value >> 32); break;                // CC
 	}
 }

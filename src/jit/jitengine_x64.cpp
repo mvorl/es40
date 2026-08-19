@@ -331,8 +331,8 @@ SafeOp classify(uint32_t ins, bool pal_block)
       // (idempotent add_tb_i/_d), IER (field stores + check_int kick), the ITB invalidates (idempotent
       // tbia/tbiap/tbis -> note_itb_invalidate), IC_FLUSH (lazy flush; reclaim deferred off the
       // compiled frame), I_CTL (terminator: writes SDE/SPE/VA mode), CM/SIRR (mode + soft-int fields,
-      // check_int kick), and the 0x40-7f AST/FPEN/PPCEN stores. DTB invalidates (dpc coherence), ASN
-      // writes, HW_INT_CLR, PAL_BASE, VA_CTL (translation/flush) stay interpreted.
+      // check_int kick), the 0x40-7f AST/FPEN/PPCEN stores, and single-entry DTB invalidates.
+      // Broad DTB invalidates, ASN writes, HW_INT_CLR, PAL_BASE and VA_CTL stay interpreted.
       if (!pal_block) return OP_NONE;
       const uint32_t mfn = (ins >> 8) & 0xff;
       // 0x40-0x7f bitmask group: bit 0 writes ASN (dpc flush + asn-epoch bump) -> must terminate; the
@@ -346,6 +346,7 @@ SafeOp classify(uint32_t ins, bool pal_block)
         case 0x13:                                    // IC_FLUSH (lazy gen-bump flush; reclaim deferred off-frame)
         case 0x0a:                                    // IER (interrupt enables + check_int kick)
         case 0x09: case 0x0b: case 0x0c:              // CM, IER_CM, SIRR (mode/soft-int fields + check_int)
+        case 0x24: case 0xa4:                         // DTB_IS0/1 (targeted TB + data-page-cache invalidate)
           return OP_HW_MTPR;
         case 0x11:                                    // I_CTL: changes SDE (shadow remap)/SPE/VA mode -> terminate
           return OP_HW_MTPR_TERM;
