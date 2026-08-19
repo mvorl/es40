@@ -385,6 +385,7 @@ CSystem::CSystem(CConfigurator* cfg)
 	state.tig.HaltA = 0;
 	state.tig.HaltB = 0;
 	state.tig.ModInfo = 0;
+	memset(state.tig.ipcr, 0, sizeof(state.tig.ipcr));
 
 	if (iNumMemoryBits > 30)
 	{
@@ -786,6 +787,7 @@ void CSystem::ResetChipsetState()
 	state.tig.HaltA = 0;
 	state.tig.HaltB = 0;
 	state.tig.ModInfo = 0;
+	memset(state.tig.ipcr, 0, sizeof(state.tig.ipcr));
 
 	memset(state.cf8_address, 0, sizeof(state.cf8_address));
 }
@@ -2217,10 +2219,31 @@ u8 CSystem::tig_read(u32 a)
 		return 0;
 	case 0x300005c0:  // ev6_halt
 		return state.tig.HaltB;
+	case 0x30000a00:  // ipcr0-4: PAL MP-restart handshake 
+	case 0x30000a40:  
+	case 0x30000a80:
+	case 0x30000ac0:
+	case 0x30000b00:
+		return state.tig.ipcr[(a - 0x30000a00) >> 6];
 	case 0x38000180:  // Arbiter revision
 		return 0xfe;
 	default:          printf("Unknown TIG %08x read attempted.\n", a); return 0;
 	}
+}
+
+/**
+ * Drive the per-CPU EV6 halt-interrupt lines (IRQ4) from the TIG halt
+ * registers. 
+ * Level-triggered: bit n of (ttcr | ev6_halt) is CPU n's line.
+ * PAL's CSERVE MP_WORK_REQUEST sets the target's bit (read or write) after
+ * storing the work code in the target's impure area. 
+ * Target's halt-interrupt handler XOR-clears its own bit to ack and deassert.
+ **/
+void CSystem::tig_update_halt_lines()
+{
+	u8 lines = state.tig.HaltA | state.tig.HaltB;
+	for (int i = 0; i < iNumCPUs; i++)
+		acCPUs[i]->irq_h(4, (lines >> i) & 1, 0);
 }
 
 void CSystem::tig_write(u32 a, u8 data)
@@ -2240,13 +2263,16 @@ void CSystem::tig_write(u32 a, u8 data)
 
 	case 0x300003c0:  // ttcr
 		state.tig.HaltA = data;
+		tig_update_halt_lines();
 		return;
 
 	case 0x30000480:  // clr_pwr_flt_det
 		return;
 
 	case 0x300005c0:  // ev6_halt
-		state.tig.HaltB = data; return;
+		state.tig.HaltB = data;
+		tig_update_halt_lines();
+		return;
 
 	case 0x30000600:  // srcr0
 	case 0x30000640:  // srcr1
@@ -2258,6 +2284,14 @@ void CSystem::tig_write(u32 a, u8 data)
 				theSROM->FlushIfDirty();
 			RequestSystemReset();
 		}
+		return;
+
+	case 0x30000a00:  // ipcr0-4: PAL MP-restart handshake registers
+	case 0x30000a40:  
+	case 0x30000a80:
+	case 0x30000ac0:
+	case 0x30000b00:
+		state.tig.ipcr[(a - 0x30000a00) >> 6] = data;
 		return;
 
 	default:

@@ -2702,6 +2702,18 @@ _next_instruction:
 				// case, our VMS PALcode replacement routines are valid, and should be used as it is
 				// faster than using the original PALcode.
 
+				// irq<4> = halt / MP work request (TIG ev6_halt)
+				if (state.eir & state.eien & 0x10)
+				{
+					GO_PAL(INTERRUPT);
+					seq_remaining = 0;
+#ifndef ES40_JIT
+					goto _next_instruction;
+#else
+					return;
+#endif
+				}
+
 				// irq<1>=device, irq<2>=timer, irq<3>=IPI. (Was 0x6 = device+timer only,
 				// which stranded incoming IPIs under VMS PALcode -> CPUSPINWAIT.)
 				if (state.eir & state.eien & 0xe)
