@@ -2142,6 +2142,18 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   }
 
   if (plen == 0) return;
+
+  // Full-word portion of OpenVMS byte-search routine.
+  bool word_scan_fused = false;
+#if defined(_WIN32) && !defined(JIT_VERIFY)
+  if (!pal_block && plen == 5 && phys + 10u * 4u <= page_end && phys + 10u * 4u <= dram_size) {
+    static const uint32_t word_scan[10] = {
+      0xa6e10000, 0x42fc01f6, 0x439701f8, 0x46d80016, 0xf6c00028,
+      0x40011120, 0x40211401, 0xf81ffff8, 0x40011400, 0xe4000007
+    };
+    word_scan_fused = memcmp(words, word_scan, sizeof(word_scan)) == 0;
+  }
+#endif
 #ifdef JIT_REGPROF
   b->rp_mask = regprof_mask(words, plen);   // GPR-access fingerprint; exec-weighted at report time
 #endif
@@ -2257,8 +2269,98 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
                        fltl_helper, fp_read_helper, fp_write_helper, fltv_helper };
 
   std::vector<ColdMemStub> cold;   // outlined memop slow paths, emitted after the epilogue
-  for (uint32_t i = 0; i < plen; ++i)
+  Label fused_done = a.new_label();
+  if (word_scan_fused) {
+#ifdef _WIN32
+    Label normal = a.new_label(), scan = a.new_label(), found = a.new_label();
+    Label exhausted = a.new_label(), capped = a.new_label(), masks = a.new_label();
+    Label remainder = a.new_label();
+
+    // Preserve the normal backward-edge delivery point if it would be cut short.
+    a.mov(x86::rax, x86::qword_ptr(x86::rbp, m_off.jit_budget));
+    a.sub(x86::rax, x86::r13);
+    a.cmp(x86::rax, imm(66)); a.jb(normal);
+    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0)); a.jne(normal);
+    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_timers), imm(0)); a.jne(normal);
+    a.test(x86::r12, imm(7)); a.jnz(normal);              // R1 must be word-aligned
+    a.test(x86::rdi, x86::rdi); a.js(normal);             // loop entry requires R0 >= 0
+
+    // Validate the read DPC entry once. 
+    // every batched word remains on this 8 KB page. 
+    // R10 becomes the host bias used with the live virtual R1.
+    a.mov(x86::r10, x86::r12); a.and_(x86::r10, imm(~(uint64_t)0x1fff));
+    if (host_has_bmi2()) a.rorx(x86::rax, x86::r12, imm(8));
+    else { a.mov(x86::rax, x86::r12); a.shr(x86::rax, imm(8)); }
+    a.and_(x86::rax, imm(0x7e0));
+    a.cmp(x86::qword_ptr(x86::rbp, x86::rax, 0, m_off.dpc_virt_page), x86::r10);
+    a.jne(normal);
+    a.mov(x86::r10, x86::qword_ptr(x86::rbp, x86::rax, 0, m_off.dpc_host_bias));
+    a.test(x86::r10, x86::r10); a.jz(normal);
+
+    // Batch cap = min(8, words remaining in this page).
+    a.mov(x86::rax, x86::r12); a.and_(x86::eax, imm(0x1fff));
+    a.mov(x86::r11d, imm(0x2000)); a.sub(x86::r11, x86::rax); a.shr(x86::r11, imm(3));
+    a.cmp(x86::r11, imm(8));
+    { Label cap_ok = a.new_label(); a.jbe(cap_ok); a.mov(x86::r11d, imm(8)); a.bind(cap_ok); }
+    a.movq(x86::xmm1, x86::qword_ptr(x86::rbx, 28 * 8));    // repeated search byte
+
+    a.bind(scan);
+    a.mov(x86::r9, x86::qword_ptr(x86::r10, x86::r12));     // architectural R23
+    a.movq(x86::xmm0, x86::r9); a.pcmpeqb(x86::xmm0, x86::xmm1);
+    a.pmovmskb(x86::eax, x86::xmm0); a.and_(x86::eax, imm(255));
+    a.test(x86::eax, x86::eax); a.jnz(found);
+    a.add(x86::r12, imm(8));
+    a.sub(x86::edi, imm(8)); a.movsxd(x86::rdi, x86::edi);
+    a.add(x86::r13, imm(8));
+    a.test(x86::rdi, x86::rdi); a.js(exhausted);
+    a.dec(x86::r11); a.jnz(scan);
+    a.jmp(capped);
+
+    a.bind(found);
+    a.mov(x86::r8d, x86::eax);                              // R22 equality mask
+    a.jmp(masks);
+
+    a.bind(exhausted);
+    a.xor_(x86::r8d, x86::r8d);
+    a.add(x86::rdi, imm(8));                                // undo guest ADDQ at +0x1c
+    a.add(x86::r13, imm(2));                                // ADDQ + BEQ
+    a.test(x86::rdi, x86::rdi); a.jnz(remainder);
+    set_pc(b->tag + 0x44);                                  // exact multiple: common return
+    a.jmp(masks);
+
+    a.bind(remainder);
+    set_pc(b->tag + 0x28);                                  // 1..7 tail bytes
+    a.jmp(masks);
+
+    a.bind(capped);
+    a.xor_(x86::r8d, x86::r8d);
+    set_pc(b->tag);                                         // next translated page/batch
+
+    a.bind(masks);
+    // R24 = CMPBGE(R28,R23), required at every architectural exit.
+    a.movq(x86::xmm0, x86::r9); a.movdqa(x86::xmm2, x86::xmm1);
+    a.pmaxub(x86::xmm2, x86::xmm0); a.pcmpeqb(x86::xmm2, x86::xmm1);
+    a.pmovmskb(x86::eax, x86::xmm2); a.and_(x86::eax, imm(255));
+    a.mov(x86::qword_ptr(x86::rbx, 24 * 8), x86::rax);
+    // Prior empty words contributed eight ops each. 
+    // The shared epilogue adds the current block's five
+    // so remove those five on paths that already counted it.
+    { Label count_done = a.new_label();
+      a.test(x86::r8, x86::r8); a.jnz(count_done);
+      a.sub(x86::r13, imm(5));
+      a.bind(count_done); }
+    { Label pc_done = a.new_label();
+      a.test(x86::r8, x86::r8); a.jz(pc_done);
+      set_pc(b->tag + 0xb4);                                // found target
+      a.bind(pc_done); }
+    a.jmp(fused_done);
+    a.bind(normal);
+#endif
+  }
+  for (uint32_t i = 0; i < plen; ++i) {
       emit_op(&a, gpa, &done, hs, pal_block, b, words[i], i, ra, &cold, true);
+  }
+  a.bind(fused_done);
 
   // Epilogue. Count this block's instructions, then chain into the next block (staying
   // in native code) or return to the dispatcher.
@@ -2377,7 +2479,8 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     // contains a backward branch or a computed jump.
     const uint32_t lw = words[plen - 1];
     const uint32_t lop = lw >> 26;
-    const bool gate_exit = !(lop >= 0x30 && lop <= 0x3f) || (((lw >> 20) & 1) != 0);
+    const bool gate_exit = word_scan_fused
+                        || !(lop >= 0x30 && lop <= 0x3f) || (((lw >> 20) & 1) != 0);
     Label exit_chain = a.new_label();
     if (gate_exit) {
       emit_gate(exit_chain);
@@ -2450,8 +2553,9 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   b->code = fn;
   b->jit_body = (void*) ((uint8_t*) (void*) fn + body_off);   // chained re-entry (past prologue)
   b->body_off = (uint32_t) body_off;                          // to restore jit_body on revalidate
-  b->src_sum  = src_hash(dram + phys, b->n_instr);            // source fingerprint (revalidate vs self-mod)
-  b->hash_len = b->n_instr;                                   // freeze the hash extent (n_instr drifts)
+  const uint32_t hash_len = word_scan_fused ? 10u : b->n_instr;
+  b->src_sum  = src_hash(dram + phys, hash_len);              // include every word the fusion depends on
+  b->hash_len = hash_len;                                     // freeze the hash extent (n_instr drifts)
   b->prefix_len = plen;
   m_code_bytes += csz;   // track for the reclaim threshold (see flush())
 #ifdef JIT_STATS
