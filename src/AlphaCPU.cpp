@@ -406,7 +406,7 @@ void CAlphaCPU::run()
 			if (StopThread)
 				return;
 #ifdef ES40_JIT
-			jit_run(8000);
+			jit_run(2000);
 #else
 			// execute() now owns a 512-instruction batch. Calling it 2,000 times
 			// here accidentally turned one scheduler turn into ~1M instructions,
