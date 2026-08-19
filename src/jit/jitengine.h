@@ -310,8 +310,9 @@ public:
 
   // Per-op codegen, shared by compile_block and compile_trace 
   // Block register allocator: maps each guest GPR to a host x86 reg id, or -1 = the
-  // state.r[] memory slot. The 3 global pins (R26/R16/R27 -> r12/r13/r15) are the static binding, live across
-  // the chain; dynamic block-local pool next. host_of(r) drives emit_op's operand routing either way.
+  // state.r[] memory slot. The callee-saved guest pins (R1/R16 -> r12/r15) and volatile
+  // pins (R22/R23 -> r8/r9) are live across the chain; R13 carries the chain count.
+  // host_of(r) drives emit_op's operand routing either way.
   struct RegAlloc {
     int host[32];                                  // host x86 reg id for guest GPR r, or -1 (memory)
     int rax_holds;                                 // guest GPR whose value currently lives in rax (value-forward), or -1
