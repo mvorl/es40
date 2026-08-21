@@ -365,6 +365,11 @@ void CDEC21143::run()
 
 			if (asserted != state.irq_was_asserted)
 			{
+#if defined(DEBUG_NIC_IRQ)
+				printf("21143: IRQ %s  CSR5=%08x CSR7=%08x (bg)\n",
+					asserted ? "ASSERT" : "DEASSERT",
+					state.reg[CSR_STATUS / 8], state.reg[CSR_INTEN / 8]);
+#endif
 				if (do_pci_interrupt(0, asserted))
 					state.irq_was_asserted = asserted;
 			}
@@ -858,6 +863,13 @@ void CDEC21143::nic_write(u32 address, int dsize, u32 data)
 		break;
 
 	case CSR_OPMODE:        /*  csr6:  */
+#if defined(DEBUG_NIC_IRQ)
+		if ((data ^ oldreg) & (OPMODE_SR | OPMODE_ST))
+			printf("21143: CSR6 SR %d->%d ST %d->%d (CSR5=%08x)\n",
+				!!(oldreg & OPMODE_SR), !!(data & OPMODE_SR),
+				!!(oldreg & OPMODE_ST), !!(data & OPMODE_ST),
+				state.reg[CSR_STATUS / 8]);
+#endif
 		/* MBO (bit 25) is hardware-driven on real silicon and always reads
 		 * back as 1, regardless of what the driver wrote (HRM 3.2.2.6,
 		 * Table 3-42). Force it set in the stored value so a write/read-back
@@ -1419,6 +1431,34 @@ int CDEC21143::dec21143_rx()
 		//state.rx.cur_offset = 0;
 	}
 
+	// Fatal bus error (SE) halts both DMA engines until a reset 
+	// (HRM: "a software or hardware reset is required")
+	// frames arriving meanwhile are discarded and counted. 
+	// Re-enabling BME doesn't revive the engines. 
+	if (state.reg[CSR_STATUS / 8] & STATUS_SE)
+	{
+		state.rx.current.used = state.rx.current.len;   // discard
+		u32 missed = state.reg[CSR_MISSED / 8];
+		if ((missed & 0xffff) == 0xffff) missed |= 0x10000; else missed++;
+		state.reg[CSR_MISSED / 8] = missed;
+		return 0;
+	}
+
+	// Master access with PCI Command.BME off = master abort = fatal bus error:
+	// latch SE, stop both processes.
+	if (!(config_read(0, 0x04, 16) & 0x4))
+	{
+		state.reg[CSR_STATUS / 8] |= STATUS_SE;
+		set_rx_state(STATUS_RS_STOPPED);
+		set_tx_state(STATUS_TS_STOPPED);
+		state.tx.suspend = true;
+		state.rx.current.used = state.rx.current.len;   // discard
+		u32 missed = state.reg[CSR_MISSED / 8];
+		if ((missed & 0xffff) == 0xffff) missed |= 0x10000; else missed++;
+		state.reg[CSR_MISSED / 8] = missed;
+		return 0;
+	}
+
 	// read current descriptor
 	do_pci_read(state.rx.cur_addr, descr, 4, 4);
 	// respect DBO bit - swap descriptor byte order if needed
@@ -1434,10 +1474,29 @@ int CDEC21143::dec21143_rx()
 	/*  Only use descriptors owned by the 21143:  */
 	if (!(rdes0 & TDSTAT_OWN))
 	{
+		// 21143 DISCARDS the arriving frame with missed count in CSR8
+		// latches RU only on the running to suspended change.
+		// Incriment counter during suspension. 
+		const bool was_suspended =
+			(state.reg[CSR_STATUS / 8] & STATUS_RS) == STATUS_RS_SUSPENDED;
+		if (state.rx.current.used < state.rx.current.len)
+		{
+#if defined(DEBUG_NIC_IRQ)
+			printf("21143: RX no-descriptor, frame dropped (CSR5=%08x)\n",
+				state.reg[CSR_STATUS / 8]);
+#endif
+			state.rx.current.used = state.rx.current.len;   // drop the frame
+			u32 missed = state.reg[CSR_MISSED / 8];
+			if ((missed & 0xffff) == 0xffff)
+				missed |= 0x10000;                          // MFO: counter overflow
+			else
+				missed++;
+			state.reg[CSR_MISSED / 8] = missed;
+		}
 
 		// set recive buffers unavailable and receive state to suspended
 		state.reg[CSR_STATUS / 8] = (state.reg[CSR_STATUS / 8] & ~STATUS_RS) |
-			STATUS_RU |
+			(was_suspended ? 0 : STATUS_RU) |
 			STATUS_RS_SUSPENDED;
 		return 0;             // indicate nothing was processed
 	}
@@ -1591,6 +1650,22 @@ int CDEC21143::dec21143_tx()
 
 	if (state.tx.suspend)
 		return 0;
+
+	// Fatal bus error halts both engines until reset; a master access with
+	// Command.BME off latches it (see dec21143_rx).
+	if (state.reg[CSR_STATUS / 8] & STATUS_SE)
+	{
+		state.tx.suspend = true;
+		return 0;
+	}
+	if (!(config_read(0, 0x04, 16) & 0x4))
+	{
+		state.reg[CSR_STATUS / 8] |= STATUS_SE;
+		set_rx_state(STATUS_RS_STOPPED);
+		set_tx_state(STATUS_TS_STOPPED);
+		state.tx.suspend = true;
+		return 0;
+	}
 
 	set_tx_state(STATUS_TS_FETCH);
 	do_pci_read(addr, descr, 4, 4);
@@ -1941,6 +2016,10 @@ void CDEC21143::ResetPCI()
 void CDEC21143::ResetNIC()
 {
 	int leaf;
+
+#if defined(DEBUG_NIC_IRQ)
+	printf("21143: RESET (CSR5 was %08x)\n", state.reg[CSR_STATUS / 8]);
+#endif
 
 	// Drop any queued inbound frames; a real 21143 loses its RX FIFO on reset.
 	if (rx_queue)
