@@ -103,7 +103,10 @@ CAliM1543C_usb::CAliM1543C_usb(CConfigurator* cfg, CSystem* c, int pcibus,
 	ResetPCI();
 
 	state.usb_data[0x34 / 4] = 0x2edf;
-	state.usb_data[0x48 / 4] = 0x01000003;
+	state.usb_data[0x48 / 4] = 0x01000203;   // HcRhDescriptorA: 3 ports, NPS (no power switching)
+	state.usb_data[0x54 / 4] = 0x00000100;   // HcRhPortStatus: PPS always set with NPS
+	state.usb_data[0x58 / 4] = 0x00000100;
+	state.usb_data[0x5c / 4] = 0x00000100;
 
 	printf("%s: $Id$\n",
 		devid_string);
@@ -168,8 +171,8 @@ u64 CAliM1543C_usb::usb_hci_read(u64 address, int dsize)
 	case 0x4c:  // HcRhDescriptorB
 	case 0x50:  // HcRhStatus
 	case 0x54:  // HcRhPortStatus1
-	case 0x58:  // HcRhPortStatus1
-	case 0x5c:  // HcRhPortStatus1
+	case 0x58:  // HcRhPortStatus2
+	case 0x5c:  // HcRhPortStatus3
 	case 0x100: // HceControlRegister
 	case 0x104: // HceInputRegister
 	case 0x108: // HceOutputRegister
@@ -201,8 +204,11 @@ void CAliM1543C_usb::usb_hci_write(u64 address, int dsize, u64 data)
 		if (data & 0x1) {
 			// Reset to a benign, quiescent state
 			memset(state.usb_data, 0, sizeof(state.usb_data));
-			state.usb_data[0x34 / 4] = 0x2edf;       // HcFmInterval 
-			state.usb_data[0x48 / 4] = 0x01000003;   // 3 ports, no power switching
+			state.usb_data[0x34 / 4] = 0x2edf;       // HcFmInterval
+			state.usb_data[0x48 / 4] = 0x01000203;   // 3 ports, NPS (no power switching)
+			state.usb_data[0x54 / 4] = 0x00000100;   // ports always powered
+			state.usb_data[0x58 / 4] = 0x00000100;
+			state.usb_data[0x5c / 4] = 0x00000100;
 			// No pending or enabled interrupts after reset
 			// HcInterruptStatus = 0, HcInterruptEnable = 0
 			// Leave HcControl in USBReset/Suspend equivalent (0)
@@ -223,6 +229,29 @@ void CAliM1543C_usb::usb_hci_write(u64 address, int dsize, u64 data)
 		state.usb_data[0x10 / 4] &= ~data;
 		break;
 
+	case 0x50:  // HcRhStatus: write-1 command bits (OHCI 7.4.3)
+		if (data & 0x00008000) state.usb_data[0x50 / 4] |= 0x00008000;   // SetRemoteWakeupEnable
+		if (data & 0x80000000) state.usb_data[0x50 / 4] &= ~0x00008000;  // ClearRemoteWakeupEnable
+		if (data & 0x00020000) state.usb_data[0x50 / 4] &= ~0x00020000;  // clear OCIC
+		// Set/ClearGlobalPower ignored: NPS, ports always powered
+		break;
+
+	case 0x54:  // HcRhPortStatus1..3: write-1 command bits (OHCI 7.4.4)
+	case 0x58:
+	case 0x5c:
+	{
+		u32 ps = state.usb_data[address / 4];
+		if (data & 0x00000001) ps &= ~0x00000002; // ClearPortEnable
+		if (data & 0x00000016)                    // Set{Enable,Suspend,Reset} with no device -> CSC
+			ps |= 0x00010000;
+		ps &= ~(data & 0x001f0000);               // write-1-to-clear change bits
+		ps |= 0x00000100;                         // PPS always set with NPS
+		state.usb_data[address / 4] = ps;
+		if (ps & 0x001f0000)
+			state.usb_data[0x0c / 4] |= 0x40;     // reflect pending change as RHSC
+		break;
+	}
+
 	case 0x18:  // HcHCCA (datasheet says 0x17, but that's wrong)
 	case 0x1c:  // HcPeriodCurrentED
 	case 0x20:  // HcControlHeadED
@@ -237,10 +266,6 @@ void CAliM1543C_usb::usb_hci_write(u64 address, int dsize, u64 data)
 	case 0x44:  // HcLSThreshold
 	case 0x48:  // HcRhDescriptorA
 	case 0x4c:  // HcRhDescriptorB
-	case 0x50:  // HcRhStatus
-	case 0x54:  // HcRhPortStatus1
-	case 0x58:  // HcRhPortStatus1
-	case 0x5c:  // HcRhPortStatus1
 	case 0x100: // HceControlRegister
 	case 0x104: // HceInputRegister
 	case 0x108: // HceOutputRegister
