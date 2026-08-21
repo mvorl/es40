@@ -2128,8 +2128,13 @@ void CSystem::cchip_csr_write(u32 a, u64 data, CSystemComponent* source)
 	case 0x240:
 	case 0x600:
 	case 0x640:
+	{
+		// A DIM change must re-drive the CPU device-interrupt lines 
+		std::lock_guard<std::mutex> g(drir_lock);
 		state.cchip.dim[((a >> 9) & 2) | ((a >> 6) & 1)] = data;
+		recompute_device_irqs();
 		return;
+	}
 
 	default:
 		printf("Unknown CCHIP CSR %07x write with %016" PRIx64 " attempted.\n", a, data);
@@ -2565,7 +2570,16 @@ void CSystem::interrupt(int number, bool assert)
 		state.cchip.drir &= ~(U64(0x1) << number);
 	}
 
-	for (i = 0; i < iNumCPUs; i++)
+	recompute_device_irqs();
+}
+
+/**
+ * Re-drive each CPU device-interrupt lines from DRIR & DIM. 
+ * C-chip actually does this continuously. 
+ **/
+void CSystem::recompute_device_irqs()
+{
+	for (int i = 0; i < iNumCPUs; i++)
 	{
 		if (state.cchip.drir & state.cchip.dim[i] & U64(0x00ffffffffffffff))
 			acCPUs[i]->irq_h(1, true, 100); // device interrupts delayed by 100 clocks
