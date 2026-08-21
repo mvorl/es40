@@ -714,6 +714,14 @@ void CPCIDevice::do_pci_read(u32 address, void* dest, size_t element_size,
 	if (element_count == 0)
 		return;
 
+	// PCI Command.BME gates all device-initiated DMA. 
+	// SRM early probe writes Command=0 to every device
+	if (!(config_read(0, 0x04, 16) & 0x4))
+	{
+		memset(dest, 0, element_size * element_count);
+		return;
+	}
+
 	// get the 64-bit system wide address
 	u64 phys_addr = cSystem->PCI_Phys(myPCIBus, address);
 
@@ -834,6 +842,10 @@ void CPCIDevice::do_pci_write(u32 address, void* source, size_t element_size,
 	char* src = (char*)source;
 
 	if (element_count == 0)
+		return;
+
+	// PCI Command.BME gates all device-initiated DMA (see do_pci_read).
+	if (!(config_read(0, 0x04, 16) & 0x4))
 		return;
 
 	// get the 64-bit system wide address
