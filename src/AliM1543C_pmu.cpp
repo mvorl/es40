@@ -28,12 +28,12 @@
 //   CFID  = 0x710110b9 : ALi M7101 power-management function
 //   CFCS  = 0x02800000 : DEVSEL=medium; OS programs CMD bits as it goes
 //   CFRV  = 0x06800000 : class 0x06 / subclass 0x80 (bridge / other)
-//   CFIT  = 0x00000109 : pin INTA, line 9 (SCI on legacy ISA IRQ 9)
+//   CFIT  = 0x00000000 : M1543C datasheet page 78: PMU config 30h-3Fh is reserved
 //   BAR0  = 0x00000001 : 64-byte I/O region (PM1 + GPE0 block)
 //   BAR1  = 0x00000001 : 32-byte I/O region (SMBus host)
 static u32 pmu_cfg_data[64] = {
 	/*00*/  0x710110b9,
-	/*04*/  0x02800000,
+	/*04*/  0x02000000,
 	/*08*/  0x06800000,
 	/*0c*/  0x00000000,
 	/*10*/  0x00000001,
@@ -47,21 +47,22 @@ static u32 pmu_cfg_data[64] = {
 	/*30*/  0x00000000,
 	/*34*/  0x00000000,
 	/*38*/  0x00000000,
-	/*3c*/  0x00000109,
+	/*3c*/  0x00000000,
 	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
 	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
 	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 };
 
 // PCI config-space write masks.
-//   CFCS  bits 0x157 : OS may toggle MEM/IO/BME/SERR/PERR
+//   CFCS  bit 0x1 only : M1543C datasheet page 77: BME/MEM always 0
+//         I/O Space Enable is the sole R/W command bit
 //   CFLT  bits 0xff00 : latency-timer field
 //   BAR0  mask 0xffffffc0 : 64-byte alignment, low bit (IO type) read-only
 //   BAR1  mask 0xffffffe0 : 32-byte alignment
-//   CFIT  bits 0xff : interrupt-line is OS-writable, pin/min/max are not
+//   CFIT  read-only zero (reserved range)
 static u32 pmu_cfg_mask[64] = {
 	/*00*/  0x00000000,
-	/*04*/  0x00000157,
+	/*04*/  0x00000001,
 	/*08*/  0x00000000,
 	/*0c*/  0x0000ff00,
 	/*10*/  0xffffffc0,
@@ -75,7 +76,7 @@ static u32 pmu_cfg_mask[64] = {
 	/*30*/  0x00000000,
 	/*34*/  0x00000000,
 	/*38*/  0x00000000,
-	/*3c*/  0x000000ff,
+	/*3c*/  0x00000000,
 	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
 	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
 	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
