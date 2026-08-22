@@ -42,6 +42,10 @@
 // switch to <asmjit/a64.h> when this backend starts emitting.
 #include <asmjit/core.h>
 
+// ARM64 codegen state lives here rather than inheriting the x86 register model.
+// Add host register roles and forwarding/cache state as the A64 emitter grows.
+struct CJitEngine::RegAlloc {};
+
 void CJitEngine::emit_op(void*, const uint8_t*, void*, const HelperSet&,
                          bool, JitBlock*, uint32_t, uint32_t, RegAlloc&, void*, bool) {}
 

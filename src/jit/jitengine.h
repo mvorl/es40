@@ -152,7 +152,7 @@ public:
 #ifdef JIT_REGPROF
     uint64_t rp_hits;     // REGPROF: block executions since record (body-entry inc -- counts chained runs)
     uint32_t rp_mask;     // REGPROF: Alpha GPRs touched by this block (bit r); compile-time, exec-weighted at report
-    uint32_t rp_csz;      // REGPROF: emitted x86 bytes for this block -- rp_hits x rp_csz = exec-weighted expansion
+    uint32_t rp_csz;      // REGPROF: emitted host bytes for this block -- rp_hits x rp_csz = exec-weighted expansion
 #endif
   };
 
@@ -194,7 +194,7 @@ public:
   };
 
   // Byte offsets (from the CAlphaCPU*) of the fields the inline load fast path reads,
-  // so compiled code can touch them via [rsi + offset]. Filled once by set_offsets().
+  // so compiled code can touch them via [cpu + offset]. Filled once by set_offsets().
   struct JitOffsets {
     uint32_t dpc_valid, dpc_virt_page, dpc_phys_base, dpc_host_bias, dpc_cm, dpc_asn;  // offsets of READ slot [0][0]
     uint32_t dpc_stride, dpc_mask;   // direct-mapped page cache: per-slot byte stride, index mask
@@ -308,25 +308,9 @@ public:
   void compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_size, void* read_helper, void* write_helper, void* opcdec_helper, void* hw_mfpr_helper, void* hw_ld_helper, void* hw_mtpr_helper, void* hw_st_helper, void* indirect_helper, void* read_locked_helper, void* stc_helper, void* misc_helper, void* read_vpte_helper, void* read_wchk_helper, void* itof_helper, void* ftoi_helper, void* fltl_helper, void* fp_read_helper, void* fp_write_helper, void* fltv_helper);
   void flush();
 
-  // Per-op codegen, shared by compile_block and compile_trace 
-  // Block register allocator: maps each guest GPR to a host x86 reg id, or -1 = the
-  // state.r[] memory slot. The callee-saved guest pins (R1/R16 -> r12/r15) and volatile
-  // pins (R22/R23 -> r8/r9) are live across the chain; R13 carries the chain count.
-  // host_of(r) drives emit_op's operand routing either way.
-  struct RegAlloc {
-    int host[32];                                  // host x86 reg id for guest GPR r, or -1 (memory)
-    int rax_holds;                                 // guest GPR whose value currently lives in rax (value-forward), or -1
-    int vol_bind;                                  // guest GPRs held in caller-saved R8/R9 (or -1);
-    int vol_bind2;                                 // call sites spill/reload them around helpers
-    bool dpc_live;                                 // previous guest op left RDX/R10/R11 = va/bias/slot
-    int dpc_base, dpc_disp;
-    bool dpc_write, dpc_force_align;
-#ifdef JIT_STATS
-    uint64_t* licm_slots;   // per-memop "page last seen" slots (null = don't probe)
-    uint32_t  licm_n, licm_max;
-#endif
-    int host_of(int r) const { return host[r]; }
-  };
+  // Per-op codegen state, shared by compile_block and compile_trace within a backend.
+  // Each backend defines its own register roles, forwarding state, and memory fast-path state.
+  struct RegAlloc;
 
   // cold: opaque std::vector<ColdMemStub>* collecting outlined memop slow paths;
   // the caller emits them after its epilogue - helper calls stay out of hot path
@@ -421,7 +405,7 @@ private:
   uint64_t m_stat_native, m_stat_interp;        // windowed: instrs run native vs interpreted
   uint64_t m_stat_hot, m_stat_miss;             // windowed: compiled-chain dispatches, interp blocks
   uint64_t m_stat_compiled, m_stat_plen_sum;    // cumulative: compiled blocks, sum of their lengths
-  uint64_t m_stat_code_bytes;                   // cumulative: emitted x86 bytes (code expansion = /plen_sum)
+  uint64_t m_stat_code_bytes;                   // cumulative: emitted host-code bytes (code expansion = /plen_sum)
   uint64_t m_stat_wall_last_ns;                 // steady_clock ns at the last window report (throughput delta)
   uint64_t m_tsc_compiled, m_tsc_interp;        // windowed: host TSC cycles in b->code() vs interp fallback
   uint64_t m_tsc_window_start;                  // host TSC at window start (the time-split denominator)

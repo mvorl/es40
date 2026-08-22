@@ -404,6 +404,25 @@ SafeOp classify(uint32_t ins, bool pal_block)
 
 } // namespace
 
+// Block register allocator: maps each guest GPR to a host x86 register id, or -1 = the
+// state.r[] memory slot. The callee-saved guest pins (R1/R16 -> r12/r15) and volatile
+// pins (R22/R23 -> r8/r9) are live across the chain; R13 carries the chain count.
+// host_of(r) drives emit_op's operand routing either way.
+struct CJitEngine::RegAlloc {
+  int host[32];                                  // host x86 reg id for guest GPR r, or -1 (memory)
+  int rax_holds;                                 // guest GPR whose value currently lives in rax (value-forward), or -1
+  int vol_bind;                                  // guest GPRs held in caller-saved R8/R9 (or -1);
+  int vol_bind2;                                 // call sites spill/reload them around helpers
+  bool dpc_live;                                 // previous guest op left RDX/R10/R11 = va/bias/slot
+  int dpc_base, dpc_disp;
+  bool dpc_write, dpc_force_align;
+#ifdef JIT_STATS
+  uint64_t* licm_slots;   // per-memop "page last seen" slots (null = don't probe)
+  uint32_t  licm_n, licm_max;
+#endif
+  int host_of(int r) const { return host[r]; }
+};
+
 // ZAP/ZAPNOT byte-expand: g_zapnot_mask[b] has byte i = 0xFF where bit i of b is set (ZAPNOT keeps
 // those bytes; ZAP keeps the complement). Compiled ZAP indexes this instead of an 8-way bit test.
 static uint64_t g_zapnot_mask[256];
