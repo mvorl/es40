@@ -3509,11 +3509,13 @@ bool CS3Trio64::IsAccelPort(u32 p) const {
  **/
 u32 CS3Trio64::ReadMem_Bar(int func, int bar, u32 address, int dsize)
 {
+#ifdef S3_LFB_TRACE
 	if (lfb_trace_needs_first_access_note) {
 		printf("%s: LFB first BAR access @+%llx size=%d\n",
 			devid_string, (unsigned long long)address, dsize);
 		lfb_trace_needs_first_access_note = false;
 	}
+#endif
 
 	switch (bar)
 	{
