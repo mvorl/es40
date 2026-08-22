@@ -2881,6 +2881,8 @@ u64 CSystem::PCI_Phys_scatter_gather(u32 address, u64 wsm, u64 tba)
 	}
 	else
 	{
+		printf("PCHIP-W-SGPTE: invalid SG PTE %016" PRIx64 " @ %016" PRIx64 " for PCI %08x\n",
+			pte, pte_a, address);
 		throw((char)'0');
 	}
 }
