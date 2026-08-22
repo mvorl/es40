@@ -38,13 +38,58 @@
 #include <initializer_list>
 #include <vector>
 #define ASMJIT_STATIC
-// Only asmjit's core is needed today (the engine's JitRuntime lives in jitengine.cpp);
-// switch to <asmjit/a64.h> when this backend starts emitting.
-#include <asmjit/core.h>
+#include <asmjit/a64.h>
 
-// ARM64 codegen state lives here rather than inheriting the x86 register model.
-// Add host register roles and forwarding/cache state as the A64 emitter grows.
-struct CJitEngine::RegAlloc {};
+// register convention for both block and trace codegen:
+//   x19 = CAlphaCPU*, x20 = state.r[] base, x21 = completed-instruction count,
+//   x22 = next guest PC / chain target, x23-x28 = future guest-GPR pin bank.
+struct CJitEngine::RegAlloc {
+  static constexpr asmjit::a64::Gp kArgCpu = asmjit::a64::x0;
+  static constexpr asmjit::a64::Gp kArgRegs = asmjit::a64::x1;
+  static constexpr asmjit::a64::Gp kResultCount = asmjit::a64::w0;
+
+  static constexpr asmjit::a64::Gp kCpu = asmjit::a64::x19;
+  static constexpr asmjit::a64::Gp kRegs = asmjit::a64::x20;
+  static constexpr asmjit::a64::Gp kChainCount = asmjit::a64::x21;
+  static constexpr asmjit::a64::Gp kNextPc = asmjit::a64::x22;
+  static constexpr asmjit::a64::Gp kGuestPin0 = asmjit::a64::x23;
+  static constexpr asmjit::a64::Gp kGuestPin1 = asmjit::a64::x24;
+  static constexpr asmjit::a64::Gp kGuestPin2 = asmjit::a64::x25;
+  static constexpr asmjit::a64::Gp kGuestPin3 = asmjit::a64::x26;
+  static constexpr asmjit::a64::Gp kGuestPin4 = asmjit::a64::x27;
+  static constexpr asmjit::a64::Gp kGuestPin5 = asmjit::a64::x28;
+
+  static constexpr asmjit::RegMask kPersistentGpMask =
+      asmjit::Support::bit_mask<asmjit::RegMask>(
+          kCpu.id(), kRegs.id(), kChainCount.id(), kNextPc.id(),
+          kGuestPin0.id(), kGuestPin1.id(), kGuestPin2.id(),
+          kGuestPin3.id(), kGuestPin4.id(), kGuestPin5.id());
+};
+
+static_assert((CJitEngine::RegAlloc::kPersistentGpMask
+               & asmjit::Support::bit_mask<asmjit::RegMask>(8, 16, 17,
+                     asmjit::a64::Gp::kIdOs, 29, 30, 31)) == 0,
+              "A64 persistent registers must exclude ABI, linker, platform, frame, link, and stack registers");
+
+#ifndef NDEBUG
+static bool a64_abi_compatible(const asmjit::Environment& environment)
+{
+  using namespace asmjit;
+  if (!environment.is_family_aarch64()) return false;
+
+  CallConv cc;
+  if (cc.init(CallConvId::kCDecl, environment) != Error::kOk) return false;
+  const uint8_t* const gp_args = cc.passed_order(RegGroup::kGp);
+  if (gp_args[0] != CJitEngine::RegAlloc::kArgCpu.id()
+      || gp_args[1] != CJitEngine::RegAlloc::kArgRegs.id()) return false;
+  for (uint32_t i = 2; i < 8; ++i) if (gp_args[i] != i) return false;
+
+  const RegMask preserved = cc.preserved_regs(RegGroup::kGp);
+  return (preserved & CJitEngine::RegAlloc::kPersistentGpMask)
+          == CJitEngine::RegAlloc::kPersistentGpMask
+      && cc.natural_stack_alignment() == 16;
+}
+#endif
 
 void CJitEngine::emit_op(void*, const uint8_t*, void*, const HelperSet&,
                          bool, JitBlock*, uint32_t, uint32_t, RegAlloc&, void*, bool) {}
@@ -53,6 +98,12 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t*, uint64_t, void*, voi
     void*, void*, void*, void*, void*, void*, void*, void*, void*, void*, void*, void*,
     void*, void*, void*, void*)
 {
+#ifndef NDEBUG
+  assert(m_rt != nullptr);
+  static const bool abi_compatible =
+      a64_abi_compatible(((asmjit::JitRuntime*) m_rt)->environment());
+  assert(abi_compatible);
+#endif
   // Mark the attempt so record()'s hot path never re-requests a compile; code stays
   // null, so this block is interpreted permanently (no recompile churn).
   b->compiled = true;
