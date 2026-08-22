@@ -2129,19 +2129,10 @@ u64 CAlphaCPU::jit_stc(CAlphaCPU* cpu, u64 va, int size_bits, u64 value)
 		dpc.valid = dpc.host_bias != 0;
 	}
 
-	u64 expected = 0;
-	bool same_address = false;
-	if (!cpu->cSystem->cpu_take_lock(cpu->state.iProcNum, phys, &expected, &same_address))
-		return 0;                                            // lock lost -> SC fails
-	if (phys < cpu->dram_size)
-	{
-		if (same_address)
-			return dram_cas(cpu->dram_ptr, phys, expected, value, size_bits) ? 1 : 0;
-		dram_write(cpu->dram_ptr, phys, size_bits, value);
-		return 1;
-	}
-	cpu->cSystem->WriteMem(phys, size_bits, value, cpu);     // MMIO conditional store
-	return 1;
+	// Shared LL/SC path: consumes the monitor, applies the ABA sequence guard,
+	// CASes RAM or performs the MMIO conditional store.
+	return cpu->cSystem->cpu_stx_c(cpu->state.iProcNum, phys, size_bits, value,
+		cpu->dram_ptr, cpu->dram_size, cpu);
 }
 
 /* CALL_PAL OPCDEC trap: a privileged function (< 0x40) attempted in user mode. Mirrors

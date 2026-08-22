@@ -295,6 +295,8 @@ public:
 
   void          cpu_lock(int cpuid, u64 address, u64 value);   // LDx_L: record locked range + loaded value
   bool          cpu_take_lock(int cpuid, u64 address, u64* expected, bool* same_address);
+  u64           cpu_stx_c(int cpuid, u64 phys, int size_bits, u64 value,
+                          char* dram, u64 dram_sz, CSystemComponent* source);  // STx_C: 1 = success
   void          cpu_clear_lock(int cpuid);                     // exception/interrupt: drop the lock
   void          RequestSystemReset();
   bool          IsSystemResetRequested() const;
@@ -333,6 +335,12 @@ private:
 
   int           iNumCPUs;
   u64           cpu_lock_value[4]; // per-CPU LDx_L value, for same-address STx_C compare-and-swap
+
+  // LL/SC ABA guard. 
+  static const u32 kLLBuckets = 65536;   // 64B-line hash; power of two
+  std::atomic<u32> m_ll_seq[kLLBuckets];
+  std::atomic<u8>  m_ll_lk[kLLBuckets];  // serializes seq-check+CAS+bump per bucket
+  u32              m_ll_seq_snap[4];     // per-CPU bucket sequence at LDx_L time
 
   // Serializes drir RMW + delivery in interrupt() across device threads. On
   // CSystem (not in saved 'state'), so SaveState is unaffected.

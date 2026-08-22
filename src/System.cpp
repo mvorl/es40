@@ -398,7 +398,13 @@ CSystem::CSystem(CConfigurator* cfg)
 	else
 		CHECK_ALLOCATION(memory = calloc(1 << iNumMemoryBits, 1));
 
-	// (no LL/SC lock to init: per-CPU state + atomic compare-and-swap, see cpu_lock())
+	// LL/SC ABA-guard buckets start at sequence 0, unlocked.
+	for (u32 llb = 0; llb < kLLBuckets; llb++)
+	{
+		m_ll_seq[llb].store(0, std::memory_order_relaxed);
+		m_ll_lk[llb].store(0, std::memory_order_relaxed);
+	}
+	memset(m_ll_seq_snap, 0, sizeof(m_ll_seq_snap));
 
 	printf("%s(%s): $Id$\n",
 		cfg->get_myName(), cfg->get_myValue());
@@ -863,6 +869,9 @@ void CSystem::cpu_lock(int cpuid, u64 address, u64 value)
 {
 	state.cpu_lock_address[cpuid] = address;
 	cpu_lock_value[cpuid] = value;
+	// ABA guard - snapshot the line's STx_C sequence. 
+	m_ll_seq_snap[cpuid] =
+		m_ll_seq[(u32)((address >> 6) & (kLLBuckets - 1))].load(std::memory_order_acquire);
 	state.cpu_lock_flags |= (1 << cpuid);   // atomic fetch_or
 }
 
@@ -881,6 +890,43 @@ bool CSystem::cpu_take_lock(int cpuid, u64 address, u64* expected, bool* same_ad
 		*same_address = (state.cpu_lock_address[cpuid] == address);
 	}
 	return held;
+}
+
+/**
+ * STx_C: consume the lock and perform the conditional store. 
+ **/
+u64 CSystem::cpu_stx_c(int cpuid, u64 phys, int size_bits, u64 value,
+	char* dram, u64 dram_sz, CSystemComponent* source)
+{
+	u64  expected = 0;
+	bool same_address = false;
+	if (!cpu_take_lock(cpuid, phys, &expected, &same_address))
+		return 0;
+
+	if (phys >= dram_sz)
+	{
+		WriteMem(phys, size_bits, value, source);   // I/O-space conditional store
+		return 1;
+	}
+
+	const u32 b = (u32)((phys >> 6) & (kLLBuckets - 1));
+	while (m_ll_lk[b].exchange(1, std::memory_order_acquire))
+		;
+	u64 ok;
+	if (m_ll_seq[b].load(std::memory_order_relaxed) != m_ll_seq_snap[cpuid])
+		ok = 0;    // another STx_C hit this line since our LDx_L
+	else if (same_address)
+		ok = dram_cas(dram, phys, expected, value, size_bits) ? 1 : 0;
+	else
+	{
+		// STx_C to a different quadword in the locked line: no value to compare.
+		dram_write(dram, phys, size_bits, value);
+		ok = 1;
+	}
+	if (ok)
+		m_ll_seq[b].fetch_add(1, std::memory_order_relaxed);
+	m_ll_lk[b].store(0, std::memory_order_release);
+	return ok;
 }
 
 /**

@@ -777,31 +777,20 @@ inline u64 fsqrt64(u64 asig, s32 exp)
   {                                                         \
     u64 _stc_va = (va);                                     \
     u64 _stc_data = (src);                                  \
-    u64 _stc_exp = 0;                                       \
-    bool _stc_same_address = false;                         \
     pbc = false;                                            \
     DATA_PHYS(_stc_va, ACCESS_WRITE, (size/8)-1);           \
-    if (cSystem->cpu_take_lock(state.iProcNum, phys_address, &_stc_exp, &_stc_same_address) && !pbc) \
+    if (pbc)                                                \
     {                                                       \
-      LWR;                                                  \
-      if (phys_address < dram_size)                         \
-      {                                                     \
-        if (_stc_same_address)                              \
-          dest = dram_cas(dram_ptr, phys_address, _stc_exp, _stc_data, size) ? 1 : 0; \
-        else                                                \
-        {                                                   \
-          dram_write(dram_ptr, phys_address, size, _stc_data); \
-          dest = 1;                                         \
-        }                                                   \
-      }                                                     \
-      else                                                  \
-      {                                                     \
-        cSystem->WriteMem(phys_address, size, _stc_data, this); \
-        dest = 1;                                           \
-      }                                                     \
+      /* page-crossing STx_C fails; still consumes the lock */ \
+      u64 _stc_exp; bool _stc_sa;                           \
+      cSystem->cpu_take_lock(state.iProcNum, phys_address, &_stc_exp, &_stc_sa); \
+      dest = 0;                                             \
     }                                                       \
     else                                                    \
-      dest = 0;                                             \
+    {                                                       \
+      LWR;                                                  \
+      dest = cSystem->cpu_stx_c(state.iProcNum, phys_address, size, _stc_data, dram_ptr, dram_size, this); \
+    }                                                       \
   }
 
   /**
