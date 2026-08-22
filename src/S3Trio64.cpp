@@ -3540,11 +3540,13 @@ void CS3Trio64::WriteMem_Bar(int func, int bar, u32 address, int dsize, u32 data
 	printf("[S3::WriteMem_Bar] func=%d bar=%d addr=%08X dsize=%d data=%08X\n",
 		func, bar, address, dsize, data);
 #endif
+#ifdef S3_LFB_TRACE
 	if (lfb_trace_needs_first_access_note) {
 		printf("%s: LFB first BAR access @+%llx size=%d (W)\n",
 			devid_string, (unsigned long long)address, dsize);
 		lfb_trace_needs_first_access_note = false;
 	}
+#endif
 
 	switch (bar)
 	{
