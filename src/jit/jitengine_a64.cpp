@@ -44,8 +44,10 @@
 // register convention for both block and trace codegen:
 //   x9 = transient expansion scratch; x19 = CAlphaCPU*, x20 = state.r[] base,
 //   x21 = completed-instruction count, x22 = next guest PC / chain target,
-//   x23-x28 = future guest-GPR pin bank.
+//   x23-x28 = guest-GPR pin bank.
 struct CJitEngine::RegAlloc {
+  static constexpr uint32_t kGuestPinCount = 6;
+
   static constexpr asmjit::a64::Gp kArgCpu = asmjit::a64::x0;
   static constexpr asmjit::a64::Gp kArgRegs = asmjit::a64::x1;
   static constexpr asmjit::a64::Gp kResultCount = asmjit::a64::w0;
@@ -67,7 +69,58 @@ struct CJitEngine::RegAlloc {
           kCpu.id(), kRegs.id(), kChainCount.id(), kNextPc.id(),
           kGuestPin0.id(), kGuestPin1.id(), kGuestPin2.id(),
           kGuestPin3.id(), kGuestPin4.id(), kGuestPin5.id());
+
+  // Bindings are explicit and ordered: entry i maps to host x23+i. Keeping the
+  // policy out of this table lets blocks and traces share the same routing machinery.
+  std::array<uint8_t, kGuestPinCount> guest_by_pin{};
+  uint8_t pin_count = 0;
+
+  static constexpr bool guest_is_shadowable(uint32_t raw_guest) noexcept {
+    return raw_guest < 32 && (raw_guest & 0x0cu) == 0x04u;
+  }
+
+  // Initial bindings exclude variant-dependent slots; a future fixed convention can
+  // add an explicit main-bank policy once its entry/exit synchronization exists.
+  static constexpr bool guest_pin_candidate(uint32_t raw_guest) noexcept {
+    return raw_guest < 31 && !guest_is_shadowable(raw_guest);
+  }
+
+  constexpr bool bind_guest(uint32_t raw_guest) noexcept {
+    if (!guest_pin_candidate(raw_guest) || pin_count >= kGuestPinCount
+        || pin_index_of(raw_guest) >= 0) return false;
+    guest_by_pin[pin_count++] = static_cast<uint8_t>(raw_guest);
+    return true;
+  }
+
+  constexpr int pin_index_of(uint32_t raw_guest) const noexcept {
+    if (raw_guest >= 32) return -1;
+    for (uint32_t i = 0; i < pin_count; ++i)
+      if (guest_by_pin[i] == raw_guest) return static_cast<int>(i);
+    return -1;
+  }
+
+  constexpr int guest_of_pin(uint32_t pin_index) const noexcept {
+    return pin_index < pin_count ? guest_by_pin[pin_index] : -1;
+  }
+
+  constexpr int host_of(uint32_t raw_guest, bool pal_shadow) const noexcept {
+    if (raw_guest >= 31 || (pal_shadow && guest_is_shadowable(raw_guest))) return -1;
+    const int pin_index = pin_index_of(raw_guest);
+    return pin_index < 0 ? -1 : static_cast<int>(kGuestPin0.id()) + pin_index;
+  }
 };
+
+static_assert(CJitEngine::RegAlloc::kGuestPin1.id()
+                  == CJitEngine::RegAlloc::kGuestPin0.id() + 1
+              && CJitEngine::RegAlloc::kGuestPin2.id()
+                  == CJitEngine::RegAlloc::kGuestPin0.id() + 2
+              && CJitEngine::RegAlloc::kGuestPin3.id()
+                  == CJitEngine::RegAlloc::kGuestPin0.id() + 3
+              && CJitEngine::RegAlloc::kGuestPin4.id()
+                  == CJitEngine::RegAlloc::kGuestPin0.id() + 4
+              && CJitEngine::RegAlloc::kGuestPin5.id()
+                  == CJitEngine::RegAlloc::kGuestPin0.id() + 5,
+              "A64 guest pin indices must map contiguously to x23-x28");
 
 static_assert((CJitEngine::RegAlloc::kPersistentGpMask
                & asmjit::Support::bit_mask<asmjit::RegMask>(8, 16, 17,
@@ -79,6 +132,12 @@ static_assert((CJitEngine::RegAlloc::kPersistentGpMask
               "A64 expansion scratch must not overlap persistent registers");
 
 namespace {
+
+enum A64GprOperandMask : uint8_t {
+  kA64GprRa = 1u << 0,
+  kA64GprRb = 1u << 1,
+  kA64GprRc = 1u << 2
+};
 
 enum class A64OpKind : uint8_t {
   kUnsupported
@@ -103,12 +162,16 @@ enum class A64PlanStop : uint8_t {
 struct A64OpClass {
   A64OpKind kind = A64OpKind::kUnsupported;
   A64TerminatorKind terminator = A64TerminatorKind::kNone;
+  uint8_t gpr_reads = 0;
+  uint8_t gpr_writes = 0;
 };
 
 struct A64DecodedOp {
   uint32_t ins = 0;
   A64OpKind kind = A64OpKind::kUnsupported;
   A64TerminatorKind terminator = A64TerminatorKind::kNone;
+  uint8_t gpr_reads = 0;
+  uint8_t gpr_writes = 0;
   uint8_t opcode = 0;
   uint8_t ra = 0;
   uint8_t rb = 0;
@@ -120,10 +183,37 @@ struct A64DecodedOp {
 static_assert(sizeof(A64DecodedOp) <= 16,
               "A64 block plans must keep their fixed instruction snapshot compact");
 
+struct A64GprUsage {
+  std::array<uint16_t, 32> refs{};
+  uint32_t reads = 0;
+  uint32_t writes = 0;
+};
+
+static constexpr void note_a64_gpr(A64GprUsage& usage, uint32_t raw_guest,
+                                   bool write) noexcept
+{
+  if (raw_guest >= 31) return;
+  ++usage.refs[raw_guest];
+  if (write) usage.writes |= 1u << raw_guest;
+  else       usage.reads  |= 1u << raw_guest;
+}
+
+static constexpr void note_a64_op_gprs(A64GprUsage& usage,
+                                       const A64DecodedOp& op) noexcept
+{
+  if (op.gpr_reads & kA64GprRa) note_a64_gpr(usage, op.ra, false);
+  if (op.gpr_reads & kA64GprRb) note_a64_gpr(usage, op.rb, false);
+  if (op.gpr_reads & kA64GprRc) note_a64_gpr(usage, op.rc, false);
+  if (op.gpr_writes & kA64GprRa) note_a64_gpr(usage, op.ra, true);
+  if (op.gpr_writes & kA64GprRb) note_a64_gpr(usage, op.rb, true);
+  if (op.gpr_writes & kA64GprRc) note_a64_gpr(usage, op.rc, true);
+}
+
 struct A64BlockPlan {
   static constexpr uint32_t kMaxOps = 64;
 
   std::array<A64DecodedOp, kMaxOps> ops{};
+  A64GprUsage gpr_usage{};
   uint32_t count = 0;
   uint32_t breaker_word = 0;
   A64PlanStop stop = A64PlanStop::kInvalidSource;
@@ -150,6 +240,8 @@ static constexpr A64DecodedOp decode_a64_op(uint32_t ins, bool pal_block) noexce
   decoded.ins = ins;
   decoded.kind = classification.kind;
   decoded.terminator = classification.terminator;
+  decoded.gpr_reads = classification.gpr_reads;
+  decoded.gpr_writes = classification.gpr_writes;
   decoded.opcode = static_cast<uint8_t>(ins >> 26);
   decoded.ra = static_cast<uint8_t>((ins >> 21) & 31u);
   decoded.rb = static_cast<uint8_t>((ins >> 16) & 31u);
@@ -211,6 +303,7 @@ static A64BlockPlan plan_a64_block(const CJitEngine::JitBlock& block,
     }
 
     plan.ops[plan.count++] = decoded;
+    note_a64_op_gprs(plan.gpr_usage, decoded);
     if (decoded.terminator != A64TerminatorKind::kNone) {
       plan.terminator = decoded.terminator;
       plan.stop = A64PlanStop::kTerminator;
@@ -242,11 +335,126 @@ static_assert(a64_scan_limit(3, 0).count == 3
               && a64_scan_limit(1, 0x2000).count == 1,
               "A64 planning must honor block, instruction, and physical-page bounds");
 
+static constexpr bool a64_gpr_usage_probe() noexcept
+{
+  A64GprUsage usage{};
+  A64DecodedOp register_form{};
+  register_form.ra = 1;
+  register_form.rb = 1;
+  register_form.rc = 2;
+  register_form.gpr_reads = kA64GprRa | kA64GprRb;
+  register_form.gpr_writes = kA64GprRc;
+  note_a64_op_gprs(usage, register_form);
+
+  // Operand roles, not bit 12 by itself, decide whether Rb is a register.
+  A64DecodedOp literal_form{};
+  literal_form.ra = 2;
+  literal_form.rb = 16;
+  literal_form.rc = 31;
+  literal_form.is_literal = true;
+  literal_form.gpr_reads = kA64GprRa;
+  literal_form.gpr_writes = kA64GprRc;
+  note_a64_op_gprs(usage, literal_form);
+
+  return usage.refs[1] == 2 && usage.refs[2] == 2
+      && usage.refs[16] == 0 && usage.refs[31] == 0
+      && usage.reads == ((1u << 1) | (1u << 2))
+      && usage.writes == (1u << 2);
+}
+
+static_assert(a64_gpr_usage_probe(),
+              "A64 GPR analysis must follow semantic roles and exclude architectural R31");
+
 static constexpr uint32_t a64_guest_gpr_slot(uint32_t raw_reg, bool pal_shadow) noexcept
 {
   const uint32_t reg = raw_reg & 31u;
-  return reg + ((pal_shadow && (reg & 0x0cu) == 0x04u) ? 32u : 0u);
+  return reg + ((pal_shadow && CJitEngine::RegAlloc::guest_is_shadowable(reg)) ? 32u : 0u);
 }
+
+enum class A64GprRouteKind : uint8_t {
+  kInvalid,
+  kMemory,
+  kPinned,
+  kZero,
+  kDiscard
+};
+
+struct A64GprRoute {
+  A64GprRouteKind kind;
+  uint8_t slot;
+  int8_t host;
+};
+
+// A route selects operand storage only. In particular, kDiscard suppresses the
+// R31 destination write, never the instruction's faults or other side effects.
+
+static constexpr A64GprRoute a64_guest_gpr_read_route(
+    const CJitEngine::RegAlloc& regs, uint32_t raw_reg, bool pal_shadow) noexcept
+{
+  if (raw_reg >= 32) return {A64GprRouteKind::kInvalid, 0, -1};
+  const uint32_t reg = raw_reg;
+  if (reg == 31) return {A64GprRouteKind::kZero, 31, -1};
+  const uint8_t slot = static_cast<uint8_t>(a64_guest_gpr_slot(reg, pal_shadow));
+  const int host = regs.host_of(reg, pal_shadow);
+  return host < 0 ? A64GprRoute{A64GprRouteKind::kMemory, slot, -1}
+                  : A64GprRoute{A64GprRouteKind::kPinned, slot,
+                                static_cast<int8_t>(host)};
+}
+
+static constexpr A64GprRoute a64_guest_gpr_write_route(
+    const CJitEngine::RegAlloc& regs, uint32_t raw_reg, bool pal_shadow) noexcept
+{
+  if (raw_reg >= 32) return {A64GprRouteKind::kInvalid, 0, -1};
+  const uint32_t reg = raw_reg;
+  if (reg == 31) return {A64GprRouteKind::kDiscard, 31, -1};
+  const uint8_t slot = static_cast<uint8_t>(a64_guest_gpr_slot(reg, pal_shadow));
+  const int host = regs.host_of(reg, pal_shadow);
+  return host < 0 ? A64GprRoute{A64GprRouteKind::kMemory, slot, -1}
+                  : A64GprRoute{A64GprRouteKind::kPinned, slot,
+                                static_cast<int8_t>(host)};
+}
+
+static constexpr bool a64_gpr_route_probe() noexcept
+{
+  CJitEngine::RegAlloc regs{};
+  if (regs.host_of(1, false) != -1
+      || !regs.bind_guest(1)
+      || !regs.bind_guest(16)
+      || regs.bind_guest(1)
+      || regs.bind_guest(22)
+      || regs.bind_guest(31)
+      || !regs.bind_guest(0)
+      || !regs.bind_guest(2)
+      || !regs.bind_guest(3)
+      || !regs.bind_guest(30)
+      || regs.bind_guest(27)) return false;
+
+  const A64GprRoute r1 = a64_guest_gpr_read_route(regs, 1, false);
+  const A64GprRoute r16 = a64_guest_gpr_read_route(regs, 16, false);
+  const A64GprRoute p22 = a64_guest_gpr_read_route(regs, 22, true);
+  const A64GprRoute r24 = a64_guest_gpr_read_route(regs, 24, true);
+  const A64GprRoute r31 = a64_guest_gpr_read_route(regs, 31, false);
+  const A64GprRoute w31 = a64_guest_gpr_write_route(regs, 31, false);
+  const A64GprRoute bad = a64_guest_gpr_read_route(regs, 32, false);
+  return regs.guest_of_pin(0) == 1 && regs.guest_of_pin(1) == 16
+      && r1.kind == A64GprRouteKind::kPinned
+      && r1.host == CJitEngine::RegAlloc::kGuestPin0.id()
+      && r16.kind == A64GprRouteKind::kPinned
+      && r16.host == CJitEngine::RegAlloc::kGuestPin1.id()
+      && p22.kind == A64GprRouteKind::kMemory && p22.slot == 54
+      && r24.kind == A64GprRouteKind::kMemory && r24.slot == 24
+      && r31.kind == A64GprRouteKind::kZero
+      && w31.kind == A64GprRouteKind::kDiscard
+      && bad.kind == A64GprRouteKind::kInvalid
+      && CJitEngine::RegAlloc::guest_pin_candidate(3)
+      && !CJitEngine::RegAlloc::guest_pin_candidate(4)
+      && !CJitEngine::RegAlloc::guest_pin_candidate(20)
+      && CJitEngine::RegAlloc::guest_pin_candidate(24)
+      && !CJitEngine::RegAlloc::guest_pin_candidate(31);
+}
+
+static_assert(a64_gpr_route_probe(),
+              "A64 GPR routing must preserve pin, PAL-shadow, and R31 semantics");
 
 static constexpr asmjit::a64::Mem a64_guest_gpr_mem(uint32_t raw_reg,
                                                      bool pal_shadow) noexcept
