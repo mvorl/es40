@@ -71,6 +71,73 @@ static_assert((CJitEngine::RegAlloc::kPersistentGpMask
                      asmjit::a64::Gp::kIdOs, 29, 30, 31)) == 0,
               "A64 persistent registers must exclude ABI, linker, platform, frame, link, and stack registers");
 
+namespace {
+
+struct A64FrameLayout {
+  static constexpr int32_t kCpuRegs = 16;
+  static constexpr int32_t kCountPc = 32;
+  static constexpr int32_t kPin01 = 48;
+  static constexpr int32_t kPin23 = 64;
+  static constexpr int32_t kPin45 = 80;
+  static constexpr int32_t kHelperOut = 96;
+  static constexpr int32_t kHelperScratch = 104;
+  static constexpr int32_t kSize = 112;
+};
+
+static_assert(A64FrameLayout::kSize % 16 == 0,
+              "A64 JIT frame must preserve 16-byte stack alignment");
+static_assert(A64FrameLayout::kHelperScratch + 8 == A64FrameLayout::kSize,
+              "A64 helper locals must fit inside the fixed frame");
+
+static asmjit::Error emit_a64_prologue(asmjit::a64::Assembler& a)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  using namespace asmjit::a64;
+
+  Error err = a.stp(x29, x30, ptr_pre(sp, -A64FrameLayout::kSize));
+  if (err != Error::kOk) return err;
+  err = a.mov(x29, sp);
+  if (err != Error::kOk) return err;
+  err = a.stp(RA::kCpu, RA::kRegs, ptr(sp, A64FrameLayout::kCpuRegs));
+  if (err != Error::kOk) return err;
+  err = a.stp(RA::kChainCount, RA::kNextPc, ptr(sp, A64FrameLayout::kCountPc));
+  if (err != Error::kOk) return err;
+  err = a.stp(RA::kGuestPin0, RA::kGuestPin1, ptr(sp, A64FrameLayout::kPin01));
+  if (err != Error::kOk) return err;
+  err = a.stp(RA::kGuestPin2, RA::kGuestPin3, ptr(sp, A64FrameLayout::kPin23));
+  if (err != Error::kOk) return err;
+  err = a.stp(RA::kGuestPin4, RA::kGuestPin5, ptr(sp, A64FrameLayout::kPin45));
+  if (err != Error::kOk) return err;
+
+  err = a.mov(RA::kCpu, RA::kArgCpu);
+  if (err != Error::kOk) return err;
+  err = a.mov(RA::kRegs, RA::kArgRegs);
+  if (err != Error::kOk) return err;
+  return a.mov(RA::kChainCount, 0);
+}
+
+static asmjit::Error emit_a64_epilogue(asmjit::a64::Assembler& a)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  using namespace asmjit::a64;
+
+  Error err = a.ldp(RA::kGuestPin4, RA::kGuestPin5, ptr(sp, A64FrameLayout::kPin45));
+  if (err != Error::kOk) return err;
+  err = a.ldp(RA::kGuestPin2, RA::kGuestPin3, ptr(sp, A64FrameLayout::kPin23));
+  if (err != Error::kOk) return err;
+  err = a.ldp(RA::kGuestPin0, RA::kGuestPin1, ptr(sp, A64FrameLayout::kPin01));
+  if (err != Error::kOk) return err;
+  err = a.ldp(RA::kChainCount, RA::kNextPc, ptr(sp, A64FrameLayout::kCountPc));
+  if (err != Error::kOk) return err;
+  err = a.ldp(RA::kCpu, RA::kRegs, ptr(sp, A64FrameLayout::kCpuRegs));
+  if (err != Error::kOk) return err;
+  err = a.ldp(x29, x30, ptr_post(sp, A64FrameLayout::kSize));
+  if (err != Error::kOk) return err;
+  return a.ret(x30);
+}
+
 #ifndef NDEBUG
 static bool a64_abi_compatible(const asmjit::Environment& environment)
 {
@@ -90,6 +157,8 @@ static bool a64_abi_compatible(const asmjit::Environment& environment)
       && cc.natural_stack_alignment() == 16;
 }
 #endif
+
+} // namespace
 
 void CJitEngine::emit_op(void*, const uint8_t*, void*, const HelperSet&,
                          bool, JitBlock*, uint32_t, uint32_t, RegAlloc&, void*, bool) {}
@@ -112,14 +181,32 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t*, uint64_t, void*, voi
   assert(abi_compatible);
 #endif
 
-  // Exercise the checked codegen setup, but deliberately discard the empty image.
+  // Build a complete fixed frame, but deliberately discard the generated image.
   asmjit::CodeHolder code;
   if (code.init(rt->environment(), rt->cpu_features()) != asmjit::Error::kOk) return;
 
   asmjit::a64::Assembler a;
   if (code.attach(&a) != asmjit::Error::kOk) return;
+#ifndef NDEBUG
+  a.add_diagnostic_options(asmjit::DiagnosticOptions::kValidateAssembler);
+#endif
   assert(a.is_initialized());
-  assert(code.code_size() == 0);
+
+  if (emit_a64_prologue(a) != asmjit::Error::kOk) return;
+
+  asmjit::Label done = a.new_label();
+  asmjit::Label body = a.new_label();
+  if (a.bind(body) != asmjit::Error::kOk) return;
+  [[maybe_unused]] const size_t body_off = code.code_size();
+
+  // Empty translated body: a cold call would return zero completed instructions.
+  if (a.mov(RegAlloc::kResultCount, RegAlloc::kChainCount.w()) != asmjit::Error::kOk) return;
+  if (a.bind(done) != asmjit::Error::kOk) return;
+  if (emit_a64_epilogue(a) != asmjit::Error::kOk) return;
+  if (a.finalize() != asmjit::Error::kOk) return;
+
+  assert(body_off == 40);
+  assert(code.code_size() == 72);
 }
 
 void CJitEngine::compile_trace(TraceFragment*, JitBlock**, uint32_t,
