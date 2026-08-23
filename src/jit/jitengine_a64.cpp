@@ -146,7 +146,9 @@ enum class A64OpKind : uint8_t {
 enum class A64TerminatorKind : uint8_t {
   kNone,
   kDirect,
-  kIndirect
+  kIndirect,
+  kCallPal,
+  kRedispatch
 };
 
 enum class A64PlanStop : uint8_t {
@@ -209,6 +211,100 @@ static constexpr void note_a64_op_gprs(A64GprUsage& usage,
   if (op.gpr_writes & kA64GprRc) note_a64_gpr(usage, op.rc, true);
 }
 
+static constexpr uint64_t a64_advance_pc(uint64_t pc, uint32_t n_instr) noexcept
+{
+  // Alpha PC arithmetic wraps modulo 2^64; adding whole words preserves its mode bits.
+  return pc + static_cast<uint64_t>(n_instr) * sizeof(uint32_t);
+}
+
+static constexpr int64_t a64_branch_displacement(uint32_t ins) noexcept
+{
+  const uint32_t raw = ins & 0x1fffffu;
+  return (raw & 0x100000u) != 0
+      ? static_cast<int64_t>(raw) - 0x200000
+      : static_cast<int64_t>(raw);
+}
+
+static constexpr uint64_t a64_branch_target(uint64_t fallthrough_pc,
+                                            uint32_t ins) noexcept
+{
+  const int64_t byte_disp = a64_branch_displacement(ins) * 4;
+  return fallthrough_pc + static_cast<uint64_t>(byte_disp);
+}
+
+static constexpr uint64_t a64_jmp_target(uint64_t source_pc, uint64_t rb) noexcept
+{
+  return (rb & ~uint64_t(3)) | (source_pc & 3u);
+}
+
+static constexpr uint64_t a64_hw_ret_target(uint64_t rb) noexcept
+{
+  return rb & ~uint64_t(2);
+}
+
+enum class A64ExitKind : uint8_t {
+  kNone,
+  kFallthrough,
+  kDirect,
+  kIndirect,
+  kCallPal,
+  kRedispatch
+};
+
+enum class A64PcAuthority : uint8_t {
+  kNextPc,
+  kCpuState
+};
+
+struct A64BlockExit {
+  // Deltas are added exactly once to x21, which carries prior chained-block progress.
+  uint64_t fallthrough_pc = 0;
+  uint32_t completed_delta = 0;
+  A64ExitKind kind = A64ExitKind::kNone;
+
+  constexpr bool valid() const noexcept { return kind != A64ExitKind::kNone; }
+};
+
+struct A64OpExit {
+  uint64_t next_pc = 0;
+  uint32_t completed_delta = 0;
+  A64PcAuthority pc_authority = A64PcAuthority::kNextPc;
+};
+
+static constexpr A64BlockExit plan_a64_exit(uint64_t start_pc, uint32_t count,
+                                            A64TerminatorKind terminator) noexcept
+{
+  if (count == 0) return {start_pc, 0, A64ExitKind::kNone};
+
+  A64ExitKind kind = A64ExitKind::kFallthrough;
+  switch (terminator) {
+    case A64TerminatorKind::kDirect:     kind = A64ExitKind::kDirect; break;
+    case A64TerminatorKind::kIndirect:   kind = A64ExitKind::kIndirect; break;
+    case A64TerminatorKind::kCallPal:    kind = A64ExitKind::kCallPal; break;
+    case A64TerminatorKind::kRedispatch: kind = A64ExitKind::kRedispatch; break;
+    case A64TerminatorKind::kNone:       break;
+  }
+  return {a64_advance_pc(start_pc, count), count, kind};
+}
+
+static constexpr A64OpExit a64_retry_exit(uint64_t start_pc,
+                                          uint32_t op_index) noexcept
+{
+  return {a64_advance_pc(start_pc, op_index), op_index, A64PcAuthority::kNextPc};
+}
+
+static constexpr A64OpExit a64_completed_trap_exit(uint32_t op_index) noexcept
+{
+  return {0, op_index + 1, A64PcAuthority::kCpuState};
+}
+
+static constexpr bool a64_publish_pc_before_chain(const A64BlockExit& exit,
+                                                  bool pal_block) noexcept
+{
+  return pal_block || exit.kind == A64ExitKind::kCallPal
+      || exit.kind == A64ExitKind::kRedispatch;
+}
+
 struct A64BlockPlan {
   static constexpr uint32_t kMaxOps = 64;
 
@@ -218,8 +314,6 @@ struct A64BlockPlan {
   uint32_t breaker_word = 0;
   A64PlanStop stop = A64PlanStop::kInvalidSource;
   A64TerminatorKind terminator = A64TerminatorKind::kNone;
-
-  constexpr bool has_prefix() const noexcept { return count != 0; }
 };
 
 struct A64ScanLimit {
@@ -334,6 +428,46 @@ static_assert(a64_scan_limit(3, 0).count == 3
               && a64_scan_limit(3, 0x1ff8).stop == A64PlanStop::kPageBoundary
               && a64_scan_limit(1, 0x2000).count == 1,
               "A64 planning must honor block, instruction, and physical-page bounds");
+
+static constexpr bool a64_exit_contract_probe() noexcept
+{
+  const A64BlockExit none = plan_a64_exit(0x1001, 0, A64TerminatorKind::kNone);
+  const A64BlockExit fall = plan_a64_exit(0x1001, 3, A64TerminatorKind::kNone);
+  const A64BlockExit direct = plan_a64_exit(0x1001, 2, A64TerminatorKind::kDirect);
+  const A64BlockExit indirect = plan_a64_exit(0x1001, 2, A64TerminatorKind::kIndirect);
+  const A64BlockExit call_pal = plan_a64_exit(0x1000, 1, A64TerminatorKind::kCallPal);
+  const A64BlockExit redispatch =
+      plan_a64_exit(0x1001, 1, A64TerminatorKind::kRedispatch);
+  const A64OpExit retry = a64_retry_exit(0x1001, 63);
+  const A64OpExit trapped = a64_completed_trap_exit(63);
+
+  return !none.valid() && none.completed_delta == 0 && none.fallthrough_pc == 0x1001
+      && fall.kind == A64ExitKind::kFallthrough
+      && fall.completed_delta == 3 && fall.fallthrough_pc == 0x100d
+      && direct.kind == A64ExitKind::kDirect
+      && indirect.kind == A64ExitKind::kIndirect
+      && call_pal.kind == A64ExitKind::kCallPal
+      && redispatch.kind == A64ExitKind::kRedispatch
+      && retry.completed_delta == 63 && retry.next_pc == 0x10fd
+      && retry.pc_authority == A64PcAuthority::kNextPc
+      && trapped.completed_delta == 64
+      && trapped.pc_authority == A64PcAuthority::kCpuState
+      && !a64_publish_pc_before_chain(fall, false)
+      && a64_publish_pc_before_chain(fall, true)
+      && a64_publish_pc_before_chain(call_pal, false)
+      && a64_publish_pc_before_chain(redispatch, false);
+}
+
+static_assert(a64_advance_pc(~uint64_t(0) - 2, 1) == 1
+              && a64_branch_displacement(0x000fffffu) == 1048575
+              && a64_branch_displacement(0x00100000u) == -1048576
+              && a64_branch_displacement(0x001fffffu) == -1
+              && a64_branch_target(0x1005, 0x001fffffu) == 0x1001
+              && a64_jmp_target(0x1001, 0x2007) == 0x2005
+              && a64_hw_ret_target(0x2007) == 0x2005,
+              "A64 exit planning must preserve Alpha PC arithmetic and target masks");
+static_assert(a64_exit_contract_probe(),
+              "A64 exits must distinguish normal, retry, trap, and terminator bookkeeping");
 
 static constexpr bool a64_gpr_usage_probe() noexcept
 {
@@ -626,8 +760,9 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   b->prefix_len = 0;
 
   const A64BlockPlan plan = plan_a64_block(*b, dram, dram_size);
+  const A64BlockExit exit = plan_a64_exit(b->tag, plan.count, plan.terminator);
   // Avoid even dry-run codegen until a classifier and emitter agree on a supported prefix.
-  if (!plan.has_prefix()) return;
+  if (!exit.valid()) return;
 
   if (m_rt == nullptr) return;
   auto* const rt = static_cast<asmjit::JitRuntime*>(m_rt);
