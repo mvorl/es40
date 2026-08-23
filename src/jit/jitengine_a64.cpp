@@ -98,18 +98,28 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t*, uint64_t, void*, voi
     void*, void*, void*, void*, void*, void*, void*, void*, void*, void*, void*, void*,
     void*, void*, void*, void*)
 {
-#ifndef NDEBUG
-  assert(m_rt != nullptr);
-  static const bool abi_compatible =
-      a64_abi_compatible(((asmjit::JitRuntime*) m_rt)->environment());
-  assert(abi_compatible);
-#endif
-  // Mark the attempt so record()'s hot path never re-requests a compile; code stays
-  // null, so this block is interpreted permanently (no recompile churn).
+  // Mark the attempt first so every setup failure leaves a permanent interpreter block.
   b->compiled = true;
   b->code = nullptr;
   b->jit_body = nullptr;
   b->prefix_len = 0;
+
+  if (m_rt == nullptr) return;
+  auto* const rt = static_cast<asmjit::JitRuntime*>(m_rt);
+#ifndef NDEBUG
+  static const bool abi_compatible =
+      a64_abi_compatible(rt->environment());
+  assert(abi_compatible);
+#endif
+
+  // Exercise the checked codegen setup, but deliberately discard the empty image.
+  asmjit::CodeHolder code;
+  if (code.init(rt->environment(), rt->cpu_features()) != asmjit::Error::kOk) return;
+
+  asmjit::a64::Assembler a;
+  if (code.attach(&a) != asmjit::Error::kOk) return;
+  assert(a.is_initialized());
+  assert(code.code_size() == 0);
 }
 
 void CJitEngine::compile_trace(TraceFragment*, JitBlock**, uint32_t,
