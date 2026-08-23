@@ -483,7 +483,19 @@ void CAlphaCPU::idle_nap()
  * Constructor.
  **/
 CAlphaCPU::CAlphaCPU(CConfigurator* cfg, CSystem* system) : CSystemComponent(cfg, system), mySemaphore(0, 1)
-{}
+{
+#ifdef ES40_JIT
+	// The JIT compiles PALcode like any other guest code; the HLE can't be used
+	system->request_native_pal("JIT build");
+#else
+	if (cfg->get_bool_value("palcode.vms.nohle", false))
+	{
+		char why[64];
+		snprintf(why, sizeof(why), "palcode.vms.nohle set on %s", cfg->get_myName());
+		system->request_native_pal(why);
+	}
+#endif
+}
 
 /**
  * Initialize the CPU.
@@ -500,13 +512,7 @@ void CAlphaCPU::init()
 	idle_nap_enabled = myCfg->get_bool_value("idle_nap", false);
 	exit_on_pal_halt = myCfg->get_myParent()->get_bool_value("exit_on_pal_halt", false);
 
-#ifdef ES40_JIT
-	// With the JIT, PALcode runs natively (compiled like any other guest code) rather than being
-	// shortcut by the high-level vmspal routines, so the replacement is force-disabled
-	vmspal_lle_enabled = true;
-#else
-	vmspal_lle_enabled = myCfg->get_bool_value("palcode.vms.nohle", false);
-#endif
+	vmspal_lle_enabled = cSystem->native_pal_requested();
 
 	state.iProcNum = cSystem->RegisterCPU(this);
 

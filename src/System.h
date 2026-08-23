@@ -265,6 +265,16 @@ public:
   CAlphaCPU* get_cpu(int cpunum) { return acCPUs[cpunum]; };
   int           get_cpu_num() { return iNumCPUs; };
 
+  // We determine the PALcode (native or optimized C++ replacements) during config ingestion
+  // if any CPU has nohle = true set. If any single CPU has it set, we apply to all
+  void          request_native_pal(const char* why)
+  {
+    if (!bNativePal)
+      printf("%%SYS-I-NATIVEPAL: %s: running native PALcode on all CPUs, vmspal replacement routines disabled.\n", why);
+    bNativePal = true;
+  };
+  bool          native_pal_requested() { return bNativePal; };
+
   // DIMM topology: 4 MMBs of 8 slots; array a lives on MMB a as sets of 4
   // identical DIMMs (J1-4 lower set, J5-8 upper set). Max config = 4 arrays
   // x 8 x 1GB DIMMs = 32GB (all 32 slots).
@@ -334,6 +344,7 @@ private:
   std::vector<uint8_t> m_dimm_spd; // shared SPD image (all DIMMs identical)
 
   int           iNumCPUs;
+  bool          bNativePal = false;
   u64           cpu_lock_value[4]; // per-CPU LDx_L value, for same-address STx_C compare-and-swap
 
   // LL/SC ABA guard. 
