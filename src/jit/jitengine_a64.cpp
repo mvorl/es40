@@ -79,17 +79,21 @@ struct CJitEngine::RegAlloc {
     return raw_guest < 32 && (raw_guest & 0x0cu) == 0x04u;
   }
 
-  // Initial bindings exclude variant-dependent slots; a future fixed convention can
-  // add an explicit main-bank policy once its entry/exit synchronization exists.
+  // Dynamic bindings exclude variant-dependent slots. Fixed block bindings may use
+  // bind_main_guest() for an explicitly main-bank value that PAL-shadow routing bypasses.
   static constexpr bool guest_pin_candidate(uint32_t raw_guest) noexcept {
     return raw_guest < 31 && !guest_is_shadowable(raw_guest);
   }
 
-  constexpr bool bind_guest(uint32_t raw_guest) noexcept {
-    if (!guest_pin_candidate(raw_guest) || pin_count >= kGuestPinCount
+  constexpr bool bind_main_guest(uint32_t raw_guest) noexcept {
+    if (raw_guest >= 31 || pin_count >= kGuestPinCount
         || pin_index_of(raw_guest) >= 0) return false;
     guest_by_pin[pin_count++] = static_cast<uint8_t>(raw_guest);
     return true;
+  }
+
+  constexpr bool bind_guest(uint32_t raw_guest) noexcept {
+    return guest_pin_candidate(raw_guest) && bind_main_guest(raw_guest);
   }
 
   constexpr int pin_index_of(uint32_t raw_guest) const noexcept {
@@ -132,6 +136,20 @@ static_assert((CJitEngine::RegAlloc::kPersistentGpMask
               "A64 expansion scratch must not overlap persistent registers");
 
 namespace {
+
+// Every block body shares this exact mapping so a chained entry can inherit the
+// live pin bank without an adapter. R22/R23 name the main-bank slots; PAL-shadow
+// accesses to those architectural registers continue to route through memory.
+static constexpr std::array<uint8_t, CJitEngine::RegAlloc::kGuestPinCount>
+    kA64BlockGuestPins{{1, 16, 30, 22, 23, 27}};
+
+static constexpr CJitEngine::RegAlloc make_a64_block_regalloc() noexcept
+{
+  CJitEngine::RegAlloc regs{};
+  for (const uint8_t guest : kA64BlockGuestPins)
+    if (!regs.bind_main_guest(guest)) return {};
+  return regs;
+}
 
 enum A64GprOperandMask : uint8_t {
   kA64GprRa = 1u << 0,
@@ -607,6 +625,54 @@ static_assert(a64_guest_gpr_mem(23, true).base_id() == CJitEngine::RegAlloc::kRe
               && a64_guest_gpr_mem(23, true).offset() == 55 * 8,
               "A64 guest GPR operands must be fixed offsets from the register-bank base");
 
+static constexpr bool a64_block_pin_contract_probe() noexcept
+{
+  const CJitEngine::RegAlloc regs = make_a64_block_regalloc();
+  return regs.pin_count == kA64BlockGuestPins.size()
+      && regs.guest_of_pin(0) == 1 && regs.host_of(1, false) == 23
+      && regs.guest_of_pin(1) == 16 && regs.host_of(16, false) == 24
+      && regs.guest_of_pin(2) == 30 && regs.host_of(30, false) == 25
+      && regs.guest_of_pin(3) == 22 && regs.host_of(22, false) == 26
+      && regs.guest_of_pin(4) == 23 && regs.host_of(23, false) == 27
+      && regs.guest_of_pin(5) == 27 && regs.host_of(27, false) == 28
+      && regs.host_of(22, true) == -1 && regs.host_of(23, true) == -1
+      && a64_guest_gpr_slot(22, true) == 54
+      && a64_guest_gpr_slot(23, true) == 55
+      && !CJitEngine::RegAlloc::guest_pin_candidate(22)
+      && !CJitEngine::RegAlloc::guest_pin_candidate(23);
+}
+
+static_assert(a64_block_pin_contract_probe(),
+              "A64 block bodies must share one PAL-safe guest-pin convention");
+
+static asmjit::Error emit_a64_load_guest_pins(asmjit::a64::Assembler& a,
+                                               const CJitEngine::RegAlloc& regs)
+{
+  using namespace asmjit;
+  for (uint32_t i = 0; i < regs.pin_count; ++i) {
+    const int guest = regs.guest_of_pin(i);
+    if (guest < 0) return Error::kInvalidArgument;
+    const Error err = a.ldr(a64::x(CJitEngine::RegAlloc::kGuestPin0.id() + i),
+                            a64_guest_gpr_mem(static_cast<uint32_t>(guest), false));
+    if (err != Error::kOk) return err;
+  }
+  return Error::kOk;
+}
+
+static asmjit::Error emit_a64_sync_guest_pins(asmjit::a64::Assembler& a,
+                                               const CJitEngine::RegAlloc& regs)
+{
+  using namespace asmjit;
+  for (uint32_t i = 0; i < regs.pin_count; ++i) {
+    const int guest = regs.guest_of_pin(i);
+    if (guest < 0) return Error::kInvalidArgument;
+    const Error err = a.str(a64::x(CJitEngine::RegAlloc::kGuestPin0.id() + i),
+                            a64_guest_gpr_mem(static_cast<uint32_t>(guest), false));
+    if (err != Error::kOk) return err;
+  }
+  return Error::kOk;
+}
+
 static bool a64_is_real_x(const asmjit::a64::Gp& reg) noexcept
 {
   return reg.is_gp64() && reg.id() < asmjit::a64::Gp::kIdSp;
@@ -783,7 +849,11 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 #endif
   assert(a.is_initialized());
 
+  RegAlloc regalloc = make_a64_block_regalloc();
   if (emit_a64_prologue(a) != asmjit::Error::kOk) return;
+  // Cold entry materializes the shared block convention. Chained entries target
+  // body directly and inherit these live values plus x19-x22 from their predecessor.
+  if (emit_a64_load_guest_pins(a, regalloc) != asmjit::Error::kOk) return;
 
   asmjit::Label done = a.new_label();
   asmjit::Label body = a.new_label();
@@ -793,11 +863,13 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   // Empty translated body: a cold call would return zero completed instructions.
   if (a.mov(RegAlloc::kResultCount, RegAlloc::kChainCount.w()) != asmjit::Error::kOk) return;
   if (a.bind(done) != asmjit::Error::kOk) return;
+  // Every dispatcher or bailout exit converges here while x20 still names state.r[].
+  if (emit_a64_sync_guest_pins(a, regalloc) != asmjit::Error::kOk) return;
   if (emit_a64_epilogue(a) != asmjit::Error::kOk) return;
   if (a.finalize() != asmjit::Error::kOk) return;
 
-  assert(body_off == 40);
-  assert(code.code_size() == 72);
+  assert(body_off == 40 + kA64BlockGuestPins.size() * 4);
+  assert(code.code_size() == 72 + kA64BlockGuestPins.size() * 8);
 }
 
 void CJitEngine::compile_trace(TraceFragment*, JitBlock**, uint32_t,
