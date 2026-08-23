@@ -41,12 +41,14 @@
 #include <asmjit/a64.h>
 
 // register convention for both block and trace codegen:
-//   x19 = CAlphaCPU*, x20 = state.r[] base, x21 = completed-instruction count,
-//   x22 = next guest PC / chain target, x23-x28 = future guest-GPR pin bank.
+//   x9 = transient expansion scratch; x19 = CAlphaCPU*, x20 = state.r[] base,
+//   x21 = completed-instruction count, x22 = next guest PC / chain target,
+//   x23-x28 = future guest-GPR pin bank.
 struct CJitEngine::RegAlloc {
   static constexpr asmjit::a64::Gp kArgCpu = asmjit::a64::x0;
   static constexpr asmjit::a64::Gp kArgRegs = asmjit::a64::x1;
   static constexpr asmjit::a64::Gp kResultCount = asmjit::a64::w0;
+  static constexpr asmjit::a64::Gp kScratch0 = asmjit::a64::x9;
 
   static constexpr asmjit::a64::Gp kCpu = asmjit::a64::x19;
   static constexpr asmjit::a64::Gp kRegs = asmjit::a64::x20;
@@ -70,8 +72,86 @@ static_assert((CJitEngine::RegAlloc::kPersistentGpMask
                & asmjit::Support::bit_mask<asmjit::RegMask>(8, 16, 17,
                      asmjit::a64::Gp::kIdOs, 29, 30, 31)) == 0,
               "A64 persistent registers must exclude ABI, linker, platform, frame, link, and stack registers");
+static_assert((CJitEngine::RegAlloc::kPersistentGpMask
+               & asmjit::Support::bit_mask<asmjit::RegMask>(
+                     CJitEngine::RegAlloc::kScratch0.id())) == 0,
+              "A64 expansion scratch must not overlap persistent registers");
 
 namespace {
+
+static constexpr uint32_t a64_guest_gpr_slot(uint32_t raw_reg, bool pal_shadow) noexcept
+{
+  const uint32_t reg = raw_reg & 31u;
+  return reg + ((pal_shadow && (reg & 0x0cu) == 0x04u) ? 32u : 0u);
+}
+
+static constexpr asmjit::a64::Mem a64_guest_gpr_mem(uint32_t raw_reg,
+                                                     bool pal_shadow) noexcept
+{
+  return asmjit::a64::ptr(CJitEngine::RegAlloc::kRegs,
+      static_cast<int32_t>(a64_guest_gpr_slot(raw_reg, pal_shadow) * sizeof(uint64_t)));
+}
+
+static_assert(a64_guest_gpr_slot(3, true) == 3
+              && a64_guest_gpr_slot(4, true) == 36
+              && a64_guest_gpr_slot(23, true) == 55
+              && a64_guest_gpr_slot(24, true) == 24
+              && a64_guest_gpr_slot(23, false) == 23,
+              "A64 guest operands must match the PAL-shadow register mapping");
+static_assert(a64_guest_gpr_mem(23, true).base_id() == CJitEngine::RegAlloc::kRegs.id()
+              && a64_guest_gpr_mem(23, true).offset() == 55 * 8,
+              "A64 guest GPR operands must be fixed offsets from the register-bank base");
+
+static bool a64_is_real_x(const asmjit::a64::Gp& reg) noexcept
+{
+  return reg.is_gp64() && reg.id() < asmjit::a64::Gp::kIdSp;
+}
+
+static bool a64_is_address_x(const asmjit::a64::Gp& reg) noexcept
+{
+  return reg.is_gp64() && reg.id() <= asmjit::a64::Gp::kIdSp;
+}
+
+// AsmJit's MOV pseudo-op selects a logical immediate or the shortest MOVZ/MOVN/MOVK sequence.
+static asmjit::Error emit_a64_mov_u64(asmjit::a64::Assembler& a,
+                                      const asmjit::a64::Gp& dst, uint64_t value)
+{
+  if (!a64_is_real_x(dst)) return asmjit::Error::kInvalidArgument;
+  return a.mov(dst, asmjit::imm(value));
+}
+
+static asmjit::Error emit_a64_add_offset(asmjit::a64::Assembler& a,
+    const asmjit::a64::Gp& dst, const asmjit::a64::Gp& base, int64_t delta,
+    const asmjit::a64::Gp& scratch = CJitEngine::RegAlloc::kScratch0)
+{
+  using namespace asmjit;
+  if (!a64_is_address_x(dst) || !a64_is_address_x(base)) return Error::kInvalidArgument;
+  if (delta == 0)
+    return dst.id() == base.id() ? Error::kOk : a.mov(dst, base);
+
+  const bool negative = delta < 0;
+  const uint64_t magnitude = negative ? uint64_t(0) - uint64_t(delta) : uint64_t(delta);
+  auto emit_part = [&](const a64::Gp& part_dst, const a64::Gp& part_base,
+                       uint64_t part) -> Error {
+    return negative ? a.sub(part_dst, part_base, imm(part))
+                    : a.add(part_dst, part_base, imm(part));
+  };
+
+  if (arm::Utils::is_add_sub_imm(magnitude))
+    return emit_part(dst, base, magnitude);
+
+  // Two immediate instructions cover every 24-bit magnitude without consuming scratch.
+  if (magnitude <= 0x00ffffffu) {
+    Error err = emit_part(dst, base, magnitude & 0xfffu);
+    return err != Error::kOk ? err : emit_part(dst, dst, magnitude & 0xfff000u);
+  }
+
+  if (!a64_is_real_x(scratch) || scratch.id() == base.id())
+    return Error::kInvalidArgument;
+  Error err = emit_a64_mov_u64(a, scratch, magnitude);
+  if (err != Error::kOk) return err;
+  return negative ? a.sub(dst, base, scratch) : a.add(dst, base, scratch);
+}
 
 struct A64FrameLayout {
   static constexpr int32_t kCpuRegs = 16;
@@ -97,7 +177,7 @@ static asmjit::Error emit_a64_prologue(asmjit::a64::Assembler& a)
 
   Error err = a.stp(x29, x30, ptr_pre(sp, -A64FrameLayout::kSize));
   if (err != Error::kOk) return err;
-  err = a.mov(x29, sp);
+  err = emit_a64_add_offset(a, x29, sp, 0);
   if (err != Error::kOk) return err;
   err = a.stp(RA::kCpu, RA::kRegs, ptr(sp, A64FrameLayout::kCpuRegs));
   if (err != Error::kOk) return err;
@@ -114,7 +194,7 @@ static asmjit::Error emit_a64_prologue(asmjit::a64::Assembler& a)
   if (err != Error::kOk) return err;
   err = a.mov(RA::kRegs, RA::kArgRegs);
   if (err != Error::kOk) return err;
-  return a.mov(RA::kChainCount, 0);
+  return emit_a64_mov_u64(a, RA::kChainCount, 0);
 }
 
 static asmjit::Error emit_a64_epilogue(asmjit::a64::Assembler& a)
@@ -154,6 +234,7 @@ static bool a64_abi_compatible(const asmjit::Environment& environment)
   const RegMask preserved = cc.preserved_regs(RegGroup::kGp);
   return (preserved & CJitEngine::RegAlloc::kPersistentGpMask)
           == CJitEngine::RegAlloc::kPersistentGpMask
+      && (preserved & Support::bit_mask<RegMask>(CJitEngine::RegAlloc::kScratch0.id())) == 0
       && cc.natural_stack_alignment() == 16;
 }
 #endif
