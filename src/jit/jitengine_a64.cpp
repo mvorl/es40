@@ -31,6 +31,7 @@
 
 #ifdef ES40_JIT_A64
 
+#include <array>
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -78,6 +79,168 @@ static_assert((CJitEngine::RegAlloc::kPersistentGpMask
               "A64 expansion scratch must not overlap persistent registers");
 
 namespace {
+
+enum class A64OpKind : uint8_t {
+  kUnsupported
+};
+
+enum class A64TerminatorKind : uint8_t {
+  kNone,
+  kDirect,
+  kIndirect
+};
+
+enum class A64PlanStop : uint8_t {
+  kInvalidSource,
+  kEmptyBlock,
+  kUnsupported,
+  kBlockEnd,
+  kPageBoundary,
+  kInstructionLimit,
+  kTerminator
+};
+
+struct A64OpClass {
+  A64OpKind kind = A64OpKind::kUnsupported;
+  A64TerminatorKind terminator = A64TerminatorKind::kNone;
+};
+
+struct A64DecodedOp {
+  uint32_t ins = 0;
+  A64OpKind kind = A64OpKind::kUnsupported;
+  A64TerminatorKind terminator = A64TerminatorKind::kNone;
+  uint8_t opcode = 0;
+  uint8_t ra = 0;
+  uint8_t rb = 0;
+  uint8_t rc = 0;
+  uint8_t literal = 0;
+  bool is_literal = false;
+};
+
+static_assert(sizeof(A64DecodedOp) <= 16,
+              "A64 block plans must keep their fixed instruction snapshot compact");
+
+struct A64BlockPlan {
+  static constexpr uint32_t kMaxOps = 64;
+
+  std::array<A64DecodedOp, kMaxOps> ops{};
+  uint32_t count = 0;
+  uint32_t breaker_word = 0;
+  A64PlanStop stop = A64PlanStop::kInvalidSource;
+  A64TerminatorKind terminator = A64TerminatorKind::kNone;
+
+  constexpr bool has_prefix() const noexcept { return count != 0; }
+};
+
+struct A64ScanLimit {
+  uint32_t count;
+  A64PlanStop stop;
+};
+
+// Classification stays fail-closed: each translation will add its classifier and emitter together.
+static constexpr A64OpClass classify_a64_op(uint32_t, bool) noexcept
+{
+  return {};
+}
+
+static constexpr A64DecodedOp decode_a64_op(uint32_t ins, bool pal_block) noexcept
+{
+  const A64OpClass classification = classify_a64_op(ins, pal_block);
+  A64DecodedOp decoded{};
+  decoded.ins = ins;
+  decoded.kind = classification.kind;
+  decoded.terminator = classification.terminator;
+  decoded.opcode = static_cast<uint8_t>(ins >> 26);
+  decoded.ra = static_cast<uint8_t>((ins >> 21) & 31u);
+  decoded.rb = static_cast<uint8_t>((ins >> 16) & 31u);
+  decoded.rc = static_cast<uint8_t>(ins & 31u);
+  decoded.literal = static_cast<uint8_t>((ins >> 13) & 0xffu);
+  decoded.is_literal = ((ins >> 12) & 1u) != 0;
+  return decoded;
+}
+
+static constexpr A64ScanLimit a64_scan_limit(uint32_t n_instr, uint64_t phys) noexcept
+{
+  constexpr uint32_t kGuestPageBytes = 0x2000;
+  A64ScanLimit limit{n_instr, A64PlanStop::kBlockEnd};
+  if (limit.count > A64BlockPlan::kMaxOps) {
+    limit.count = A64BlockPlan::kMaxOps;
+    limit.stop = A64PlanStop::kInstructionLimit;
+  }
+
+  const uint32_t page_offset = static_cast<uint32_t>(phys & (kGuestPageBytes - 1));
+  const uint32_t page_words = (kGuestPageBytes - page_offset) / sizeof(uint32_t);
+  if (limit.count > page_words) {
+    limit.count = page_words;
+    limit.stop = A64PlanStop::kPageBoundary;
+  }
+  return limit;
+}
+
+static uint32_t load_a64_guest_u32(const uint8_t* source) noexcept
+{
+  return static_cast<uint32_t>(source[0])
+      | (static_cast<uint32_t>(source[1]) << 8)
+      | (static_cast<uint32_t>(source[2]) << 16)
+      | (static_cast<uint32_t>(source[3]) << 24);
+}
+
+static A64BlockPlan plan_a64_block(const CJitEngine::JitBlock& block,
+    const uint8_t* dram, uint64_t dram_size) noexcept
+{
+  A64BlockPlan plan{};
+  if (block.n_instr == 0) {
+    plan.stop = A64PlanStop::kEmptyBlock;
+    return plan;
+  }
+  if (dram == nullptr || (block.phys & 3u) != 0 || block.phys > dram_size
+      || static_cast<uint64_t>(block.n_instr) > (dram_size - block.phys) / sizeof(uint32_t))
+    return plan;
+
+  const A64ScanLimit limit = a64_scan_limit(block.n_instr, block.phys);
+  plan.stop = limit.stop;
+  const uint8_t* const source = dram + static_cast<size_t>(block.phys);
+  const bool pal_block = (block.tag & 1u) != 0;
+  for (uint32_t i = 0; i < limit.count; ++i) {
+    const uint32_t word = load_a64_guest_u32(source + static_cast<size_t>(i) * 4);
+    const A64DecodedOp decoded = decode_a64_op(word, pal_block);
+    if (decoded.kind == A64OpKind::kUnsupported) {
+      plan.breaker_word = word;
+      plan.stop = A64PlanStop::kUnsupported;
+      return plan;
+    }
+
+    plan.ops[plan.count++] = decoded;
+    if (decoded.terminator != A64TerminatorKind::kNone) {
+      plan.terminator = decoded.terminator;
+      plan.stop = A64PlanStop::kTerminator;
+      return plan;
+    }
+  }
+  return plan;
+}
+
+static constexpr uint32_t kA64DecodeProbe =
+    (0x10u << 26) | (17u << 21) | (9u << 16) | 29u;
+static constexpr uint32_t kA64LiteralProbe =
+    (0x11u << 26) | (4u << 21) | (0xa5u << 13) | (1u << 12) | 7u;
+static_assert(decode_a64_op(kA64DecodeProbe, false).opcode == 0x10
+              && decode_a64_op(kA64DecodeProbe, false).ra == 17
+              && decode_a64_op(kA64DecodeProbe, false).rb == 9
+              && decode_a64_op(kA64DecodeProbe, false).rc == 29
+              && !decode_a64_op(kA64DecodeProbe, false).is_literal,
+              "A64 planning must decode Alpha register-form operands once");
+static_assert(decode_a64_op(kA64LiteralProbe, false).is_literal
+              && decode_a64_op(kA64LiteralProbe, false).literal == 0xa5,
+              "A64 planning must decode Alpha literal operands once");
+static_assert(a64_scan_limit(3, 0).count == 3
+              && a64_scan_limit(3, 0).stop == A64PlanStop::kBlockEnd
+              && a64_scan_limit(65, 0).count == 64
+              && a64_scan_limit(65, 0).stop == A64PlanStop::kInstructionLimit
+              && a64_scan_limit(3, 0x1ff8).count == 2
+              && a64_scan_limit(3, 0x1ff8).stop == A64PlanStop::kPageBoundary
+              && a64_scan_limit(1, 0x2000).count == 1,
+              "A64 planning must honor block, instruction, and physical-page bounds");
 
 static constexpr uint32_t a64_guest_gpr_slot(uint32_t raw_reg, bool pal_shadow) noexcept
 {
@@ -244,7 +407,7 @@ static bool a64_abi_compatible(const asmjit::Environment& environment)
 void CJitEngine::emit_op(void*, const uint8_t*, void*, const HelperSet&,
                          bool, JitBlock*, uint32_t, uint32_t, RegAlloc&, void*, bool) {}
 
-void CJitEngine::compile_block(JitBlock* b, const uint8_t*, uint64_t, void*, void*, void*,
+void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_size, void*, void*, void*,
     void*, void*, void*, void*, void*, void*, void*, void*, void*, void*, void*, void*,
     void*, void*, void*, void*)
 {
@@ -253,6 +416,10 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t*, uint64_t, void*, voi
   b->code = nullptr;
   b->jit_body = nullptr;
   b->prefix_len = 0;
+
+  const A64BlockPlan plan = plan_a64_block(*b, dram, dram_size);
+  // Avoid even dry-run codegen until a classifier and emitter agree on a supported prefix.
+  if (!plan.has_prefix()) return;
 
   if (m_rt == nullptr) return;
   auto* const rt = static_cast<asmjit::JitRuntime*>(m_rt);
