@@ -52,6 +52,7 @@ struct CJitEngine::RegAlloc {
   static constexpr asmjit::a64::Gp kArgRegs = asmjit::a64::x1;
   static constexpr asmjit::a64::Gp kResultCount = asmjit::a64::w0;
   static constexpr asmjit::a64::Gp kScratch0 = asmjit::a64::x9;
+  static constexpr asmjit::a64::Gp kCallTarget = asmjit::a64::x16;
 
   static constexpr asmjit::a64::Gp kCpu = asmjit::a64::x19;
   static constexpr asmjit::a64::Gp kRegs = asmjit::a64::x20;
@@ -737,8 +738,238 @@ struct A64FrameLayout {
 
 static_assert(A64FrameLayout::kSize % 16 == 0,
               "A64 JIT frame must preserve 16-byte stack alignment");
+static_assert(A64FrameLayout::kHelperOut % alignof(uint64_t) == 0
+              && A64FrameLayout::kHelperOut + 8 <= A64FrameLayout::kHelperScratch,
+              "A64 helper out storage must be aligned and disjoint from call scratch");
 static_assert(A64FrameLayout::kHelperScratch + 8 == A64FrameLayout::kSize,
               "A64 helper locals must fit inside the fixed frame");
+
+enum class A64CallArgKind : uint8_t {
+  kCpu,
+  kGuest,
+  kGuestOrZero,
+  kHost,
+  kOut,
+  kImm32,
+  kImm64
+};
+
+struct A64CallArg {
+  A64CallArgKind kind = A64CallArgKind::kImm64;
+  uint64_t value = 0;
+};
+
+static constexpr uint32_t kA64MaxCallArgs = 8;
+
+static constexpr bool a64_valid_helper_host_source(uint32_t host) noexcept
+{
+  // x16 is the call target, x17 is linker scratch, x18 is platform-reserved,
+  // and x29/x30/SP/ZR are fixed framee, not helper
+  return host < 16 || (host >= 19 && host <= 28);
+}
+
+static constexpr bool a64_valid_call_arg(const A64CallArg& arg) noexcept
+{
+  switch (arg.kind) {
+    case A64CallArgKind::kCpu:
+    case A64CallArgKind::kOut:
+    case A64CallArgKind::kImm64:
+      return true;
+    case A64CallArgKind::kGuest:
+      return arg.value < 31;
+    case A64CallArgKind::kGuestOrZero:
+      return arg.value < 32;
+    case A64CallArgKind::kHost:
+      return arg.value <= UINT32_MAX
+          && a64_valid_helper_host_source(static_cast<uint32_t>(arg.value));
+    case A64CallArgKind::kImm32:
+      return arg.value <= UINT32_MAX;
+  }
+  return false;
+}
+
+static_assert(kA64MaxCallArgs == 8
+              && a64_valid_call_arg({A64CallArgKind::kGuest, 30})
+              && !a64_valid_call_arg({A64CallArgKind::kGuest, 31})
+              && a64_valid_call_arg({A64CallArgKind::kGuestOrZero, 31})
+              && a64_valid_helper_host_source(0)
+              && a64_valid_helper_host_source(15)
+              && !a64_valid_helper_host_source(16)
+              && !a64_valid_helper_host_source(17)
+              && !a64_valid_helper_host_source(18)
+              && a64_valid_helper_host_source(19)
+              && a64_valid_helper_host_source(28)
+              && !a64_valid_helper_host_source(29),
+              "A64 helper arguments must respect AAPCS64 register roles");
+
+static int a64_helper_index(const CJitEngine::HelperSet& helpers,
+                            const void* helper) noexcept
+{
+  constexpr size_t kHelperCount = 19;
+  static_assert(sizeof(CJitEngine::HelperSet) == kHelperCount * sizeof(void*),
+                "HelperSet must remain the CPU helper table's pure pointer layout");
+  if (helper == nullptr) return -1;
+  std::array<void*, kHelperCount> table{};
+  std::memcpy(table.data(), &helpers, sizeof(helpers));
+  for (size_t i = 0; i < table.size(); ++i)
+    if (table[i] == helper) return static_cast<int>(i);
+  return -1;
+}
+
+static constexpr asmjit::a64::Mem a64_helper_out_mem() noexcept
+{
+  return asmjit::a64::ptr(asmjit::a64::sp, A64FrameLayout::kHelperOut);
+}
+
+static constexpr asmjit::a64::Mem a64_helper_scratch_mem() noexcept
+{
+  return asmjit::a64::ptr(asmjit::a64::sp, A64FrameLayout::kHelperScratch);
+}
+
+static_assert(a64_helper_out_mem().base_id() == asmjit::a64::Gp::kIdSp
+              && a64_helper_out_mem().offset() == A64FrameLayout::kHelperOut
+              && a64_helper_scratch_mem().offset() == A64FrameLayout::kHelperScratch,
+              "A64 helper locals must remain fixed SP-relative operands");
+
+// Preserve the incoming values of x0-x7 when helper arguments change them.
+static asmjit::Error emit_a64_parallel_arg_moves(asmjit::a64::Assembler& a,
+    const std::array<A64CallArg, kA64MaxCallArgs>& args, uint32_t count)
+{
+  using namespace asmjit;
+  constexpr int8_t kNoSource = -1;
+  constexpr int8_t kStackSource = -2;
+  std::array<int8_t, kA64MaxCallArgs> source{};
+  std::array<bool, kA64MaxCallArgs> pending{};
+  source.fill(kNoSource);
+
+  uint32_t remaining = 0;
+  for (uint32_t dst = 0; dst < count; ++dst) {
+    const A64CallArg& arg = args[dst];
+    if (arg.kind != A64CallArgKind::kHost || arg.value >= kA64MaxCallArgs
+        || arg.value == dst) continue;
+    source[dst] = static_cast<int8_t>(arg.value);
+    pending[dst] = true;
+    ++remaining;
+  }
+
+  while (remaining != 0) {
+    bool progressed = false;
+    for (uint32_t dst = 0; dst < count; ++dst) {
+      if (!pending[dst]) continue;
+      bool old_dst_needed = false;
+      for (uint32_t other = 0; other < count; ++other) {
+        if (pending[other] && source[other] == static_cast<int8_t>(dst)) {
+          old_dst_needed = true;
+          break;
+        }
+      }
+      if (old_dst_needed) continue;
+
+      const Error err = source[dst] == kStackSource
+          ? a.ldr(a64::x(dst), a64_helper_scratch_mem())
+          : a.mov(a64::x(dst), a64::x(static_cast<uint32_t>(source[dst])));
+      if (err != Error::kOk) return err;
+      pending[dst] = false;
+      --remaining;
+      progressed = true;
+    }
+    if (progressed) continue;
+
+    uint32_t cycle_dst = 0;
+    while (cycle_dst < count && !pending[cycle_dst]) ++cycle_dst;
+    if (cycle_dst == count) return Error::kInvalidState;
+    for (uint32_t i = 0; i < count; ++i)
+      if (pending[i] && source[i] == kStackSource) return Error::kInvalidState;
+
+    Error err = a.str(a64::x(cycle_dst), a64_helper_scratch_mem());
+    if (err != Error::kOk) return err;
+    for (uint32_t i = 0; i < count; ++i)
+      if (pending[i] && source[i] == static_cast<int8_t>(cycle_dst))
+        source[i] = kStackSource;
+  }
+  return Error::kOk;
+}
+
+static asmjit::Error emit_a64_call_arg(asmjit::a64::Assembler& a,
+    const CJitEngine::RegAlloc& regs, bool pal_shadow, uint32_t index,
+    const A64CallArg& arg)
+{
+  using namespace asmjit;
+  const a64::Gp dst = a64::x(index);
+  switch (arg.kind) {
+    case A64CallArgKind::kCpu:
+      return a.mov(dst, CJitEngine::RegAlloc::kCpu);
+    case A64CallArgKind::kGuest:
+    case A64CallArgKind::kGuestOrZero: {
+      const A64GprRoute route = a64_guest_gpr_read_route(
+          regs, static_cast<uint32_t>(arg.value), pal_shadow);
+      switch (route.kind) {
+        case A64GprRouteKind::kMemory:
+          return a.ldr(dst, a64::ptr(CJitEngine::RegAlloc::kRegs,
+              static_cast<int32_t>(route.slot * sizeof(uint64_t))));
+        case A64GprRouteKind::kPinned:
+          return a.mov(dst, a64::x(static_cast<uint32_t>(route.host)));
+        case A64GprRouteKind::kZero:
+          return a.mov(dst, a64::xzr);
+        default:
+          return Error::kInvalidArgument;
+      }
+    }
+    case A64CallArgKind::kHost:
+      // Sources in x0-x7 were resolved as a parallel copy above.
+      return arg.value < kA64MaxCallArgs
+          ? Error::kOk
+          : a.mov(dst, a64::x(static_cast<uint32_t>(arg.value)));
+    case A64CallArgKind::kOut:
+      return emit_a64_add_offset(a, dst, a64::sp, A64FrameLayout::kHelperOut);
+    case A64CallArgKind::kImm32:
+      return a.mov(dst.w(), imm(static_cast<uint32_t>(arg.value)));
+    case A64CallArgKind::kImm64:
+      return emit_a64_mov_u64(a, dst, arg.value);
+  }
+  return Error::kInvalidArgument;
+}
+
+[[maybe_unused]] static asmjit::Error emit_a64_helper_call(
+    asmjit::a64::Assembler& a, const CJitEngine::JitOffsets& offsets,
+    const CJitEngine::HelperSet& helpers, const CJitEngine::RegAlloc& regs,
+    bool pal_shadow, const void* helper, std::initializer_list<A64CallArg> call_args)
+{
+  using namespace asmjit;
+  if (helper == nullptr || call_args.size() > kA64MaxCallArgs)
+    return Error::kInvalidArgument;
+
+  std::array<A64CallArg, kA64MaxCallArgs> args{};
+  uint32_t count = 0;
+  for (const A64CallArg& arg : call_args) {
+    if (!a64_valid_call_arg(arg)) return Error::kInvalidArgument;
+    args[count++] = arg;
+  }
+
+  Error err = emit_a64_parallel_arg_moves(a, args, count);
+  if (err != Error::kOk) return err;
+  for (uint32_t i = 0; i < count; ++i) {
+    err = emit_a64_call_arg(a, regs, pal_shadow, i, args[i]);
+    if (err != Error::kOk) return err;
+  }
+
+  const int helper_slot = a64_helper_index(helpers, helper);
+  if (helper_slot >= 0 && offsets.helpers != 0) {
+    const uint64_t table_offset = static_cast<uint64_t>(offsets.helpers)
+        + static_cast<uint64_t>(helper_slot) * sizeof(void*);
+    err = emit_a64_add_offset(a, CJitEngine::RegAlloc::kScratch0,
+        CJitEngine::RegAlloc::kCpu, static_cast<int64_t>(table_offset));
+    if (err != Error::kOk) return err;
+    err = a.ldr(CJitEngine::RegAlloc::kCallTarget,
+                a64::ptr(CJitEngine::RegAlloc::kScratch0));
+  }
+  else {
+    err = emit_a64_mov_u64(a, CJitEngine::RegAlloc::kCallTarget,
+                           reinterpret_cast<uintptr_t>(helper));
+  }
+  if (err != Error::kOk) return err;
+  return a.blr(CJitEngine::RegAlloc::kCallTarget);
+}
 
 static asmjit::Error emit_a64_prologue(asmjit::a64::Assembler& a)
 {
@@ -815,9 +1046,12 @@ static bool a64_abi_compatible(const asmjit::Environment& environment)
 void CJitEngine::emit_op(void*, const uint8_t*, void*, const HelperSet&,
                          bool, JitBlock*, uint32_t, uint32_t, RegAlloc&, void*, bool) {}
 
-void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_size, void*, void*, void*,
-    void*, void*, void*, void*, void*, void*, void*, void*, void*, void*, void*, void*,
-    void*, void*, void*, void*)
+void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_size,
+    void* read_helper, void* write_helper, void* opcdec_helper, void* hw_mfpr_helper,
+    void* hw_ld_helper, void* hw_mtpr_helper, void* hw_st_helper, void* indirect_helper,
+    void* read_locked_helper, void* stc_helper, void* misc_helper, void* read_vpte_helper,
+    void* read_wchk_helper, void* itof_helper, void* ftoi_helper, void* fltl_helper,
+    void* fp_read_helper, void* fp_write_helper, void* fltv_helper)
 {
   // Mark the attempt first so every setup failure leaves a permanent interpreter block.
   b->compiled = true;
@@ -850,6 +1084,11 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   assert(a.is_initialized());
 
   RegAlloc regalloc = make_a64_block_regalloc();
+  [[maybe_unused]] const HelperSet helpers = {
+      read_helper, write_helper, opcdec_helper, hw_mfpr_helper, hw_ld_helper,
+      hw_mtpr_helper, hw_st_helper, indirect_helper, read_locked_helper, stc_helper,
+      misc_helper, read_vpte_helper, read_wchk_helper, itof_helper, ftoi_helper,
+      fltl_helper, fp_read_helper, fp_write_helper, fltv_helper};
   if (emit_a64_prologue(a) != asmjit::Error::kOk) return;
   // Cold entry materializes the shared block convention. Chained entries target
   // body directly and inherit these live values plus x19-x22 from their predecessor.
