@@ -37,6 +37,7 @@
 #include <cstring>
 #include <cstddef>
 #include <initializer_list>
+#include <type_traits>
 #include <vector>
 #define ASMJIT_STATIC
 #include <asmjit/a64.h>
@@ -324,8 +325,259 @@ static constexpr bool a64_publish_pc_before_chain(const A64BlockExit& exit,
       || exit.kind == A64ExitKind::kRedispatch;
 }
 
+enum class A64ChainGate : uint8_t {
+  kNone,
+  kPollAll,
+  kDeferInterrupt
+};
+
+static constexpr uint32_t kA64MaxBlockOps = 64;
+
+// Local policy for the shared LinkSlot protocol.
+struct A64DirectChainContract {
+  A64ExitKind kind = A64ExitKind::kNone;
+  uint32_t completed_delta = 0;
+  A64ChainGate gate = A64ChainGate::kNone;
+  A64PcAuthority bailout_pc = A64PcAuthority::kNextPc;
+  bool source_pal_guard = false;
+  bool target_pal_guard = false;
+  bool request_patch_on_slot_miss = false;
+  bool self_loop_candidate = false;
+  bool publish_pc_before_probe = false;
+  bool source_pal_shadow = false;
+
+  constexpr bool eligible() const noexcept {
+    return kind == A64ExitKind::kFallthrough
+        || kind == A64ExitKind::kDirect
+        || kind == A64ExitKind::kCallPal;
+  }
+
+  constexpr bool valid() const noexcept {
+    if (kind == A64ExitKind::kNone || completed_delta == 0
+        || completed_delta > kA64MaxBlockOps
+        || bailout_pc != A64PcAuthority::kNextPc)
+      return false;
+
+    if (!eligible()) {
+      if (kind != A64ExitKind::kIndirect && kind != A64ExitKind::kRedispatch)
+        return false;
+      return gate == A64ChainGate::kNone
+          && !source_pal_guard && !target_pal_guard
+          && !request_patch_on_slot_miss && !self_loop_candidate
+          && !publish_pc_before_probe && !source_pal_shadow;
+    }
+
+    return gate == (source_pal_guard ? A64ChainGate::kDeferInterrupt
+                                     : A64ChainGate::kPollAll)
+        && target_pal_guard
+            == (kind == A64ExitKind::kCallPal && !source_pal_guard)
+        && request_patch_on_slot_miss
+        && self_loop_candidate == (kind == A64ExitKind::kDirect)
+        && publish_pc_before_probe == (source_pal_guard || target_pal_guard)
+        && (source_pal_guard || !source_pal_shadow);
+  }
+};
+
+static constexpr A64DirectChainContract plan_a64_direct_chain(
+    const A64BlockExit& exit, bool pal_block, bool pal_shadow) noexcept
+{
+  A64DirectChainContract contract{};
+  contract.kind = exit.kind;
+  contract.completed_delta = exit.completed_delta;
+  if (!contract.eligible()) return contract;
+
+  contract.gate = pal_block ? A64ChainGate::kDeferInterrupt
+                            : A64ChainGate::kPollAll;
+  contract.source_pal_guard = pal_block;
+  contract.target_pal_guard = exit.kind == A64ExitKind::kCallPal && !pal_block;
+  contract.request_patch_on_slot_miss = true;
+  contract.self_loop_candidate = exit.kind == A64ExitKind::kDirect;
+  contract.publish_pc_before_probe = a64_publish_pc_before_chain(exit, pal_block);
+  contract.source_pal_shadow = pal_block && pal_shadow;
+  return contract;
+}
+
+static constexpr uint64_t kA64LinkPalShadowBit = uint64_t(1) << 63;
+static constexpr uint64_t kA64LinkEpochMask = ~kA64LinkPalShadowBit;
+static constexpr uint64_t kA64InvalidLinkTag = ~uint64_t(0);
+
+static constexpr uint64_t a64_pack_link_vgen(uint64_t epoch,
+                                             bool pal_shadow) noexcept
+{
+  return (epoch & kA64LinkEpochMask)
+      | (pal_shadow ? kA64LinkPalShadowBit : 0);
+}
+
+static constexpr uint64_t a64_link_epoch(uint64_t packed_vgen) noexcept
+{
+  return packed_vgen & kA64LinkEpochMask;
+}
+
+static constexpr bool a64_link_pal_shadow(uint64_t packed_vgen) noexcept
+{
+  return (packed_vgen & kA64LinkPalShadowBit) != 0;
+}
+
+struct A64LinkProbe {
+  uint64_t tag = kA64InvalidLinkTag;
+  uint64_t packed_vgen = 0;
+  bool body_present = false;
+
+  constexpr bool matches(uint64_t target, uint64_t current_epoch,
+                         bool require_target_pal_guard,
+                         bool live_pal_shadow) const noexcept {
+    return body_present && tag == target
+        && a64_link_epoch(packed_vgen)
+            == (current_epoch & kA64LinkEpochMask)
+        && (!require_target_pal_guard
+            || a64_link_pal_shadow(packed_vgen) == live_pal_shadow);
+  }
+};
+
+static constexpr int a64_find_link_probe(
+    const std::array<A64LinkProbe, CJitEngine::kLinkSlots>& slots,
+    uint64_t target, uint64_t current_epoch, bool require_target_pal_guard,
+    bool live_pal_shadow) noexcept
+{
+  for (uint32_t i = 0; i < slots.size(); ++i)
+    if (slots[i].matches(target, current_epoch, require_target_pal_guard,
+                         live_pal_shadow))
+      return static_cast<int>(i);
+  return -1;
+}
+
+static_assert(sizeof(void*) == 8
+              && std::is_standard_layout<CJitEngine::LinkSlot>::value
+              && offsetof(CJitEngine::LinkSlot, tag) == 0
+              && offsetof(CJitEngine::LinkSlot, vgen) == 8
+              && offsetof(CJitEngine::LinkSlot, body) == 16
+              && sizeof(CJitEngine::LinkSlot) == 24
+              && alignof(CJitEngine::LinkSlot) >= 8
+              && CJitEngine::kLinkSlots == 2,
+              "A64 direct links must match the shared two-slot snapshot ABI");
+
+static constexpr bool a64_direct_chain_contract_probe() noexcept
+{
+  const A64BlockExit none = plan_a64_exit(0x1000, 0, A64TerminatorKind::kNone);
+  const A64BlockExit fall = plan_a64_exit(0x1000, 2, A64TerminatorKind::kNone);
+  const A64BlockExit direct =
+      plan_a64_exit(0x1000, 1, A64TerminatorKind::kDirect);
+  const A64BlockExit indirect =
+      plan_a64_exit(0x1000, 1, A64TerminatorKind::kIndirect);
+  const A64BlockExit call_pal =
+      plan_a64_exit(0x1000, 1, A64TerminatorKind::kCallPal);
+  const A64BlockExit redispatch =
+      plan_a64_exit(0x1000, 1, A64TerminatorKind::kRedispatch);
+
+  const A64DirectChainContract native_fall =
+      plan_a64_direct_chain(fall, false, false);
+  const A64DirectChainContract native_direct =
+      plan_a64_direct_chain(direct, false, false);
+  const A64DirectChainContract native_call =
+      plan_a64_direct_chain(call_pal, false, false);
+  const A64DirectChainContract pal_fall =
+      plan_a64_direct_chain(fall, true, false);
+  const A64DirectChainContract pal_direct =
+      plan_a64_direct_chain(direct, true, true);
+  const A64DirectChainContract pal_call =
+      plan_a64_direct_chain(call_pal, true, true);
+  const A64DirectChainContract dynamic =
+      plan_a64_direct_chain(indirect, false, false);
+  const A64DirectChainContract retry =
+      plan_a64_direct_chain(redispatch, false, false);
+  const A64DirectChainContract empty =
+      plan_a64_direct_chain(none, false, false);
+
+  A64DirectChainContract malformed = native_direct;
+  malformed.request_patch_on_slot_miss = false;
+  A64DirectChainContract zero_count = native_direct;
+  zero_count.completed_delta = 0;
+  A64DirectChainContract max_count = native_direct;
+  max_count.completed_delta = kA64MaxBlockOps;
+  A64DirectChainContract unknown_gate = native_direct;
+  unknown_gate.gate = static_cast<A64ChainGate>(0xff);
+  A64DirectChainContract native_shadow = native_direct;
+  native_shadow.source_pal_shadow = true;
+  A64DirectChainContract missing_target_guard = native_call;
+  missing_target_guard.target_pal_guard = false;
+  A64DirectChainContract inactive_patch = dynamic;
+  inactive_patch.request_patch_on_slot_miss = true;
+  const A64DirectChainContract oversized =
+      plan_a64_direct_chain(
+          {0x1104, kA64MaxBlockOps + 1, A64ExitKind::kDirect}, false, false);
+  const A64DirectChainContract unknown =
+      plan_a64_direct_chain({0x1104, 1, static_cast<A64ExitKind>(0xff)}, false, false);
+
+  return native_fall.valid() && native_fall.eligible()
+      && native_fall.gate == A64ChainGate::kPollAll
+      && native_fall.request_patch_on_slot_miss
+      && !native_fall.self_loop_candidate
+      && !native_fall.publish_pc_before_probe
+      && native_direct.valid() && native_direct.self_loop_candidate
+      && native_direct.gate == A64ChainGate::kPollAll
+      && native_call.valid() && native_call.target_pal_guard
+      && native_call.publish_pc_before_probe
+      && !native_call.source_pal_guard
+      && pal_fall.valid() && pal_fall.source_pal_guard
+      && !pal_fall.source_pal_shadow
+      && pal_fall.gate == A64ChainGate::kDeferInterrupt
+      && pal_fall.publish_pc_before_probe
+      && pal_direct.valid() && pal_direct.source_pal_guard
+      && pal_direct.source_pal_shadow && pal_direct.self_loop_candidate
+      && pal_call.valid() && pal_call.source_pal_guard
+      && !pal_call.target_pal_guard && pal_call.publish_pc_before_probe
+      && dynamic.valid() && !dynamic.eligible()
+      && !dynamic.request_patch_on_slot_miss
+      && retry.valid() && !retry.eligible()
+      && !empty.valid() && !malformed.valid()
+      && !zero_count.valid() && max_count.valid()
+      && !unknown_gate.valid() && !native_shadow.valid()
+      && !missing_target_guard.valid() && !inactive_patch.valid()
+      && !oversized.valid()
+      && !unknown.valid();
+}
+
+static constexpr bool a64_link_probe_contract_probe() noexcept
+{
+  constexpr uint64_t native_target = 0x2000;
+  constexpr uint64_t pal_target = 0x2001;
+  constexpr uint64_t epoch = 0x12345678;
+  const std::array<A64LinkProbe, CJitEngine::kLinkSlots> native_slots{{
+      {0x3000, a64_pack_link_vgen(epoch, false), true},
+      {native_target, a64_pack_link_vgen(epoch, true), true}}};
+  const std::array<A64LinkProbe, CJitEngine::kLinkSlots> pal_slots{{
+      {pal_target, a64_pack_link_vgen(epoch, false), true},
+      {pal_target, a64_pack_link_vgen(epoch, true), true}}};
+  const std::array<A64LinkProbe, CJitEngine::kLinkSlots> empty_slots{{
+      {pal_target, a64_pack_link_vgen(epoch, true), false},
+      {kA64InvalidLinkTag, 0, false}}};
+
+  return a64_pack_link_vgen(epoch, false) == epoch
+      && a64_pack_link_vgen(UINT64_MAX, false) == kA64LinkEpochMask
+      && a64_pack_link_vgen(UINT64_MAX, true) == UINT64_MAX
+      && a64_link_epoch(a64_pack_link_vgen(epoch, true)) == epoch
+      && a64_link_pal_shadow(a64_pack_link_vgen(epoch, true))
+      && !a64_link_pal_shadow(a64_pack_link_vgen(epoch, false))
+      // A native target ignores the packed PAL variant; slot zero misses by tag.
+      && a64_find_link_probe(
+          native_slots, native_target, epoch, false, false) == 1
+      && a64_find_link_probe(native_slots, 0x4000, epoch, false, false) == -1
+      // A PAL target skips the wrong variant in slot zero and reaches slot one.
+      && a64_find_link_probe(pal_slots, pal_target, epoch, true, true) == 1
+      && a64_find_link_probe(pal_slots, pal_target, epoch, true, false) == 0
+      && a64_find_link_probe(
+          pal_slots, pal_target, epoch + 1, true, true) == -1
+      && a64_find_link_probe(
+          empty_slots, pal_target, epoch, true, true) == -1;
+}
+
+static_assert(a64_direct_chain_contract_probe(),
+              "A64 direct-chain policy must gate, guard, and route every exit kind consistently");
+static_assert(a64_link_probe_contract_probe(),
+              "A64 link probes must reject stale, absent, mistagged, and wrong-variant snapshots");
+
 struct A64BlockPlan {
-  static constexpr uint32_t kMaxOps = 64;
+  static constexpr uint32_t kMaxOps = kA64MaxBlockOps;
 
   std::array<A64DecodedOp, kMaxOps> ops{};
   A64GprUsage gpr_usage{};
@@ -1182,8 +1434,10 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 
   const A64BlockPlan plan = plan_a64_block(*b, dram, dram_size);
   const A64BlockExit exit = plan_a64_exit(b->tag, plan.count, plan.terminator);
+  const A64DirectChainContract chain =
+      plan_a64_direct_chain(exit, (b->tag & 1u) != 0, b->pal_shadow);
   // Avoid even dry-run codegen until a classifier and emitter agree on a supported prefix.
-  if (!exit.valid()) return;
+  if (!exit.valid() || !chain.valid()) return;
 
   if (m_rt == nullptr) return;
   auto* const rt = static_cast<asmjit::JitRuntime*>(m_rt);
