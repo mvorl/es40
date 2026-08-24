@@ -1433,6 +1433,29 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   b->hash_len = 0;
 
   const A64BlockPlan plan = plan_a64_block(*b, dram, dram_size);
+#ifdef JIT_STATS
+  if (plan.stop == A64PlanStop::kUnsupported) {
+    const uint32_t bop = plan.breaker_word >> 26;
+    m_term_op[bop]++;                 // tally what cut this block (the coverage gap to chase)
+    if (bop == 0x00)                  // CALL_PAL: also tally the function code (low 8 bits)
+      m_pal_func[plan.breaker_word & 0xFF]++;
+    else if (bop == 0x1d)             // HW_MTPR: tally the IPR index -- which writes break blocks
+      m_mtpr_func[(plan.breaker_word >> 8) & 0xFF]++;
+    else if (bop == 0x1b)             // HW_LD: tally the form (phys/virt/lock/vpte/chk, ins[15:12])
+      m_hwld_func[(plan.breaker_word >> 12) & 0xF]++;
+    else if (bop == 0x18)             // MISC: tally the Ra==31 form (ins[15:12]: 0xc RPCC / 0xe RC / 0xf RS)
+      m_misc_func[(plan.breaker_word >> 12) & 0xF]++;
+    // Punch list: one-shot print of the first ACTIONABLE breaker -- keep the exclusions
+    // identical to the x64 backend so both hosts point at the same next translation target.
+    if (!m_first_breaker_logged && bop != 0x00 && bop != 0x1b && bop != 0x1d && bop != 0x1f && bop != 0x10 && bop != 0x18 && bop != 0x13 && bop != 0x14 && bop != 0x17) {
+      m_first_breaker_logged = true;
+      printf("[JIT][PUNCH][CPU%d] first unhandled breaker: %s(0x%02x) ins=%08x at pc=%016llx%s\n",
+             m_cpu_id, jit_opcode_name(bop), bop, plan.breaker_word,
+             (unsigned long long) ((b->tag & ~(uint64_t) 1) + (uint64_t) plan.count * 4),
+             (b->tag & 1) ? "  [PALmode]" : "");
+    }
+  }
+#endif
   const A64BlockExit exit = plan_a64_exit(b->tag, plan.count, plan.terminator);
   const A64DirectChainContract chain =
       plan_a64_direct_chain(exit, (b->tag & 1u) != 0, b->pal_shadow);
