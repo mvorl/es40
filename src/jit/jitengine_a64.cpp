@@ -433,7 +433,7 @@ struct A64IndirectChainContract {
   uint32_t completed_delta = 0;
   A64ChainGate gate = A64ChainGate::kNone;
   A64LinkVariantPolicy target_variant = A64LinkVariantPolicy::kNone;
-  bool source_pal_guard = false;
+  bool pal_block = false;
   bool source_pal_shadow = false;
   bool probe_pic = false;
   bool call_resolver_on_miss = false;
@@ -448,15 +448,15 @@ struct A64IndirectChainContract {
     if (kind == A64IndirectKind::kNone)
       return completed_delta == 0 && gate == A64ChainGate::kNone
           && target_variant == A64LinkVariantPolicy::kNone
-          && !source_pal_guard && !source_pal_shadow && !probe_pic
+          && !pal_block && !source_pal_shadow && !probe_pic
           && !call_resolver_on_miss && !publish_pc_before_probe
           && !publish_pc_on_miss;
-    if (!eligible() || (kind == A64IndirectKind::kHwRet && !source_pal_guard)
+    if (!eligible() || (kind == A64IndirectKind::kHwRet && !pal_block)
         || completed_delta == 0
         || completed_delta > kA64MaxBlockOps)
       return false;
 
-    const A64ChainGate expected_gate = !source_pal_guard
+    const A64ChainGate expected_gate = !pal_block
         ? A64ChainGate::kPollAll
         : kind == A64IndirectKind::kHwRet
             ? A64ChainGate::kPollInterruptOnNativeTarget
@@ -466,9 +466,9 @@ struct A64IndirectChainContract {
             ? A64LinkVariantPolicy::kIfTargetPal
             : A64LinkVariantPolicy::kNone;
     return gate == expected_gate && target_variant == expected_variant
-        && (source_pal_guard || !source_pal_shadow)
+        && (pal_block || !source_pal_shadow)
         && probe_pic && call_resolver_on_miss
-        && publish_pc_before_probe == source_pal_guard
+        && publish_pc_before_probe == pal_block
         && publish_pc_on_miss;
   }
 };
@@ -498,7 +498,7 @@ static constexpr A64IndirectChainContract plan_a64_indirect_chain(
   contract.target_variant = contract.kind == A64IndirectKind::kHwRet
       ? A64LinkVariantPolicy::kIfTargetPal
       : A64LinkVariantPolicy::kNone;
-  contract.source_pal_guard = pal_block;
+  contract.pal_block = pal_block;
   contract.source_pal_shadow = pal_block && pal_shadow;
   contract.probe_pic = true;
   contract.call_resolver_on_miss = true;
@@ -708,6 +708,8 @@ static constexpr bool a64_indirect_chain_contract_probe() noexcept
   wrong_variant.target_variant = A64LinkVariantPolicy::kAlways;
   A64IndirectChainContract no_resolver = native_jmp;
   no_resolver.call_resolver_on_miss = false;
+  A64IndirectChainContract native_shadow = native_jmp;
+  native_shadow.source_pal_shadow = true;
   A64IndirectChainContract bad_kind = native_jmp;
   bad_kind.kind = static_cast<A64IndirectKind>(0xff);
 
@@ -715,13 +717,14 @@ static constexpr bool a64_indirect_chain_contract_probe() noexcept
       && native_jmp.kind == A64IndirectKind::kJmp
       && native_jmp.gate == A64ChainGate::kPollAll
       && native_jmp.target_variant == A64LinkVariantPolicy::kNone
+      && !native_jmp.pal_block
       && !native_jmp.publish_pc_before_probe
       && !native_hw.valid()
-      && pal_jmp.valid() && pal_jmp.source_pal_guard
+      && pal_jmp.valid() && pal_jmp.pal_block
       && !pal_jmp.source_pal_shadow
       && pal_jmp.gate == A64ChainGate::kDeferInterrupt
       && pal_jmp.publish_pc_before_probe
-      && pal_hw.valid() && pal_hw.source_pal_guard
+      && pal_hw.valid() && pal_hw.pal_block
       && pal_hw.source_pal_shadow
       && pal_hw.gate == A64ChainGate::kPollInterruptOnNativeTarget
       && pal_hw.target_variant == A64LinkVariantPolicy::kIfTargetPal
@@ -729,7 +732,7 @@ static constexpr bool a64_indirect_chain_contract_probe() noexcept
       && inactive.valid() && !inactive.eligible()
       && !unknown.valid() && !zero_count.valid() && max_count.valid()
       && !oversized.valid() && !wrong_gate.valid() && !wrong_variant.valid()
-      && !no_resolver.valid() && !bad_kind.valid();
+      && !no_resolver.valid() && !native_shadow.valid() && !bad_kind.valid();
 }
 
 static constexpr bool a64_link_probe_contract_probe() noexcept
@@ -2185,6 +2188,8 @@ static asmjit::Error emit_a64_direct_chain_tail(asmjit::a64::Assembler& a,
   const Label miss = a.new_label();
   err = emit_a64_chain_gate(a, offsets, contract.gate, bailout);
   if (err != Error::kOk) return err;
+  // A source-variant mismatch must not request a patch: PAL-source slots are
+  // tag-keyed and rely on this guard to imply the target register-bank variant.
   err = emit_a64_source_pal_guard(a, offsets, contract.source_pal_guard,
                                   contract.source_pal_shadow, bailout);
   if (err != Error::kOk) return err;
@@ -2257,9 +2262,6 @@ static asmjit::Error emit_a64_indirect_chain_tail(asmjit::a64::Assembler& a,
   const Label bailout = a.new_label();
   const Label resolver = a.new_label();
   err = emit_a64_chain_gate(a, offsets, contract.gate, bailout);
-  if (err != Error::kOk) return err;
-  err = emit_a64_source_pal_guard(a, offsets, contract.source_pal_guard,
-                                  contract.source_pal_shadow, bailout);
   if (err != Error::kOk) return err;
   err = emit_a64_link_slots_probe(a, offsets, slots, current_epoch,
                                   contract.target_variant, resolver);
@@ -2495,6 +2497,7 @@ static bool a64_validate_tail_emitters(const asmjit::Environment& environment,
   };
 
   return validate_direct(A64ExitKind::kFallthrough, false, false)
+      && validate_direct(A64ExitKind::kFallthrough, true, true)
       && validate_direct(A64ExitKind::kDirect, true, true)
       && validate_direct(A64ExitKind::kCallPal, false, false)
       && validate_direct(A64ExitKind::kRedispatch, true, true)
