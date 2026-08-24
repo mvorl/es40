@@ -1924,6 +1924,9 @@ struct A64EmitContext {
   uint64_t start_pc;
   bool pal_block;
   bool pal_shadow;
+  const A64BlockPlan* plan = nullptr;
+  A64OpEmitReceipt receipt{};
+  uint32_t receipt_index = UINT32_MAX;
 };
 
 static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
@@ -2497,10 +2500,29 @@ static bool a64_abi_compatible(const asmjit::Environment& environment)
 
 } // namespace
 
-void CJitEngine::emit_op(void*, const uint8_t*, void*, const HelperSet&,
-                         bool, JitBlock*, uint32_t, uint32_t, RegAlloc&, void*, bool)
+void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr,
+                         const HelperSet& hs, bool pal_block, JitBlock* b,
+                         uint32_t ins, uint32_t i, RegAlloc& regalloc,
+                         void* cold, bool defer_pc)
 {
-  assert(false && "A64 callers must use the checked typed body driver");
+  (void)gpa;
+  auto* const context = static_cast<A64EmitContext*>(cold);
+  if (context == nullptr) return;
+
+  context->receipt = {};
+  context->receipt_index = i;
+  if (a_ptr != &context->assembler || done_ptr != &context->done
+      || &hs != &context->helpers || &regalloc != &context->regs
+      || b == nullptr || b->tag != context->start_pc
+      || pal_block != context->pal_block || !defer_pc
+      || context->plan == nullptr || i >= context->plan->count
+      || context->plan->ops[i].ins != ins) {
+    context->receipt.error = asmjit::Error::kInvalidArgument;
+    return;
+  }
+
+  context->receipt = emit_a64_planned_op(
+      *context, context->plan->ops[i], i);
 }
 
 void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_size,
@@ -2582,7 +2604,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   assert(abi_compatible);
 #endif
 
-  // Build a complete fixed frame, but deliberately discard the generated image.
+  // Build a complete fixed frame.
   asmjit::CodeHolder code;
   if (code.init(rt->environment(), rt->cpu_features()) != asmjit::Error::kOk) return;
 
@@ -2613,9 +2635,13 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 
   A64EmitContext emit_context{a, m_off, helpers, regalloc, done, b->tag,
                               pal_block, b->pal_shadow};
+  emit_context.plan = &plan;
   const A64BodyEmitReceipt body_emission = emit_a64_block_body(
       plan, [&](const A64DecodedOp& op, uint32_t index) {
-        return emit_a64_planned_op(emit_context, op, index);
+        emit_op(&a, nullptr, &done, helpers, pal_block, b, op.ins, index,
+                regalloc, &emit_context, true);
+        return emit_context.receipt_index == index
+            ? emit_context.receipt : A64OpEmitReceipt{};
       });
   if (!body_emission.complete_for(plan)) return;
 
@@ -2638,6 +2664,35 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
       *b, plan, exit, body_emission, dram, dram_size, code, body, m_code_bytes);
   if (!pending.ready()) return;
   assert(pending.body_off != 0);  // Chained entry must remain past the cold prologue.
+
+  JitFn fn = nullptr;
+  if (rt->add(&fn, &code) != asmjit::Error::kOk) return;
+
+  const A64PendingPublication committed = prepare_a64_block_publication(
+      *b, plan, exit, body_emission, dram, dram_size, code, body, m_code_bytes);
+  if (!committed.ready()) {
+    (void)rt->release(fn);
+    return;
+  }
+
+  void* const jit_body = static_cast<void*>(
+      reinterpret_cast<uint8_t*>(reinterpret_cast<void*>(fn)) + committed.body_off);
+  b->body_off = static_cast<uint32_t>(committed.body_off);
+  b->src_sum = committed.source_hash;
+  b->hash_len = committed.hash_len;
+  b->prefix_len = committed.prefix_len;
+#ifdef JIT_REGPROF
+  b->rp_mask = plan.gpr_usage.reads | plan.gpr_usage.writes;
+  b->rp_csz = static_cast<uint32_t>(committed.code_size);
+#endif
+  m_code_bytes = committed.prior_code_bytes + committed.code_size;
+#ifdef JIT_STATS
+  m_stat_compiled++;
+  m_stat_plen_sum += committed.prefix_len;
+  m_stat_code_bytes += committed.code_size;
+#endif
+  b->code = fn;
+  b->jit_body = jit_body;  // Runnable chain entry publishes last.
 }
 
 void CJitEngine::compile_trace(TraceFragment*, JitBlock**, uint32_t,
