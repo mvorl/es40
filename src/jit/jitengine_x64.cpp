@@ -2708,13 +2708,16 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   // Cached direct link: tail straight into our cached successor's body via its SNAPSHOT
   // {tag, vgen, body} in OUR link slots so one cache line, no dereference into the successor's
   // JitBlock. A slot hits when it maps this exit's PC (tag == R10) and was patched under the
-  // current epoch. Otherwise record a patch request (m_link_from = this block) and fall back. 
+  // current epoch. Otherwise record a patch request (m_link_from = this block) and fall back.
+  auto emit_source_pal_guard = [&](Label& lbl) {
+    if (pal_block) {
+      // PAL-source slots are tag-keyed and rely on this guard to imply the target
+      // register-bank variant. A mismatch must bypass the link-patch request.
+      a.cmp(x86::byte_ptr(x86::rbp, m_off.sde), imm(b->pal_shadow ? 1 : 0)); a.jne(lbl);
+    }
+  };
   auto emit_chain = [&](Label& lbl) {
     Label miss = a.new_label();
-    // A PAL body has a fixed register-bank mapping.
-    if (pal_block) {
-      a.cmp(x86::byte_ptr(x86::rbp, m_off.sde), imm(b->pal_shadow ? 1 : 0)); a.jne(miss);
-    }
     // Epoch changes proactively clear every patched LinkSlot, so body!=0 is the
     // staleness proof.
     // Poly-link: walk the cached successor snapshots, 2-successor cache both.
@@ -2804,8 +2807,9 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     const bool gate_exit = counted_scan_fused || word_scan_fused || byte_scan_fused || tail_scan_fused
                         || !(lop >= 0x30 && lop <= 0x3f) || (((lw >> 20) & 1) != 0);
     Label exit_chain = a.new_label();
+    if (gate_exit) emit_gate(exit_chain);
+    emit_source_pal_guard(exit_chain);
     if (gate_exit) {
-      emit_gate(exit_chain);
       // Self-loop fast path: a taken branch back to our own start (r10 == b->tag) jumps
       // straight into the body, skipping the resolver call entirely.
       Label not_self = a.new_label();
@@ -2824,6 +2828,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 #ifndef JIT_VERIFY
     // No gate: fall-through PC is strictly forward.
     Label exit_chain = a.new_label();
+    emit_source_pal_guard(exit_chain);
     emit_chain(exit_chain);
     a.bind(exit_chain);
 #endif
