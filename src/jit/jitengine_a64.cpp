@@ -335,10 +335,43 @@ struct A64BlockPlan {
   A64TerminatorKind terminator = A64TerminatorKind::kNone;
 };
 
+// Block image description.
+struct A64PendingPublication {
+  uint64_t code_size = 0;
+  uint64_t body_off = 0;
+  uint64_t source_hash = 0;
+  uint64_t prior_code_bytes = 0;
+  uint32_t plan_count = 0;
+  uint32_t prefix_len = 0;
+  uint32_t hash_len = 0;
+  bool source_current = false;
+  bool layout_complete = false;
+
+  constexpr bool ready() const noexcept {
+    return source_current && layout_complete
+        && plan_count != 0 && plan_count <= A64BlockPlan::kMaxOps
+        && prefix_len == plan_count
+        && hash_len == prefix_len
+        && code_size != 0 && (code_size & 3u) == 0
+        && code_size <= UINT32_MAX
+        && (body_off & 3u) == 0 && body_off < code_size
+        && body_off <= UINT32_MAX
+        && code_size <= UINT64_MAX - prior_code_bytes;
+  }
+};
+
 struct A64ScanLimit {
   uint32_t count;
   A64PlanStop stop;
 };
+
+static constexpr bool a64_source_extent_valid(uint64_t phys, uint32_t words,
+                                               uint64_t dram_size) noexcept
+{
+  return words != 0 && (phys & 3u) == 0 && phys <= dram_size
+      && static_cast<uint64_t>(words)
+          <= (dram_size - phys) / sizeof(uint32_t);
+}
 
 // Classification stays fail-closed: each translation will add its classifier and emitter together.
 static constexpr A64OpClass classify_a64_op(uint32_t, bool) noexcept
@@ -398,8 +431,8 @@ static A64BlockPlan plan_a64_block(const CJitEngine::JitBlock& block,
     plan.stop = A64PlanStop::kEmptyBlock;
     return plan;
   }
-  if (dram == nullptr || (block.phys & 3u) != 0 || block.phys > dram_size
-      || static_cast<uint64_t>(block.n_instr) > (dram_size - block.phys) / sizeof(uint32_t))
+  if (dram == nullptr
+      || !a64_source_extent_valid(block.phys, block.n_instr, dram_size))
     return plan;
 
   const A64ScanLimit limit = a64_scan_limit(block.n_instr, block.phys);
@@ -426,6 +459,55 @@ static A64BlockPlan plan_a64_block(const CJitEngine::JitBlock& block,
   return plan;
 }
 
+static A64PendingPublication prepare_a64_block_publication(
+    const CJitEngine::JitBlock& block, const A64BlockPlan& plan,
+    const A64BlockExit& exit, const uint8_t* dram, uint64_t dram_size,
+    const asmjit::CodeHolder& code, const asmjit::Label& body,
+    uint64_t prior_code_bytes) noexcept
+{
+  A64PendingPublication pending{};
+  pending.code_size = static_cast<uint64_t>(code.code_size());
+  pending.prior_code_bytes = prior_code_bytes;
+  pending.plan_count = plan.count;
+  pending.prefix_len = plan.count;
+  // Placeholder until lookahead and fusion are brought in.
+  pending.hash_len = plan.count;
+
+  const bool body_bound = code.is_label_bound(body);
+  pending.layout_complete = exit.valid()
+      && exit.completed_delta == plan.count
+      && !code.has_unresolved_fixups()
+      && code.section_count() == 1
+      && code.section_by_id(0)->has_offset()
+      && code.section_by_id(0)->offset() == 0
+      && body_bound
+      && code.label_entry_of(body).section_id() == 0;
+  if (body_bound) pending.body_off = code.label_offset(body);
+
+  if (dram == nullptr
+      || !a64_source_extent_valid(block.phys, pending.hash_len, dram_size))
+    return pending;
+  if (pending.prefix_len > plan.ops.size()
+      || pending.hash_len != pending.prefix_len)
+    return pending;
+
+  const uint8_t* const source = dram + static_cast<size_t>(block.phys);
+  std::array<uint32_t, A64BlockPlan::kMaxOps> current_words{};
+  for (uint32_t i = 0; i < pending.prefix_len; ++i) {
+    const uint32_t word =
+        load_a64_guest_u32(source + static_cast<size_t>(i) * sizeof(uint32_t));
+    if (word != plan.ops[i].ins)
+      return pending;
+    current_words[i] = word;
+  }
+
+  // Hash reads that prove snapshot current
+  pending.source_hash = src_hash(
+      reinterpret_cast<const uint8_t*>(current_words.data()), pending.hash_len);
+  pending.source_current = true;
+  return pending;
+}
+
 static constexpr uint32_t kA64DecodeProbe =
     (0x10u << 26) | (17u << 21) | (9u << 16) | 29u;
 static constexpr uint32_t kA64LiteralProbe =
@@ -447,6 +529,36 @@ static_assert(a64_scan_limit(3, 0).count == 3
               && a64_scan_limit(3, 0x1ff8).stop == A64PlanStop::kPageBoundary
               && a64_scan_limit(1, 0x2000).count == 1,
               "A64 planning must honor block, instruction, and physical-page bounds");
+static_assert(a64_source_extent_valid(0, 1, 4)
+              && a64_source_extent_valid(4, 2, 12)
+              && a64_source_extent_valid(~uint64_t(7), 1, UINT64_MAX)
+              && !a64_source_extent_valid(0, 0, 4)
+              && !a64_source_extent_valid(1, 1, 8)
+              && !a64_source_extent_valid(8, 1, 8)
+              && !a64_source_extent_valid(4, 2, 11)
+              && !a64_source_extent_valid(12, 1, 8)
+              && !a64_source_extent_valid(~uint64_t(7), 2, UINT64_MAX),
+              "A64 source extents must reject empty, unaligned, truncated, and wrapping ranges");
+static_assert(A64PendingPublication{64, 16, 1, 0, 3, 3, 3, true, true}.ready()
+              && A64PendingPublication{64, 16, 1, UINT64_MAX - 64,
+                                       3, 3, 3, true, true}.ready()
+              && !A64PendingPublication{}.ready()
+              && !A64PendingPublication{64, 16, 1, 0, 3, 0, 3, true, true}.ready()
+              && !A64PendingPublication{64, 16, 1, 0, 3, 2, 3, true, true}.ready()
+              && !A64PendingPublication{64, 16, 1, 0, 65, 65, 65, true, true}.ready()
+              && !A64PendingPublication{64, 16, 1, 0, 3, 3, 2, true, true}.ready()
+              && !A64PendingPublication{64, 16, 1, 0, 3, 3, 4, true, true}.ready()
+              && !A64PendingPublication{0, 0, 1, 0, 3, 3, 3, true, true}.ready()
+              && !A64PendingPublication{62, 16, 1, 0, 3, 3, 3, true, true}.ready()
+              && !A64PendingPublication{64, 64, 1, 0, 3, 3, 3, true, true}.ready()
+              && !A64PendingPublication{64, 18, 1, 0, 3, 3, 3, true, true}.ready()
+              && !A64PendingPublication{uint64_t(UINT32_MAX) + 1, 16, 1, 0,
+                                         3, 3, 3, true, true}.ready()
+              && !A64PendingPublication{64, 16, 1, UINT64_MAX - 63,
+                                         3, 3, 3, true, true}.ready()
+              && !A64PendingPublication{64, 16, 1, 0, 3, 3, 3, false, true}.ready()
+              && !A64PendingPublication{64, 16, 1, 0, 3, 3, 3, true, false}.ready(),
+              "A64 publication must be complete, aligned, bounded, and transactionally safe");
 
 static constexpr bool a64_exit_contract_probe() noexcept
 {
@@ -1053,11 +1165,20 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     void* read_wchk_helper, void* itof_helper, void* ftoi_helper, void* fltl_helper,
     void* fp_read_helper, void* fp_write_helper, void* fltv_helper)
 {
-  // Mark the attempt first so every setup failure leaves a permanent interpreter block.
+  // Match the x64 cold-path lifecycle.
+  if (m_rt && m_code_bytes >= kReclaimBytes) {
+    reclaim_code();
+    b->valid = true;
+  }
+
+  // Mark the attempt
   b->compiled = true;
   b->code = nullptr;
   b->jit_body = nullptr;
   b->prefix_len = 0;
+  b->body_off = 0;
+  b->src_sum = 0;
+  b->hash_len = 0;
 
   const A64BlockPlan plan = plan_a64_block(*b, dram, dram_size);
   const A64BlockExit exit = plan_a64_exit(b->tag, plan.count, plan.terminator);
@@ -1097,7 +1218,6 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   asmjit::Label done = a.new_label();
   asmjit::Label body = a.new_label();
   if (a.bind(body) != asmjit::Error::kOk) return;
-  [[maybe_unused]] const size_t body_off = code.code_size();
 
   // Empty translated body: a cold call would return zero completed instructions.
   if (a.mov(RegAlloc::kResultCount, RegAlloc::kChainCount.w()) != asmjit::Error::kOk) return;
@@ -1107,8 +1227,12 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   if (emit_a64_epilogue(a) != asmjit::Error::kOk) return;
   if (a.finalize() != asmjit::Error::kOk) return;
 
-  assert(body_off == 40 + kA64BlockGuestPins.size() * 4);
-  assert(code.code_size() == 72 + kA64BlockGuestPins.size() * 8);
+  const A64PendingPublication pending = prepare_a64_block_publication(
+      *b, plan, exit, dram, dram_size, code, body, m_code_bytes);
+  if (!pending.ready()) return;
+
+  assert(pending.body_off == 40 + kA64BlockGuestPins.size() * 4);
+  assert(pending.code_size == 72 + kA64BlockGuestPins.size() * 8);
 }
 
 void CJitEngine::compile_trace(TraceFragment*, JitBlock**, uint32_t,
