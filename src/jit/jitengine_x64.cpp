@@ -31,6 +31,8 @@
 
 #ifdef ES40_JIT_X64
 
+#include <algorithm>
+#include <array>
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -45,10 +47,9 @@
 // ---- guest-ISA classification + emit support (x86 backend only) ----
 namespace {
 
-#ifdef JIT_DISASM
 // Log/error any asmjit emit failure (badly formed instruction / bad operand) that the Assembler
-// would otherwise accept and then ship as a silently truncated block. Records the failure so
-// compile_block discards the block instead of adding it.
+// would otherwise accept and then ship as a silently truncated block/trace. Strict instruction
+// validation and formatted disassembly remain optional; rejecting a failed image is not.
 class JitErrorHandler : public asmjit::ErrorHandler {
 public:
   FILE* fp = nullptr;   // disassembly trace file (falls back to stderr if unopened)
@@ -60,7 +61,6 @@ public:
     fprintf(fp ? fp : stderr, "[JIT][CPU%d][EMIT-ERROR] %s\n", cpu_id, message);
   }
 };
-#endif
 
 enum SafeOp {
   OP_NONE,
@@ -2123,9 +2123,10 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   }
   b->compiled = true;
 
-  uint64_t phys = b->phys;
-  if (b->n_instr == 0 || phys + (uint64_t) b->n_instr * 4 > dram_size) return;
-  const uint32_t* words = (const uint32_t*) (dram + phys);   // x86 LE == Alpha LE
+  const uint64_t phys = b->phys;
+  if (dram == nullptr || b->n_instr == 0 || phys > dram_size
+      || static_cast<uint64_t>(b->n_instr) > (dram_size - phys) / sizeof(uint32_t))
+    return;
 
   // PALmode blocks (PC bit 0) use the register-bank mapping captured in b->pal_shadow
   const bool pal_block = (b->tag & 1) != 0;
@@ -2134,6 +2135,19 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   // address need not be phys+4 (the next virtual page maps elsewhere), so words[]
   // there would be the wrong instructions. (The page-crossing case verify caught.)
   const uint64_t page_end = (phys & ~(uint64_t) 0x1FFF) + 0x2000;
+
+  // Compile from one immutable source image. 
+  uint32_t snapshot_len = b->n_instr;
+  const uint64_t fusion_avail = (std::min)(
+      (dram_size - phys) / sizeof(uint32_t),
+      (page_end - phys) / sizeof(uint32_t));
+  const uint32_t fusion_snapshot_len = static_cast<uint32_t>(
+      (std::min)(fusion_avail, uint64_t{39}));
+  if (snapshot_len < fusion_snapshot_len) snapshot_len = fusion_snapshot_len;
+  std::vector<uint32_t> source_words(snapshot_len);
+  memcpy(source_words.data(), dram + phys,
+         static_cast<size_t>(snapshot_len) * sizeof(uint32_t));
+  const uint32_t* const words = source_words.data();   // x86 LE == Alpha LE
   uint32_t plen = 0;
   bool terminator_branch = false;       // last instruction is a compiled terminator (sets its own PC)
   bool terminator_jmp = false;          // ...and it's a computed jump (don't chain: targets vary)
@@ -2234,6 +2248,11 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     tail_scan_fused = memcmp(words, tail_scan, sizeof(tail_scan)) == 0;
   }
 #endif
+  const uint32_t hash_len = counted_scan_fused ? 39u : byte_scan_fused ? 8u
+                          : tail_scan_fused ? 6u : word_scan_fused ? 10u : b->n_instr;
+  assert(hash_len <= source_words.size());
+  const uint64_t source_hash = src_hash(
+      reinterpret_cast<const uint8_t*>(source_words.data()), hash_len);
 #ifdef JIT_REGPROF
   b->rp_mask = regprof_mask(words, plen);   // GPR-access fingerprint; exec-weighted at report time
 #endif
@@ -2242,15 +2261,19 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   // Keep cpu in RBP and regs in RBX (callee-saved, so they survive helper calls);
   // reserve a 40-byte frame (32 shadow + 8 load-out slot) that keeps RSP 16-aligned
   // for calls. RAX = op1/result, RCX = operand2 (CL for variable shifts).
+  JitErrorHandler eh;
+  eh.cpu_id = m_cpu_id;
+#ifdef JIT_DISASM
+  eh.fp = m_disasm_fp;
+  StringLogger logger;
+#endif
   CodeHolder code;
   if (code.init(((JitRuntime*) m_rt)->environment()) != Error::kOk) return;
+  code.set_error_handler(&eh);
 #ifdef JIT_DISASM
   // Dev: capture this block's disassembly, validate each emitted instruction, and trap any
   // emit failure (dumped + bailed near rt->add() below). Logging formats every instruction.
-  StringLogger logger;
   code.set_logger(&logger);
-  JitErrorHandler eh; eh.cpu_id = m_cpu_id; eh.fp = m_disasm_fp;
-  code.set_error_handler(&eh);
 #endif
   x86::Assembler a(&code);
 #ifdef JIT_DISASM
@@ -2262,7 +2285,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   // 64-/32-bit register; emit_call (below) marshals into them, replacing out usage of 
   // #ifdef _WIN32. Helpers limited to <= 4 integer arguments.
   CallConv cc;
-  (void) cc.init(CallConvId::kCDecl, ((JitRuntime*) m_rt)->environment());
+  if (cc.init(CallConvId::kCDecl, ((JitRuntime*) m_rt)->environment()) != Error::kOk) return;
   const uint8_t* gpa = cc.passed_order(RegGroup::kGp);
   auto aq = [&](int i) { return x86::gpq(gpa[i]); };
   auto ad = [&](int i) { return x86::gpd(gpa[i]); };
@@ -2846,15 +2869,24 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
             (b->tag & 1) ? " PAL" : "", plen, (unsigned long long) csz, logger.data());
     fflush(out);   // per-block flush: preserve the trace if JIT'd code later crashes
   }
-  if (eh.failed) return;   // emit error already reported -- don't ship a broken block
 #endif
-  if (((JitRuntime*) m_rt)->add(&fn, &code) != Error::kOk) return;
-  b->code = fn;
-  b->jit_body = (void*) ((uint8_t*) (void*) fn + body_off);   // chained re-entry (past prologue)
+  if (eh.failed) return;   // emit error already reported -- don't ship a broken block
+
+  const size_t source_bytes = static_cast<size_t>(hash_len) * sizeof(uint32_t);
+  if (memcmp(dram + phys, source_words.data(), source_bytes) != 0) return;
+
+  auto* const rt = static_cast<JitRuntime*>(m_rt);
+  if (rt->add(&fn, &code) != Error::kOk) return;
+  // add() can allocate/copy for long enough that another CPU modifies the guest source. 
+  // Never publish old code with a hash of new bytesand abandon the unreferenced on any mismatch.
+  if (eh.failed || memcmp(dram + phys, source_words.data(), source_bytes) != 0) {
+    (void)rt->release(fn);
+    return;
+  }
+
+  void* const jit_body = (void*) ((uint8_t*) (void*) fn + body_off);   // chained re-entry (past prologue)
   b->body_off = (uint32_t) body_off;                          // to restore jit_body on revalidate
-  const uint32_t hash_len = counted_scan_fused ? 39u : byte_scan_fused ? 8u
-                          : tail_scan_fused ? 6u : word_scan_fused ? 10u : b->n_instr;
-  b->src_sum  = src_hash(dram + phys, hash_len);              // include every word the fusion depends on
+  b->src_sum  = source_hash;                                  // include every word the fusion depends on
   b->hash_len = hash_len;                                     // freeze the hash extent (n_instr drifts)
   b->prefix_len = plen;
   m_code_bytes += csz;   // track for the reclaim threshold (see flush())
@@ -2866,6 +2898,8 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 #ifdef JIT_REGPROF
   b->rp_csz = (uint32_t) csz;   // exec-weighted expansion: sum(rp_hits*rp_csz) / sum(rp_hits*prefix_len)
 #endif
+  b->code = fn;
+  b->jit_body = jit_body;                                     // runnable chain entry publishes last
 }
 
 // Compile an N-block trace. Reuses the shared emit_op for each block's per-op codegen (so the body
@@ -2877,12 +2911,21 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
                                const uint8_t* dram, uint64_t dram_size, const HelperSet& hs)
 {
   using namespace asmjit;
-  if (n_blocks == 0 || n_blocks > kMaxTraceSegs) return;
+  if (dram == nullptr || m_rt == nullptr || n_blocks == 0 || n_blocks > kMaxTraceSegs) return;
+  std::array<SourceSeg, kMaxTraceSegs> source_desc{};
+  std::array<std::vector<uint32_t>, kMaxTraceSegs> source_words{};
   // Validate every segment up front: a compiled prefix that fits in DRAM. (prefix_len, NOT n_instr --
   // ops past the prefix never passed the safe-to-compile scan; emitting them runs code PAST the terminator.)
   for (uint32_t bi = 0; bi < n_blocks; ++bi) {
     const JitBlock* b = blocks[bi];
-    if (b->prefix_len == 0 || b->phys + (uint64_t) b->prefix_len * 4 > dram_size) return;
+    if (b == nullptr || b->prefix_len == 0 || b->phys > dram_size
+        || static_cast<uint64_t>(b->prefix_len)
+            > (dram_size - b->phys) / sizeof(uint32_t))
+      return;
+    source_desc[bi] = {b->tag, b->phys, b->prefix_len, b->asm_global, b->asn, 0};
+    source_words[bi].resize(source_desc[bi].n_instr);
+    memcpy(source_words[bi].data(), dram + source_desc[bi].phys_pc,
+           static_cast<size_t>(source_desc[bi].n_instr) * sizeof(uint32_t));
   }
 
   // Regalloc: pick the trace's hottest guest GPRs for its callee-saved pins. A fresh
@@ -2900,7 +2943,7 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   if (TracePinSpike) {
     uint32_t acc[32] = {};
     for (uint32_t bi = 0; bi < n_blocks; ++bi)
-      count_gpr_access((const uint32_t*) (dram + blocks[bi]->phys), blocks[bi]->prefix_len, acc);
+      count_gpr_access(source_words[bi].data(), source_desc[bi].n_instr, acc);
     acc[31] = 0;
     for (int r = 0; r < 32; ++r) if ((r & 0xc) == 0x4) acc[r] = 0;   // r4-7, r20-23: PALshadow-remappable
     for (int k = 0; k < n_pin_hosts; ++k) {
@@ -2926,7 +2969,7 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   if (RegionCacheReg) {
     uint32_t acc2[32] = {};
     for (uint32_t bi = 0; bi < n_blocks; ++bi)
-      count_gpr_access((const uint32_t*) (dram + blocks[bi]->phys), blocks[bi]->prefix_len, acc2);
+      count_gpr_access(source_words[bi].data(), source_desc[bi].n_instr, acc2);
     acc2[31] = 0;
     for (int r = 0; r < 32; ++r) if ((r & 0xc) == 0x4) acc2[r] = 0;
     for (int k = 0; k < n_pins; ++k) acc2[pin_guest[k]] = 0;
@@ -2935,11 +2978,20 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   }
   const bool vol_sync = (vol_reg >= 0);
 
+  JitErrorHandler eh;
+  eh.cpu_id = m_cpu_id;
+#ifdef JIT_DISASM
+  eh.fp = m_disasm_fp;
+#endif
   CodeHolder code;
   if (code.init(((JitRuntime*) m_rt)->environment()) != Error::kOk) return;
+  code.set_error_handler(&eh);
   x86::Assembler a(&code);
+#ifdef JIT_DISASM
+  a.add_diagnostic_options(DiagnosticOptions::kValidateAssembler);
+#endif
   CallConv cc;
-  (void) cc.init(CallConvId::kCDecl, ((JitRuntime*) m_rt)->environment());
+  if (cc.init(CallConvId::kCDecl, ((JitRuntime*) m_rt)->environment()) != Error::kOk) return;
   const uint8_t* gpa = cc.passed_order(RegGroup::kGp);
   [[maybe_unused]] const uint32_t kPinnedGp =
       (1u << x86::rbp.id()) | (1u << x86::rbx.id()) | (1u << x86::r14.id())
@@ -3025,15 +3077,17 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   std::vector<RegionOp> ir;
   if (RegionIR) {
     for (uint32_t bi = 0; bi < n_blocks; ++bi) {
-      JitBlock* b = blocks[bi];
-      const uint32_t plen = b->prefix_len;
-      const uint32_t* words = (const uint32_t*) (dram + b->phys);
+      const uint32_t plen = source_desc[bi].n_instr;
+      const uint32_t* words = source_words[bi].data();
       RegionOp o{}; o.blk = (uint8_t) bi;
-      o.kind = RegionOp::BLOCK_ENTER; o.pc = b->tag + 4 * (uint64_t) plen; ir.push_back(o);
+      o.kind = RegionOp::BLOCK_ENTER;
+      o.pc = source_desc[bi].guest_pc + 4 * (uint64_t) plen; ir.push_back(o);
       o.kind = RegionOp::INSTR;
       for (uint32_t i = 0; i < plen; ++i) { o.ins = words[i]; o.idx = i; ir.push_back(o); }
       o.kind = RegionOp::BLOCK_END; o.idx = plen; ir.push_back(o);
-      if (bi + 1 < n_blocks) { o.kind = RegionOp::GUARD; o.pc = blocks[bi + 1]->tag; ir.push_back(o); }
+      if (bi + 1 < n_blocks) {
+        o.kind = RegionOp::GUARD; o.pc = source_desc[bi + 1].guest_pc; ir.push_back(o);
+      }
     }
   }
 
@@ -3050,7 +3104,8 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
       a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
       break;
     case RegionOp::INSTR:
-      emit_op(&a, gpa, &done, hs, (b->tag & 1) != 0, b, o.ins, o.idx, ra, &cold);
+      emit_op(&a, gpa, &done, hs, (source_desc[o.blk].guest_pc & 1) != 0,
+              b, o.ins, o.idx, ra, &cold);
       break;
     case RegionOp::BLOCK_END:
       a.add(x86::r13, imm(o.idx));                       // count this block
@@ -3076,17 +3131,17 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   if (!RegionIR) {
     for (uint32_t bi = 0; bi < n_blocks; ++bi) {
       JitBlock* b = blocks[bi];
-      const uint32_t plen = b->prefix_len;
-      const uint32_t* words = (const uint32_t*) (dram + b->phys);
-      const bool pal_block = (b->tag & 1) != 0;
-      a.mov(x86::r10, imm(b->tag + 4 * (uint64_t) plen));
+      const uint32_t plen = source_desc[bi].n_instr;
+      const uint32_t* words = source_words[bi].data();
+      const bool pal_block = (source_desc[bi].guest_pc & 1) != 0;
+      a.mov(x86::r10, imm(source_desc[bi].guest_pc + 4 * (uint64_t) plen));
       a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
       for (uint32_t i = 0; i < plen; ++i)
         emit_op(&a, gpa, &done, hs, pal_block, b, words[i], i, ra, &cold);
       a.add(x86::r13, imm(plen));
       a.mov(x86::eax, x86::r13d);
       if (bi + 1 < n_blocks) {
-        a.mov(x86::rcx, imm(blocks[bi + 1]->tag));
+        a.mov(x86::rcx, imm(source_desc[bi + 1].guest_pc));
         a.cmp(x86::r10, x86::rcx);
 #ifndef JIT_VERIFY
         if (TraceChainOut && n_x < kMaxTraceExits) {
@@ -3106,14 +3161,15 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   // ones (RET-closed call-containing loops from link-guided fusion). Budget/interrupt gate ON
   // the back-edge. Verify builds omit this.
   bool final_is_jmp = false;
-  { JitBlock* lb = blocks[n_blocks - 1];
-    const uint32_t* lw = (const uint32_t*) (dram + lb->phys);
-    const uint32_t lop = lw[lb->prefix_len - 1], lopc = lop >> 26;
+  {
+    const SourceSeg& last = source_desc[n_blocks - 1];
+    const uint32_t* lw = source_words[n_blocks - 1].data();
+    const uint32_t lop = lw[last.n_instr - 1], lopc = lop >> 26;
     final_is_jmp = (lopc == 0x1a || lopc == 0x1e);   // JMP/HW_RET: varying target -> jit_indirect exit
   }
   {
     Label not_head = a.new_label();
-    a.mov(x86::rcx, imm(blocks[0]->tag));
+    a.mov(x86::rcx, imm(source_desc[0].guest_pc));
     a.cmp(x86::r10, x86::rcx); a.jne(not_head);                                  // not the head -> final exit
     a.cmp(x86::r13, x86::qword_ptr(x86::rbp, m_off.jit_budget)); a.jge(done);   // budget ceiling
     a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0));     a.jne(done);   // interrupt pending
@@ -3250,13 +3306,32 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
 #endif
   const size_t csz = code.code_size();
   JitFn fn = nullptr;
-  if (((JitRuntime*) m_rt)->add(&fn, &code) != Error::kOk) return;
+  if (eh.failed) return;
+  auto sources_current = [&]() noexcept {
+    for (uint32_t bi = 0; bi < n_blocks; ++bi) {
+      const SourceSeg& source = source_desc[bi];
+      if (memcmp(dram + source.phys_pc, source_words[bi].data(),
+                 static_cast<size_t>(source.n_instr) * sizeof(uint32_t)) != 0)
+        return false;
+    }
+    return true;
+  };
+  if (!sources_current()) return;
+
+  auto* const rt = static_cast<JitRuntime*>(m_rt);
+  if (rt->add(&fn, &code) != Error::kOk) return;
+  if (eh.failed || !sources_current()) {
+    (void)rt->release(fn);
+    return;
+  }
+  t->valid = false;
   uint32_t total = 0;
   for (uint32_t bi = 0; bi < n_blocks; ++bi) {
-    JitBlock* b = blocks[bi];
-    t->segs[bi] = { b->tag, b->phys, b->prefix_len, b->asm_global, b->asn,
-                    src_hash(dram + b->phys, b->prefix_len) };
-    total += b->prefix_len;
+    t->segs[bi] = source_desc[bi];
+    t->segs[bi].src_sum = src_hash(
+        reinterpret_cast<const uint8_t*>(source_words[bi].data()),
+        source_desc[bi].n_instr);
+    total += source_desc[bi].n_instr;
   }
   for (uint32_t e = 0; e < kMaxTraceExits; ++e) t->exits[e] = TraceExit{};   // fresh slot: empty links
   t->code       = fn;
@@ -3266,10 +3341,9 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   t->chain_entry = nullptr;
 #endif
   t->underrun   = 0;
-  t->head_tag   = blocks[0]->tag;
-  t->asn        = blocks[0]->asn;
-  t->asm_global = blocks[0]->asm_global;
-  t->valid      = true;
+  t->head_tag   = source_desc[0].guest_pc;
+  t->asn        = source_desc[0].asn;
+  t->asm_global = source_desc[0].asm_global;
   t->vgen       = m_vgen_cur;
   t->flush_gen  = m_flush_gen;
   t->n_blocks   = n_blocks;
@@ -3284,6 +3358,7 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
 #ifdef JIT_STATS
   m_trace_formed++;
 #endif
+  t->valid = true;   // commit the fully populated trace
 }
 
 #endif // ES40_JIT_X64
