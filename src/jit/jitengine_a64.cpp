@@ -171,7 +171,8 @@ enum A64GprOperandMask : uint8_t {
 };
 
 enum class A64OpKind : uint8_t {
-  kUnsupported
+  kUnsupported,
+  kValidationProbe
 };
 
 enum class A64TerminatorKind : uint8_t {
@@ -774,6 +775,218 @@ struct A64BlockPlan {
   A64TerminatorKind terminator = A64TerminatorKind::kNone;
 };
 
+enum class A64EmitState : uint8_t {
+  kUnhandled,
+  kComplete
+};
+
+enum class A64Mainline : uint8_t {
+  kNone,
+  kContinues,
+  kExitReady
+};
+
+static constexpr bool a64_known_terminator(A64TerminatorKind kind) noexcept
+{
+  switch (kind) {
+    case A64TerminatorKind::kNone:
+    case A64TerminatorKind::kDirect:
+    case A64TerminatorKind::kIndirect:
+    case A64TerminatorKind::kCallPal:
+    case A64TerminatorKind::kRedispatch:
+      return true;
+  }
+  return false;
+}
+
+static constexpr bool a64_supported_op_kind(A64OpKind kind) noexcept
+{
+  switch (kind) {
+    case A64OpKind::kUnsupported:
+    case A64OpKind::kValidationProbe:
+      return false;
+  }
+  return false;
+}
+
+static constexpr bool a64_validation_op_kind(A64OpKind kind) noexcept
+{
+  return kind == A64OpKind::kValidationProbe;
+}
+
+// A nonempty prefix may legitimately stop before an unsupported instruction.
+// Dispatch back at start_pc + count * 4.
+static constexpr bool a64_plan_shape_valid(const A64BlockPlan& plan) noexcept
+{
+  if (plan.count == 0 || plan.count > plan.ops.size()
+      || !a64_known_terminator(plan.terminator))
+    return false;
+
+  const bool has_terminator = plan.terminator != A64TerminatorKind::kNone;
+  if (has_terminator != (plan.stop == A64PlanStop::kTerminator)) return false;
+  if (!has_terminator
+      && plan.stop != A64PlanStop::kUnsupported
+      && plan.stop != A64PlanStop::kBlockEnd
+      && plan.stop != A64PlanStop::kPageBoundary
+      && plan.stop != A64PlanStop::kInstructionLimit)
+    return false;
+  if (plan.stop == A64PlanStop::kInstructionLimit
+      && plan.count != A64BlockPlan::kMaxOps)
+    return false;
+
+  for (uint32_t i = 0; i < plan.count; ++i) {
+    const A64DecodedOp& op = plan.ops[i];
+    if (!a64_known_terminator(op.terminator))
+      return false;
+    const A64TerminatorKind expected = i + 1 == plan.count
+        ? plan.terminator : A64TerminatorKind::kNone;
+    if (op.terminator != expected) return false;
+  }
+  return true;
+}
+
+static constexpr bool a64_plan_ready_for_emission(
+    const A64BlockPlan& plan) noexcept
+{
+  if (!a64_plan_shape_valid(plan)) return false;
+  for (uint32_t i = 0; i < plan.count; ++i)
+    if (!a64_supported_op_kind(plan.ops[i].kind)) return false;
+  return true;
+}
+
+static constexpr bool a64_plan_ready_for_validation(
+    const A64BlockPlan& plan) noexcept
+{
+  if (!a64_plan_shape_valid(plan)) return false;
+  for (uint32_t i = 0; i < plan.count; ++i)
+    if (!a64_validation_op_kind(plan.ops[i].kind)) return false;
+  return true;
+}
+
+struct A64OpEmitReceipt {
+  asmjit::Error error = asmjit::Error::kInvalidInstruction;
+  A64OpKind kind = A64OpKind::kUnsupported;
+  A64EmitState state = A64EmitState::kUnhandled;
+  A64Mainline mainline = A64Mainline::kNone;
+  A64TerminatorKind terminator = A64TerminatorKind::kNone;
+
+  constexpr bool accepted_for(const A64DecodedOp& op,
+                              bool validation_probe = false) const noexcept {
+    const A64Mainline expected = op.terminator == A64TerminatorKind::kNone
+        ? A64Mainline::kContinues : A64Mainline::kExitReady;
+    const bool known_kind = a64_supported_op_kind(op.kind)
+        || (validation_probe && a64_validation_op_kind(op.kind));
+    return known_kind
+        && error == asmjit::Error::kOk
+        && kind == op.kind
+        && state == A64EmitState::kComplete
+        && mainline == expected
+        && terminator == op.terminator;
+  }
+};
+
+struct A64BodyEmitReceipt {
+  asmjit::Error error = asmjit::Error::kInvalidState;
+  uint32_t planned_count = 0;
+  uint32_t attempted_count = 0;
+  uint32_t emitted_count = 0;
+  A64TerminatorKind observed_terminator = A64TerminatorKind::kNone;
+  bool validation_probe = false;
+  bool complete = false;
+
+  constexpr bool complete_for(const A64BlockPlan& plan) const noexcept {
+    return error == asmjit::Error::kOk && complete && !validation_probe
+        && planned_count == plan.count
+        && attempted_count == plan.count && emitted_count == plan.count
+        && observed_terminator == plan.terminator
+        && a64_plan_ready_for_emission(plan);
+  }
+
+  constexpr bool complete_for_validation(
+      const A64BlockPlan& plan) const noexcept {
+    return error == asmjit::Error::kOk && complete && validation_probe
+        && planned_count == plan.count
+        && attempted_count == plan.count && emitted_count == plan.count
+        && observed_terminator == plan.terminator
+        && a64_plan_ready_for_validation(plan);
+  }
+};
+
+static constexpr A64BodyEmitReceipt a64_begin_body_emission(
+    const A64BlockPlan& plan) noexcept
+{
+  A64BodyEmitReceipt receipt{};
+  receipt.planned_count = plan.count;
+  receipt.error = a64_plan_ready_for_emission(plan)
+      ? asmjit::Error::kOk : asmjit::Error::kInvalidArgument;
+  return receipt;
+}
+
+static constexpr A64BodyEmitReceipt a64_begin_body_validation(
+    const A64BlockPlan& plan) noexcept
+{
+  A64BodyEmitReceipt receipt{};
+  receipt.planned_count = plan.count;
+  receipt.validation_probe = true;
+  receipt.error = a64_plan_ready_for_validation(plan)
+      ? asmjit::Error::kOk : asmjit::Error::kInvalidArgument;
+  return receipt;
+}
+
+static constexpr bool a64_begin_op_emission(A64BodyEmitReceipt& body,
+    const A64BlockPlan& plan, uint32_t index) noexcept
+{
+  if (body.error != asmjit::Error::kOk || body.complete
+      || body.planned_count != plan.count
+      || index != body.attempted_count || index != body.emitted_count
+      || index >= plan.count) {
+    if (body.error == asmjit::Error::kOk)
+      body.error = asmjit::Error::kInvalidState;
+    return false;
+  }
+  ++body.attempted_count;
+  return true;
+}
+
+static constexpr bool a64_accept_op_emission(A64BodyEmitReceipt& body,
+    const A64BlockPlan& plan, uint32_t index,
+    const A64OpEmitReceipt& op) noexcept
+{
+  if (body.error != asmjit::Error::kOk || body.complete
+      || body.planned_count != plan.count
+      || index != body.emitted_count || body.attempted_count != index + 1
+      || index >= plan.count) {
+    if (body.error == asmjit::Error::kOk)
+      body.error = asmjit::Error::kInvalidState;
+    return false;
+  }
+  if (!op.accepted_for(plan.ops[index], body.validation_probe)) {
+    body.error = op.error == asmjit::Error::kOk
+        ? asmjit::Error::kInvalidState : op.error;
+    return false;
+  }
+  if (op.terminator != A64TerminatorKind::kNone)
+    body.observed_terminator = op.terminator;
+  ++body.emitted_count;
+  return true;
+}
+
+static constexpr bool a64_finish_body_emission(A64BodyEmitReceipt& body,
+    const A64BlockPlan& plan) noexcept
+{
+  if (body.error != asmjit::Error::kOk || body.complete
+      || body.planned_count != plan.count
+      || body.attempted_count != plan.count
+      || body.emitted_count != plan.count
+      || body.observed_terminator != plan.terminator) {
+    if (body.error == asmjit::Error::kOk)
+      body.error = asmjit::Error::kInvalidState;
+    return false;
+  }
+  body.complete = true;
+  return true;
+}
+
 // Block image description.
 struct A64PendingPublication {
   uint64_t code_size = 0;
@@ -900,9 +1113,9 @@ static A64BlockPlan plan_a64_block(const CJitEngine::JitBlock& block,
 
 static A64PendingPublication prepare_a64_block_publication(
     const CJitEngine::JitBlock& block, const A64BlockPlan& plan,
-    const A64BlockExit& exit, const uint8_t* dram, uint64_t dram_size,
-    const asmjit::CodeHolder& code, const asmjit::Label& body,
-    uint64_t prior_code_bytes) noexcept
+    const A64BlockExit& exit, const A64BodyEmitReceipt& emission,
+    const uint8_t* dram, uint64_t dram_size, const asmjit::CodeHolder& code,
+    const asmjit::Label& body, uint64_t prior_code_bytes) noexcept
 {
   A64PendingPublication pending{};
   pending.code_size = static_cast<uint64_t>(code.code_size());
@@ -913,7 +1126,8 @@ static A64PendingPublication prepare_a64_block_publication(
   pending.hash_len = plan.count;
 
   const bool body_bound = code.is_label_bound(body);
-  pending.layout_complete = exit.valid()
+  pending.layout_complete = emission.complete_for(plan)
+      && exit.valid()
       && exit.completed_delta == plan.count
       && !code.has_unresolved_fixups()
       && code.section_count() == 1
@@ -978,6 +1192,129 @@ static_assert(a64_source_extent_valid(0, 1, 4)
               && !a64_source_extent_valid(12, 1, 8)
               && !a64_source_extent_valid(~uint64_t(7), 2, UINT64_MAX),
               "A64 source extents must reject empty, unaligned, truncated, and wrapping ranges");
+
+static constexpr A64OpEmitReceipt a64_completed_op_receipt(
+    const A64DecodedOp& op,
+    asmjit::Error error = asmjit::Error::kOk) noexcept
+{
+  if (error != asmjit::Error::kOk)
+    return {error, op.kind, A64EmitState::kUnhandled,
+            A64Mainline::kNone, A64TerminatorKind::kNone};
+  return {asmjit::Error::kOk, op.kind, A64EmitState::kComplete,
+          op.terminator == A64TerminatorKind::kNone
+              ? A64Mainline::kContinues : A64Mainline::kExitReady,
+          op.terminator};
+}
+
+static constexpr bool a64_body_emission_contract_probe() noexcept
+{
+  A64BlockPlan linear{};
+  linear.count = 3;
+  linear.stop = A64PlanStop::kBlockEnd;
+  for (uint32_t i = 0; i < linear.count; ++i) {
+    linear.ops[i].ins = i + 1;
+    linear.ops[i].kind = A64OpKind::kValidationProbe;
+  }
+
+  A64BlockPlan prefix = linear;
+  prefix.count = 2;
+  prefix.stop = A64PlanStop::kUnsupported;
+
+  A64BlockPlan terminated = linear;
+  terminated.stop = A64PlanStop::kTerminator;
+  terminated.terminator = A64TerminatorKind::kDirect;
+  terminated.ops[2].terminator = A64TerminatorKind::kDirect;
+
+  A64BlockPlan unsupported = linear;
+  unsupported.ops[1].kind = A64OpKind::kUnsupported;
+  A64BlockPlan early_terminator = linear;
+  early_terminator.ops[1].terminator = A64TerminatorKind::kDirect;
+  A64BlockPlan missing_terminator = terminated;
+  missing_terminator.ops[2].terminator = A64TerminatorKind::kNone;
+  A64BlockPlan wrong_terminator = terminated;
+  wrong_terminator.ops[2].terminator = A64TerminatorKind::kIndirect;
+  A64BlockPlan wrong_stop = terminated;
+  wrong_stop.stop = A64PlanStop::kBlockEnd;
+  A64BlockPlan oversized = linear;
+  oversized.count = A64BlockPlan::kMaxOps + 1;
+  A64BlockPlan unknown_kind = linear;
+  unknown_kind.ops[0].kind = static_cast<A64OpKind>(0x7f);
+
+  if (a64_plan_ready_for_emission(linear)
+      || !a64_plan_ready_for_validation(linear)
+      || !a64_plan_ready_for_validation(prefix)
+      || !a64_plan_ready_for_validation(terminated)
+      || a64_plan_ready_for_emission(A64BlockPlan{})
+      || a64_plan_ready_for_validation(unsupported)
+      || a64_plan_ready_for_validation(early_terminator)
+      || a64_plan_ready_for_validation(missing_terminator)
+      || a64_plan_ready_for_validation(wrong_terminator)
+      || a64_plan_ready_for_validation(wrong_stop)
+      || a64_plan_ready_for_validation(oversized)
+      || a64_plan_ready_for_emission(unknown_kind)
+      || a64_plan_ready_for_validation(unknown_kind))
+    return false;
+
+  A64BodyEmitReceipt complete = a64_begin_body_validation(linear);
+  for (uint32_t i = 0; i < linear.count; ++i) {
+    if (!a64_begin_op_emission(complete, linear, i)
+        || !a64_accept_op_emission(
+            complete, linear, i, a64_completed_op_receipt(linear.ops[i])))
+      return false;
+  }
+  if (!a64_finish_body_emission(complete, linear)
+      || !complete.complete_for_validation(linear)
+      || complete.complete_for(linear))
+    return false;
+
+  A64BodyEmitReceipt terminal = a64_begin_body_validation(terminated);
+  for (uint32_t i = 0; i < terminated.count; ++i) {
+    if (!a64_begin_op_emission(terminal, terminated, i)
+        || !a64_accept_op_emission(
+            terminal, terminated, i,
+            a64_completed_op_receipt(terminated.ops[i])))
+      return false;
+  }
+  if (!a64_finish_body_emission(terminal, terminated)
+      || terminal.observed_terminator != A64TerminatorKind::kDirect
+      || !terminal.complete_for_validation(terminated))
+    return false;
+
+  A64BodyEmitReceipt duplicate = a64_begin_body_validation(linear);
+  if (!a64_begin_op_emission(duplicate, linear, 0)
+      || a64_begin_op_emission(duplicate, linear, 0)
+      || duplicate.error != asmjit::Error::kInvalidState)
+    return false;
+
+  A64BodyEmitReceipt partial = a64_begin_body_validation(linear);
+  if (!a64_begin_op_emission(partial, linear, 0)
+      || !a64_accept_op_emission(
+          partial, linear, 0, a64_completed_op_receipt(linear.ops[0]))
+      || a64_finish_body_emission(partial, linear)
+      || partial.complete || partial.emitted_count != 1)
+    return false;
+
+  A64BodyEmitReceipt rejected = a64_begin_body_validation(linear);
+  if (!a64_begin_op_emission(rejected, linear, 0)
+      || a64_accept_op_emission(rejected, linear, 0, {})
+      || rejected.error != asmjit::Error::kInvalidInstruction
+      || rejected.emitted_count != 0)
+    return false;
+
+  A64BodyEmitReceipt mismatch = a64_begin_body_validation(terminated);
+  A64OpEmitReceipt wrong_mainline =
+      a64_completed_op_receipt(terminated.ops[0]);
+  wrong_mainline.mainline = A64Mainline::kExitReady;
+  if (!a64_begin_op_emission(mismatch, terminated, 0)
+      || a64_accept_op_emission(mismatch, terminated, 0, wrong_mainline)
+      || mismatch.error != asmjit::Error::kInvalidState)
+    return false;
+
+  return true;
+}
+
+static_assert(a64_body_emission_contract_probe(),
+              "A64 body emission must be exact, ordered, terminator-aware, and fail-closed");
 static_assert(A64PendingPublication{64, 16, 1, 0, 3, 3, 3, true, true}.ready()
               && A64PendingPublication{64, 16, 1, UINT64_MAX - 64,
                                        3, 3, 3, true, true}.ready()
@@ -1578,6 +1915,63 @@ static asmjit::Error emit_a64_call_arg(asmjit::a64::Assembler& a,
   return a.blr(CJitEngine::RegAlloc::kCallTarget);
 }
 
+struct A64EmitContext {
+  asmjit::a64::Assembler& assembler;
+  const CJitEngine::JitOffsets& offsets;
+  const CJitEngine::HelperSet& helpers;
+  CJitEngine::RegAlloc& regs;
+  const asmjit::Label& done;
+  uint64_t start_pc;
+  bool pal_block;
+  bool pal_shadow;
+};
+
+static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
+    const A64DecodedOp& op, uint32_t index)
+{
+  (void)context;
+  if (index >= A64BlockPlan::kMaxOps)
+    return {asmjit::Error::kInvalidArgument, op.kind};
+
+  switch (op.kind) {
+    case A64OpKind::kUnsupported:
+    case A64OpKind::kValidationProbe:
+      return {};
+  }
+  return {};
+}
+
+template<typename EmitOne>
+static A64BodyEmitReceipt drive_a64_block_body(const A64BlockPlan& plan,
+    A64BodyEmitReceipt body, EmitOne&& emit_one)
+{
+  if (body.error != asmjit::Error::kOk) return body;
+
+  for (uint32_t i = 0; i < plan.count; ++i) {
+    if (!a64_begin_op_emission(body, plan, i)) return body;
+    const A64OpEmitReceipt op = emit_one(plan.ops[i], i);
+    if (!a64_accept_op_emission(body, plan, i, op)) return body;
+  }
+  (void)a64_finish_body_emission(body, plan);
+  return body;
+}
+
+template<typename EmitOne>
+static A64BodyEmitReceipt emit_a64_block_body(const A64BlockPlan& plan,
+                                               EmitOne&& emit_one)
+{
+  return drive_a64_block_body(
+      plan, a64_begin_body_emission(plan), emit_one);
+}
+
+template<typename EmitOne>
+static A64BodyEmitReceipt validate_a64_block_body(const A64BlockPlan& plan,
+                                                   EmitOne&& emit_one)
+{
+  return drive_a64_block_body(
+      plan, a64_begin_body_validation(plan), emit_one);
+}
+
 static asmjit::Error emit_a64_chain_gate(asmjit::a64::Assembler& a,
     const CJitEngine::JitOffsets& offsets, A64ChainGate gate,
     const asmjit::Label& bailout)
@@ -1921,6 +2315,80 @@ static asmjit::Error emit_a64_epilogue(asmjit::a64::Assembler& a)
 }
 
 #ifndef NDEBUG
+static bool a64_validate_body_driver(const asmjit::Environment& environment,
+                                     const asmjit::CpuFeatures& features)
+{
+  using namespace asmjit;
+
+  A64BlockPlan plan{};
+  plan.count = 3;
+  plan.stop = A64PlanStop::kBlockEnd;
+  for (uint32_t i = 0; i < plan.count; ++i) {
+    plan.ops[i].ins = i + 1;
+    plan.ops[i].kind = A64OpKind::kValidationProbe;
+  }
+
+  CodeHolder complete_code;
+  if (complete_code.init(environment, features) != Error::kOk) return false;
+  a64::Assembler complete_assembler;
+  if (complete_code.attach(&complete_assembler) != Error::kOk) return false;
+  complete_assembler.add_diagnostic_options(
+      DiagnosticOptions::kValidateAssembler);
+  uint32_t complete_calls = 0;
+  const A64BodyEmitReceipt complete = validate_a64_block_body(
+      plan, [&](const A64DecodedOp& op, uint32_t index) {
+        if (index != complete_calls++)
+          return A64OpEmitReceipt{};
+        return a64_completed_op_receipt(op, complete_assembler.nop());
+      });
+  if (!complete.complete_for_validation(plan) || complete_calls != plan.count
+      || complete_assembler.finalize() != Error::kOk
+      || complete_code.has_unresolved_fixups()
+      || complete_code.code_size() != plan.count * sizeof(uint32_t))
+    return false;
+
+  // Host bytes emitted before a later error are deliberately not rolled back or
+  // accepted as a shorter body; the caller abandons this whole CodeHolder.
+  CodeHolder partial_code;
+  if (partial_code.init(environment, features) != Error::kOk) return false;
+  a64::Assembler partial_assembler;
+  if (partial_code.attach(&partial_assembler) != Error::kOk) return false;
+  partial_assembler.add_diagnostic_options(
+      DiagnosticOptions::kValidateAssembler);
+  uint32_t partial_calls = 0;
+  const A64BodyEmitReceipt partial = validate_a64_block_body(
+      plan, [&](const A64DecodedOp& op, uint32_t index) {
+        ++partial_calls;
+        const Error err = partial_assembler.nop();
+        return a64_completed_op_receipt(
+            op, index == 1 && err == Error::kOk ? Error::kInvalidState : err);
+      });
+  if (partial.complete || partial.error != Error::kInvalidState
+      || partial.attempted_count != 2 || partial.emitted_count != 1
+      || partial_calls != 2
+      || partial_code.code_size() != 2 * sizeof(uint32_t))
+    return false;
+
+  CJitEngine::JitOffsets offsets{};
+  CJitEngine::HelperSet helpers{};
+  CJitEngine::RegAlloc regs = make_a64_block_regalloc();
+  const Label done = partial_assembler.new_label();
+  A64EmitContext context{partial_assembler, offsets, helpers, regs, done,
+                         0x1000, false, false};
+  const A64BodyEmitReceipt inert = validate_a64_block_body(
+      plan, [&](const A64DecodedOp& op, uint32_t index) {
+        return emit_a64_planned_op(context, op, index);
+      });
+  A64DecodedOp unsupported{};
+  const A64OpEmitReceipt unsupported_receipt =
+      emit_a64_planned_op(context, unsupported, 0);
+  return !inert.complete && inert.error == Error::kInvalidInstruction
+      && inert.attempted_count == 1 && inert.emitted_count == 0
+      && !unsupported_receipt.accepted_for(unsupported)
+      && unsupported_receipt.error == Error::kInvalidInstruction
+      && partial_code.code_size() == 2 * sizeof(uint32_t);
+}
+
 static bool a64_validate_tail_emitters(const asmjit::Environment& environment,
                                        const asmjit::CpuFeatures& features)
 {
@@ -2030,7 +2498,10 @@ static bool a64_abi_compatible(const asmjit::Environment& environment)
 } // namespace
 
 void CJitEngine::emit_op(void*, const uint8_t*, void*, const HelperSet&,
-                         bool, JitBlock*, uint32_t, uint32_t, RegAlloc&, void*, bool) {}
+                         bool, JitBlock*, uint32_t, uint32_t, RegAlloc&, void*, bool)
+{
+  assert(false && "A64 callers must use the checked typed body driver");
+}
 
 void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_size,
     void* read_helper, void* write_helper, void* opcdec_helper, void* hw_mfpr_helper,
@@ -2057,9 +2528,12 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 #ifndef NDEBUG
   if (m_rt != nullptr) {
     auto* const validation_rt = static_cast<asmjit::JitRuntime*>(m_rt);
-    static const bool tails_valid = a64_validate_tail_emitters(
-        validation_rt->environment(), validation_rt->cpu_features());
-    assert(tails_valid);
+    static const bool emitters_valid =
+        a64_validate_body_driver(validation_rt->environment(),
+                                 validation_rt->cpu_features())
+        && a64_validate_tail_emitters(validation_rt->environment(),
+                                      validation_rt->cpu_features());
+    assert(emitters_valid);
   }
 #endif
 
@@ -2087,6 +2561,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     }
   }
 #endif
+  if (!a64_plan_ready_for_emission(plan)) return;
   const A64BlockExit exit = plan_a64_exit(b->tag, plan.count, plan.terminator);
   const bool pal_block = (b->tag & 1u) != 0;
   const A64DirectChainContract chain =
@@ -2136,6 +2611,14 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   if (emit_a64_mov_u64(a, RegAlloc::kNextPc, exit.fallthrough_pc)
       != asmjit::Error::kOk) return;
 
+  A64EmitContext emit_context{a, m_off, helpers, regalloc, done, b->tag,
+                              pal_block, b->pal_shadow};
+  const A64BodyEmitReceipt body_emission = emit_a64_block_body(
+      plan, [&](const A64DecodedOp& op, uint32_t index) {
+        return emit_a64_planned_op(emit_context, op, index);
+      });
+  if (!body_emission.complete_for(plan)) return;
+
   const asmjit::Error tail_err = chain.eligible()
       ? emit_a64_direct_chain_tail(a, m_off, chain, &b->link[0],
                                   &m_vgen_cur, b->tag, body, done)
@@ -2152,7 +2635,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   if (a.finalize() != asmjit::Error::kOk) return;
 
   const A64PendingPublication pending = prepare_a64_block_publication(
-      *b, plan, exit, dram, dram_size, code, body, m_code_bytes);
+      *b, plan, exit, body_emission, dram, dram_size, code, body, m_code_bytes);
   if (!pending.ready()) return;
   assert(pending.body_off != 0);  // Chained entry must remain past the cold prologue.
 }
