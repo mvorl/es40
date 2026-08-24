@@ -43,7 +43,7 @@
 #include <asmjit/a64.h>
 
 // register convention for both block and trace codegen:
-//   x9 = transient expansion scratch; x19 = CAlphaCPU*, x20 = state.r[] base,
+//   x9-x15 = transient expansion/tail scratch; x19 = CAlphaCPU*, x20 = state.r[] base,
 //   x21 = completed-instruction count, x22 = next guest PC / chain target,
 //   x23-x28 = guest-GPR pin bank.
 struct CJitEngine::RegAlloc {
@@ -53,6 +53,12 @@ struct CJitEngine::RegAlloc {
   static constexpr asmjit::a64::Gp kArgRegs = asmjit::a64::x1;
   static constexpr asmjit::a64::Gp kResultCount = asmjit::a64::w0;
   static constexpr asmjit::a64::Gp kScratch0 = asmjit::a64::x9;
+  static constexpr asmjit::a64::Gp kScratch1 = asmjit::a64::x10;
+  static constexpr asmjit::a64::Gp kScratch2 = asmjit::a64::x11;
+  static constexpr asmjit::a64::Gp kScratch3 = asmjit::a64::x12;
+  static constexpr asmjit::a64::Gp kScratch4 = asmjit::a64::x13;
+  static constexpr asmjit::a64::Gp kScratch5 = asmjit::a64::x14;
+  static constexpr asmjit::a64::Gp kScratch6 = asmjit::a64::x15;
   static constexpr asmjit::a64::Gp kCallTarget = asmjit::a64::x16;
 
   static constexpr asmjit::a64::Gp kCpu = asmjit::a64::x19;
@@ -136,6 +142,11 @@ static_assert((CJitEngine::RegAlloc::kPersistentGpMask
                & asmjit::Support::bit_mask<asmjit::RegMask>(
                      CJitEngine::RegAlloc::kScratch0.id())) == 0,
               "A64 expansion scratch must not overlap persistent registers");
+static_assert(CJitEngine::RegAlloc::kScratch6.id()
+                  - CJitEngine::RegAlloc::kScratch0.id() == 6
+              && CJitEngine::RegAlloc::kCallTarget.id()
+                  == CJitEngine::RegAlloc::kScratch6.id() + 1,
+              "A64 tail scratch registers must remain the contiguous x9-x16 bank");
 
 namespace {
 
@@ -328,7 +339,14 @@ static constexpr bool a64_publish_pc_before_chain(const A64BlockExit& exit,
 enum class A64ChainGate : uint8_t {
   kNone,
   kPollAll,
-  kDeferInterrupt
+  kDeferInterrupt,
+  kPollInterruptOnNativeTarget
+};
+
+enum class A64LinkVariantPolicy : uint8_t {
+  kNone,
+  kAlways,
+  kIfTargetPal
 };
 
 static constexpr uint32_t kA64MaxBlockOps = 64;
@@ -397,6 +415,92 @@ static constexpr A64DirectChainContract plan_a64_direct_chain(
   return contract;
 }
 
+enum class A64IndirectKind : uint8_t {
+  kNone,
+  kJmp,
+  kHwRet,
+  kInvalid
+};
+
+struct A64IndirectChainContract {
+  A64IndirectKind kind = A64IndirectKind::kNone;
+  uint32_t completed_delta = 0;
+  A64ChainGate gate = A64ChainGate::kNone;
+  A64LinkVariantPolicy target_variant = A64LinkVariantPolicy::kNone;
+  bool source_pal_guard = false;
+  bool source_pal_shadow = false;
+  bool probe_pic = false;
+  bool call_resolver_on_miss = false;
+  bool publish_pc_before_probe = false;
+  bool publish_pc_on_miss = false;
+
+  constexpr bool eligible() const noexcept {
+    return kind == A64IndirectKind::kJmp || kind == A64IndirectKind::kHwRet;
+  }
+
+  constexpr bool valid() const noexcept {
+    if (kind == A64IndirectKind::kNone)
+      return completed_delta == 0 && gate == A64ChainGate::kNone
+          && target_variant == A64LinkVariantPolicy::kNone
+          && !source_pal_guard && !source_pal_shadow && !probe_pic
+          && !call_resolver_on_miss && !publish_pc_before_probe
+          && !publish_pc_on_miss;
+    if (!eligible() || (kind == A64IndirectKind::kHwRet && !source_pal_guard)
+        || completed_delta == 0
+        || completed_delta > kA64MaxBlockOps)
+      return false;
+
+    const A64ChainGate expected_gate = !source_pal_guard
+        ? A64ChainGate::kPollAll
+        : kind == A64IndirectKind::kHwRet
+            ? A64ChainGate::kPollInterruptOnNativeTarget
+            : A64ChainGate::kDeferInterrupt;
+    const A64LinkVariantPolicy expected_variant =
+        kind == A64IndirectKind::kHwRet
+            ? A64LinkVariantPolicy::kIfTargetPal
+            : A64LinkVariantPolicy::kNone;
+    return gate == expected_gate && target_variant == expected_variant
+        && (source_pal_guard || !source_pal_shadow)
+        && probe_pic && call_resolver_on_miss
+        && publish_pc_before_probe == source_pal_guard
+        && publish_pc_on_miss;
+  }
+};
+
+static constexpr A64IndirectChainContract plan_a64_indirect_chain(
+    const A64BlockExit& exit, uint32_t terminator_ins,
+    bool pal_block, bool pal_shadow) noexcept
+{
+  A64IndirectChainContract contract{};
+  if (exit.kind != A64ExitKind::kIndirect) return contract;
+
+  contract.completed_delta = exit.completed_delta;
+  switch (terminator_ins >> 26) {
+    case 0x1a: contract.kind = A64IndirectKind::kJmp; break;
+    case 0x1e:
+      contract.kind = pal_block ? A64IndirectKind::kHwRet
+                                : A64IndirectKind::kInvalid;
+      if (!pal_block) return contract;
+      break;
+    default:   contract.kind = A64IndirectKind::kInvalid; return contract;
+  }
+  contract.gate = !pal_block
+      ? A64ChainGate::kPollAll
+      : contract.kind == A64IndirectKind::kHwRet
+          ? A64ChainGate::kPollInterruptOnNativeTarget
+          : A64ChainGate::kDeferInterrupt;
+  contract.target_variant = contract.kind == A64IndirectKind::kHwRet
+      ? A64LinkVariantPolicy::kIfTargetPal
+      : A64LinkVariantPolicy::kNone;
+  contract.source_pal_guard = pal_block;
+  contract.source_pal_shadow = pal_block && pal_shadow;
+  contract.probe_pic = true;
+  contract.call_resolver_on_miss = true;
+  contract.publish_pc_before_probe = pal_block;
+  contract.publish_pc_on_miss = true;
+  return contract;
+}
+
 static constexpr uint64_t kA64LinkPalShadowBit = uint64_t(1) << 63;
 static constexpr uint64_t kA64LinkEpochMask = ~kA64LinkPalShadowBit;
 static constexpr uint64_t kA64InvalidLinkTag = ~uint64_t(0);
@@ -424,23 +528,33 @@ struct A64LinkProbe {
   bool body_present = false;
 
   constexpr bool matches(uint64_t target, uint64_t current_epoch,
-                         bool require_target_pal_guard,
+                         A64LinkVariantPolicy variant_policy,
                          bool live_pal_shadow) const noexcept {
-    return body_present && tag == target
-        && a64_link_epoch(packed_vgen)
-            == (current_epoch & kA64LinkEpochMask)
-        && (!require_target_pal_guard
-            || a64_link_pal_shadow(packed_vgen) == live_pal_shadow);
+    if (!body_present || tag != target
+        || a64_link_epoch(packed_vgen)
+            != (current_epoch & kA64LinkEpochMask))
+      return false;
+    switch (variant_policy) {
+      case A64LinkVariantPolicy::kNone:
+        return true;
+      case A64LinkVariantPolicy::kAlways:
+        return a64_link_pal_shadow(packed_vgen) == live_pal_shadow;
+      case A64LinkVariantPolicy::kIfTargetPal:
+        return (target & 1u) == 0
+            || a64_link_pal_shadow(packed_vgen) == live_pal_shadow;
+    }
+    return false;
   }
 };
 
 static constexpr int a64_find_link_probe(
     const std::array<A64LinkProbe, CJitEngine::kLinkSlots>& slots,
-    uint64_t target, uint64_t current_epoch, bool require_target_pal_guard,
+    uint64_t target, uint64_t current_epoch,
+    A64LinkVariantPolicy variant_policy,
     bool live_pal_shadow) noexcept
 {
   for (uint32_t i = 0; i < slots.size(); ++i)
-    if (slots[i].matches(target, current_epoch, require_target_pal_guard,
+    if (slots[i].matches(target, current_epoch, variant_policy,
                          live_pal_shadow))
       return static_cast<int>(i);
   return -1;
@@ -454,7 +568,7 @@ static_assert(sizeof(void*) == 8
               && sizeof(CJitEngine::LinkSlot) == 24
               && alignof(CJitEngine::LinkSlot) >= 8
               && CJitEngine::kLinkSlots == 2,
-              "A64 direct links must match the shared two-slot snapshot ABI");
+              "A64 cached links must match the shared two-slot snapshot ABI");
 
 static constexpr bool a64_direct_chain_contract_probe() noexcept
 {
@@ -537,6 +651,64 @@ static constexpr bool a64_direct_chain_contract_probe() noexcept
       && !unknown.valid();
 }
 
+static constexpr bool a64_indirect_chain_contract_probe() noexcept
+{
+  constexpr uint32_t jmp = 0x1au << 26;
+  constexpr uint32_t hw_ret = 0x1eu << 26;
+  const A64BlockExit indirect =
+      plan_a64_exit(0x1001, 1, A64TerminatorKind::kIndirect);
+  const A64BlockExit fall =
+      plan_a64_exit(0x1001, 1, A64TerminatorKind::kNone);
+
+  const A64IndirectChainContract native_jmp =
+      plan_a64_indirect_chain(indirect, jmp, false, false);
+  const A64IndirectChainContract native_hw =
+      plan_a64_indirect_chain(indirect, hw_ret, false, false);
+  const A64IndirectChainContract pal_jmp =
+      plan_a64_indirect_chain(indirect, jmp, true, false);
+  const A64IndirectChainContract pal_hw =
+      plan_a64_indirect_chain(indirect, hw_ret, true, true);
+  const A64IndirectChainContract inactive =
+      plan_a64_indirect_chain(fall, jmp, false, false);
+  const A64IndirectChainContract unknown =
+      plan_a64_indirect_chain(indirect, 0x10u << 26, false, false);
+
+  A64IndirectChainContract zero_count = native_jmp;
+  zero_count.completed_delta = 0;
+  A64IndirectChainContract max_count = native_jmp;
+  max_count.completed_delta = kA64MaxBlockOps;
+  A64IndirectChainContract oversized = native_jmp;
+  oversized.completed_delta = kA64MaxBlockOps + 1;
+  A64IndirectChainContract wrong_gate = pal_hw;
+  wrong_gate.gate = A64ChainGate::kDeferInterrupt;
+  A64IndirectChainContract wrong_variant = pal_hw;
+  wrong_variant.target_variant = A64LinkVariantPolicy::kAlways;
+  A64IndirectChainContract no_resolver = native_jmp;
+  no_resolver.call_resolver_on_miss = false;
+  A64IndirectChainContract bad_kind = native_jmp;
+  bad_kind.kind = static_cast<A64IndirectKind>(0xff);
+
+  return native_jmp.valid() && native_jmp.eligible()
+      && native_jmp.kind == A64IndirectKind::kJmp
+      && native_jmp.gate == A64ChainGate::kPollAll
+      && native_jmp.target_variant == A64LinkVariantPolicy::kNone
+      && !native_jmp.publish_pc_before_probe
+      && !native_hw.valid()
+      && pal_jmp.valid() && pal_jmp.source_pal_guard
+      && !pal_jmp.source_pal_shadow
+      && pal_jmp.gate == A64ChainGate::kDeferInterrupt
+      && pal_jmp.publish_pc_before_probe
+      && pal_hw.valid() && pal_hw.source_pal_guard
+      && pal_hw.source_pal_shadow
+      && pal_hw.gate == A64ChainGate::kPollInterruptOnNativeTarget
+      && pal_hw.target_variant == A64LinkVariantPolicy::kIfTargetPal
+      && pal_hw.publish_pc_before_probe
+      && inactive.valid() && !inactive.eligible()
+      && !unknown.valid() && !zero_count.valid() && max_count.valid()
+      && !oversized.valid() && !wrong_gate.valid() && !wrong_variant.valid()
+      && !no_resolver.valid() && !bad_kind.valid();
+}
+
 static constexpr bool a64_link_probe_contract_probe() noexcept
 {
   constexpr uint64_t native_target = 0x2000;
@@ -560,19 +732,34 @@ static constexpr bool a64_link_probe_contract_probe() noexcept
       && !a64_link_pal_shadow(a64_pack_link_vgen(epoch, false))
       // A native target ignores the packed PAL variant; slot zero misses by tag.
       && a64_find_link_probe(
-          native_slots, native_target, epoch, false, false) == 1
-      && a64_find_link_probe(native_slots, 0x4000, epoch, false, false) == -1
+          native_slots, native_target, epoch,
+          A64LinkVariantPolicy::kNone, false) == 1
+      && a64_find_link_probe(native_slots, 0x4000, epoch,
+          A64LinkVariantPolicy::kNone, false) == -1
       // A PAL target skips the wrong variant in slot zero and reaches slot one.
-      && a64_find_link_probe(pal_slots, pal_target, epoch, true, true) == 1
-      && a64_find_link_probe(pal_slots, pal_target, epoch, true, false) == 0
+      && a64_find_link_probe(pal_slots, pal_target, epoch,
+          A64LinkVariantPolicy::kAlways, true) == 1
+      && a64_find_link_probe(pal_slots, pal_target, epoch,
+          A64LinkVariantPolicy::kAlways, false) == 0
+      // HW_RET ignores the variant for a native target, but enforces it in PALmode.
+      && a64_find_link_probe(native_slots, native_target, epoch,
+          A64LinkVariantPolicy::kIfTargetPal, false) == 1
+      && a64_find_link_probe(pal_slots, pal_target, epoch,
+          A64LinkVariantPolicy::kIfTargetPal, true) == 1
       && a64_find_link_probe(
-          pal_slots, pal_target, epoch + 1, true, true) == -1
+          pal_slots, pal_target, epoch + 1,
+          A64LinkVariantPolicy::kAlways, true) == -1
       && a64_find_link_probe(
-          empty_slots, pal_target, epoch, true, true) == -1;
+          empty_slots, pal_target, epoch,
+          A64LinkVariantPolicy::kAlways, true) == -1
+      && a64_find_link_probe(pal_slots, pal_target, epoch,
+          static_cast<A64LinkVariantPolicy>(0xff), true) == -1;
 }
 
 static_assert(a64_direct_chain_contract_probe(),
               "A64 direct-chain policy must gate, guard, and route every exit kind consistently");
+static_assert(a64_indirect_chain_contract_probe(),
+              "A64 indirect-chain policy must distinguish JMP and PAL-return gates");
 static_assert(a64_link_probe_contract_probe(),
               "A64 link probes must reject stale, absent, mistagged, and wrong-variant snapshots");
 
@@ -1089,6 +1276,62 @@ static asmjit::Error emit_a64_add_offset(asmjit::a64::Assembler& a,
   return negative ? a.sub(dst, base, scratch) : a.add(dst, base, scratch);
 }
 
+static bool a64_is_tail_scratch(const asmjit::a64::Gp& reg) noexcept
+{
+  return reg.is_gp() && reg.id() >= CJitEngine::RegAlloc::kScratch0.id()
+      && reg.id() <= CJitEngine::RegAlloc::kScratch6.id();
+}
+
+static asmjit::a64::Gp a64_tail_scratch_avoiding(
+    uint32_t first, uint32_t second = UINT32_MAX) noexcept
+{
+  for (uint32_t id = CJitEngine::RegAlloc::kScratch0.id();
+       id <= CJitEngine::RegAlloc::kScratch6.id(); ++id)
+    if (id != first && id != second) return asmjit::a64::x(id);
+  return asmjit::a64::xzr;
+}
+
+static asmjit::Error emit_a64_load_cpu_u64(asmjit::a64::Assembler& a,
+    const asmjit::a64::Gp& dst, uint32_t offset)
+{
+  using namespace asmjit;
+  if (!dst.is_gp64() || !a64_is_tail_scratch(dst)) return Error::kInvalidArgument;
+  const a64::Gp expansion = a64_tail_scratch_avoiding(dst.id());
+  Error err = emit_a64_add_offset(a, dst, CJitEngine::RegAlloc::kCpu,
+                                  static_cast<int64_t>(offset), expansion);
+  return err != Error::kOk ? err : a.ldr(dst, a64::ptr(dst));
+}
+
+static asmjit::Error emit_a64_load_cpu_u8(asmjit::a64::Assembler& a,
+    const asmjit::a64::Gp& dst, uint32_t offset, bool acquire)
+{
+  using namespace asmjit;
+  if (!dst.is_gp32() || !a64_is_tail_scratch(dst)) return Error::kInvalidArgument;
+  const a64::Gp address = a64::x(dst.id());
+  const a64::Gp expansion = a64_tail_scratch_avoiding(dst.id());
+  Error err = emit_a64_add_offset(a, address, CJitEngine::RegAlloc::kCpu,
+                                  static_cast<int64_t>(offset), expansion);
+  if (err != Error::kOk) return err;
+  return acquire ? a.ldarb(dst, a64::ptr(address))
+                 : a.ldrb(dst, a64::ptr(address));
+}
+
+static asmjit::Error emit_a64_store_cpu_u64(asmjit::a64::Assembler& a,
+    const asmjit::a64::Gp& src, uint32_t offset)
+{
+  using namespace asmjit;
+  if (!a64_is_real_x(src) || src.id() == CJitEngine::RegAlloc::kCpu.id())
+    return Error::kInvalidArgument;
+  const a64::Gp address = a64_tail_scratch_avoiding(src.id());
+  const a64::Gp expansion =
+      a64_tail_scratch_avoiding(src.id(), address.id());
+  if (!a64_is_real_x(address) || !a64_is_real_x(expansion))
+    return Error::kInvalidArgument;
+  Error err = emit_a64_add_offset(a, address, CJitEngine::RegAlloc::kCpu,
+                                  static_cast<int64_t>(offset), expansion);
+  return err != Error::kOk ? err : a.str(src, a64::ptr(address));
+}
+
 struct A64FrameLayout {
   static constexpr int32_t kCpuRegs = 16;
   static constexpr int32_t kCountPc = 32;
@@ -1335,6 +1578,299 @@ static asmjit::Error emit_a64_call_arg(asmjit::a64::Assembler& a,
   return a.blr(CJitEngine::RegAlloc::kCallTarget);
 }
 
+static asmjit::Error emit_a64_chain_gate(asmjit::a64::Assembler& a,
+    const CJitEngine::JitOffsets& offsets, A64ChainGate gate,
+    const asmjit::Label& bailout)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+
+  if (gate != A64ChainGate::kPollAll
+      && gate != A64ChainGate::kDeferInterrupt
+      && gate != A64ChainGate::kPollInterruptOnNativeTarget)
+    return Error::kInvalidArgument;
+
+  Error err = emit_a64_load_cpu_u64(a, RA::kScratch0, offsets.jit_budget);
+  if (err != Error::kOk) return err;
+  err = a.cmp(RA::kChainCount, RA::kScratch0);
+  if (err != Error::kOk) return err;
+  err = a.b_ge(bailout);  // m_jit_budget is signed, matching the x64 JGE gate.
+  if (err != Error::kOk) return err;
+
+  if (gate == A64ChainGate::kPollAll) {
+    err = emit_a64_load_cpu_u8(a, RA::kScratch0.w(), offsets.check_int, true);
+    if (err != Error::kOk) return err;
+    err = a.cbnz(RA::kScratch0.w(), bailout);
+    if (err != Error::kOk) return err;
+  }
+  else if (gate == A64ChainGate::kPollInterruptOnNativeTarget) {
+    const Label no_interrupt = a.new_label();
+    err = emit_a64_load_cpu_u8(a, RA::kScratch0.w(), offsets.check_int, true);
+    if (err != Error::kOk) return err;
+    err = a.cbz(RA::kScratch0.w(), no_interrupt);
+    if (err != Error::kOk) return err;
+    err = a.tst(RA::kNextPc, imm(1));
+    if (err != Error::kOk) return err;
+    err = a.b_eq(bailout);  // A pending interrupt is deferred only to a PAL target.
+    if (err != Error::kOk) return err;
+    err = a.bind(no_interrupt);
+    if (err != Error::kOk) return err;
+  }
+
+  err = emit_a64_load_cpu_u8(a, RA::kScratch0.w(), offsets.check_timers, true);
+  return err != Error::kOk ? err : a.cbnz(RA::kScratch0.w(), bailout);
+}
+
+static asmjit::Error emit_a64_source_pal_guard(asmjit::a64::Assembler& a,
+    const CJitEngine::JitOffsets& offsets, bool enabled, bool expected_shadow,
+    const asmjit::Label& bailout)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  if (!enabled) return Error::kOk;
+
+  Error err = emit_a64_load_cpu_u8(a, RA::kScratch6.w(), offsets.sde, false);
+  if (err != Error::kOk) return err;
+  err = a.cmp(RA::kScratch6.w(), imm(expected_shadow ? 1 : 0));
+  return err != Error::kOk ? err : a.b_ne(bailout);
+}
+
+// Probe snapshots owned by the source block.
+static asmjit::Error emit_a64_link_slots_probe(asmjit::a64::Assembler& a,
+    const CJitEngine::JitOffsets& offsets, const CJitEngine::LinkSlot* slots,
+    const uint64_t* current_epoch, A64LinkVariantPolicy variant_policy,
+    const asmjit::Label& miss)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  using namespace asmjit::a64;
+
+  if (slots == nullptr || current_epoch == nullptr
+      || (variant_policy != A64LinkVariantPolicy::kNone
+          && variant_policy != A64LinkVariantPolicy::kAlways
+          && variant_policy != A64LinkVariantPolicy::kIfTargetPal))
+    return Error::kInvalidArgument;
+
+  Error err = emit_a64_mov_u64(a, RA::kScratch5,
+      reinterpret_cast<uintptr_t>(current_epoch));
+  if (err != Error::kOk) return err;
+  err = a.ldr(RA::kScratch5, ptr(RA::kScratch5));
+  if (err != Error::kOk) return err;
+  err = a.and_(RA::kScratch5, RA::kScratch5, imm(kA64LinkEpochMask));
+  if (err != Error::kOk) return err;
+
+  err = emit_a64_mov_u64(a, RA::kScratch1,
+                         reinterpret_cast<uintptr_t>(slots));
+  if (err != Error::kOk) return err;
+  if (variant_policy != A64LinkVariantPolicy::kNone) {
+    err = emit_a64_load_cpu_u8(a, RA::kScratch6.w(), offsets.sde, false);
+    if (err != Error::kOk) return err;
+  }
+
+  for (uint32_t slot = 0; slot < CJitEngine::kLinkSlots; ++slot) {
+    const Label next = slot + 1 < CJitEngine::kLinkSlots
+        ? a.new_label() : miss;
+    const int32_t base = static_cast<int32_t>(slot * sizeof(CJitEngine::LinkSlot));
+
+    // A null body always misses.
+    err = a.ldr(RA::kScratch4,
+                ptr(RA::kScratch1, base + offsetof(CJitEngine::LinkSlot, body)));
+    if (err != Error::kOk) return err;
+    err = a.cbz(RA::kScratch4, next);
+    if (err != Error::kOk) return err;
+
+    err = a.ldr(RA::kScratch2,
+                ptr(RA::kScratch1, base + offsetof(CJitEngine::LinkSlot, tag)));
+    if (err != Error::kOk) return err;
+    err = a.cmp(RA::kScratch2, RA::kNextPc);
+    if (err != Error::kOk) return err;
+    err = a.b_ne(next);
+    if (err != Error::kOk) return err;
+
+    err = a.ldr(RA::kScratch3,
+                ptr(RA::kScratch1, base + offsetof(CJitEngine::LinkSlot, vgen)));
+    if (err != Error::kOk) return err;
+    err = a.and_(RA::kScratch4, RA::kScratch3, imm(kA64LinkEpochMask));
+    if (err != Error::kOk) return err;
+    err = a.cmp(RA::kScratch4, RA::kScratch5);
+    if (err != Error::kOk) return err;
+    err = a.b_ne(next);
+    if (err != Error::kOk) return err;
+
+    Label variant_ok;
+    if (variant_policy == A64LinkVariantPolicy::kIfTargetPal) {
+      variant_ok = a.new_label();
+      err = a.tst(RA::kNextPc, imm(1));
+      if (err != Error::kOk) return err;
+      err = a.b_eq(variant_ok);
+      if (err != Error::kOk) return err;
+    }
+    if (variant_policy != A64LinkVariantPolicy::kNone) {
+      err = a.lsr(RA::kScratch4, RA::kScratch3, 63);
+      if (err != Error::kOk) return err;
+      err = a.cmp(RA::kScratch4.w(), RA::kScratch6.w());
+      if (err != Error::kOk) return err;
+      err = a.b_ne(next);
+      if (err != Error::kOk) return err;
+    }
+    if (variant_policy == A64LinkVariantPolicy::kIfTargetPal) {
+      err = a.bind(variant_ok);
+      if (err != Error::kOk) return err;
+    }
+
+    err = a.ldr(RA::kScratch4,
+                ptr(RA::kScratch1, base + offsetof(CJitEngine::LinkSlot, body)));
+    if (err != Error::kOk) return err;
+    err = a.cbz(RA::kScratch4, next);
+    if (err != Error::kOk) return err;
+    err = a.br(RA::kScratch4);
+    if (err != Error::kOk) return err;
+    if (slot + 1 < CJitEngine::kLinkSlots) {
+      err = a.bind(next);
+      if (err != Error::kOk) return err;
+    }
+  }
+  return Error::kOk;
+}
+
+static asmjit::Error emit_a64_direct_chain_tail(asmjit::a64::Assembler& a,
+    const CJitEngine::JitOffsets& offsets,
+    const A64DirectChainContract& contract, CJitEngine::LinkSlot* slots,
+    const uint64_t* current_epoch, uint64_t source_tag,
+    const asmjit::Label& body, const asmjit::Label& done)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  if (!contract.valid() || !contract.eligible()
+      || slots == nullptr || current_epoch == nullptr)
+    return Error::kInvalidArgument;
+
+  Error err = a.add(RA::kChainCount, RA::kChainCount,
+                    imm(contract.completed_delta));
+  if (err != Error::kOk) return err;
+  if (contract.publish_pc_before_probe) {
+    err = emit_a64_store_cpu_u64(a, RA::kNextPc, offsets.state_pc);
+    if (err != Error::kOk) return err;
+  }
+
+#ifdef JIT_VERIFY
+  if (!contract.publish_pc_before_probe) {
+    err = emit_a64_store_cpu_u64(a, RA::kNextPc, offsets.state_pc);
+    if (err != Error::kOk) return err;
+  }
+  return a.b(done);
+#else
+  const Label bailout = a.new_label();
+  const Label miss = a.new_label();
+  err = emit_a64_chain_gate(a, offsets, contract.gate, bailout);
+  if (err != Error::kOk) return err;
+  err = emit_a64_source_pal_guard(a, offsets, contract.source_pal_guard,
+                                  contract.source_pal_shadow, bailout);
+  if (err != Error::kOk) return err;
+
+  if (contract.self_loop_candidate) {
+    err = emit_a64_mov_u64(a, RA::kScratch0, source_tag);
+    if (err != Error::kOk) return err;
+    err = a.cmp(RA::kNextPc, RA::kScratch0);
+    if (err != Error::kOk) return err;
+    err = a.b_eq(body);
+    if (err != Error::kOk) return err;
+  }
+
+  const A64LinkVariantPolicy variant = contract.target_pal_guard
+      ? A64LinkVariantPolicy::kAlways : A64LinkVariantPolicy::kNone;
+  err = emit_a64_link_slots_probe(a, offsets, slots, current_epoch,
+                                  variant, miss);
+  if (err != Error::kOk) return err;
+
+  err = a.bind(miss);
+  if (err != Error::kOk) return err;
+  err = emit_a64_mov_u64(a, RA::kScratch1,
+                         reinterpret_cast<uintptr_t>(slots));
+  if (err != Error::kOk) return err;
+  err = emit_a64_store_cpu_u64(a, RA::kScratch1, offsets.link_from);
+  if (err != Error::kOk) return err;
+
+  err = a.bind(bailout);
+  if (err != Error::kOk) return err;
+  if (!contract.publish_pc_before_probe) {
+    err = emit_a64_store_cpu_u64(a, RA::kNextPc, offsets.state_pc);
+    if (err != Error::kOk) return err;
+  }
+  return a.b(done);
+#endif
+}
+
+static asmjit::Error emit_a64_indirect_chain_tail(asmjit::a64::Assembler& a,
+    const CJitEngine::JitOffsets& offsets, const CJitEngine::HelperSet& helpers,
+    const CJitEngine::RegAlloc& regs,
+    const A64IndirectChainContract& contract, CJitEngine::LinkSlot* slots,
+    const uint64_t* current_epoch, const asmjit::Label& done)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  if (!contract.valid() || !contract.eligible()
+      || slots == nullptr || current_epoch == nullptr)
+    return Error::kInvalidArgument;
+#ifndef JIT_VERIFY
+  if (helpers.indirect_helper == nullptr) return Error::kInvalidArgument;
+#endif
+
+  Error err = a.add(RA::kChainCount, RA::kChainCount,
+                    imm(contract.completed_delta));
+  if (err != Error::kOk) return err;
+  if (contract.publish_pc_before_probe) {
+    err = emit_a64_store_cpu_u64(a, RA::kNextPc, offsets.state_pc);
+    if (err != Error::kOk) return err;
+  }
+
+#ifdef JIT_VERIFY
+  (void)helpers;
+  (void)regs;
+  if (!contract.publish_pc_before_probe) {
+    err = emit_a64_store_cpu_u64(a, RA::kNextPc, offsets.state_pc);
+    if (err != Error::kOk) return err;
+  }
+  return a.b(done);
+#else
+  const Label bailout = a.new_label();
+  const Label resolver = a.new_label();
+  err = emit_a64_chain_gate(a, offsets, contract.gate, bailout);
+  if (err != Error::kOk) return err;
+  err = emit_a64_source_pal_guard(a, offsets, contract.source_pal_guard,
+                                  contract.source_pal_shadow, bailout);
+  if (err != Error::kOk) return err;
+  err = emit_a64_link_slots_probe(a, offsets, slots, current_epoch,
+                                  contract.target_variant, resolver);
+  if (err != Error::kOk) return err;
+
+  err = a.bind(resolver);
+  if (err != Error::kOk) return err;
+  if (!contract.publish_pc_before_probe) {
+    err = emit_a64_store_cpu_u64(a, RA::kNextPc, offsets.state_pc);
+    if (err != Error::kOk) return err;
+  }
+  err = emit_a64_helper_call(a, offsets, helpers, regs,
+      contract.source_pal_shadow, helpers.indirect_helper,
+      {{A64CallArgKind::kCpu, 0},
+       {A64CallArgKind::kHost, RA::kNextPc.id()},
+       {A64CallArgKind::kImm64, reinterpret_cast<uintptr_t>(slots)}});
+  if (err != Error::kOk) return err;
+  err = a.cbz(a64::x0, done);
+  if (err != Error::kOk) return err;
+  err = a.br(a64::x0);
+  if (err != Error::kOk) return err;
+
+  err = a.bind(bailout);
+  if (err != Error::kOk) return err;
+  if (!contract.publish_pc_before_probe) {
+    err = emit_a64_store_cpu_u64(a, RA::kNextPc, offsets.state_pc);
+    if (err != Error::kOk) return err;
+  }
+  return a.b(done);
+#endif
+}
+
 static asmjit::Error emit_a64_prologue(asmjit::a64::Assembler& a)
 {
   using RA = CJitEngine::RegAlloc;
@@ -1385,6 +1921,92 @@ static asmjit::Error emit_a64_epilogue(asmjit::a64::Assembler& a)
 }
 
 #ifndef NDEBUG
+static bool a64_validate_tail_emitters(const asmjit::Environment& environment,
+                                       const asmjit::CpuFeatures& features)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+
+  CJitEngine::JitOffsets offsets{};
+  offsets.state_pc = 4095;
+  offsets.link_from = 4096;
+  offsets.check_timers = 32760;
+  offsets.helpers = 32768;
+  offsets.sde = 0x00ffffffu;
+  offsets.check_int = 0x01000000u;
+  offsets.jit_budget = UINT32_MAX;
+
+  CJitEngine::JitBlock block{};
+  block.tag = 0x1001;
+  block.pal_shadow = true;
+  uint64_t epoch = 0x12345678;
+  CJitEngine::HelperSet helpers{};
+  helpers.indirect_helper = reinterpret_cast<void*>(uintptr_t(1));
+  const CJitEngine::RegAlloc regs = make_a64_block_regalloc();
+
+  auto finish = [&](CodeHolder& code, a64::Assembler& a,
+                    const Label& done) -> bool {
+    Error err = a.bind(done);
+    if (err == Error::kOk)
+      err = a.mov(RA::kResultCount, RA::kChainCount.w());
+    if (err == Error::kOk) err = a.ret(a64::x30);
+    if (err == Error::kOk) err = a.finalize();
+    return err == Error::kOk && !code.has_unresolved_fixups()
+        && code.code_size() != 0;
+  };
+
+  auto validate_direct = [&](A64ExitKind kind, bool pal_block,
+                             bool pal_shadow) -> bool {
+    CodeHolder code;
+    if (code.init(environment, features) != Error::kOk) return false;
+    a64::Assembler a;
+    if (code.attach(&a) != Error::kOk) return false;
+    a.add_diagnostic_options(DiagnosticOptions::kValidateAssembler);
+    const Label body = a.new_label();
+    const Label done = a.new_label();
+    if (a.bind(body) != Error::kOk
+        || emit_a64_mov_u64(a, RA::kChainCount, 0) != Error::kOk
+        || emit_a64_mov_u64(a, RA::kNextPc, 0x2001) != Error::kOk)
+      return false;
+    const A64BlockExit exit{0x1005, 1, kind};
+    const A64DirectChainContract contract =
+        plan_a64_direct_chain(exit, pal_block, pal_shadow);
+    if (emit_a64_direct_chain_tail(a, offsets, contract, &block.link[0],
+          &epoch, block.tag, body, done) != Error::kOk)
+      return false;
+    return finish(code, a, done);
+  };
+
+  auto validate_indirect = [&](uint32_t opcode, bool pal_block,
+                               bool pal_shadow) -> bool {
+    CodeHolder code;
+    if (code.init(environment, features) != Error::kOk) return false;
+    a64::Assembler a;
+    if (code.attach(&a) != Error::kOk) return false;
+    a.add_diagnostic_options(DiagnosticOptions::kValidateAssembler);
+    const Label body = a.new_label();
+    const Label done = a.new_label();
+    if (a.bind(body) != Error::kOk
+        || emit_a64_mov_u64(a, RA::kChainCount, 0) != Error::kOk
+        || emit_a64_mov_u64(a, RA::kNextPc, 0x2001) != Error::kOk)
+      return false;
+    const A64BlockExit exit{0x1005, 1, A64ExitKind::kIndirect};
+    const A64IndirectChainContract contract = plan_a64_indirect_chain(
+        exit, opcode << 26, pal_block, pal_shadow);
+    if (emit_a64_indirect_chain_tail(a, offsets, helpers, regs, contract,
+          &block.link[0], &epoch, done) != Error::kOk)
+      return false;
+    return finish(code, a, done);
+  };
+
+  return validate_direct(A64ExitKind::kFallthrough, false, false)
+      && validate_direct(A64ExitKind::kDirect, true, true)
+      && validate_direct(A64ExitKind::kCallPal, false, false)
+      && validate_indirect(0x1a, false, false)
+      && validate_indirect(0x1a, true, false)
+      && validate_indirect(0x1e, true, true);
+}
+
 static bool a64_abi_compatible(const asmjit::Environment& environment)
 {
   using namespace asmjit;
@@ -1432,6 +2054,15 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   b->src_sum = 0;
   b->hash_len = 0;
 
+#ifndef NDEBUG
+  if (m_rt != nullptr) {
+    auto* const validation_rt = static_cast<asmjit::JitRuntime*>(m_rt);
+    static const bool tails_valid = a64_validate_tail_emitters(
+        validation_rt->environment(), validation_rt->cpu_features());
+    assert(tails_valid);
+  }
+#endif
+
   const A64BlockPlan plan = plan_a64_block(*b, dram, dram_size);
 #ifdef JIT_STATS
   if (plan.stop == A64PlanStop::kUnsupported) {
@@ -1457,10 +2088,16 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   }
 #endif
   const A64BlockExit exit = plan_a64_exit(b->tag, plan.count, plan.terminator);
+  const bool pal_block = (b->tag & 1u) != 0;
   const A64DirectChainContract chain =
-      plan_a64_direct_chain(exit, (b->tag & 1u) != 0, b->pal_shadow);
-  // Avoid even dry-run codegen until a classifier and emitter agree on a supported prefix.
-  if (!exit.valid() || !chain.valid()) return;
+      plan_a64_direct_chain(exit, pal_block, b->pal_shadow);
+  const uint32_t terminator_ins =
+      plan.count != 0 ? plan.ops[plan.count - 1].ins : 0;
+  const A64IndirectChainContract indirect = plan_a64_indirect_chain(
+      exit, terminator_ins, pal_block, b->pal_shadow);
+  // Only one currently scaffolded tail must own a supported block.
+  if (!exit.valid() || !chain.valid() || !indirect.valid()
+      || chain.eligible() == indirect.eligible()) return;
 
   if (m_rt == nullptr) return;
   auto* const rt = static_cast<asmjit::JitRuntime*>(m_rt);
@@ -1495,10 +2132,20 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   asmjit::Label done = a.new_label();
   asmjit::Label body = a.new_label();
   if (a.bind(body) != asmjit::Error::kOk) return;
+  // Every body begins with its forward default.
+  if (emit_a64_mov_u64(a, RegAlloc::kNextPc, exit.fallthrough_pc)
+      != asmjit::Error::kOk) return;
 
-  // Empty translated body: a cold call would return zero completed instructions.
-  if (a.mov(RegAlloc::kResultCount, RegAlloc::kChainCount.w()) != asmjit::Error::kOk) return;
+  const asmjit::Error tail_err = chain.eligible()
+      ? emit_a64_direct_chain_tail(a, m_off, chain, &b->link[0],
+                                  &m_vgen_cur, b->tag, body, done)
+      : emit_a64_indirect_chain_tail(a, m_off, helpers, regalloc, indirect,
+                                    &b->link[0], &m_vgen_cur, done);
+  if (tail_err != asmjit::Error::kOk) return;
+
   if (a.bind(done) != asmjit::Error::kOk) return;
+  if (a.mov(RegAlloc::kResultCount, RegAlloc::kChainCount.w())
+      != asmjit::Error::kOk) return;
   // Every dispatcher or bailout exit converges here while x20 still names state.r[].
   if (emit_a64_sync_guest_pins(a, regalloc) != asmjit::Error::kOk) return;
   if (emit_a64_epilogue(a) != asmjit::Error::kOk) return;
@@ -1507,9 +2154,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   const A64PendingPublication pending = prepare_a64_block_publication(
       *b, plan, exit, dram, dram_size, code, body, m_code_bytes);
   if (!pending.ready()) return;
-
-  assert(pending.body_off == 40 + kA64BlockGuestPins.size() * 4);
-  assert(pending.code_size == 72 + kA64BlockGuestPins.size() * 8);
+  assert(pending.body_off != 0);  // Chained entry must remain past the cold prologue.
 }
 
 void CJitEngine::compile_trace(TraceFragment*, JitBlock**, uint32_t,
