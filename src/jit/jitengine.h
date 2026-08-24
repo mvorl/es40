@@ -30,9 +30,9 @@
 #ifdef ES40_JIT
 
 // Host codegen architecture, picking which backend TU is live: x86-64 has the full backend
-// (jitengine_x64.cpp -- emit_op & friends emit x86 via asmjit); ARM64 is scaffolding only
-// (jitengine_a64.cpp -- the engine and dispatcher compile, but compile_block emits no code,
-// so every block falls back to the interpreter). The host-independent engine is jitengine.cpp.
+// jitengine_x64.cpp - x86_64 host
+// jitengine_a64.cpp - ARM64 aka AArch64 host.
+// The host-independent engine is jitengine.cpp
 #if defined(_M_X64) || defined(__x86_64__)
 #define ES40_JIT_X64 1
 #elif defined(_M_ARM64) || defined(__aarch64__)
@@ -312,7 +312,7 @@ public:
   // Each backend defines its own register roles, forwarding state, and memory fast-path state.
   struct RegAlloc;
 
-  // cold: opaque std::vector<ColdMemStub>* collecting outlined memop slow paths;
+  // cold: opaque backend-owned per-body context. collecting outlined memop slow paths;
   // the caller emits them after its epilogue - helper calls stay out of hot path
   void emit_op(void* a, const uint8_t* gpa, void* done, const HelperSet& hs,
                bool pal_block, JitBlock* b, uint32_t ins, uint32_t i, RegAlloc& regalloc,
