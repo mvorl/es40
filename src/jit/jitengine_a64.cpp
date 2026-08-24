@@ -368,7 +368,8 @@ struct A64DirectChainContract {
   constexpr bool eligible() const noexcept {
     return kind == A64ExitKind::kFallthrough
         || kind == A64ExitKind::kDirect
-        || kind == A64ExitKind::kCallPal;
+        || kind == A64ExitKind::kCallPal
+        || kind == A64ExitKind::kRedispatch;
   }
 
   constexpr bool valid() const noexcept {
@@ -378,7 +379,7 @@ struct A64DirectChainContract {
       return false;
 
     if (!eligible()) {
-      if (kind != A64ExitKind::kIndirect && kind != A64ExitKind::kRedispatch)
+      if (kind != A64ExitKind::kIndirect)
         return false;
       return gate == A64ChainGate::kNone
           && !source_pal_guard && !target_pal_guard
@@ -391,8 +392,10 @@ struct A64DirectChainContract {
         && target_pal_guard
             == (kind == A64ExitKind::kCallPal && !source_pal_guard)
         && request_patch_on_slot_miss
-        && self_loop_candidate == (kind == A64ExitKind::kDirect)
-        && publish_pc_before_probe == (source_pal_guard || target_pal_guard)
+        && self_loop_candidate == (kind != A64ExitKind::kFallthrough)
+        && publish_pc_before_probe
+            == (source_pal_guard || target_pal_guard
+                || kind == A64ExitKind::kRedispatch)
         && (source_pal_guard || !source_pal_shadow);
   }
 };
@@ -410,7 +413,9 @@ static constexpr A64DirectChainContract plan_a64_direct_chain(
   contract.source_pal_guard = pal_block;
   contract.target_pal_guard = exit.kind == A64ExitKind::kCallPal && !pal_block;
   contract.request_patch_on_slot_miss = true;
-  contract.self_loop_candidate = exit.kind == A64ExitKind::kDirect;
+  // x64 sends every non-fallthrough direct exit through the same branch-tail
+  // self-link check, including CALL_PAL and I_CTL redispatch.
+  contract.self_loop_candidate = exit.kind != A64ExitKind::kFallthrough;
   contract.publish_pc_before_probe = a64_publish_pc_before_chain(exit, pal_block);
   contract.source_pal_shadow = pal_block && pal_shadow;
   return contract;
@@ -596,9 +601,11 @@ static constexpr bool a64_direct_chain_contract_probe() noexcept
       plan_a64_direct_chain(direct, true, true);
   const A64DirectChainContract pal_call =
       plan_a64_direct_chain(call_pal, true, true);
+  const A64DirectChainContract pal_redispatch =
+      plan_a64_direct_chain(redispatch, true, true);
   const A64DirectChainContract dynamic =
       plan_a64_direct_chain(indirect, false, false);
-  const A64DirectChainContract retry =
+  const A64DirectChainContract native_redispatch =
       plan_a64_direct_chain(redispatch, false, false);
   const A64DirectChainContract empty =
       plan_a64_direct_chain(none, false, false);
@@ -631,7 +638,7 @@ static constexpr bool a64_direct_chain_contract_probe() noexcept
       && native_direct.valid() && native_direct.self_loop_candidate
       && native_direct.gate == A64ChainGate::kPollAll
       && native_call.valid() && native_call.target_pal_guard
-      && native_call.publish_pc_before_probe
+      && native_call.self_loop_candidate && native_call.publish_pc_before_probe
       && !native_call.source_pal_guard
       && pal_fall.valid() && pal_fall.source_pal_guard
       && !pal_fall.source_pal_shadow
@@ -640,10 +647,25 @@ static constexpr bool a64_direct_chain_contract_probe() noexcept
       && pal_direct.valid() && pal_direct.source_pal_guard
       && pal_direct.source_pal_shadow && pal_direct.self_loop_candidate
       && pal_call.valid() && pal_call.source_pal_guard
-      && !pal_call.target_pal_guard && pal_call.publish_pc_before_probe
+      && !pal_call.target_pal_guard && pal_call.self_loop_candidate
+      && pal_call.publish_pc_before_probe
+      && pal_redispatch.valid() && pal_redispatch.eligible()
+      && pal_redispatch.gate == A64ChainGate::kDeferInterrupt
+      && pal_redispatch.source_pal_guard
+      && pal_redispatch.source_pal_shadow
+      && !pal_redispatch.target_pal_guard
+      && pal_redispatch.request_patch_on_slot_miss
+      && pal_redispatch.self_loop_candidate
+      && pal_redispatch.publish_pc_before_probe
       && dynamic.valid() && !dynamic.eligible()
       && !dynamic.request_patch_on_slot_miss
-      && retry.valid() && !retry.eligible()
+      && native_redispatch.valid() && native_redispatch.eligible()
+      && native_redispatch.gate == A64ChainGate::kPollAll
+      && !native_redispatch.source_pal_guard
+      && !native_redispatch.target_pal_guard
+      && native_redispatch.request_patch_on_slot_miss
+      && native_redispatch.self_loop_candidate
+      && native_redispatch.publish_pc_before_probe
       && !empty.valid() && !malformed.valid()
       && !zero_count.valid() && max_count.valid()
       && !unknown_gate.valid() && !native_shadow.valid()
@@ -1355,6 +1377,8 @@ static constexpr bool a64_exit_contract_probe() noexcept
       && indirect.kind == A64ExitKind::kIndirect
       && call_pal.kind == A64ExitKind::kCallPal
       && redispatch.kind == A64ExitKind::kRedispatch
+      && redispatch.completed_delta == 1
+      && redispatch.fallthrough_pc == 0x1005
       && retry.completed_delta == 63 && retry.next_pc == 0x10fd
       && retry.pc_authority == A64PcAuthority::kNextPc
       && trapped.completed_delta == 64
@@ -2473,6 +2497,7 @@ static bool a64_validate_tail_emitters(const asmjit::Environment& environment,
   return validate_direct(A64ExitKind::kFallthrough, false, false)
       && validate_direct(A64ExitKind::kDirect, true, true)
       && validate_direct(A64ExitKind::kCallPal, false, false)
+      && validate_direct(A64ExitKind::kRedispatch, true, true)
       && validate_indirect(0x1a, false, false)
       && validate_indirect(0x1a, true, false)
       && validate_indirect(0x1e, true, true);
