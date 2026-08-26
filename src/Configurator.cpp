@@ -1298,6 +1298,17 @@ void CConfigurator::set_value(char *name, char *value)
 	add_value(name, value);
 }
 
+void CConfigurator::remove_value(char *name)
+{
+	for (int i = 0; i < iNumValues; ++i)
+		if (!strcmp(pValues[i].name, name))
+		{
+			for (int j = i; j < iNumValues - 1; ++j)
+				pValues[j] = pValues[j + 1];
+			--iNumValues;
+		}
+}
+
   /**
    * Set a child in our list of children.
    * If a child with this name does not exist, add it.
@@ -1336,6 +1347,17 @@ CConfigurator *CConfigurator::find_child(const char *name)
 	}
 		
     return nullptr;
+}
+
+void CConfigurator::remove_child(const char *name)
+{
+	for (int i = 0; i < iNumChildren; ++i)
+		if (!strcmp(pChildren[i]->myName, name))
+		{
+			for (int j = i; j < iNumChildren - 1; ++j)
+				pChildren[j] = pChildren[j + 1];
+			--iNumChildren;
+		}
 }
 
   /**
