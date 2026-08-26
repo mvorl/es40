@@ -535,7 +535,12 @@ FormValues_t show_form(const char *title, FormEntry_t entry[], int num_entries)
 
         ValidationFuncPtr set_field_validation = entry[i].validation_callback;
         if (set_field_validation != NULL)
+        {
             set_field_validation(my_fld[i]);
+            field_opts_off(my_fld[i], O_PASSOK);   // Valdidate on every exit
+            if (field_type(my_fld[i]) == TYPE_INTEGER || field_type(my_fld[i]) == TYPE_NUMERIC)
+                field_opts_off(my_fld[i], O_NULLOK); // Don't allow empty field
+        }
     }
     my_fld[num_entries] = NULL;
 
@@ -563,7 +568,10 @@ FormValues_t show_form(const char *title, FormEntry_t entry[], int num_entries)
             show_text(entry[cur_idx].label, entry[cur_idx].description);
             break;
         case KEY_F(2):
-            stay_in_loop = FALSE;
+            if (form_driver(my_form, REQ_VALIDATION) == E_OK)
+                stay_in_loop = FALSE;
+            else
+                show_text("Error", "Field validation failed");
             break;
         case KEY_TAB:
             if (field_type(cur_field) == TYPE_ENUM)
@@ -589,10 +597,22 @@ FormValues_t show_form(const char *title, FormEntry_t entry[], int num_entries)
             form_driver(my_form, REQ_END_LINE);
             break;
         case KEY_LEFT:
-            form_driver(my_form, REQ_PREV_CHAR);
+            if (field_type(cur_field) == TYPE_ENUM)
+            {
+                form_driver(my_form, REQ_PREV_CHOICE);
+                form_driver(my_form, REQ_END_LINE);
+            }
+            else
+                form_driver(my_form, REQ_PREV_CHAR);
             break;
         case KEY_RIGHT:
-            form_driver(my_form, REQ_NEXT_CHAR);
+            if (field_type(cur_field) == TYPE_ENUM)
+            {
+                form_driver(my_form, REQ_NEXT_CHOICE);
+                form_driver(my_form, REQ_END_LINE);
+            }
+            else
+                form_driver(my_form, REQ_NEXT_CHAR);
             break;
         case KEY_BACKSPACE: // Ctrl-H
         case KEY_DEL:
@@ -612,9 +632,6 @@ FormValues_t show_form(const char *title, FormEntry_t entry[], int num_entries)
             break;
         }
     }
-
-    // Make sure all validation routines have ended before retrieving values
-    form_driver(my_form, REQ_VALIDATION);
 
     FormValues_t values = (FormValues_t)calloc(num_entries, sizeof(char *));
     for (int i = 0; i < num_entries; ++i)
@@ -680,20 +697,20 @@ void es40_banner(const char *title)
     update_panels();
     doupdate();
 
-    // FIXME: Why does this not work as intended (counting down)?
+    // No idea why the coordinates need offesets...
     const int factor = 10;
     const timespec req = {0, 1000L * 1000 * 1000 / factor}; // = 100,000,000 ns = 0.1 seconds
     int count = WAITSEC * factor;
     int maxx, maxy;
     getmaxyx(my_win, maxy, maxx);
     nodelay(my_win, TRUE);
-    while (--count > factor && wgetch(my_win) == ERR)
+    while (--count > 0 && wgetch(my_win) == ERR)
     {
         nanosleep(&req, NULL);
         if (count % factor == 0)
         {
             string dur = string("(") + i2s(count / factor) + ")";
-            mvwprintw(my_win, maxy, maxx - strlen(dur.c_str()), dur.c_str());
+            mvwprintw(my_win, maxy-1, maxx-2 - strlen(dur.c_str()), dur.c_str());
             update_panels();
             doupdate();
         }
@@ -730,8 +747,8 @@ const char *find_first_free_pcislot(void)
         for (int slot = 1; slot < ((bus == 0) ? 4 : 6); ++slot)
             if (is_pcislot_free(bus, slot))
             {
-                static string bus_slot = i2s(bus) + "." + i2s(slot);
-                return bus_slot.c_str();
+                string bus_slot = i2s(bus) + "." + i2s(slot);
+                return strdup(bus_slot.c_str());
             }
     return NULL;
 }
@@ -750,6 +767,12 @@ char *device_in_pcislot(int bus, int slot)
  * General validation routines
  **/
 
+void validation_yes(FIELD *field)
+{
+    const char *choices[] = {"yes", NULL};
+    set_field_type(field, TYPE_ENUM, choices, FALSE, TRUE);
+}
+
 void validation_bool(FIELD *field)
 {
     const char *choices[] = {
@@ -759,13 +782,13 @@ void validation_bool(FIELD *field)
     set_field_type(field, TYPE_ENUM, choices, FALSE, TRUE);
 }
 
-void validation_datetime(FIELD *field)
+void validation_optional_datetime(FIELD *field)
 {
     // Preceeding and trailing optional blanks added for trimming the field,
     // see form_field_validation(3X) manpage
     set_field_type(field, TYPE_REGEXP,
                    "^ *"
-                   "[0-8]{4}-[0-8]{2}-[0-8]{2}"
+                   "([0-8]{4}-[0-8]{2}-[0-8]{2})?"
                    "( [0-8]{2}:[0-8]{2}:[0-8]{2})?"
                    " *$");
 }
@@ -790,8 +813,9 @@ void validation_pcislot(FIELD *field)
         for (int slot = 1; slot <= ((bus == 0) ? 4 : 6); ++slot)
             if (is_pcislot_free(bus, slot))
             {
-                string o = i2s(bus) + "." + i2s(slot);
-                choices.push_back(o.c_str());
+                char pcislot[4];
+                snprintf(pcislot, sizeof(pcislot), "%d.%d", bus, slot);
+                choices.push_back(strdup(pcislot));
             }
     choices.push_back(NULL);
 
@@ -835,13 +859,13 @@ void validation_disk_autocreate_size(FIELD *field)
     // Preceeding and trailing optional blanks added for trimming the field,
     // see form_field_validation(3X) manpage
     // (..)? to allow leaving field empty
-    set_field_type(field, TYPE_REGEXP, "^ *([0-8]+[KMG] *)?$");
+    set_field_type(field, TYPE_REGEXP, "^ *([0-8]+[KMG])? *$");
 }
 
 /**
  * Add disks for a controller to the configuration file.
  **/
-FormValues_t add_disks(const char *title, const char *disk_name, CConfigurator *parent)
+void add_disks(const char *title, const char *disk_name, CConfigurator *parent)
 {
     FormEntry_t entry[] = {
         {"Type", "file", "type",
@@ -865,7 +889,7 @@ FormValues_t add_disks(const char *title, const char *disk_name, CConfigurator *
          validation_disk_autocreate_size},
         {"Read-only?", "no", "read_only",
          "Should the disk be set to read-only?\n"
-         "This parameter is ignoed for CD-ROMs (always true),\n"
+         "This parameter is ignored for CD-ROMs (always true),\n"
          "and for ramdisks (always false)",
          validation_bool},
         {"Disk model number", "", "model_number",
@@ -882,21 +906,25 @@ FormValues_t add_disks(const char *title, const char *disk_name, CConfigurator *
 
     FormValues_t values = show_form(title, entry, num_entries);
 
-    char *disk_type = values[fentry_index(entry, num_entries, "type")];
+    char *disk_type = values[fentry_index(entry, num_entries, "Type")];
     if ((!strcmp(disk_type, "file") || !strcmp(disk_type, "device")) &&
         !strcmp(values[fentry_index(entry, num_entries, "File / Device name")], ""))
     {
-        // TODO: Invalid - show message, return to form
+        string msg = string("No ") + disk_type + " name has been specified. Aborting.";
+        show_text("Error", msg.c_str());
+        return;
     }
+
     idx = fentry_index(entry, num_entries, "Harddisk or CD-ROM");
     bool is_cdrom = !strcmp(values[idx], "cd-rom");
     if (!strcmp(disk_type, "floppy") && is_cdrom)
-        values[idx] = (char *)"disk";
+        values[idx] = strdup("disk");
+
     idx = fentry_index(entry, num_entries, "Read-only?");
     if (!strcmp(disk_type, "ramdisk"))
-        values[idx] = (char *)"no";
+        values[idx] = strdup("no");
     if (is_cdrom)
-        values[idx] = (char *)"yes";
+        values[idx] = strdup("yes");
 
     CConfigurator *c = new CConfigurator(parent, (char *)disk_name, (char *)disk_type);
     for (int i = 0; i < num_entries; ++i)
@@ -916,7 +944,10 @@ FormValues_t add_disks(const char *title, const char *disk_name, CConfigurator *
             }
         }
 
-    return values;
+    // Clean up
+    for (int i = 0; i < num_entries; ++i)
+        free(values[i]);
+    free(values);
 }
 
 /**
@@ -926,7 +957,6 @@ FormValues_t add_disks(const char *title, const char *disk_name, CConfigurator *
 #ifdef HAVE_SDL
 void validation_gui_sdl_mousespeed(FIELD *field)
 {
-    // FIXME: Never can get out of ths field after enteing 0.5 ?!
     set_field_type(field, TYPE_NUMERIC, 1, 0.1, 10.0);
 }
 
@@ -1001,14 +1031,13 @@ void edit_gui_sdl(const char *title)
     if (!strcmp(values[fentry_index(entry, num_entries, "keyboard use mapping?")], "yes") &&
         !strcmp(values[fentry_index(entry, num_entries, "keyboard map")], ""))
     {
-        // TODO: Invalid - show message, return to form
+        show_text("Error", "No keyboard map has been specified. Aborting.");
+        return;
     }
 
     CConfigurator *c = theConfig->find_child("gui");
     if (c != nullptr)
-    {
-        // TODO: remove old gui config from theConfig
-    }
+        theConfig->remove_child("gui");
     c = new CConfigurator(theConfig, (char *)"gui", (char *)"sdl");
 
     for (int i = 0; i < num_entries; ++i)
@@ -1041,14 +1070,13 @@ void edit_gui_x11(const char *title)
     if (!strcmp(values[fentry_index(entry, num_entries, "keyboard use mapping?")], "yes") &&
         !strcmp(values[fentry_index(entry, num_entries, "keyboard map")], ""))
     {
-        // TODO: Invalid - show message, return to form
+        show_text("Error", "No keyboard map has been specified. Aborting.");
+        return;
     }
 
     CConfigurator *c = theConfig->find_child("gui");
     if (c != nullptr)
-    {
-        // TODO: remove old gui config from theConfig
-    }
+        theConfig->remove_child("gui");
     c = new CConfigurator(theConfig, (char *)"gui", (char *)"x11");
 
     for (int i = 0; i < num_entries; ++i)
@@ -1095,9 +1123,7 @@ void edit_gui(const char *title)
     {
         CConfigurator *c = theConfig->find_child("gui");
         if (c != nullptr)
-        {
-            // TODO: remove gui config from theConfig
-        }
+            theConfig->remove_child("gui");
     }
 }
 
@@ -1108,6 +1134,7 @@ void edit_gui(const char *title)
 void validation_tsunami_memory(FIELD *field)
 {
     char *choices[HI_MEM_BITS + 1 - LOW_MEM_BITS + 1];
+
     for (int i = LOW_MEM_BITS; i <= HI_MEM_BITS; ++i)
     {
         char a = '\0';
@@ -1195,7 +1222,7 @@ void edit_tsunami(const char *title)
          "to the current host date and time at startup.\n"
          "You can set a fixed date and time instead,\n"
          "Format: 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS'",
-         validation_datetime},
+         validation_optional_datetime},
         {"arc_year_compat?", "no", "arc_year_compat",
          "Should the reported year be compatible with Windows?\n"
          "This only affects the year reported to the guest.\n"
@@ -1205,13 +1232,22 @@ void edit_tsunami(const char *title)
          "Should the VM power off on the guest's request?",
          validation_bool}};
     const int num_entries = ARRAY_SIZE(entry);
+    int idx;
 
     FormValues_t values = show_form(title, entry, num_entries);
 
+    idx = fentry_index(entry, num_entries, "rom.srm file");
+    if (!strcmp(values[idx], ""))
+    {
+        show_text("Error", "No ROM filename has been specified. Aborting.");
+        return;
+    }
+
     // Convert memory size to memory bits (assumes power of 2)
-    int idx = fentry_index(entry, num_entries, "memory size");
+    idx = fentry_index(entry, num_entries, "memory size");
     char unit = values[idx][strlen(values[idx]) - 1];
     u64 amount = atoi(values[idx]);
+    int mem_bits = 0;
     switch (unit)
     {
     case 'M':
@@ -1224,7 +1260,6 @@ void edit_tsunami(const char *title)
         FAILURE_1(Configuration, "Unrecognized memory ammout: '%s", values[idx]);
         break;
     }
-    int mem_bits = 0;
     while ((amount & 1) == 0 && amount > 0)
     {
         ++mem_bits;
@@ -1233,7 +1268,7 @@ void edit_tsunami(const char *title)
     sys0->set_value(strdup("memory.bits"), strdup(i2s(mem_bits).c_str()));
 
     for (int i = 0; i < num_entries; ++i)
-        if (entry[i].name != NULL)
+        if (entry[i].name != NULL && (strcmp(entry[i].name, "time") || strcmp(values[i], "")))
             sys0->set_value(strdup(entry[i].name), strdup(values[i]));
 
     // Clean up
@@ -1246,12 +1281,6 @@ void edit_tsunami(const char *title)
  * EV68 CPU configuration
  **/
 
-void validation_ev68cb_cpu0_enabled(FIELD *field)
-{
-    const char *choices[] = {"yes", NULL};
-    set_field_type(field, TYPE_ENUM, choices, FALSE, TRUE);
-}
-
 void validation_ev68cb_cpuspeed(FIELD *field)
 {
     set_field_type(field, TYPE_INTEGER, 2, 10, 1250);
@@ -1260,7 +1289,7 @@ void validation_ev68cb_cpuspeed(FIELD *field)
 // EV68CB form
 void edit_ev68cb(const char *title)
 {
-    vector<FormEntry_t> entry; // (enabled, speed [,nohle]) * 4 CPUs
+    vector<FormEntry_t> entry; // (enabled, speed [,nohle]) * MAX_CPUS
 
     for (int i = 0; i < MAX_CPUS; ++i)
     {
@@ -1269,7 +1298,7 @@ void edit_ev68cb(const char *title)
         if (i == 0)
             entry.push_back({strdup(enabled.c_str()), "yes", NULL,
                              "CPU 0 is always enabled.",
-                             validation_ev68cb_cpu0_enabled});
+                             validation_yes});
         else
             entry.push_back({strdup(enabled.c_str()), "no", NULL,
                              "Enable CPU?\n"
@@ -1281,7 +1310,7 @@ void edit_ev68cb(const char *title)
                          "The CPU speed reported to the guest platform (in MHz, ranging from 10 to 1250).\n"
                          "This does not affect the speed of the emulation.",
                          validation_ev68cb_cpuspeed});
-#ifndef ASM_JIT
+#ifndef ES40_JIT
         const string nohle = cpu + ".palcode.vms.nohle?";
         entry.push_back({strdup(nohle.c_str()), "false", "palcode.vms.nohle",
                          "Disable the high-level emulation (HLE) of the OpenVMS PALcode\n"
@@ -1290,6 +1319,7 @@ void edit_ev68cb(const char *title)
 #endif
     }
     const int num_entries = entry.size();
+    const int entries_per_cpu = num_entries / MAX_CPUS;
 
     FormValues_t values = show_form(title, entry.data(), num_entries);
 
@@ -1299,11 +1329,11 @@ void edit_ev68cb(const char *title)
         int idx = fentry_index(entry.data(), num_entries, enabled.c_str());
         if (!strcmp(values[idx], "yes"))
         {
-            const string cpu = "cpu" + i2s(j++);
+            string cpu = "cpu" + i2s(j++);
             CConfigurator *c = sys0->find_child(cpu.c_str());
             if (c == nullptr)
                 c = new CConfigurator(sys0, (char*)cpu.c_str(), (char*)"ev68cb");
-            for (int k = i * num_entries / MAX_CPUS; k < (i + 1) * num_entries / MAX_CPUS; ++k)
+            for (int k = i * entries_per_cpu; k < (i + 1) * entries_per_cpu; ++k)
                 if (entry[k].name != NULL)
                     c->set_value(strdup(entry[k].name), strdup(values[k]));
         }
@@ -1363,6 +1393,7 @@ void edit_ali(const char *title)
 
     idx = fentry_index(entry, num_entries, "Console Output");
     c->set_value(strdup(entry[idx].name), strdup(values[idx]));
+
     idx = fentry_index(entry, num_entries, "LPT Output");
     if (strcmp(values[idx], ""))
         c->set_value(strdup(entry[idx].name), strdup(values[idx]));
@@ -1420,7 +1451,7 @@ void edit_pci_vga_s3(const char *title)
     FormEntry_t entry[] = {
         {"PCI slot", first_free_pcislot, NULL,
          "Which PCI slot should the VGA card be on?\n"
-         // "Only free PCI slots are listed.\n"
+         "Only free PCI slots are listed.\n"
          "AFAIK, VGA should always be on pci0.x",
          validation_pcislot},
         {"rom file",
@@ -1485,9 +1516,7 @@ void edit_pci_vga(const char *title)
                     continue;
                 for (int i = 1; i < num_entries; ++i)
                     if (!strcmp(c->get_myValue(), entry[i].text))
-                    {
-                        // TODO: Remove c from config
-                    }
+                        sys0->remove_child(c->get_myName());
             }
     }
 }
@@ -1550,7 +1579,8 @@ void validation_pci_dec21143_queue(FIELD *field)
 void edit_pci_dec21143(const char *title)
 {
 #if !defined(HAVE_PCAP) && !defined(HAVE_TAP_NET) && !defined(HAVE_VMNET)
-    show_description("Error", "This program has been compiled with no network support.");
+    show_text("Error", "This program has been compiled with no network support.");
+    return;
 #else
     const char *first_free_pcislot = find_first_free_pcislot();
     if (first_free_pcislot == NULL)
@@ -1674,7 +1704,7 @@ void edit_pci_sym53c810_settings(const char *title)
 
     FormValues_t values = show_form(title, entry, num_entries);
 
-    CConfigurator *c = sys0->find_child("pci0.99");
+    CConfigurator *c = sys0->find_child("pci99.99");
 
     int idx = fentry_index(entry, num_entries, "PCI slot");
     c->set_value(strdup("pci_slot"), strdup(values[idx]));
@@ -1698,7 +1728,7 @@ void edit_pci_sym53c810_disks(const char *title)
     }
     int num_entries = entry.size();
 
-    CConfigurator *c = sys0->find_child("pci0.99");
+    CConfigurator *c = sys0->find_child("pci99.99");
 
     while (TRUE)
     {
@@ -1707,14 +1737,7 @@ void edit_pci_sym53c810_disks(const char *title)
             break;
 
         string subtitle = string(title) + ": " + entry[sel].text;
-        FormValues_t values = add_disks(subtitle.c_str(), entry[sel].text, c);
-
-        // TODO: Process values
-
-        // Clean up
-        for (int i = 0; i < num_entries; ++i)
-            free(values[i]);
-        free(values);
+        add_disks(subtitle.c_str(), entry[sel].text, c);
     }
 
     // Clean up
@@ -1732,19 +1755,23 @@ void edit_pci_sym53c810(const char *title)
         {"Add disks", "Add disks to the Symbios 53C810 narrow SCSI controller.", edit_pci_sym53c810_disks}};
     int num_entries = ARRAY_SIZE(entry);
 
-    CConfigurator *c = sys0->find_child("pci0.99");
-    if (c == nullptr)
-        c = new CConfigurator(sys0, (char *)"pci0.99", (char *)"sym53c810");
+    CConfigurator *c = sys0->find_child("pci99.99");
+    if (c != nullptr)
+        sys0->remove_child("pci99.99");
+    c = new CConfigurator(sys0, (char *)"pci99.99", (char *)"sym53c810");
 
     show_menu(title, entry, num_entries, MENU_3RD_LEVEL);
 
     char *pcislot = c->get_text_value("pci_slot", NULL);
     if (pcislot == NULL)
     {
-        // TODO: Invalid - show message, return to menu
+        show_text("Error", "No PCI slot has been specified. Aborting.");
+        sys0->remove_child("pci99.99");
+        return;
     }
 
-    // TODO: Copy c to the real thing, remove pci_slot value, and remove c from the config
+    c->set_myName((char*)(string("pci") + pcislot).c_str());
+    c->remove_value((char*)"pci_slot");
 }
 
 void edit_pci_lsi53c1020_settings(const char *title)
@@ -1814,15 +1841,49 @@ void edit_pci_lsi53c1020_settings(const char *title)
          "when initializing flash, and does not change the emulated card's 53C1020 identity.",
          validation_file}};
     int num_entries = ARRAY_SIZE(entry);
+    int idx;
 
     FormValues_t values = show_form(title, entry, num_entries);
 
-    CConfigurator *c = sys0->find_child("pci0.99");
+    CConfigurator *c = sys0->find_child("pci99.99");
 
-    int idx = fentry_index(entry, num_entries, "PCI slot");
+    idx = fentry_index(entry, num_entries, "PCI slot");
     c->set_value(strdup("pci_slot"), strdup(values[idx]));
 
-    // TODO: Process values
+    idx = fentry_index(entry, num_entries, "persistant flash?");
+    if (!strcmp(values[idx], "yes"))
+    {
+        idx = fentry_index(entry, num_entries, "flash file");
+        if (!strcmp(values[idx], ""))
+        {
+            show_text("Error", "No flash filename has been specified. Aborting.");
+            return;
+        }
+        else
+            c->set_value(strdup(entry[idx].name), strdup(values[idx]));
+    }
+
+    idx = fentry_index(entry, num_entries, "initial LSI BIOS and IOC firmware images?");
+    if (!strcmp(values[idx], "yes"))
+    {
+        idx = fentry_index(entry, num_entries, "rom file");
+        if (!strcmp(values[idx], ""))
+        {
+            show_text("Error", "No ROM filename has been specified. Aborting.");
+            return;
+        }
+        else
+            c->set_value(strdup(entry[idx].name), strdup(values[idx]));
+
+        idx = fentry_index(entry, num_entries, "firmware file");
+        if (!strcmp(values[idx], ""))
+        {
+            show_text("Error", "No firmware filename has been specified. Aborting.");
+            return;
+        }
+        else
+            c->set_value(strdup(entry[idx].name), strdup(values[idx]));
+    }
 
     // Clean up
     for (int i = 0; i < num_entries; ++i)
@@ -1843,7 +1904,7 @@ void edit_pci_lsi53c1020_disks(const char *title)
     }
     int num_entries = entry.size();
 
-    CConfigurator *c = sys0->find_child("pci0.99");
+    CConfigurator *c = sys0->find_child("pci99.99");
 
     while (TRUE)
     {
@@ -1852,14 +1913,7 @@ void edit_pci_lsi53c1020_disks(const char *title)
             break;
 
         string subtitle = string(title) + ": " + entry[sel].text;
-        FormValues_t values = add_disks(subtitle.c_str(), entry[sel].text, c);
-
-        // TODO: Process values
-
-        // Clean up
-        for (int i = 0; i < num_entries; ++i)
-            free(values[i]);
-        free(values);
+        add_disks(subtitle.c_str(), entry[sel].text, c);
     }
 
     // Clean up
@@ -1877,11 +1931,23 @@ void edit_pci_lsi53c1020(const char *title)
         {"Add disks", "Add disks to the LSI 53C1020 Fusion-MPT Ultra320 SCSI controller.", edit_pci_lsi53c1020_disks}};
     int num_entries = ARRAY_SIZE(entry);
 
-    CConfigurator *c = sys0->find_child("pci0.99");
-    if (c == nullptr)
-        c = new CConfigurator(sys0, (char *)"pci0.99", (char *)"lsi53c1020");
+    CConfigurator *c = sys0->find_child("pci99.99");
+    if (c != nullptr)
+        sys0->remove_child("pci99.99");
+    c = new CConfigurator(sys0, (char *)"pci99.99", (char *)"lsi53c1020");
 
     show_menu(title, entry, num_entries, MENU_3RD_LEVEL);
+
+    char *pcislot = c->get_text_value("pci_slot", NULL);
+    if (pcislot == NULL)
+    {
+        show_text("Error", "No PCI slot has been specified. Aborting.");
+        sys0->remove_child("pci99.99");
+        return;
+    }
+
+    c->set_myName((char*)(string("pci") + pcislot).c_str());
+    c->remove_value((char*)"pci_slot");
 }
 
 void edit_pci_es1370(const char *title)
@@ -2068,12 +2134,7 @@ void edit_floppy(const char *title)
             break;
 
         string subtitle = string(title) + ": " + entry[sel].text;
-        FormValues_t values = add_disks(subtitle.c_str(), entry[sel].text, c);
-
-        // Clean up
-        for (int i = 0; i < num_entries; ++i)
-            free(values[i]);
-        free(values);
+        add_disks(subtitle.c_str(), entry[sel].text, c);
     }
 }
 
@@ -2126,12 +2187,7 @@ void edit_ide_disks(const char *title)
             break;
 
         string subtitle = string(title) + ": " + entry[sel].text;
-        FormValues_t values = add_disks(subtitle.c_str(), entry[sel].text, c);
-
-        // Clean up
-        for (int i = 0; i < num_entries; ++i)
-            free(values[i]);
-        free(values);
+        add_disks(subtitle.c_str(), entry[sel].text, c);
     }
 }
 
@@ -2146,9 +2202,7 @@ void edit_ide(const char *title)
     int sel = show_menu(title, entry, num_entries, MENU_2ND_LEVEL);
 
     if (sel == 0)
-    {
-        // TODO: Remove ide controller (node pci0.15) from theConfig
-    }
+        sys0->remove_child("pci0.15");
 }
 
 /**
