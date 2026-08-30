@@ -804,6 +804,19 @@ inline void CAlphaCPU::set_PAL_BASE(u64 pb)
   //state.pal_vms = false;
 
 #ifdef DEBUG_PAL
+  if (pb != old_base || was_vms != state.pal_vms)
+  {
+    // Only the VMS PALcode (base 0x8000) is a type the emulator knows about.
+    const char* type = (pb == U64(0x8000)) ? "VMS PALcode" : "unknown PALcode type";
+    printf("%%CPU-I-PALSWITCH: cpu%d PAL_BASE %016" PRIx64 " -> %016" PRIx64 ": %s, %s\n",
+      get_cpuid(), old_base, pb, type,
+      state.pal_vms        ? "vmspal replacement routines engaged" :
+      vmspal_lle_enabled   ? "running native (replacements disabled)" :
+                             "running native (no replacements for this type)");
+  }
+#endif
+
+#ifdef DEBUG_PAL
   printf("%%CPU-I-PALSWITCH: PAL=%016" PRIx64 " p21=%016" PRIx64 " p22=%016" PRIx64 " r22=%016" PRIx64 "\n", pb, state.r[53], state.r[54], state.r[22]);
   // Dump PAL scratch area contents for non-VMS PAL
   if (!state.pal_vms && state.r[53] != 0) {
