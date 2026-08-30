@@ -200,6 +200,9 @@
 #include "banner.h"
 
 #include "lockstep.h"
+#include "gui/gui.h"
+
+#include <thread>
 
 #if !defined(ES40_GIT_COMMIT)
 #define ES40_GIT_COMMIT "unknown"
@@ -265,6 +268,8 @@ void segv_handler(int signum)
 #warning "Your compiler isn't configured to support backtraces."
 #endif // __GNUG__
 #endif
+
+static void run_emulator(int argc, char* argv[]);
 
 /**
  * Entry point for the application.
@@ -444,6 +449,43 @@ int main(int argc, char* argv[])
 			profiled_insts = 0;
 		}
 #endif
+		if (bx_gui && bx_gui->requires_main_thread())
+			bx_gui->main_thread_init();
+	}
+	catch (CException& e)
+	{
+		printf("Emulator Failure: %s\n", e.displayText().c_str());
+		if (theSystem)
+		{
+			theSystem->stop_threads();
+			delete theSystem;
+		}
+		return 0;
+	}
+
+	// A GUI that owns main() pumps its event loop there while the emulator,
+	// including its shutdown, runs on a worker thread. Everything the GUI
+	// thread posts back has to keep being dispatched until that worker has
+	// joined the GUI thread, so run_emulator() ends the pump itself.
+	if (bx_gui && bx_gui->requires_main_thread())
+	{
+		std::thread emulator(run_emulator, argc, argv);
+		bx_gui->main_thread_pump();
+		emulator.join();
+	}
+	else
+		run_emulator(argc, argv);
+
+	return 0;
+}
+
+/**
+ * Run the emulator, and clean up after it terminates.
+ **/
+static void run_emulator(int argc, char* argv[])
+{
+	try
+	{
 #if defined(IDB)
 		theSystem->start_threads(); // fix from axpbox commit 9ef3473 
 
@@ -512,5 +554,7 @@ int main(int argc, char* argv[])
 			delete theSystem;
 		}
 	}
-	return 0;
+
+	if (bx_gui)
+		bx_gui->main_thread_stop();
 }

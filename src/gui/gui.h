@@ -136,6 +136,16 @@ public:
   virtual void                  mouse_enabled_changed_specific(bool val) = 0;
   virtual void                  exit(void) = 0;
 
+  // Some GUI backends must drive the windowing system from the thread that
+  // called main() (SDL on macOS refuses to work anywhere else). A backend that
+  // returns true here gets main_thread_init()/main_thread_pump() called from
+  // there, and the emulator itself runs on a worker thread; main_thread_stop()
+  // ends the pump once that worker is completely done.
+  virtual bool                  requires_main_thread() { return false; }
+  virtual void                  main_thread_init() {}
+  virtual void                  main_thread_pump() {}
+  virtual void                  main_thread_stop() {}
+
   virtual u32                   get_sighandler_mask() { return 0; }
   virtual void                  sighandler(int sig) {}
   virtual void                  beep_on(float frequency);

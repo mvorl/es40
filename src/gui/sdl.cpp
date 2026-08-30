@@ -95,7 +95,9 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <atomic>
 #include <cctype>
+#include <exception>
 #include <string>
 #include <SDL3/SDL.h>
 
@@ -149,6 +151,10 @@ public:
 	virtual			u8* graphics_tile_get(unsigned x, unsigned y, unsigned* w, unsigned* h) override;
 	virtual void    graphics_tile_update_in_place(unsigned x, unsigned y, unsigned w, unsigned h) override;
 	void			graphics_frame_update(const u32* pixels, unsigned w, unsigned h) override;
+	virtual bool    requires_main_thread() override;
+	virtual void    main_thread_init() override;
+	virtual void    main_thread_pump() override;
+	virtual void    main_thread_stop() override;
 private:
 	CConfigurator* myCfg;
 	unsigned int   vid_scale = 0;
@@ -168,6 +174,16 @@ private:
 	u32            guest_key_by_scancode[SDL_SCANCODE_COUNT] = {};
 	bool           guest_key_pressed[SDL_SCANCODE_COUNT] = {};
 	bool           swallowed_hotkey_releases[SDL_SCANCODE_COUNT] = {};
+	// Bodies of the public entry points above; always executed on the thread
+	// that owns the SDL window (see on_main_thread).
+	void           specific_init_impl(unsigned x_tilesize, unsigned y_tilesize);
+	void           handle_events_impl();
+	void           clear_screen_impl();
+	void           dimension_update_impl(unsigned x, unsigned y, unsigned fheight,
+		unsigned fwidth, unsigned bpp);
+	void           graphics_frame_update_impl(const u32* pixels, unsigned w, unsigned h);
+	void           mouse_enabled_changed_specific_impl(bool val);
+	void           exit_impl();
 	void           reset_window_size();
 	void           adjust_window_scale(int delta);
 	void           load_hotkeys();
@@ -193,6 +209,81 @@ static SDL_Window*   sdl_window = NULL;
 static SDL_Renderer* sdl_renderer = NULL;
 static SDL_Texture*  sdl_texture = NULL;
 
+/// Set while main() is pumping SDL events on our behalf (see requires_main_thread).
+static std::atomic<bool> sdl_main_thread_pumping(false);
+
+/**
+ * Run fn on the thread that called main().
+ *
+ * SDL wants the video subsystem, the window and the event pump all touched
+ * from that one thread, and macOS enforces it. The emulator drives the GUI
+ * from the VGA card's thread instead, so every SDL call made from there is
+ * bounced across with SDL_RunOnMainThread(). Exceptions (FAILURE_*) must not
+ * escape into SDL's C event loop, so they are caught and rethrown on the
+ * calling thread. On platforms that keep the old threading model this is a
+ * plain inline call.
+ **/
+template <typename F>
+static void on_main_thread(F fn)
+{
+	if (!sdl_main_thread_pumping.load(std::memory_order_acquire) || SDL_IsMainThread())
+	{
+		fn();
+		return;
+	}
+
+	struct SCall
+	{
+		F* fn;
+		std::exception_ptr error;
+	} call = { &fn, nullptr };
+
+	if (!SDL_RunOnMainThread([](void* p)
+		{
+			SCall* c = static_cast<SCall*>(p);
+			try { (*c->fn)(); }
+			catch (...) { c->error = std::current_exception(); }
+		}, &call, true))
+	{
+		FAILURE_1(SDL, "Unable to reach the SDL main thread: %s", SDL_GetError());
+	}
+
+	if (call.error)
+		std::rethrow_exception(call.error);
+}
+
+bool bx_sdl_gui_c::requires_main_thread()
+{
+#if defined(__APPLE__)
+	return true;
+#else
+	return false;
+#endif
+}
+
+void bx_sdl_gui_c::main_thread_init()
+{
+	if (!SDL_Init(SDL_INIT_VIDEO))
+		FAILURE_1(SDL, "Unable to initialize SDL3 video subsystem: %s", SDL_GetError());
+
+	sdl_main_thread_pumping.store(true, std::memory_order_release);
+}
+
+void bx_sdl_gui_c::main_thread_pump()
+{
+	// Collect OS events into SDL's queue and dispatch whatever the GUI thread
+	// posted with on_main_thread(). handle_events() drains the queue itself.
+	while (sdl_main_thread_pumping.load(std::memory_order_acquire))
+	{
+		SDL_PumpEvents();
+		SDL_Delay(1);
+	}
+}
+
+void bx_sdl_gui_c::main_thread_stop()
+{
+	sdl_main_thread_pumping.store(false, std::memory_order_release);
+}
 
 SDL_Event           sdl_event;
 int                 sdl_grab = 0;
@@ -476,7 +567,13 @@ void bx_sdl_gui_c::build_window_titles()
 
 void bx_sdl_gui_c::specific_init(unsigned x_tilesize, unsigned y_tilesize)
 {
-	if (!SDL_Init(SDL_INIT_VIDEO))
+	on_main_thread([&] { specific_init_impl(x_tilesize, y_tilesize); });
+}
+
+void bx_sdl_gui_c::specific_init_impl(unsigned x_tilesize, unsigned y_tilesize)
+{
+	// Already done by main_thread_init() where the GUI owns main().
+	if (!SDL_WasInit(SDL_INIT_VIDEO) && !SDL_Init(SDL_INIT_VIDEO))
 	{
 		FAILURE_1(SDL, "Unable to initialize SDL3 video subsystem: %s", SDL_GetError());
 	}
@@ -515,6 +612,11 @@ void bx_sdl_gui_c::specific_init(unsigned x_tilesize, unsigned y_tilesize)
 }
 
 void bx_sdl_gui_c::graphics_frame_update(const u32* pixels, unsigned width, unsigned height)
+{
+	on_main_thread([&] { graphics_frame_update_impl(pixels, width, height); });
+}
+
+void bx_sdl_gui_c::graphics_frame_update_impl(const u32* pixels, unsigned width, unsigned height)
 {
 	if (!sdl_texture || !sdl_renderer)
 		return;
@@ -766,6 +868,11 @@ void bx_sdl_gui_c::send_guest_ctrl_alt_delete()
 }
 
 void bx_sdl_gui_c::handle_events(void)
+{
+	on_main_thread([&] { handle_events_impl(); });
+}
+
+void bx_sdl_gui_c::handle_events_impl(void)
 {
 	u32 key_event;
 
@@ -1055,6 +1162,11 @@ void bx_sdl_gui_c::flush(void)
  **/
 void bx_sdl_gui_c::clear_screen(void)
 {
+	on_main_thread([&] { clear_screen_impl(); });
+}
+
+void bx_sdl_gui_c::clear_screen_impl(void)
+{
 	if (!sdl_renderer)
 		return;
 
@@ -1075,6 +1187,12 @@ bool bx_sdl_gui_c::palette_change(unsigned index, unsigned red, unsigned green,
 }
 
 void bx_sdl_gui_c::dimension_update(unsigned x, unsigned y, unsigned fheight,
+	unsigned fwidth, unsigned bpp)
+{
+	on_main_thread([&] { dimension_update_impl(x, y, fheight, fwidth, bpp); });
+}
+
+void bx_sdl_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheight,
 	unsigned fwidth, unsigned bpp)
 {
 	SDL_DisplayID display;
@@ -1198,6 +1316,11 @@ void bx_sdl_gui_c::adjust_window_scale(int delta)
 
 void bx_sdl_gui_c::mouse_enabled_changed_specific(bool val)
 {
+	on_main_thread([&] { mouse_enabled_changed_specific_impl(val); });
+}
+
+void bx_sdl_gui_c::mouse_enabled_changed_specific_impl(bool val)
+{
 	if (val)
 	{
 		SDL_HideCursor();
@@ -1223,6 +1346,11 @@ void bx_sdl_gui_c::mouse_enabled_changed_specific(bool val)
 }
 
 void bx_sdl_gui_c::exit(void)
+{
+	on_main_thread([&] { exit_impl(); });
+}
+
+void bx_sdl_gui_c::exit_impl(void)
 {
 	sdl_media_shutdown();
 	if (sdl_texture) {
