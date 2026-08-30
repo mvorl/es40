@@ -904,6 +904,10 @@ void CAlphaCPU::jit_run(int budget)
 		const u32 start_asn = (u32)state.asn;
 		const bool start_pal_shadow = (start_virt & 1) && state.sde;
 
+		// PAL reset-vector entry
+		if (start_virt == (state.pal_base | 1))
+			flush_icache();
+
 		// Resolve the block's physical start side-effect-free (FAKE = no fault, no TB fill) so
 		// execute() stays the sole I-stream fetcher; covers superpage/KSEG (no TB entry). phys
 		// validates a compiled block vs the live translation -- virtual+ASN keying misses remaps.
@@ -1528,8 +1532,35 @@ void CAlphaCPU::jit_run(int budget)
 #ifdef JIT_STATS
 		cc_last_sync += std::chrono::nanoseconds(m_jit->note_exec(0, n, 0, jit_rdtsc() - _interp_t0));   // don't bill the stats-print stall to the wall-clock RPCC
 #endif
+		// Stale icache line for this span
+		bool src_stale = false;
+		if (icache_enabled && have_phys)
+		{
+			const u64 vs = start_virt & ~U64(3);
+			const u64 ve = vs + 4 * (u64)n;
+			for (u64 v = vs & ~U64(0x7ff); v < ve; v += 0x800)
+			{
+				const int li = (int)((v >> 11) & (ICACHE_ENTRIES - 1));
+				const auto& L = state.icache[li];
+				if (L.valid && (L.asn == state.asn || L.asm_bit)
+					&& L.address == ((v | (start_virt & 1)) & ICACHE_MATCH_MASK))
+				{
+					const u64 lo = (v > vs) ? v : vs;
+					const u64 hi = (v + 0x800 < ve) ? v + 0x800 : ve;
+					const u64 poff = L.p_address + (lo - v);
+					if (poff + (hi - lo) <= dram_size
+						&& memcmp((const uint8_t*)dram_ptr + poff,
+							(const uint8_t*)L.data + (lo - v), (size_t)(hi - lo)))
+					{
+						src_stale = true;
+						break;
+					}
+				}
+			}
+		}
+
 		// Record only translatable block starts (a translation miss left have_phys false).
-		if (have_phys && state.pc != expected)
+		if (have_phys && !src_stale && state.pc != expected)
 		{
 			CJitEngine::JitBlock* nb = m_jit->record(start_virt, start_phys, start_asn,
 				start_pal_shadow, start_asm, n, (const uint8_t*)dram_ptr);
@@ -2283,6 +2314,9 @@ void CAlphaCPU::jit_hw_mtpr(CAlphaCPU* cpu, u32 function, u64 value)
 void* CAlphaCPU::jit_indirect(CAlphaCPU* cpu, u64 target, void* link_cache)
 {
 	cpu->m_jit->note_jmp_attempt();
+	// PAL reset entry: never chain in - match dispatch/interp
+	if (target == (cpu->state.pal_base | 1))
+		return nullptr;
 	CJitEngine::JitBlock* b = cpu->m_jit->lookup(target, (u32)cpu->state.asn,
 		(target & 1) && cpu->state.sde);
 	if (!b || !b->jit_body) return nullptr;
@@ -2785,6 +2819,10 @@ _next_instruction:
 		}
 		else
 		{
+			// PAL reset-vector entry: drop stale icache lines (in-place image rewrite)
+			if (state.pc == (state.pal_base | 1))
+				flush_icache();
+
 			// Full icache lookup
 			if (get_icache(state.pc, &ins))
 				goto _next_instruction;
@@ -2823,6 +2861,10 @@ _next_instruction:
 		}
 		else
 		{
+			// PAL reset-vector entry: drop stale icache lines (in-place image rewrite)
+			if (state.pc == (state.pal_base | 1))
+				flush_icache();
+
 			if (get_icache(state.pc, &ins))
 				return;
 
