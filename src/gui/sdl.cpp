@@ -209,8 +209,13 @@ static SDL_Window*   sdl_window = NULL;
 static SDL_Renderer* sdl_renderer = NULL;
 static SDL_Texture*  sdl_texture = NULL;
 
-/// Set while main() is pumping SDL events on our behalf (see requires_main_thread).
-static std::atomic<bool> sdl_main_thread_pumping(false);
+/// Set once main() has taken ownership of SDL and is driving main_thread_pump()
+/// on our behalf, so on_main_thread() must bounce SDL calls across to it.
+static std::atomic<bool> sdl_main_thread_owns_sdl(false);
+
+/// How long main_thread_pump() blocks waiting for work before looping. Only
+/// caps how quickly it notices main_thread_stop(); callbacks wake it at once.
+static const int sdl_pump_idle_ms = 10;
 
 /**
  * Run fn on the thread that called main().
@@ -226,7 +231,7 @@ static std::atomic<bool> sdl_main_thread_pumping(false);
 template <typename F>
 static void on_main_thread(F fn)
 {
-	if (!sdl_main_thread_pumping.load(std::memory_order_acquire) || SDL_IsMainThread())
+	if (!sdl_main_thread_owns_sdl.load(std::memory_order_acquire) || SDL_IsMainThread())
 	{
 		fn();
 		return;
@@ -266,23 +271,32 @@ void bx_sdl_gui_c::main_thread_init()
 	if (!SDL_Init(SDL_INIT_VIDEO))
 		FAILURE_1(SDL, "Unable to initialize SDL3 video subsystem: %s", SDL_GetError());
 
-	sdl_main_thread_pumping.store(true, std::memory_order_release);
+	sdl_main_thread_owns_sdl.store(true, std::memory_order_release);
 }
 
 void bx_sdl_gui_c::main_thread_pump()
 {
 	// Collect OS events into SDL's queue and dispatch whatever the GUI thread
-	// posted with on_main_thread(). handle_events() drains the queue itself.
-	while (sdl_main_thread_pumping.load(std::memory_order_acquire))
+	// posted with on_main_thread(). handle_events() drains the queue itself,
+	// so the wait is passed NULL and leaves the events where they are.
+	//
+	// SDL_PumpEvents() is what runs the queued on_main_thread() callbacks, so
+	// it has to happen every time round: SDL_WaitEventTimeout() returns early
+	// without pumping while the queue is non-empty, and waiting on that alone
+	// would hang any thread blocked in on_main_thread(). With an empty queue
+	// it sleeps until a posted callback or an OS event wakes it, which keeps
+	// the loop off the CPU without adding latency to the GUI thread.
+	while (sdl_main_thread_owns_sdl.load(std::memory_order_acquire))
 	{
 		SDL_PumpEvents();
-		SDL_Delay(1);
+		if (SDL_WaitEventTimeout(NULL, sdl_pump_idle_ms))
+			SDL_Delay(1);  // queue not drained yet; let the GUI thread catch up
 	}
 }
 
 void bx_sdl_gui_c::main_thread_stop()
 {
-	sdl_main_thread_pumping.store(false, std::memory_order_release);
+	sdl_main_thread_owns_sdl.store(false, std::memory_order_release);
 }
 
 SDL_Event           sdl_event;
