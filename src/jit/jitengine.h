@@ -43,6 +43,7 @@
 
 #include <cstdint>
 #include <vector>
+#include <unordered_set>
 #include "../config_debug.h"   // JIT_VERIFY
 #ifdef JIT_STATS
 // host cycle counter for the JIT_STATS wall-time split: TSC on x86-64, CNTVCT_EL0 on ARM64
@@ -168,8 +169,7 @@ public:
     uint64_t src_sum;     // hash of the segment's source words at build
   };
 
-  // M4+: which guest regs are held in host registers (not yet committed to state.r[]) at a side-exit.
-  // Empty through M3 (no register cache across guards), so the side-exit needs no spill until M4.
+  // which guest regs are held in host registers (not yet copied back to state.r[]) at a side-exit.
   struct Snapshot { uint64_t dirty_gpr; uint64_t dirty_fpr; };
 
   struct TraceExit {
@@ -334,7 +334,7 @@ public:
   inline void     note_itb_invalidate() { ++m_itb_gen; ++m_vgen_cur; invalidate_links(); }
   // Combined validation epoch, maintained (not summed) so the emitted chain guard reads ONE qword.
   inline uint64_t vgen() const          { return m_vgen_cur; }
-  void note_link_patch(LinkSlot* slots) { m_active_links.push_back(slots); }
+  void note_link_patch(LinkSlot* slots) { m_active_links.insert(slots); }
   void invalidate_links();
 
   // Bail-cause counters (JIT_STATS): why a compiled chain returned to the dispatcher -- a branch/
@@ -389,7 +389,8 @@ private:
   uint64_t m_itb_gen = 0; // current ITB generation (bumped on every I-stream TB invalidate)
   uint64_t m_flush_gen = 0; // current icache-flush generation (bumped by flush(); lazy IC_FLUSH/IMB)
   uint64_t m_vgen_cur = 0;  // maintained epoch = itb + flush + non-global-flush bumps 
-  std::vector<LinkSlot*> m_active_links; // patched block/trace exits to clear on an epoch change
+  std::unordered_set<LinkSlot*> m_active_links; // patched block/trace exits to clear on an epoch
+                                                // change; unordered set so re-registration never grows it
   uint64_t m_code_bytes;  // compiled bytes since last reclaim (see flush())
   bool     m_reclaim_pending = false;   // flush() hit kReclaimBytes; reclaim at the next dispatch boundary
   void*    m_rt;          // asmjit::JitRuntime*

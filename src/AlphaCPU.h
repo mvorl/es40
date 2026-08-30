@@ -284,6 +284,7 @@ public:
 
   bool          get_waiting() { return state.wait_for_start; };
   void          stop_waiting() { state.wait_for_start = false; };
+  u64           get_icount() { return state.instruction_count; };
 #ifdef IDB
   u64           get_current_pc_physical();
   u64           get_instruction_count();
@@ -611,16 +612,18 @@ private:
   static int jit_fltv(CAlphaCPU* cpu, u32 ins);
   // Verify support: the interpreter pass records each value it loads, and the
   // compiled pass replays them instead of re-reading memory - false mismatch fix
+  // must cover a full trace formation, not just a 64-instruction block.
+  static constexpr u32 kJitVlogCap = 1024;
   bool m_jit_vreplay = false;  // compiled pass: replay recorded loads, don't re-read
   u32  m_jit_vlog_i  = 0;      // replay cursor
-  u64  m_jit_vlog[64];         // values the interpreter pass loaded (<= prefix_len)
-  u64  m_jit_vaddr[64];        // diagnostic: load addresses the interpreter computed
+  u64  m_jit_vlog[kJitVlogCap];   // values the interpreter pass loaded (<= trace span)
+  u64  m_jit_vaddr[kJitVlogCap];  // diagnostic: load addresses the interpreter computed
   // Store verify: the interpreter pass records each store (addr,value); the compiled
   // pass compares against it (stores touch memory, not GPRs, so the GPR check can't see them).
   u32  m_jit_slog_i  = 0;      // store-compare cursor
-  u64  m_jit_slog_addr[64];    // store addresses the interpreter pass wrote
-  u64  m_jit_slog_val[64];     // store values the interpreter pass wrote
-  u64  m_jit_slog_success[64]; // STx_C outcome (1/0) the interp pass got; 1 for ordinary stores
+  u64  m_jit_slog_addr[kJitVlogCap];    // store addresses the interpreter pass wrote
+  u64  m_jit_slog_val[kJitVlogCap];     // store values the interpreter pass wrote
+  u64  m_jit_slog_success[kJitVlogCap]; // STx_C outcome (1/0) the interp pass got; 1 for ordinary stores
 #endif
 
   /// The state structure contains all elements that need to be saved to the statefile
@@ -792,6 +795,7 @@ inline void CAlphaCPU::flush_icache_asm()
  **/
 inline void CAlphaCPU::set_PAL_BASE(u64 pb)
 {
+  u64  old_base = state.pal_base;
   state.pal_base = pb;
   bool was_vms = state.pal_vms;
 

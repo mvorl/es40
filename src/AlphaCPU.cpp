@@ -970,12 +970,12 @@ void CAlphaCPU::jit_run(int budget)
 				// in-frame next time. Hook-before-block ordering makes traces win the patch.
 				if (m_link_from && t->chain_entry) { m_jit->note_link_bail();
 					CJitEngine::LinkSlot* lf = (CJitEngine::LinkSlot*)m_link_from;
-					m_jit->note_link_patch(lf);
 					const CJitEngine::LinkSlot snap = { t->head_tag, t->vgen, t->chain_entry };
-					int found = -1, empty = -1;
+					int found = -1, empty = -1; bool was_live = false;
 					for (int i = 0; i < CJitEngine::kLinkSlots; ++i)
-						if (lf[i].body && lf[i].tag == t->head_tag) found = i;
-						else if (!lf[i].body && empty < 0) empty = i;
+						if (lf[i].body) { was_live = true; if (lf[i].tag == t->head_tag) found = i; }
+						else if (empty < 0) empty = i;
+					if (!was_live) m_jit->note_link_patch(lf);   // empty->live: register (pre-filter; the engine set dedups)
 					if (found >= 0) lf[found] = snap;
 					else if (empty >= 0) lf[empty] = snap;
 					else { for (int i = CJitEngine::kLinkSlots - 1; i > 0; --i) lf[i] = lf[i-1]; lf[0] = snap; }
@@ -1290,13 +1290,13 @@ void CAlphaCPU::jit_run(int budget)
 						clean = false;
 					break;
 				}
-				if (isld && vn < 64)
+				if (isld && vn < kJitVlogCap)
 				{
 					m_jit_vaddr[vn] = eva;
 					m_jit_vlog[vn] = is_fpld ? state.f[lra] : state.r[RREG(lra)];   // FP dest -> f[]; shadow-aware GPR otherwise
 					vn++;
 				}
-				if (isst && sn < 64)
+				if (isst && sn < kJitVlogCap)
 				{
 					m_jit_slog_addr[sn] = sva;
 					m_jit_slog_val[sn] = sval;
@@ -1470,13 +1470,13 @@ void CAlphaCPU::jit_run(int budget)
 			// Tag-keyed: an existing entry for this target MUST be refreshed in place.
 			if (m_link_from) { m_jit->note_link_bail();   // (fanout stats retired with the generic LinkSlot* target)
 				CJitEngine::LinkSlot* lf = (CJitEngine::LinkSlot*)m_link_from;
-				m_jit->note_link_patch(lf);
 				const CJitEngine::LinkSlot snap = { b->tag,
 					b->vgen | (b->pal_shadow ? (U64(1) << 63) : 0), b->jit_body };
-				int found = -1, empty = -1;   // preserve the first-observed edge in slot 0 while space remains
+				int found = -1, empty = -1; bool was_live = false;   // preserve the first-observed edge in slot 0 while space remains
 				for (int i = 0; i < CJitEngine::kLinkSlots; ++i)
-					if (lf[i].body && lf[i].tag == b->tag) found = i;
-					else if (!lf[i].body && empty < 0) empty = i;
+					if (lf[i].body) { was_live = true; if (lf[i].tag == b->tag) found = i; }
+					else if (empty < 0) empty = i;
+				if (!was_live) m_jit->note_link_patch(lf);   // empty->live: register (pre-filter; the engine set dedups)
 				if (found >= 0) lf[found] = snap;
 				else if (empty >= 0) lf[empty] = snap;
 				else { for (int i = CJitEngine::kLinkSlots - 1; i > 0; --i) lf[i] = lf[i-1]; lf[0] = snap; }
@@ -2290,13 +2290,13 @@ void* CAlphaCPU::jit_indirect(CAlphaCPU* cpu, u64 target, void* link_cache)
 		if (link_cache)
 		{
 			auto* links = (CJitEngine::LinkSlot*)link_cache;
-			cpu->m_jit->note_link_patch(links);
 			const CJitEngine::LinkSlot snap = { target,
 				cpu->m_jit->vgen() | (b->pal_shadow ? (U64(1) << 63) : 0), body };
-			int found = -1, empty = -1;
+			int found = -1, empty = -1; bool was_live = false;
 			for (int i = 0; i < CJitEngine::kLinkSlots; ++i)
-				if (links[i].body && links[i].tag == target) found = i;
-				else if (!links[i].body && empty < 0) empty = i;
+				if (links[i].body) { was_live = true; if (links[i].tag == target) found = i; }
+				else if (empty < 0) empty = i;
+			if (!was_live) cpu->m_jit->note_link_patch(links);   // empty->live: register (pre-filter; the engine set dedups)
 			if (found >= 0) links[found] = snap;
 			else if (empty >= 0) links[empty] = snap;
 			else {
@@ -3582,6 +3582,13 @@ int CAlphaCPU::RestoreState(FILE* f)
 
 	printf("%s: %d bytes restored.\n", devid_string, (int)ss);
 	last_dtb_virt[0] = last_dtb_virt[1] = 0;
+	// RAM and TB state now belong to the restored state. Restored icache stays. Rest gets chucked.
+	flush_data_page_cache();
+	break_seq_icache();
+#ifdef ES40_JIT
+	m_link_from = nullptr;      // pending link-patch request into pre-restore code
+	if (m_jit) m_jit->flush();  // epoch bump: blocks/traces re-hash against restored RAM before running
+#endif
 	// The floor/debt state is intentionally not part of the legacy save-state
 	// format.  Rebase it to the restored architectural counter and a fresh host
 	// epoch so a restore cannot create a false jump or bill paused wall time.

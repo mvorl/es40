@@ -192,6 +192,8 @@ SafeOp classify(uint32_t ins, bool pal_block)
       if ((ins & 0x1f) == 31) return OP_NONE;             // Fc==31 -> interp
       const uint32_t sb = f14 & 0x3f;                     // IEEE sqrt (source Fb): SQRTS 0x0b / SQRTT 0x2b
       if (sb == 0x0b || sb == 0x2b) {
+        if (((ins >> 21) & 0x1f) != 31) return OP_NONE;   // Ra must be R31 (else DO_SQRT* traps OPCDEC)
+        if (((f14 & 0x600) == 0x200) || ((f14 & 0x500) == 0x400)) return OP_NONE;  // invalid qualifier -> OPCDEC
         const uint32_t r = (f14 >> 6) & 3;
         if (r == 0 || r == 1) return OP_NONE;             // /C, /M: SSE rounds nearest -> interpret
         if (((f14 >> 8) & 7) == 7) return OP_NONE;        // /SUI -> interpret
@@ -1378,7 +1380,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
         if (op == OP_LDA || op == OP_LDAH) {
             if (ra == 31) continue;
             int64_t d = (int64_t)(int16_t)(ins & 0xFFFF);
-            if (op == OP_LDAH) d <<= 16;
+            if (op == OP_LDAH) d *= 65536;
             const int dp = pin_id(ra), bp = (rb == 31) ? -1 : pin_id(rb);
             if (dp >= 0) {
                 const x86::Gp dst = x86::gpq((uint32_t)dp);
@@ -1525,6 +1527,33 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             default:      a.divsd(x86::xmm0, x86::xmm1); break;                   // OP_DIVT
             }
             class_bail(x86::xmm0, true);                                           // Inf/NaN/denormal result -> interp
+            if (op == OP_MULT || op == OP_DIVT) {
+                // Complete underflow rounds to +-0 with no denormal to catch
+                // ieee_rpack still sets FPCR.UNF (+ /U //SU trap) so a zero result bails to the 
+                // interp unless it is provably an operand of +-0, or (DIV) a +-Inf divisor  
+                // finite/Inf is an exact signed zero with no exception (ieee_fdiv), committed inline. 
+                // ADD/SUB are exempt entirely
+                Label nz = a.new_label();
+                a.movq(x86::rax, x86::xmm0);
+                a.add(x86::rax, x86::rax);                                        // drop the sign bit
+                a.jnz(nz);
+                a.mov(x86::rax, x86::qword_ptr(x86::rbp, m_off.f_base + 8u * (uint32_t)ra));
+                a.add(x86::rax, x86::rax);
+                a.jz(nz);                                                         // Fa == +-0 -> exact zero
+                if (op == OP_MULT) {
+                    a.mov(x86::rax, x86::qword_ptr(x86::rbp, m_off.f_base + 8u * (uint32_t)rb));
+                    a.add(x86::rax, x86::rax);
+                    a.jz(nz);                                                     // Fb == +-0 -> exact zero
+                } else {
+                    a.mov(x86::rax, x86::qword_ptr(x86::rbp, m_off.f_base + 8u * (uint32_t)rb));
+                    a.add(x86::rax, x86::rax);                                    // +-Inf -> 0xFFE0...0
+                    a.mov(x86::rcx, imm(0xFFE0000000000000ull));
+                    a.cmp(x86::rax, x86::rcx);
+                    a.je(nz);                                                     // finite/+-Inf -> exact zero
+                }
+                a.jmp(bail);                                                      // underflowed to zero
+                a.bind(nz);
+            }
             a.movq(x86::qword_ptr(x86::rbp, m_off.f_base + 8u * (uint32_t)rc), x86::xmm0);   // f[Fc]
             a.jmp(cont);
             a.bind(bail);
@@ -1633,6 +1662,17 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             dbl_bail(x86::xmm0, false, bail);                                       // denormal operand -> interp
             a.cvtsd2ss(x86::xmm0, x86::xmm0);                                       // round to single
             sgl_bail(x86::xmm0, true, bail);                                        // Inf/NaN/denormal single -> interp
+            {   // complete underflow to +-0: nonzero double below the single range; interp owns UNF/trap
+                Label nz = a.new_label();
+                a.movd(x86::eax, x86::xmm0);
+                a.add(x86::eax, x86::eax);                                          // drop the sign bit
+                a.jnz(nz);
+                a.mov(x86::rax, x86::qword_ptr(x86::rbp, m_off.f_base + 8u * (uint32_t)rb));
+                a.add(x86::rax, x86::rax);
+                a.jz(nz);                                                           // Fb == +-0 -> exact zero
+                a.jmp(bail);
+                a.bind(nz);
+            }
             a.cvtss2sd(x86::xmm0, x86::xmm0);                                       // -> double (register format)
             a.movq(x86::qword_ptr(x86::rbp, m_off.f_base + 8u * (uint32_t)rc), x86::xmm0);
             a.jmp(cont);
@@ -1724,6 +1764,33 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             default:      a.divss(x86::xmm0, x86::xmm1); break;                   // OP_DIVS
             }
             sgl_bail(x86::xmm0, true, bail);                                        // Inf/NaN/denormal single result -> interp
+            if (op == OP_MULS || op == OP_DIVS) {
+                // Complete underflow to +-0 (no denormal to catch). 
+                // ieee_rpack sets FPCR.UNF (+ /U // //SU trap), so a zero result bails unless exactly
+                // an operand of +-0, or (DIV) a +-Inf divisor (finite/Inf = exact signed zero, no exception,
+                // committed inline; a not-canonical S divisor fails the Inf compare and bails to the
+                // interp. ADD/SUB exempt entirely.
+                Label nz = a.new_label();
+                a.movd(x86::eax, x86::xmm0);
+                a.add(x86::eax, x86::eax);                                        // drop the sign bit
+                a.jnz(nz);
+                a.mov(x86::rax, x86::qword_ptr(x86::rbp, m_off.f_base + 8u * (uint32_t)ra));
+                a.add(x86::rax, x86::rax);
+                a.jz(nz);                                                         // Fa == +-0 -> exact zero
+                if (op == OP_MULS) {
+                    a.mov(x86::rax, x86::qword_ptr(x86::rbp, m_off.f_base + 8u * (uint32_t)rb));
+                    a.add(x86::rax, x86::rax);
+                    a.jz(nz);                                                     // Fb == +-0 -> exact zero
+                } else {
+                    a.mov(x86::rax, x86::qword_ptr(x86::rbp, m_off.f_base + 8u * (uint32_t)rb));
+                    a.add(x86::rax, x86::rax);                                    // +-Inf (reg format) -> 0xFFE0...0
+                    a.mov(x86::rcx, imm(0xFFE0000000000000ull));
+                    a.cmp(x86::rax, x86::rcx);
+                    a.je(nz);                                                     // finite/+-Inf -> exact zero
+                }
+                a.jmp(bail);                                                      // underflowed to zero
+                a.bind(nz);
+            }
             a.cvtss2sd(x86::xmm0, x86::xmm0);                                       // -> double (register format)
             a.movq(x86::qword_ptr(x86::rbp, m_off.f_base + 8u * (uint32_t)rc), x86::xmm0);
             a.jmp(cont);
@@ -1751,6 +1818,8 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
         // FLTV VAX arith (0x15): jit_fltv runs the op into f[Fc]. Return 0 ok / 1 FPSTART bail (op not run
         // -> set_pc, interp re-runs) / 2 arith trap (op ran + GO_PAL already set state.pc -> return as-is).
         if (op == OP_FLTV) {
+            a.mov(x86::r10, imm(b->tag + 4 * (uint64_t)i));   // GO_PAL inside the helper stamps
+            a.mov(x86::qword_ptr(x86::rbp, m_off.state_current_pc), x86::r10);   // EXC_ADDR from current_pc
             emit_call(fltv_helper, { {JA_CPU, 0}, {JA_I32, (uint64_t)ins} });  // jit_fltv(cpu, ins)
             Label ok = a.new_label(), trapped = a.new_label();
             a.test(x86::eax, x86::eax);
@@ -2268,7 +2337,11 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   StringLogger logger;
 #endif
   CodeHolder code;
-  if (code.init(((JitRuntime*) m_rt)->environment()) != Error::kOk) return;
+  if (code.init(((JitRuntime*) m_rt)->environment()) != Error::kOk) {
+    m_reclaim_pending = true;   // init only fails on OOM here: free code at the next
+    b->compiled = false;        // safe point and retry, don't latch the block interpreted
+    return;
+  }
   code.set_error_handler(&eh);
 #ifdef JIT_DISASM
   // Dev: capture this block's disassembly, validate each emitted instruction, and trap any
@@ -2876,16 +2949,31 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   }
 #endif
   if (eh.failed) return;   // emit error already reported -- don't ship a broken block
+                           // (deterministic for these source bytes: stays compiled=true, no retry loop)
 
+  // A source RACE is transient (another CPU modified the guest bytes mid-compile): clear the
+  // attempt flag so the dispatcher retries, instead of interpreting this block until the next flush.
   const size_t source_bytes = static_cast<size_t>(hash_len) * sizeof(uint32_t);
-  if (memcmp(dram + phys, source_words.data(), source_bytes) != 0) return;
+  if (memcmp(dram + phys, source_words.data(), source_bytes) != 0) { b->compiled = false; return; }
 
   auto* const rt = static_cast<JitRuntime*>(m_rt);
-  if (rt->add(&fn, &code) != Error::kOk) return;
-  // add() can allocate/copy for long enough that another CPU modifies the guest source. 
-  // Never publish old code with a hash of new bytesand abandon the unreferenced on any mismatch.
-  if (eh.failed || memcmp(dram + phys, source_words.data(), source_bytes) != 0) {
+  const Error add_err = rt->add(&fn, &code);
+  if (add_err != Error::kOk) {
+    if (add_err == Error::kOutOfMemory) {   // transient: reclaim at the next safe point, then retry
+      m_reclaim_pending = true;
+      b->compiled = false;
+    }                                        // any other add() error is deterministic -> stays terminal
+    printf("[JIT][CPU%d] JitRuntime::add failed (err=%u%s) for block @ %016llx\n", m_cpu_id,
+           (unsigned) add_err, add_err == Error::kOutOfMemory ? ", OOM: will reclaim+retry" : ", terminal",
+           (unsigned long long) (b->tag & ~(uint64_t) 1));
+    return;
+  }
+  // add() can allocate/copy for long enough that another CPU modifies the guest source.
+  // Never publish old code with a hash of new bytes; abandon the unreferenced image on a mismatch.
+  if (eh.failed) { (void)rt->release(fn); return; }   // late deterministic emit error -> terminal
+  if (memcmp(dram + phys, source_words.data(), source_bytes) != 0) {
     (void)rt->release(fn);
+    b->compiled = false;   // post-add source race -> retry
     return;
   }
 
@@ -2917,6 +3005,8 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
 {
   using namespace asmjit;
   if (dram == nullptr || m_rt == nullptr || n_blocks == 0 || n_blocks > kMaxTraceSegs) return;
+  // Mirror compile_block's reclaim threshold.
+  if (m_code_bytes >= kReclaimBytes) { m_reclaim_pending = true; return; }
   std::array<SourceSeg, kMaxTraceSegs> source_desc{};
   std::array<std::vector<uint32_t>, kMaxTraceSegs> source_words{};
   // Validate every segment up front: a compiled prefix that fits in DRAM. (prefix_len, NOT n_instr --
@@ -2989,7 +3079,10 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   eh.fp = m_disasm_fp;
 #endif
   CodeHolder code;
-  if (code.init(((JitRuntime*) m_rt)->environment()) != Error::kOk) return;
+  if (code.init(((JitRuntime*) m_rt)->environment()) != Error::kOk) {
+    m_reclaim_pending = true;   // OOM: free code at the next safe point (the head re-promotes)
+    return;
+  }
   code.set_error_handler(&eh);
   x86::Assembler a(&code);
 #ifdef JIT_DISASM
