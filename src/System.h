@@ -236,6 +236,7 @@ public:
   u64           PCI_Phys_direct_mapped(u32 address, u64 wsm, u64 tba);
   u64           PCI_Phys_scatter_gather(u32 address, u64 wsm, u64 tba);
   void          interrupt(int number, bool assert);
+  u32           get_tick_seq() { return m_tick_seq.load(std::memory_order_relaxed); }
   int           LoadROM();
   void          PrepareX86OptionROMMemory();
   u64           ReadMem(u64 address, int dsize, CSystemComponent* source);
@@ -356,6 +357,7 @@ private:
   // Serializes drir RMW + delivery in interrupt() across device threads. On
   // CSystem (not in saved 'state'), so SaveState is unaffected.
   std::mutex    drir_lock;
+  std::atomic<u32> m_tick_seq{ 0 };  // interval-tick sequence; CPU instruction pacing
 
   /// The state structure contains all elements that need to be saved to the statefile.
   struct SSys_state

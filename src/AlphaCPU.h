@@ -456,6 +456,9 @@ private:
   std::chrono::steady_clock::time_point tick_last_fire;
   u32                                   tick_pace_lcg = 0x9e3779b9; // noise term of the catch-up gap modulation (see timer fire in jit_run/execute)
   u32                                   tick_fire_idx = 0;          // triangle-wave phase of the catch-up gap modulation
+  u64                                   tick_last_icount = 0;       // instruction_count when this CPU last observed an interval tick (instruction-paced cap)
+  u32                                   tick_seen_seq = 0;          // last CSystem tick sequence this CPU observed
+  u64                                   m_max_instr_per_tick = 0;   // config timer.max_instr_per_tick (0 = off); see jit_run timer
 
   // CALL_PAL WTINT idle nap: enabled by the cpu config, announced once
   bool                                  idle_nap_enabled = false;
@@ -995,8 +998,8 @@ inline int CAlphaCPU::get_cpuid()
  **/
 inline void CAlphaCPU::irq_h(int number, bool assert, int delay)
 {
-  bool  active = (state.eir & (U64(0x1) << number))
-    || state.irq_h_timer[number];
+  const u64 bit = U64(0x1) << number;
+  bool  active = (state.eir & bit) || state.irq_h_timer[number];
   if (assert && !active)
   {
     if (delay)
@@ -1006,16 +1009,27 @@ inline void CAlphaCPU::irq_h(int number, bool assert, int delay)
     }
     else
     {
-      state.eir |= (U64(0x1) << number);
+      state.eir |= bit;
       state.check_int = true;
     }
 
     return;
   }
 
+  if (assert && (state.eir & bit))
+  {
+    // New request on an already-high line - a second device asserting while
+    // the first is still being serviced. 
+    // The level in eir is already correct, but check_int was consumed when the 
+    // interrupt was dispatched, and after its REI nothing re-polls.
+    // Re-kick so it is picked up at the next dispatch boundary, matching real hardware.
+    state.check_int = true;
+    return;
+  }
+
   if (!assert && active)
   {
-    state.eir &= ~(U64(0x1) << number);
+    state.eir &= ~bit;
     state.irq_h_timer[number] = 0;
     state.check_timers = false;
     for (int i = 0; i < 6; i++)

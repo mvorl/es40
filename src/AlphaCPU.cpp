@@ -512,6 +512,12 @@ void CAlphaCPU::init()
 	idle_nap_enabled = myCfg->get_bool_value("idle_nap", false);
 	exit_on_pal_halt = myCfg->get_myParent()->get_bool_value("exit_on_pal_halt", false);
 
+	// Instruction-paced interval-timer cap. 
+	// Default = 1.25M, the 1024Hz-tick cadence of the fastest Alpha - 1.25GHz EV68)
+	m_max_instr_per_tick = myCfg->get_num_value("timer.max_instr_per_tick", false, 1250000);
+	if (const char* e = getenv("ES40_MAX_INSTR_PER_TICK"))
+		m_max_instr_per_tick = (u64)atoll(e);
+
 	vmspal_lle_enabled = cSystem->native_pal_requested();
 
 	state.iProcNum = cSystem->RegisterCPU(this);
@@ -622,6 +628,14 @@ void CAlphaCPU::init()
 
 	printf("%s(%d): $Id$\n",
 		devid_string, state.iProcNum);
+	if (state.iProcNum == 0)
+	{
+		if (m_max_instr_per_tick)
+			printf("%s: interval timer paced to %" PRIu64 " guest instr/tick\n",
+				devid_string, m_max_instr_per_tick);
+		else
+			printf("%s: interval timer wall-clock only (instruction pacing disabled)\n", devid_string);
+	}
 }
 
 void CAlphaCPU::ResetForSystemReset()
@@ -638,6 +652,11 @@ void CAlphaCPU::ResetForSystemReset()
 	cpu_hz = myCfg->get_num_value("speed", true, 500000000);
 	idle_nap_enabled = myCfg->get_bool_value("idle_nap", false);
 	exit_on_pal_halt = myCfg->get_myParent()->get_bool_value("exit_on_pal_halt", false);
+	m_max_instr_per_tick = myCfg->get_num_value("timer.max_instr_per_tick", false, 1250000);
+	if (const char* e = getenv("ES40_MAX_INSTR_PER_TICK"))
+		m_max_instr_per_tick = (u64)atoll(e);
+	tick_last_icount = 0;
+	tick_seen_seq = 0;
 
 	state.wait_for_start = (state.iProcNum == 0) ? false : true;
 	icache_enabled = true;
@@ -895,6 +914,30 @@ void CAlphaCPU::jit_run(int budget)
 				tick_last_fire = now;
 				next_timer_fire = now + std::chrono::seconds(1);
 			}
+		}
+	}
+
+	// Instruction-paced interval tick, for EVERY CPU.
+	// Gated off for the firmware/VMS PALcode (base 0x8000, and the pre-PAL reset state):
+	// SRM runs under it, and SRM's per-CPU speed calibration counts cycles
+	// per tick in a tight spin. NT and OSF-style PALcodes load at other bases and are paced.
+	// The RPCC/cycle counter is unaffected (it stays wall-clock accurate via sync_cc_wallclock).
+	if (m_max_instr_per_tick && theAli && state.pal_base && state.pal_base != U64(0x8000))
+	{
+		const u64 ic = state.instruction_count;
+		const u32 seq = cSystem->get_tick_seq();
+		if (seq != tick_seen_seq)
+		{
+			tick_seen_seq = seq;
+			tick_last_icount = ic;
+		}
+		else if ((ic - tick_last_icount) >= m_max_instr_per_tick)
+		{
+			cSystem->interrupt(-1, true);
+			tick_seen_seq = cSystem->get_tick_seq();
+			tick_last_icount = ic;
+			if (state.iProcNum == 0)
+				tick_last_fire = now;
 		}
 	}
 
@@ -2489,7 +2532,7 @@ void CAlphaCPU::execute()
 					// (~100 ticks) never agree during a repay stretch. Per-fire noise alone
 					// averages out 1/sqrt(N) over a window; the triangle wave's ~2.8-window
 					// wavelength survives the averaging, and the noise breaks symmetric-
-					// alignment ties.
+					// alignment ties. 
 					// Backlog beyond 1s (debugger pause, host sleep) is dropped.
 					tick_fire_idx++;
 					const u32 ph = tick_fire_idx % 277;
