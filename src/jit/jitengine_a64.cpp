@@ -191,7 +191,8 @@ enum class A64OpKind : uint8_t {
   kIntlLogical,   // INTL (0x11) AND/BIS/XOR/BIC/ORNOT/EQV: 1:1 A64 register ops
   kBranchInt,     // BR/BSR + conditional integer branches (0x30/0x34/0x38-0x3f)
   kHwMfpr,        // HW_MFPR (0x19), PALmode: Ra = IPR[fn] via the jit_hw_mfpr helper
-  kIntsShift      // INTS (0x12) SLL/SRL/SRA: LSLV/LSRV/ASRV share Alpha's mod-64 count
+  kIntsShift,     // INTS (0x12) SLL/SRL/SRA: LSLV/LSRV/ASRV share Alpha's mod-64 count
+  kLoadAddress    // LDA/LDAH (0x08/0x09): Ra = Rb + sext(disp16) (<<16) -- pure ALU
 };
 
 enum class A64TerminatorKind : uint8_t {
@@ -910,6 +911,7 @@ static constexpr bool a64_supported_op_kind(A64OpKind kind) noexcept
     case A64OpKind::kBranchInt:
     case A64OpKind::kHwMfpr:
     case A64OpKind::kIntsShift:
+    case A64OpKind::kLoadAddress:
       return true;
   }
   return false;
@@ -1156,6 +1158,10 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block) noexce
                   operate_reads, static_cast<uint8_t>(kA64GprRc)};
       }
       break;
+    case 0x08:   // LDA:  Ra = Rb + sext(disp16) - all ALU, all the time
+    case 0x09:   // LDAH: Ra = Rb + (sext(disp16) << 16)
+      return {A64OpKind::kLoadAddress, A64TerminatorKind::kNone,
+              static_cast<uint8_t>(kA64GprRb), static_cast<uint8_t>(kA64GprRa)};
     case 0x19: {   // HW_MFPR (PALmode only)
       if (!pal_block) break;
       const uint32_t fn = (ins >> 8) & 0xffu;
@@ -1384,6 +1390,16 @@ static_assert(decode_a64_op(0x48e0d727u, true).kind == A64OpKind::kIntsShift
               && classify_a64_op((0x12u << 26) | (0x30u << 5), false).kind
                   == A64OpKind::kUnsupported,   // ZAP: byte-manip stays interpreted
               "A64 INTS classification must accept only the three mod-64 shifts");
+// LDAH R2,0(R2).
+static_assert(decode_a64_op(0x24420000u, true).kind == A64OpKind::kLoadAddress
+              && decode_a64_op(0x24420000u, true).terminator == A64TerminatorKind::kNone
+              && decode_a64_op(0x24420000u, true).opcode == 0x09
+              && decode_a64_op(0x24420000u, true).ra == 2
+              && decode_a64_op(0x24420000u, true).rb == 2
+              && decode_a64_op(0x24420000u, true).gpr_reads == kA64GprRb
+              && decode_a64_op(0x24420000u, true).gpr_writes == kA64GprRa
+              && classify_a64_op(0x08u << 26, false).kind == A64OpKind::kLoadAddress,
+              "A64 LDA/LDAH classification must write Ra from the Rb base");
 static_assert(a64_scan_limit(3, 0).count == 3
               && a64_scan_limit(3, 0).stop == A64PlanStop::kBlockEnd
               && a64_scan_limit(65, 0).count == 64
@@ -2351,6 +2367,53 @@ static A64OpEmitReceipt emit_a64_ints_shift(A64EmitContext& context,
   return a64_completed_op_receipt(op, err);
 }
 
+// LDA/LDAH
+static A64OpEmitReceipt emit_a64_load_address(A64EmitContext& context,
+                                              const A64DecodedOp& op)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+
+  const A64GprRoute wa =
+      a64_guest_gpr_write_route(context.regs, op.ra, context.pal_shadow);
+  if (wa.kind == A64GprRouteKind::kInvalid || wa.kind == A64GprRouteKind::kZero)
+    return {Error::kInvalidArgument, op.kind};
+  if (wa.kind == A64GprRouteKind::kDiscard)   // Ra==31: architectural no-op
+    return a64_completed_op_receipt(op);
+
+  a64::Assembler& a = context.assembler;
+  const int64_t disp = static_cast<int16_t>(op.ins & 0xffffu);
+  const int64_t delta = op.opcode == 0x09 ? disp * 65536 : disp;
+
+  const a64::Gp dst = wa.kind == A64GprRouteKind::kPinned
+      ? a64::x(static_cast<uint32_t>(wa.host)) : RA::kScratch2;
+
+  Error err = Error::kOk;
+  const A64GprRoute rb =
+      a64_guest_gpr_read_route(context.regs, op.rb, context.pal_shadow);
+  switch (rb.kind) {
+    case A64GprRouteKind::kZero:
+      err = emit_a64_mov_u64(a, dst, static_cast<uint64_t>(delta));
+      break;
+    case A64GprRouteKind::kPinned:
+      err = emit_a64_add_offset(a, dst, a64::x(static_cast<uint32_t>(rb.host)),
+                                delta, RA::kScratch0);
+      break;
+    case A64GprRouteKind::kMemory:
+      err = a.ldr(RA::kScratch0, a64::ptr(RA::kRegs,
+                  static_cast<int32_t>(rb.slot * sizeof(uint64_t))));
+      if (err == Error::kOk)
+        err = emit_a64_add_offset(a, dst, RA::kScratch0, delta, RA::kScratch1);
+      break;
+    default:
+      return {Error::kInvalidArgument, op.kind};
+  }
+  if (err == Error::kOk && wa.kind == A64GprRouteKind::kMemory)
+    err = a.str(dst, a64::ptr(RA::kRegs,
+                static_cast<int32_t>(wa.slot * sizeof(uint64_t))));
+  return a64_completed_op_receipt(op, err);
+}
+
 // HW_MFPR: jit_hw_mfpr(cpu, ins, cur)
 static A64OpEmitReceipt emit_a64_hw_mfpr(A64EmitContext& context,
                                          const A64DecodedOp& op)
@@ -2399,6 +2462,8 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
       return emit_a64_hw_mfpr(context, op);
     case A64OpKind::kIntsShift:
       return emit_a64_ints_shift(context, op);
+    case A64OpKind::kLoadAddress:
+      return emit_a64_load_address(context, op);
   }
   return {};
 }
