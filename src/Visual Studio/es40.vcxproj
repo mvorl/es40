@@ -2356,10 +2356,12 @@
     <None Include="..\..\m4\x11.m4" />
     <None Include="..\..\Makefile.am" />
     <None Include="..\..\README.md" />
+    <None Include="..\config.h.cmake" />
     <None Include="..\es40.cfg" />
     <None Include="..\Makefile.am" />
   </ItemGroup>
   <ItemGroup>
+    <Text Include="..\..\CMakeLists.txt" />
     <Text Include="..\..\old_vga_docs.txt" />
   </ItemGroup>
   <ItemGroup>
@@ -2369,14 +2371,7 @@
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Target Name="SetES40GitCommit" BeforeTargets="ClCompile">
-    <Exec
-      Command="git -C &quot;$(ProjectDir)..\..&quot; rev-parse HEAD"
-      Condition="'$(ES40GitCommit)' == ''"
-      ConsoleToMSBuild="true"
-      IgnoreExitCode="true"
-      IgnoreStandardErrorWarningFormat="true"
-      StandardErrorImportance="Low"
-      StandardOutputImportance="Low">
+    <Exec Command="git -C &quot;$(ProjectDir)..\..&quot; rev-parse HEAD" Condition="'$(ES40GitCommit)' == ''" ConsoleToMSBuild="true" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardErrorImportance="Low" StandardOutputImportance="Low">
       <Output TaskParameter="ConsoleOutput" ItemName="_ES40GitOutput" />
       <Output TaskParameter="ExitCode" PropertyName="_ES40GitExitCode" />
     </Exec>
@@ -2386,7 +2381,7 @@
     </PropertyGroup>
     <ItemGroup>
       <ClCompile Update="@(ClCompile)">
-        <PreprocessorDefinitions>ES40_GIT_COMMIT=&quot;$(ES40GitCommit)&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+        <PreprocessorDefinitions>ES40_GIT_COMMIT="$(ES40GitCommit)";%(PreprocessorDefinitions)</PreprocessorDefinitions>
       </ClCompile>
     </ItemGroup>
   </Target>

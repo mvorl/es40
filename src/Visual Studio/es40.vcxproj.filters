@@ -529,9 +529,15 @@
     <None Include="..\..\.github\workflows\release.yml">
       <Filter>Resource Files\.github stuff</Filter>
     </None>
+    <None Include="..\config.h.cmake">
+      <Filter>Resource Files</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Text Include="..\..\old_vga_docs.txt">
+      <Filter>Resource Files</Filter>
+    </Text>
+    <Text Include="..\..\CMakeLists.txt">
       <Filter>Resource Files</Filter>
     </Text>
   </ItemGroup>

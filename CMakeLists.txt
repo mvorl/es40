@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(ES40 VERSION 0.75.4 LANGUAGES C CXX)
+project(ES40 VERSION 0.84 LANGUAGES C CXX)
 
 option(ES40_DISABLE_SDL "Disable SDL for headless builds" OFF)
 option(ES40_DISABLE_NETWORKING "Disable PCap/networking for networkless builds" OFF)

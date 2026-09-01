@@ -2,8 +2,7 @@
 # ES40 emulator.
 # Copyright (C) 2007-2008 by the ES40 Emulator Project
 #
-# Website: http://sourceforge.net/projects/es40
-# E-mail : camiel@camicom.com
+# Website: https://github.com/ES40-Emu/es40
 # 
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
