@@ -188,7 +188,8 @@ enum A64GprOperandMask : uint8_t {
 enum class A64OpKind : uint8_t {
   kUnsupported,
   kValidationProbe,
-  kIntlLogical    // INTL (0x11) AND/BIS/XOR/BIC/ORNOT/EQV: 1:1 A64 register ops
+  kIntlLogical,   // INTL (0x11) AND/BIS/XOR/BIC/ORNOT/EQV: 1:1 A64 register ops
+  kBranchInt      // BR/BSR + conditional integer branches (0x30/0x34/0x38-0x3f)
 };
 
 enum class A64TerminatorKind : uint8_t {
@@ -904,6 +905,7 @@ static constexpr bool a64_supported_op_kind(A64OpKind kind) noexcept
     case A64OpKind::kValidationProbe:
       return false;
     case A64OpKind::kIntlLogical:
+    case A64OpKind::kBranchInt:
       return true;
   }
   return false;
@@ -1144,6 +1146,14 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block) noexce
                   operate_reads, static_cast<uint8_t>(kA64GprRc)};
       }
       break;
+    case 0x30: case 0x34:   // BR / BSR: Ra = link, unconditional direct terminator
+      return {A64OpKind::kBranchInt, A64TerminatorKind::kDirect,
+              0, static_cast<uint8_t>(kA64GprRa)};
+    case 0x38: case 0x39: case 0x3a: case 0x3b:   // BLBC/BEQ/BLT/BLE: conditional on Ra
+    case 0x3c: case 0x3d: case 0x3e: case 0x3f:   // BLBS/BNE/BGE/BGT
+      return {A64OpKind::kBranchInt, A64TerminatorKind::kDirect,
+              static_cast<uint8_t>(kA64GprRa), 0};
+    // FP branches (0x31-0x33, 0x35-0x37) need the FPSTART gate.
   }
   return {};
 }
@@ -1311,6 +1321,19 @@ static_assert(classify_a64_op((0x11u << 26) | (0x14u << 5), false).kind
               && classify_a64_op((0x11u << 26) | (0x20u << 5), false).gpr_writes
                   == kA64GprRc,
               "A64 INTL classification must stay fail-closed outside the six logicals");
+static_assert(decode_a64_op(0xc3402e1eu, true).kind == A64OpKind::kBranchInt
+              && decode_a64_op(0xc3402e1eu, true).terminator == A64TerminatorKind::kDirect
+              && decode_a64_op(0xc3402e1eu, true).ra == 26
+              && decode_a64_op(0xc3402e1eu, true).gpr_writes == kA64GprRa
+              && decode_a64_op(0xc3402e1eu, true).gpr_reads == 0
+              && plan_a64_direct_chain(
+                     plan_a64_exit(0x8001, 2, A64TerminatorKind::kDirect),
+                     0xc3402e1eu, true, false).gate == A64ChainGate::kNone
+              && classify_a64_op(0x39u << 26, false).gpr_reads == kA64GprRa   // BEQ reads Ra
+              && classify_a64_op(0x39u << 26, false).gpr_writes == 0
+              && classify_a64_op(0x31u << 26, false).kind
+                  == A64OpKind::kUnsupported,   // FP branches stay interpreted
+              "A64 branch classification must link, read, and thin per the x64 contract");
 static_assert(a64_scan_limit(3, 0).count == 3
               && a64_scan_limit(3, 0).stop == A64PlanStop::kBlockEnd
               && a64_scan_limit(65, 0).count == 64
@@ -2133,6 +2156,87 @@ static A64OpEmitReceipt emit_a64_intl_logical(A64EmitContext& context,
   return a64_completed_op_receipt(op, err);
 }
 
+// Branch format: BR/BSR link, etc
+static A64OpEmitReceipt emit_a64_branch_int(A64EmitContext& context,
+                                            const A64DecodedOp& op, uint32_t index)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = context.assembler;
+
+  const uint64_t fall = a64_advance_pc(context.start_pc, index + 1);
+  const uint64_t target = a64_branch_target(fall, op.ins);
+  Error err = Error::kOk;
+
+  if (op.opcode == 0x30 || op.opcode == 0x34) {   // BR / BSR
+    const A64GprRoute wa =
+        a64_guest_gpr_write_route(context.regs, op.ra, context.pal_shadow);
+    switch (wa.kind) {
+      case A64GprRouteKind::kPinned:
+        err = emit_a64_mov_u64(a, a64::x(static_cast<uint32_t>(wa.host)),
+                               fall & ~uint64_t(3));
+        break;
+      case A64GprRouteKind::kMemory:
+        err = emit_a64_mov_u64(a, RA::kScratch0, fall & ~uint64_t(3));
+        if (err == Error::kOk)
+          err = a.str(RA::kScratch0, a64::ptr(RA::kRegs,
+                      static_cast<int32_t>(wa.slot * sizeof(uint64_t))));
+        break;
+      case A64GprRouteKind::kDiscard:   // Ra==31: no link
+        break;
+      default:
+        return {Error::kInvalidArgument, op.kind};
+    }
+    if (err == Error::kOk)
+      err = emit_a64_mov_u64(a, RA::kNextPc, target);
+    return a64_completed_op_receipt(op, err);
+  }
+
+  const A64GprRoute rra =
+      a64_guest_gpr_read_route(context.regs, op.ra, context.pal_shadow);
+  if (rra.kind == A64GprRouteKind::kZero) {
+    // Ra==31 reads zero, so the condition folds (and CMP can't encode xzr as its
+    // base -- reg 31 is SP there). BEQ/BGE/BLE/BLBC on zero are always taken.
+    const bool taken = op.opcode == 0x39 || op.opcode == 0x3e
+                    || op.opcode == 0x3b || op.opcode == 0x38;
+    if (taken) err = emit_a64_mov_u64(a, RA::kNextPc, target);
+    return a64_completed_op_receipt(op, err);
+  }
+  a64::Gp src = RA::kScratch0;
+  switch (rra.kind) {
+    case A64GprRouteKind::kPinned: src = a64::x(static_cast<uint32_t>(rra.host)); break;
+    case A64GprRouteKind::kMemory:
+      err = a.ldr(RA::kScratch0, a64::ptr(RA::kRegs,
+                  static_cast<int32_t>(rra.slot * sizeof(uint64_t))));
+      break;
+    default:
+      return {Error::kInvalidArgument, op.kind};
+  }
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  const Label not_taken = a.new_label();
+  switch (op.opcode) {
+    case 0x39: err = a.cbnz(src, not_taken); break;               // BEQ
+    case 0x3d: err = a.cbz(src, not_taken);  break;               // BNE
+    case 0x38: err = a.tst(src, imm(1));                          // BLBC
+               if (err == Error::kOk) err = a.b_ne(not_taken); break;
+    case 0x3c: err = a.tst(src, imm(1));                          // BLBS
+               if (err == Error::kOk) err = a.b_eq(not_taken); break;
+    case 0x3a: err = a.cmp(src, imm(0));                          // BLT
+               if (err == Error::kOk) err = a.b_ge(not_taken); break;
+    case 0x3b: err = a.cmp(src, imm(0));                          // BLE
+               if (err == Error::kOk) err = a.b_gt(not_taken); break;
+    case 0x3e: err = a.cmp(src, imm(0));                          // BGE
+               if (err == Error::kOk) err = a.b_lt(not_taken); break;
+    case 0x3f: err = a.cmp(src, imm(0));                          // BGT
+               if (err == Error::kOk) err = a.b_le(not_taken); break;
+    default:   return {Error::kInvalidInstruction, op.kind};
+  }
+  if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kNextPc, target);
+  if (err == Error::kOk) err = a.bind(not_taken);
+  return a64_completed_op_receipt(op, err);
+}
+
 static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
     const A64DecodedOp& op, uint32_t index)
 {
@@ -2145,6 +2249,8 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
       return {};
     case A64OpKind::kIntlLogical:
       return emit_a64_intl_logical(context, op);
+    case A64OpKind::kBranchInt:
+      return emit_a64_branch_int(context, op, index);
   }
   return {};
 }
