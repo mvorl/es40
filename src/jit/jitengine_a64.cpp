@@ -1384,6 +1384,7 @@ static_assert(decode_a64_op(0x48e0d727u, true).kind == A64OpKind::kIntsShift
               && classify_a64_op((0x12u << 26) | (0x30u << 5), false).kind
                   == A64OpKind::kUnsupported,   // ZAP: byte-manip stays interpreted
               "A64 INTS classification must accept only the three mod-64 shifts");
+static_assert(a64_scan_limit(3, 0).count == 3
               && a64_scan_limit(3, 0).stop == A64PlanStop::kBlockEnd
               && a64_scan_limit(65, 0).count == 64
               && a64_scan_limit(65, 0).stop == A64PlanStop::kInstructionLimit
