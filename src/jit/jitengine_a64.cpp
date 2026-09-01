@@ -187,7 +187,8 @@ enum A64GprOperandMask : uint8_t {
 
 enum class A64OpKind : uint8_t {
   kUnsupported,
-  kValidationProbe
+  kValidationProbe,
+  kIntlLogical    // INTL (0x11) AND/BIS/XOR/BIC/ORNOT/EQV: 1:1 A64 register ops
 };
 
 enum class A64TerminatorKind : uint8_t {
@@ -902,6 +903,8 @@ static constexpr bool a64_supported_op_kind(A64OpKind kind) noexcept
     case A64OpKind::kUnsupported:
     case A64OpKind::kValidationProbe:
       return false;
+    case A64OpKind::kIntlLogical:
+      return true;
   }
   return false;
 }
@@ -1122,9 +1125,26 @@ static constexpr bool a64_source_extent_valid(uint64_t phys, uint32_t words,
           <= (dram_size - phys) / sizeof(uint32_t);
 }
 
-// Classification stays fail-closed: each translation will add its classifier and emitter together.
-static constexpr A64OpClass classify_a64_op(uint32_t, bool) noexcept
+// Classification stays fail-closed: each translation adds its classifier and emitter together.
+static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block) noexcept
 {
+  (void) pal_block;
+  const uint32_t opcode = ins >> 26;
+  const uint32_t func = (ins >> 5) & 0x7fu;
+  const bool is_literal = ((ins >> 12) & 1u) != 0;
+  const uint8_t operate_reads =
+      static_cast<uint8_t>(kA64GprRa | (is_literal ? 0 : kA64GprRb));
+
+  switch (opcode) {
+    case 0x11:   // INTL: the six logicals; CMOV/AMASK/IMPLVER stay interpreted for now
+      switch (func) {
+        case 0x00: case 0x20: case 0x40:   // AND, BIS, XOR
+        case 0x08: case 0x28: case 0x48:   // BIC, ORNOT, EQV
+          return {A64OpKind::kIntlLogical, A64TerminatorKind::kNone,
+                  operate_reads, static_cast<uint8_t>(kA64GprRc)};
+      }
+      break;
+  }
   return {};
 }
 
@@ -1271,6 +1291,26 @@ static_assert(decode_a64_op(kA64DecodeProbe, false).opcode == 0x10
 static_assert(decode_a64_op(kA64LiteralProbe, false).is_literal
               && decode_a64_op(kA64LiteralProbe, false).literal == 0xa5,
               "A64 planning must decode Alpha literal operands once");
+// 0x47ff0410 = BIS R31,R31,R16 -- the PAL reset vector's first op (the first punch target).
+static_assert(decode_a64_op(0x47ff0410u, true).kind == A64OpKind::kIntlLogical
+              && decode_a64_op(0x47ff0410u, true).terminator == A64TerminatorKind::kNone
+              && decode_a64_op(0x47ff0410u, true).ra == 31
+              && decode_a64_op(0x47ff0410u, true).rb == 31
+              && decode_a64_op(0x47ff0410u, true).rc == 16
+              && !decode_a64_op(0x47ff0410u, true).is_literal
+              && a64_supported_op_kind(A64OpKind::kIntlLogical),
+              "A64 INTL classification must accept the six register-form logicals");
+static_assert(classify_a64_op((0x11u << 26) | (0x14u << 5), false).kind
+                  == A64OpKind::kUnsupported   // CMOVLBS stays interpreted
+              && classify_a64_op((0x11u << 26) | (0x61u << 5), false).kind
+                  == A64OpKind::kUnsupported   // AMASK stays interpreted
+              && classify_a64_op((0x11u << 26) | (1u << 12) | (0x20u << 5), true).gpr_reads
+                  == kA64GprRa                 // literal form reads Ra only
+              && classify_a64_op((0x11u << 26) | (0x20u << 5), false).gpr_reads
+                  == (kA64GprRa | kA64GprRb)
+              && classify_a64_op((0x11u << 26) | (0x20u << 5), false).gpr_writes
+                  == kA64GprRc,
+              "A64 INTL classification must stay fail-closed outside the six logicals");
 static_assert(a64_scan_limit(3, 0).count == 3
               && a64_scan_limit(3, 0).stop == A64PlanStop::kBlockEnd
               && a64_scan_limit(65, 0).count == 64
@@ -2028,10 +2068,74 @@ struct A64EmitContext {
   uint32_t receipt_index = UINT32_MAX;
 };
 
+// Rc = Ra <logical> op2 -- each of the six is one A64 register-form op. The 8-bit
+// literal is materialized in scratch: 0-255 is rarely a valid A64 logical immediate.
+static A64OpEmitReceipt emit_a64_intl_logical(A64EmitContext& context,
+                                              const A64DecodedOp& op)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+
+  const A64GprRoute wc =
+      a64_guest_gpr_write_route(context.regs, op.rc, context.pal_shadow);
+  if (wc.kind == A64GprRouteKind::kInvalid || wc.kind == A64GprRouteKind::kZero)
+    return {Error::kInvalidArgument, op.kind};
+  if (wc.kind == A64GprRouteKind::kDiscard)   // Rc==31: architectural no-op
+    return a64_completed_op_receipt(op);
+
+  a64::Assembler& a = context.assembler;
+  Error err = Error::kOk;
+
+  // Resolve a source operand into a register: xzr for R31, the pin, or a load.
+  auto source = [&](uint32_t raw_reg, const a64::Gp& scratch) -> a64::Gp {
+    const A64GprRoute route =
+        a64_guest_gpr_read_route(context.regs, raw_reg, context.pal_shadow);
+    switch (route.kind) {
+      case A64GprRouteKind::kZero:   return a64::xzr;
+      case A64GprRouteKind::kPinned: return a64::x(static_cast<uint32_t>(route.host));
+      case A64GprRouteKind::kMemory:
+        err = a.ldr(scratch, a64::ptr(RA::kRegs,
+                    static_cast<int32_t>(route.slot * sizeof(uint64_t))));
+        return scratch;
+      default:
+        err = Error::kInvalidArgument;
+        return scratch;
+    }
+  };
+
+  const a64::Gp op1 = source(op.ra, RA::kScratch0);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  a64::Gp op2 = RA::kScratch1;
+  if (op.is_literal) {
+    if (op.literal == 0) op2 = a64::xzr;
+    else                 err = a.mov(RA::kScratch1, imm(op.literal));
+  } else {
+    op2 = source(op.rb, RA::kScratch1);
+  }
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  const a64::Gp dst = wc.kind == A64GprRouteKind::kPinned
+      ? a64::x(static_cast<uint32_t>(wc.host)) : RA::kScratch2;
+
+  switch ((op.ins >> 5) & 0x7fu) {
+    case 0x00: err = a.and_(dst, op1, op2); break;   // AND
+    case 0x20: err = a.orr(dst, op1, op2);  break;   // BIS
+    case 0x40: err = a.eor(dst, op1, op2);  break;   // XOR
+    case 0x08: err = a.bic(dst, op1, op2);  break;   // BIC
+    case 0x28: err = a.orn(dst, op1, op2);  break;   // ORNOT
+    case 0x48: err = a.eon(dst, op1, op2);  break;   // EQV
+    default:   err = Error::kInvalidInstruction; break;
+  }
+  if (err == Error::kOk && wc.kind == A64GprRouteKind::kMemory)
+    err = a.str(dst, a64::ptr(RA::kRegs,
+                static_cast<int32_t>(wc.slot * sizeof(uint64_t))));
+  return a64_completed_op_receipt(op, err);
+}
+
 static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
     const A64DecodedOp& op, uint32_t index)
 {
-  (void)context;
   if (index >= A64BlockPlan::kMaxOps)
     return {asmjit::Error::kInvalidArgument, op.kind};
 
@@ -2039,6 +2143,8 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
     case A64OpKind::kUnsupported:
     case A64OpKind::kValidationProbe:
       return {};
+    case A64OpKind::kIntlLogical:
+      return emit_a64_intl_logical(context, op);
   }
   return {};
 }
