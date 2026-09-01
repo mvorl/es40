@@ -373,6 +373,7 @@ struct A64DirectChainContract {
   uint32_t completed_delta = 0;
   A64ChainGate gate = A64ChainGate::kNone;
   A64PcAuthority bailout_pc = A64PcAuthority::kNextPc;
+  bool gate_exit = false;
   bool source_pal_guard = false;
   bool target_pal_guard = false;
   bool request_patch_on_slot_miss = false;
@@ -396,18 +397,25 @@ struct A64DirectChainContract {
     if (!eligible()) {
       if (kind != A64ExitKind::kIndirect)
         return false;
-      return gate == A64ChainGate::kNone
+      return gate == A64ChainGate::kNone && !gate_exit
           && !source_pal_guard && !target_pal_guard
           && !request_patch_on_slot_miss && !self_loop_candidate
           && !publish_pc_before_probe && !source_pal_shadow;
     }
 
-    return gate == (source_pal_guard ? A64ChainGate::kDeferInterrupt
-                                     : A64ChainGate::kPollAll)
+    // Gate thinning
+    const bool gate_ok =
+        kind == A64ExitKind::kFallthrough ? !gate_exit
+      : kind == A64ExitKind::kDirect      ? true
+      : gate_exit;
+    return gate_ok
+        && gate == (!gate_exit ? A64ChainGate::kNone
+                    : source_pal_guard ? A64ChainGate::kDeferInterrupt
+                                       : A64ChainGate::kPollAll)
         && target_pal_guard
             == (kind == A64ExitKind::kCallPal && !source_pal_guard)
         && request_patch_on_slot_miss
-        && self_loop_candidate == (kind != A64ExitKind::kFallthrough)
+        && self_loop_candidate == gate_exit
         && publish_pc_before_probe
             == (source_pal_guard || target_pal_guard
                 || kind == A64ExitKind::kRedispatch)
@@ -416,21 +424,31 @@ struct A64DirectChainContract {
 };
 
 static constexpr A64DirectChainContract plan_a64_direct_chain(
-    const A64BlockExit& exit, bool pal_block, bool pal_shadow) noexcept
+    const A64BlockExit& exit, uint32_t terminator_ins,
+    bool pal_block, bool pal_shadow) noexcept
 {
   A64DirectChainContract contract{};
   contract.kind = exit.kind;
   contract.completed_delta = exit.completed_delta;
   if (!contract.eligible()) return contract;
 
-  contract.gate = pal_block ? A64ChainGate::kDeferInterrupt
-                            : A64ChainGate::kPollAll;
+  // Gate thinning (x64 parity)
+  const uint32_t opcode = terminator_ins >> 26;
+  const bool forward_branch = exit.kind == A64ExitKind::kDirect
+      && opcode >= 0x30 && opcode <= 0x3f
+      && ((terminator_ins >> 20) & 1u) == 0;   // disp21 sign bit clear
+  contract.gate_exit = exit.kind != A64ExitKind::kFallthrough && !forward_branch;
+
+  contract.gate = !contract.gate_exit ? A64ChainGate::kNone
+      : pal_block ? A64ChainGate::kDeferInterrupt
+                  : A64ChainGate::kPollAll;
   contract.source_pal_guard = pal_block;
   contract.target_pal_guard = exit.kind == A64ExitKind::kCallPal && !pal_block;
   contract.request_patch_on_slot_miss = true;
-  // x64 sends every non-fallthrough direct exit through the same branch-tail
-  // self-link check, including CALL_PAL and I_CTL redispatch.
-  contract.self_loop_candidate = exit.kind != A64ExitKind::kFallthrough;
+  // x64 emits the self-link check only on gated exits: a fall-through or forward
+  // branch can never target its own block start. CALL_PAL and I_CTL redispatch
+  // keep it, matching the shared branch-tail path.
+  contract.self_loop_candidate = contract.gate_exit;
   contract.publish_pc_before_probe = a64_publish_pc_before_chain(exit, pal_block);
   contract.source_pal_shadow = pal_block && pal_shadow;
   return contract;
@@ -604,64 +622,102 @@ static constexpr bool a64_direct_chain_contract_probe() noexcept
   const A64BlockExit redispatch =
       plan_a64_exit(0x1000, 1, A64TerminatorKind::kRedispatch);
 
-  const A64DirectChainContract native_fall =
-      plan_a64_direct_chain(fall, false, false);
-  const A64DirectChainContract native_direct =
-      plan_a64_direct_chain(direct, false, false);
-  const A64DirectChainContract native_call =
-      plan_a64_direct_chain(call_pal, false, false);
-  const A64DirectChainContract pal_fall =
-      plan_a64_direct_chain(fall, true, false);
-  const A64DirectChainContract pal_direct =
-      plan_a64_direct_chain(direct, true, true);
-  const A64DirectChainContract pal_call =
-      plan_a64_direct_chain(call_pal, true, true);
-  const A64DirectChainContract pal_redispatch =
-      plan_a64_direct_chain(redispatch, true, true);
-  const A64DirectChainContract dynamic =
-      plan_a64_direct_chain(indirect, false, false);
-  const A64DirectChainContract native_redispatch =
-      plan_a64_direct_chain(redispatch, false, false);
-  const A64DirectChainContract empty =
-      plan_a64_direct_chain(none, false, false);
+  // Terminator words for the gate-thinning split: BEQ forward (disp21 sign clear),
+  // BEQ backward (sign set), CALL_PAL, I_CTL (the redispatch HW_MTPR), and JMP.
+  constexpr uint32_t fwd_br = (0x39u << 26) | 0x000004u;
+  constexpr uint32_t back_br = (0x39u << 26) | 0x1fffffu;
+  constexpr uint32_t non_br = 0x10u << 26;
+  constexpr uint32_t call_ins = 0x86u;
+  constexpr uint32_t ictl_ins = (0x1du << 26) | (0x11u << 8);
+  constexpr uint32_t jmp_ins = 0x1au << 26;
 
-  A64DirectChainContract malformed = native_direct;
+  const A64DirectChainContract native_fall =
+      plan_a64_direct_chain(fall, non_br, false, false);
+  const A64DirectChainContract native_fwd =
+      plan_a64_direct_chain(direct, fwd_br, false, false);
+  const A64DirectChainContract native_back =
+      plan_a64_direct_chain(direct, back_br, false, false);
+  const A64DirectChainContract native_call =
+      plan_a64_direct_chain(call_pal, call_ins, false, false);
+  const A64DirectChainContract pal_fall =
+      plan_a64_direct_chain(fall, non_br, true, false);
+  const A64DirectChainContract pal_fwd =
+      plan_a64_direct_chain(direct, fwd_br, true, true);
+  const A64DirectChainContract pal_back =
+      plan_a64_direct_chain(direct, back_br, true, true);
+  const A64DirectChainContract pal_call =
+      plan_a64_direct_chain(call_pal, call_ins, true, true);
+  const A64DirectChainContract pal_redispatch =
+      plan_a64_direct_chain(redispatch, ictl_ins, true, true);
+  const A64DirectChainContract dynamic =
+      plan_a64_direct_chain(indirect, jmp_ins, false, false);
+  const A64DirectChainContract native_redispatch =
+      plan_a64_direct_chain(redispatch, ictl_ins, false, false);
+  const A64DirectChainContract empty =
+      plan_a64_direct_chain(none, non_br, false, false);
+
+  A64DirectChainContract malformed = native_back;
   malformed.request_patch_on_slot_miss = false;
-  A64DirectChainContract zero_count = native_direct;
+  A64DirectChainContract zero_count = native_back;
   zero_count.completed_delta = 0;
-  A64DirectChainContract max_count = native_direct;
+  A64DirectChainContract max_count = native_back;
   max_count.completed_delta = kA64MaxBlockOps;
-  A64DirectChainContract unknown_gate = native_direct;
+  A64DirectChainContract unknown_gate = native_back;
   unknown_gate.gate = static_cast<A64ChainGate>(0xff);
-  A64DirectChainContract native_shadow = native_direct;
+  A64DirectChainContract native_shadow = native_back;
   native_shadow.source_pal_shadow = true;
   A64DirectChainContract missing_target_guard = native_call;
   missing_target_guard.target_pal_guard = false;
   A64DirectChainContract inactive_patch = dynamic;
   inactive_patch.request_patch_on_slot_miss = true;
+  A64DirectChainContract gated_fall = native_fall;      // a fall-through must thin
+  gated_fall.gate_exit = true;
+  gated_fall.gate = A64ChainGate::kPollAll;
+  gated_fall.self_loop_candidate = true;
+  A64DirectChainContract thinned_call = native_call;    // CALL_PAL must gate
+  thinned_call.gate_exit = false;
+  thinned_call.gate = A64ChainGate::kNone;
+  thinned_call.self_loop_candidate = false;
+  A64DirectChainContract looped_fwd = native_fwd;       // thinned exits carry no self-link
+  looped_fwd.self_loop_candidate = true;
   const A64DirectChainContract oversized =
       plan_a64_direct_chain(
-          {0x1104, kA64MaxBlockOps + 1, A64ExitKind::kDirect}, false, false);
+          {0x1104, kA64MaxBlockOps + 1, A64ExitKind::kDirect}, back_br, false, false);
   const A64DirectChainContract unknown =
-      plan_a64_direct_chain({0x1104, 1, static_cast<A64ExitKind>(0xff)}, false, false);
+      plan_a64_direct_chain({0x1104, 1, static_cast<A64ExitKind>(0xff)}, non_br,
+                            false, false);
 
   return native_fall.valid() && native_fall.eligible()
-      && native_fall.gate == A64ChainGate::kPollAll
+      && !native_fall.gate_exit
+      && native_fall.gate == A64ChainGate::kNone
       && native_fall.request_patch_on_slot_miss
       && !native_fall.self_loop_candidate
       && !native_fall.publish_pc_before_probe
-      && native_direct.valid() && native_direct.self_loop_candidate
-      && native_direct.gate == A64ChainGate::kPollAll
-      && native_call.valid() && native_call.target_pal_guard
+      && native_fwd.valid() && !native_fwd.gate_exit
+      && native_fwd.gate == A64ChainGate::kNone
+      && !native_fwd.self_loop_candidate
+      && native_fwd.request_patch_on_slot_miss
+      && !native_fwd.publish_pc_before_probe
+      && native_back.valid() && native_back.gate_exit
+      && native_back.self_loop_candidate
+      && native_back.gate == A64ChainGate::kPollAll
+      && native_call.valid() && native_call.gate_exit
+      && native_call.target_pal_guard
       && native_call.self_loop_candidate && native_call.publish_pc_before_probe
       && !native_call.source_pal_guard
       && pal_fall.valid() && pal_fall.source_pal_guard
       && !pal_fall.source_pal_shadow
-      && pal_fall.gate == A64ChainGate::kDeferInterrupt
+      && !pal_fall.gate_exit && pal_fall.gate == A64ChainGate::kNone
       && pal_fall.publish_pc_before_probe
-      && pal_direct.valid() && pal_direct.source_pal_guard
-      && pal_direct.source_pal_shadow && pal_direct.self_loop_candidate
+      && pal_fwd.valid() && !pal_fwd.gate_exit
+      && pal_fwd.gate == A64ChainGate::kNone
+      && pal_fwd.source_pal_guard && pal_fwd.source_pal_shadow
+      && !pal_fwd.self_loop_candidate && pal_fwd.publish_pc_before_probe
+      && pal_back.valid() && pal_back.source_pal_guard
+      && pal_back.gate == A64ChainGate::kDeferInterrupt
+      && pal_back.source_pal_shadow && pal_back.self_loop_candidate
       && pal_call.valid() && pal_call.source_pal_guard
+      && pal_call.gate == A64ChainGate::kDeferInterrupt
       && !pal_call.target_pal_guard && pal_call.self_loop_candidate
       && pal_call.publish_pc_before_probe
       && pal_redispatch.valid() && pal_redispatch.eligible()
@@ -685,6 +741,7 @@ static constexpr bool a64_direct_chain_contract_probe() noexcept
       && !zero_count.valid() && max_count.valid()
       && !unknown_gate.valid() && !native_shadow.valid()
       && !missing_target_guard.valid() && !inactive_patch.valid()
+      && !gated_fall.valid() && !thinned_call.valid() && !looped_fwd.valid()
       && !oversized.valid()
       && !unknown.valid();
 }
@@ -2201,8 +2258,12 @@ static asmjit::Error emit_a64_direct_chain_tail(asmjit::a64::Assembler& a,
 #else
   const Label bailout = a.new_label();
   const Label miss = a.new_label();
-  err = emit_a64_chain_gate(a, offsets, contract.gate, bailout);
-  if (err != Error::kOk) return err;
+  // Thinned exits (fall-through / forward branch) carry no gate: they cannot
+  // revisit code, so the budget/interrupt poll waits for a gated exit downstream.
+  if (contract.gate != A64ChainGate::kNone) {
+    err = emit_a64_chain_gate(a, offsets, contract.gate, bailout);
+    if (err != Error::kOk) return err;
+  }
   // A source-variant mismatch must not request a patch: PAL-source slots are
   // tag-keyed and rely on this guard to imply the target register-bank variant.
   err = emit_a64_source_pal_guard(a, offsets, contract.source_pal_guard,
@@ -2467,8 +2528,8 @@ static bool a64_validate_tail_emitters(const asmjit::Environment& environment,
         && code.code_size() != 0;
   };
 
-  auto validate_direct = [&](A64ExitKind kind, bool pal_block,
-                             bool pal_shadow) -> bool {
+  auto validate_direct = [&](A64ExitKind kind, uint32_t terminator_ins,
+                             bool pal_block, bool pal_shadow) -> bool {
     CodeHolder code;
     if (code.init(environment, features) != Error::kOk) return false;
     a64::Assembler a;
@@ -2482,7 +2543,7 @@ static bool a64_validate_tail_emitters(const asmjit::Environment& environment,
       return false;
     const A64BlockExit exit{0x1005, 1, kind};
     const A64DirectChainContract contract =
-        plan_a64_direct_chain(exit, pal_block, pal_shadow);
+        plan_a64_direct_chain(exit, terminator_ins, pal_block, pal_shadow);
     if (emit_a64_direct_chain_tail(a, offsets, contract, &block.link[0],
           &epoch, block.tag, body, done) != Error::kOk)
       return false;
@@ -2511,11 +2572,15 @@ static bool a64_validate_tail_emitters(const asmjit::Environment& environment,
     return finish(code, a, done);
   };
 
-  return validate_direct(A64ExitKind::kFallthrough, false, false)
-      && validate_direct(A64ExitKind::kFallthrough, true, true)
-      && validate_direct(A64ExitKind::kDirect, true, true)
-      && validate_direct(A64ExitKind::kCallPal, false, false)
-      && validate_direct(A64ExitKind::kRedispatch, true, true)
+  // Fall-throughs and the forward branch exercise the thinned (gateless) tail;
+  // the backward branch, CALL_PAL, and redispatch exercise the gated one.
+  return validate_direct(A64ExitKind::kFallthrough, 0x10u << 26, false, false)
+      && validate_direct(A64ExitKind::kFallthrough, 0x10u << 26, true, true)
+      && validate_direct(A64ExitKind::kDirect, (0x39u << 26) | 0x1fffffu, true, true)
+      && validate_direct(A64ExitKind::kDirect, (0x39u << 26) | 0x4u, false, false)
+      && validate_direct(A64ExitKind::kCallPal, 0x86u, false, false)
+      && validate_direct(A64ExitKind::kRedispatch,
+                         (0x1du << 26) | (0x11u << 8), true, true)
       && validate_indirect(0x1a, false, false)
       && validate_indirect(0x1a, true, false)
       && validate_indirect(0x1e, true, true);
@@ -2629,10 +2694,10 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   if (!a64_plan_ready_for_emission(plan)) return;
   const A64BlockExit exit = plan_a64_exit(b->tag, plan.count, plan.terminator);
   const bool pal_block = (b->tag & 1u) != 0;
-  const A64DirectChainContract chain =
-      plan_a64_direct_chain(exit, pal_block, b->pal_shadow);
   const uint32_t terminator_ins =
       plan.count != 0 ? plan.ops[plan.count - 1].ins : 0;
+  const A64DirectChainContract chain = plan_a64_direct_chain(
+      exit, terminator_ins, pal_block, b->pal_shadow);
   const A64IndirectChainContract indirect = plan_a64_indirect_chain(
       exit, terminator_ins, pal_block, b->pal_shadow);
   // Only one currently scaffolded tail must own a supported block.
