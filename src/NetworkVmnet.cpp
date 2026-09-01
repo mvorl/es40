@@ -28,10 +28,7 @@
 #include "NetworkVmnet.h"
 #include "Configurator.h"
 
-#include <ifaddrs.h>
 #include <net/if.h>
-#include <net/if_dl.h>
-#include <net/if_types.h>
 
 CNetworkVmnet::CNetworkVmnet():
 	vmnet_if(nullptr),
@@ -77,7 +74,6 @@ bool CNetworkVmnet::init(const char *devid_string, CConfigurator *cfg)
 	__block bool success = false;
 	xpc_object_t interface_names = vmnet_copy_shared_interface_list ();
         int n_interfaces, i;
-        struct ifaddrs *ifap, *ifa;
 	__block char *adapter = cfg->get_text_value ("adapter");
 	char *interface;
 
@@ -89,12 +85,6 @@ bool CNetworkVmnet::init(const char *devid_string, CConfigurator *cfg)
         } else
 		n_interfaces = xpc_array_get_count (interface_names);
 
-        if (getifaddrs (&ifap) < 0) {
-		printf ("%s: Unable to obtain network interface addresses.\n", devid_for_log);
-                xpc_release (interface_names);
-                return false;
-        }
-
         if (adapter && adapter[0]) {
 		// Verify that vmnet can use this adapter
 		for (i = 0; i < n_interfaces; i++) {
@@ -104,53 +94,21 @@ bool CNetworkVmnet::init(const char *devid_string, CConfigurator *cfg)
                 }
                 if (n_interfaces == i) {
                 	printf ("%s: Adapter %s cannot serve as a bridge.\n", devid_for_log, adapter);
-                        freeifaddrs (ifap);
-                        xpc_release (interface_names);
-                        return false;
-                }
-                // Verify that the adapter has an Ethernet address
-                ifa = ifap;
-                while (ifa != NULL) {
-                	if (strncmp (adapter, ifa->ifa_name, IFNAMSIZ) == 0) {
-                        	if (ifa->ifa_addr != NULL && ifa->ifa_addr->sa_family == AF_INET)
-                                	break;
-                        }
-                }
-                ifa = ifa->ifa_next;
-                if (ifa == nullptr) {
-                	printf ("%s: Adapter %s does not have an Ethernet address.\n", devid_for_log, adapter);
-                        freeifaddrs (ifap);
                         xpc_release (interface_names);
                         return false;
                 }
         }
 
         else {
-        	// Use the first available interface with an Ethernet address
-		for (i = 0; i < n_interfaces; i++) {
-                	adapter = (char *) xpc_array_get_string (interface_names, i);
-                        ifa = ifap;
-                        while (ifa != NULL) {
-                        	if (strncmp (adapter, ifa->ifa_name, IFNAMSIZ) == 0) {
-                                	if (ifa->ifa_addr != NULL && ifa->ifa_addr->sa_family == AF_INET) {
-                                        	break;
-                                        }
-                                }
-                                ifa = ifa->ifa_next;
-                        }
-                        if (ifa != NULL)
-                        	break;
-                }
-                if (n_interfaces == i) {
-                        freeifaddrs (ifap);
+        	// Use the first vmnet capable interface
+                if (n_interfaces == 0) {
                         xpc_release (interface_names);
                 	printf ("%s: No network interfaces available to serve as a bridge.\n", devid_for_log);
                         return false;
                 }
-                adapter = strndup (adapter, IFNAMSIZ);
+                adapter = strndup ((char *) xpc_array_get_string (interface_names, 0), IFNAMSIZ);
         }
 
-        freeifaddrs (ifap);
         xpc_release (interface_names);
 
 	vmnet_interface_event_callback_t receive_handler = ^(interface_event_t event_mask, xpc_object_t event) {
@@ -171,16 +129,16 @@ bool CNetworkVmnet::init(const char *devid_string, CConfigurator *cfg)
                         else
                         	printf ("%s: Cannot setup %s to received packets: %s\n", devid_for_log, adapter,
                                         strvmnetstatus (status));
-                } else
+                } else if ((status == VMNET_FAILURE) && (geteuid () != 0))
+                	printf ("%s: vmnet requires root privileges; try running the emulator with sudo.\n",
+                                devid_for_log);
+                else
                 	printf ("%s: Unable to start vmnet on %s: %s\n", devid_for_log, adapter, strvmnetstatus (status));
                 dispatch_semaphore_signal (dispatch_sem);
         };
 
         dispatch_q = dispatch_queue_create (devid_string, DISPATCH_QUEUE_SERIAL);
-        dispatch_retain (dispatch_q);
-
         dispatch_sem = dispatch_semaphore_create (0);
-        dispatch_retain (dispatch_sem);
 
         xpc_object_t interface_desc = xpc_dictionary_create (NULL, NULL, 0);
         xpc_dictionary_set_uint64 (interface_desc, vmnet_operation_mode_key, VMNET_BRIDGED_MODE);
@@ -276,19 +234,27 @@ void CNetworkVmnet::set_filter (u8 mac_list[][6], int num_macs,
 
 void CNetworkVmnet::close ()
 {
-  vmnet_interface_completion_handler_t finish_cleanup = ^(vmnet_return_t status) {
-    dispatch_release (dispatch_q);
-    dispatch_q = nullptr;
-    vmnet_if = nullptr;
-  };
         if (vmnet_if != nullptr) {
+          // Wait for the stop to complete: the caller deletes us straight
+          // after, so the completion block must not outlive our members.
+          dispatch_semaphore_t stopped = dispatch_semaphore_create (0);
           vmnet_interface_set_event_callback (vmnet_if, 0, NULL, NULL);
-          vmnet_stop_interface (vmnet_if, dispatch_q, finish_cleanup);
+          vmnet_stop_interface (vmnet_if, dispatch_q, ^(vmnet_return_t status) {
+            dispatch_semaphore_signal (stopped);
+          });
+          dispatch_semaphore_wait (stopped, DISPATCH_TIME_FOREVER);
+          dispatch_release (stopped);
+          vmnet_if = nullptr;
+        }
+
+        if (dispatch_q != nullptr) {
+          dispatch_release (dispatch_q);
+          dispatch_q = nullptr;
         }
 
         if (dispatch_sem != nullptr) {
           dispatch_release (dispatch_sem);
-          dispatch_q = nullptr;
+          dispatch_sem = nullptr;
         }
 
         if (rx_buf != nullptr) {
