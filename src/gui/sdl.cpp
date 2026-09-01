@@ -221,12 +221,13 @@ static const int sdl_pump_idle_ms = 10;
  * Run fn on the thread that called main().
  *
  * SDL wants the video subsystem, the window and the event pump all touched
- * from that one thread, and macOS enforces it. The emulator drives the GUI
- * from the VGA card's thread instead, so every SDL call made from there is
- * bounced across with SDL_RunOnMainThread(). Exceptions (FAILURE_*) must not
- * escape into SDL's C event loop, so they are caught and rethrown on the
- * calling thread. On platforms that keep the old threading model this is a
- * plain inline call.
+ * from that one thread. The emulator drives the GUI from the VGA card's
+ * thread instead, so every SDL call made from there is bounced across with
+ * SDL_RunOnMainThread(). Exceptions (FAILURE_*) must not escape into SDL's
+ * C event loop, so they are caught and rethrown on the calling thread. The
+ * inline path only covers calls made before main() takes ownership and
+ * calls that already run on the main thread (e.g. from within a bounced
+ * callback).
  **/
 template <typename F>
 static void on_main_thread(F fn)
@@ -259,11 +260,10 @@ static void on_main_thread(F fn)
 
 bool bx_sdl_gui_c::requires_main_thread()
 {
-#if defined(__APPLE__)
+	// SDL wants the video subsystem, windows and event pump driven from the
+	// thread that called main() on every platform; macOS merely enforces it.
+	// Claim main() unconditionally so all platforms share one threading model.
 	return true;
-#else
-	return false;
-#endif
 }
 
 void bx_sdl_gui_c::main_thread_init()
@@ -586,7 +586,8 @@ void bx_sdl_gui_c::specific_init(unsigned x_tilesize, unsigned y_tilesize)
 
 void bx_sdl_gui_c::specific_init_impl(unsigned x_tilesize, unsigned y_tilesize)
 {
-	// Already done by main_thread_init() where the GUI owns main().
+	// main_thread_init() has already done this; kept as a fallback so the
+	// backend still works if it ever runs without claiming main().
 	if (!SDL_WasInit(SDL_INIT_VIDEO) && !SDL_Init(SDL_INIT_VIDEO))
 	{
 		FAILURE_1(SDL, "Unable to initialize SDL3 video subsystem: %s", SDL_GetError());

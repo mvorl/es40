@@ -136,11 +136,13 @@ public:
   virtual void                  mouse_enabled_changed_specific(bool val) = 0;
   virtual void                  exit(void) = 0;
 
-  // Some GUI backends must drive the windowing system from the thread that
-  // called main() (SDL on macOS refuses to work anywhere else). A backend that
+  // Some GUI backends drive the windowing system from the thread that called
+  // main() (the SDL backend does so on every platform). A backend that
   // returns true here gets main_thread_init()/main_thread_pump() called from
   // there, and the emulator itself runs on a worker thread; main_thread_stop()
-  // ends the pump once that worker is completely done.
+  // ends the pump once that worker is completely done. Legacy backends that
+  // return false keep the old model: the emulator owns main() and the GUI is
+  // driven entirely from the VGA card's thread.
   virtual bool                  requires_main_thread() { return false; }
   virtual void                  main_thread_init() {}
   virtual void                  main_thread_pump() {}
