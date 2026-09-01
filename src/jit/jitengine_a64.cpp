@@ -195,7 +195,8 @@ enum class A64OpKind : uint8_t {
   kLoadAddress,   // LDA/LDAH (0x08/0x09): Ra = Rb + sext(disp16) (<<16) -- pure ALU
   kIntsZap,       // INTS (0x12) ZAP/ZAPNOT: Rc = Ra & byte-expanded keep-mask
   kMemLoad,       // LDQ/LDL/LDWU/LDBU/LDQ_U via jit_read (helper path; DPC inline later)
-  kMemStore       // STQ/STL/STW/STB/STQ_U via jit_write (helper path; DPC inline later)
+  kMemStore,      // STQ/STL/STW/STB/STQ_U via jit_write (helper path; DPC inline later)
+  kJmpIndirect    // JMP/JSR/RET (0x1a) + HW_RET (0x1e): computed-jump terminators
 };
 
 enum class A64TerminatorKind : uint8_t {
@@ -918,6 +919,7 @@ static constexpr bool a64_supported_op_kind(A64OpKind kind) noexcept
     case A64OpKind::kIntsZap:
     case A64OpKind::kMemLoad:
     case A64OpKind::kMemStore:
+    case A64OpKind::kJmpIndirect:
       return true;
   }
   return false;
@@ -1192,6 +1194,13 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block) noexce
         return {A64OpKind::kHwMfpr, A64TerminatorKind::kNone, 0, 0};
       break;
     }
+    case 0x1a:   // JMP/JSR/RET: computed jump, Ra = link -- indirect terminator
+      return {A64OpKind::kJmpIndirect, A64TerminatorKind::kIndirect,
+              static_cast<uint8_t>(kA64GprRb), static_cast<uint8_t>(kA64GprRa)};
+    case 0x1e:   // HW_RET/HWREI (PALmode only): PC = Rb & ~2, no link.
+      // HW format: excluded from the pin-selection mask (regprof_mask parity).
+      if (!pal_block) break;
+      return {A64OpKind::kJmpIndirect, A64TerminatorKind::kIndirect, 0, 0};
     case 0x30: case 0x34:   // BR / BSR: Ra = link, unconditional direct terminator
       return {A64OpKind::kBranchInt, A64TerminatorKind::kDirect,
               0, static_cast<uint8_t>(kA64GprRa)};
@@ -1446,6 +1455,20 @@ static_assert(decode_a64_op(0x38850000u, true).kind == A64OpKind::kMemStore
               && classify_a64_op(0x2eu << 26, false).kind
                   == A64OpKind::kUnsupported,   // STL_C: LL/SC stays interpreted
               "A64 memory classification must cover the ten plain int loads/stores");
+// HW_RET (R23) 
+static_assert(decode_a64_op(0x7bf7a000u, true).kind == A64OpKind::kJmpIndirect
+              && decode_a64_op(0x7bf7a000u, true).terminator == A64TerminatorKind::kIndirect
+              && decode_a64_op(0x7bf7a000u, true).rb == 23
+              && decode_a64_op(0x7bf7a000u, true).gpr_reads == 0    // HW format:
+              && decode_a64_op(0x7bf7a000u, true).gpr_writes == 0   // no pin-mask roles
+              && decode_a64_op(0x7bf7a000u, false).kind
+                  == A64OpKind::kUnsupported    // HW_RET outside PALmode -> interp
+              && classify_a64_op(0x1au << 26, false).kind == A64OpKind::kJmpIndirect
+              && classify_a64_op(0x1au << 26, false).terminator
+                  == A64TerminatorKind::kIndirect
+              && classify_a64_op(0x1au << 26, false).gpr_reads == kA64GprRb
+              && classify_a64_op(0x1au << 26, false).gpr_writes == kA64GprRa,
+              "A64 computed-jump classification must gate HW_RET to PALmode");
 static_assert(a64_scan_limit(3, 0).count == 3
               && a64_scan_limit(3, 0).stop == A64PlanStop::kBlockEnd
               && a64_scan_limit(65, 0).count == 64
@@ -2723,6 +2746,60 @@ static A64OpEmitReceipt emit_a64_mem_store(A64EmitContext& context,
   return a64_completed_op_receipt(op, err);
 }
 
+// JMP/JSR/RET + HW_RET terminators.
+static A64OpEmitReceipt emit_a64_jmp_indirect(A64EmitContext& context,
+                                              const A64DecodedOp& op, uint32_t index)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = context.assembler;
+  Error err = Error::kOk;
+
+  const A64GprRoute rb =
+      a64_guest_gpr_read_route(context.regs, op.rb, context.pal_shadow);
+  a64::Gp src = RA::kScratch0;
+  switch (rb.kind) {
+    case A64GprRouteKind::kZero:   src = a64::xzr; break;
+    case A64GprRouteKind::kPinned: src = a64::x(static_cast<uint32_t>(rb.host)); break;
+    case A64GprRouteKind::kMemory:
+      err = a.ldr(RA::kScratch0, a64::ptr(RA::kRegs,
+                  static_cast<int32_t>(rb.slot * sizeof(uint64_t))));
+      break;
+    default:
+      return {Error::kInvalidArgument, op.kind};
+  }
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  if (op.opcode == 0x1e) {   // HW_RET: the new mode bit comes from Rb
+    err = a.and_(RA::kNextPc, src, imm(~uint64_t(2)));
+    return a64_completed_op_receipt(op, err);
+  }
+
+  err = a.and_(RA::kNextPc, src, imm(~uint64_t(3)));
+  const uint64_t mode = context.start_pc & 3u;
+  if (err == Error::kOk && mode != 0)
+    err = a.orr(RA::kNextPc, RA::kNextPc, imm(mode));
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  const A64GprRoute wa =
+      a64_guest_gpr_write_route(context.regs, op.ra, context.pal_shadow);
+  if (wa.kind == A64GprRouteKind::kInvalid || wa.kind == A64GprRouteKind::kZero)
+    return {Error::kInvalidArgument, op.kind};
+  if (wa.kind != A64GprRouteKind::kDiscard) {
+    const uint64_t ret =
+        a64_advance_pc(context.start_pc, index + 1) & ~uint64_t(3);
+    if (wa.kind == A64GprRouteKind::kPinned) {
+      err = emit_a64_mov_u64(a, a64::x(static_cast<uint32_t>(wa.host)), ret);
+    } else {
+      err = emit_a64_mov_u64(a, RA::kScratch0, ret);
+      if (err == Error::kOk)
+        err = a.str(RA::kScratch0, a64::ptr(RA::kRegs,
+                    static_cast<int32_t>(wa.slot * sizeof(uint64_t))));
+    }
+  }
+  return a64_completed_op_receipt(op, err);
+}
+
 // HW_MFPR: jit_hw_mfpr(cpu, ins, cur)
 static A64OpEmitReceipt emit_a64_hw_mfpr(A64EmitContext& context,
                                          const A64DecodedOp& op)
@@ -2779,6 +2856,8 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
       return emit_a64_mem_load(context, op, index);
     case A64OpKind::kMemStore:
       return emit_a64_mem_store(context, op, index);
+    case A64OpKind::kJmpIndirect:
+      return emit_a64_jmp_indirect(context, op, index);
   }
   return {};
 }
