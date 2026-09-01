@@ -1219,7 +1219,7 @@ static A64PendingPublication prepare_a64_block_publication(
   pending.prior_code_bytes = prior_code_bytes;
   pending.plan_count = plan.count;
   pending.prefix_len = plan.count;
-  // Placeholder until lookahead and fusion are brought in.
+  // Hash extent = every word the compiled code depends on.
   pending.hash_len = plan.count;
 
   const bool body_bound = code.is_label_bound(body);
@@ -2700,7 +2700,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
       exit, terminator_ins, pal_block, b->pal_shadow);
   const A64IndirectChainContract indirect = plan_a64_indirect_chain(
       exit, terminator_ins, pal_block, b->pal_shadow);
-  // Only one currently scaffolded tail must own a supported block.
+  // Exactly one tail owns any supported block: direct-eligible XOR indirect-eligible.
   if (!exit.valid() || !chain.valid() || !indirect.valid()
       || chain.eligible() == indirect.eligible()) return;
 
@@ -2744,6 +2744,18 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   asmjit::Label done = a.new_label();
   asmjit::Label body = a.new_label();
   if (a.bind(body) != asmjit::Error::kOk) return;
+#ifdef JIT_REGPROF
+  // REGPROF: count every execution.
+  if (emit_a64_mov_u64(a, RegAlloc::kScratch0,
+                       reinterpret_cast<uintptr_t>(&b->rp_hits))
+      != asmjit::Error::kOk) return;
+  if (a.ldr(RegAlloc::kScratch1, asmjit::a64::ptr(RegAlloc::kScratch0))
+      != asmjit::Error::kOk) return;
+  if (a.add(RegAlloc::kScratch1, RegAlloc::kScratch1, asmjit::imm(1))
+      != asmjit::Error::kOk) return;
+  if (a.str(RegAlloc::kScratch1, asmjit::a64::ptr(RegAlloc::kScratch0))
+      != asmjit::Error::kOk) return;
+#endif
   // Every body begins with its forward default.
   if (emit_a64_mov_u64(a, RegAlloc::kNextPc, exit.fallthrough_pc)
       != asmjit::Error::kOk) return;
@@ -2809,6 +2821,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   b->hash_len = committed.hash_len;
   b->prefix_len = committed.prefix_len;
 #ifdef JIT_REGPROF
+  // Pin-selection mask.
   b->rp_mask = plan.gpr_usage.reads | plan.gpr_usage.writes;
   b->rp_csz = static_cast<uint32_t>(committed.code_size);
 #endif
@@ -2822,6 +2835,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   b->jit_body = jit_body;  // Runnable chain entry publishes last.
 }
 
+// Trace tier: stub until X86 variant is improved or removed. 
 void CJitEngine::compile_trace(TraceFragment*, JitBlock**, uint32_t,
                                const uint8_t*, uint64_t, const HelperSet&) {}
 
