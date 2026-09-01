@@ -44,7 +44,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: true
 
@@ -230,7 +230,7 @@ jobs:
           fi
 
       - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: linux-${{ matrix.configuration }}
           path: ${{ runner.temp }}/linux-${{ matrix.configuration }}/
@@ -274,12 +274,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: true
 
       - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
+        uses: microsoft/setup-msbuild@v3
 
       - name: Provision SDL3 and Npcap SDK
         shell: pwsh
@@ -479,7 +479,7 @@ jobs:
             Copy-Item -Destination $artifactDir -Force
 
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: windows-${{ matrix.configuration }}-x64
           path: ${{ runner.temp }}/windows-${{ matrix.configuration }}/
@@ -517,7 +517,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: true
 
@@ -700,7 +700,7 @@ jobs:
           fi
 
       - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: macos-${{ matrix.configuration }}
           path: ${{ runner.temp }}/macos-${{ matrix.configuration }}/
@@ -714,7 +714,7 @@ jobs:
     runs-on: macos-26-intel
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: true
 
@@ -845,7 +845,7 @@ jobs:
           fi
 
       - name: Upload macOS x86-64 JIT artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: macos-x86_64-Release JIT
           path: ${{ runner.temp }}/macos-x86_64-Release JIT/
