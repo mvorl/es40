@@ -189,7 +189,8 @@ enum class A64OpKind : uint8_t {
   kUnsupported,
   kValidationProbe,
   kIntlLogical,   // INTL (0x11) AND/BIS/XOR/BIC/ORNOT/EQV: 1:1 A64 register ops
-  kBranchInt      // BR/BSR + conditional integer branches (0x30/0x34/0x38-0x3f)
+  kBranchInt,     // BR/BSR + conditional integer branches (0x30/0x34/0x38-0x3f)
+  kHwMfpr         // HW_MFPR (0x19), PALmode: Ra = IPR[fn] via the jit_hw_mfpr helper
 };
 
 enum class A64TerminatorKind : uint8_t {
@@ -906,6 +907,7 @@ static constexpr bool a64_supported_op_kind(A64OpKind kind) noexcept
       return false;
     case A64OpKind::kIntlLogical:
     case A64OpKind::kBranchInt:
+    case A64OpKind::kHwMfpr:
       return true;
   }
   return false;
@@ -1130,7 +1132,6 @@ static constexpr bool a64_source_extent_valid(uint64_t phys, uint32_t words,
 // Classification stays fail-closed: each translation adds its classifier and emitter together.
 static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block) noexcept
 {
-  (void) pal_block;
   const uint32_t opcode = ins >> 26;
   const uint32_t func = (ins >> 5) & 0x7fu;
   const bool is_literal = ((ins >> 12) & 1u) != 0;
@@ -1146,6 +1147,17 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block) noexce
                   operate_reads, static_cast<uint8_t>(kA64GprRc)};
       }
       break;
+    case 0x19: {   // HW_MFPR (PALmode only)
+      if (!pal_block) break;
+      const uint32_t fn = (ins >> 8) & 0xffu;
+      const bool known = ((fn & 0xc0u) == 0x40u)                                 // PCTX group
+          || (fn >= 0x05 && fn <= 0x0d) || fn == 0x0f || fn == 0x10
+          || fn == 0x11 || fn == 0x14 || fn == 0x16 || fn == 0x27
+          || fn == 0x2a || fn == 0x2b || fn == 0xc0 || fn == 0xc2 || fn == 0xc3;
+      if (known)
+        return {A64OpKind::kHwMfpr, A64TerminatorKind::kNone, 0, 0};
+      break;
+    }
     case 0x30: case 0x34:   // BR / BSR: Ra = link, unconditional direct terminator
       return {A64OpKind::kBranchInt, A64TerminatorKind::kDirect,
               0, static_cast<uint8_t>(kA64GprRa)};
@@ -1334,6 +1346,19 @@ static_assert(decode_a64_op(0xc3402e1eu, true).kind == A64OpKind::kBranchInt
               && classify_a64_op(0x31u << 26, false).kind
                   == A64OpKind::kUnsupported,   // FP branches stay interpreted
               "A64 branch classification must link, read, and thin per the x64 contract");
+// HW_MFPR R4, IPR 0x2b
+static_assert(decode_a64_op(0x649f2b40u, true).kind == A64OpKind::kHwMfpr
+              && decode_a64_op(0x649f2b40u, true).terminator == A64TerminatorKind::kNone
+              && decode_a64_op(0x649f2b40u, true).ra == 4
+              && decode_a64_op(0x649f2b40u, true).gpr_reads == 0    // HW formats excluded
+              && decode_a64_op(0x649f2b40u, true).gpr_writes == 0   // from the pin mask
+              && decode_a64_op(0x649f2b40u, false).kind
+                  == A64OpKind::kUnsupported    // outside PALmode it OPCDECs -> interp
+              && classify_a64_op((0x19u << 26) | (0x0du << 8), true).kind
+                  == A64OpKind::kHwMfpr         // ISUM compiles (helper log/replays it)
+              && classify_a64_op((0x19u << 26) | (0x00u << 8), true).kind
+                  == A64OpKind::kUnsupported,   // unknown IPR index -> interp warn-once
+              "A64 HW_MFPR classification must be PALmode-gated to jit_hw_mfpr's IPR set");
 static_assert(a64_scan_limit(3, 0).count == 3
               && a64_scan_limit(3, 0).stop == A64PlanStop::kBlockEnd
               && a64_scan_limit(65, 0).count == 64
@@ -2036,7 +2061,7 @@ static asmjit::Error emit_a64_call_arg(asmjit::a64::Assembler& a,
   return Error::kInvalidArgument;
 }
 
-[[maybe_unused]] static asmjit::Error emit_a64_helper_call(
+static asmjit::Error emit_a64_helper_call(
     asmjit::a64::Assembler& a, const CJitEngine::JitOffsets& offsets,
     const CJitEngine::HelperSet& helpers, const CJitEngine::RegAlloc& regs,
     bool pal_shadow, const void* helper, std::initializer_list<A64CallArg> call_args)
@@ -2237,6 +2262,36 @@ static A64OpEmitReceipt emit_a64_branch_int(A64EmitContext& context,
   return a64_completed_op_receipt(op, err);
 }
 
+// HW_MFPR: jit_hw_mfpr(cpu, ins, cur) 
+static A64OpEmitReceipt emit_a64_hw_mfpr(A64EmitContext& context,
+                                         const A64DecodedOp& op)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+
+  const A64GprRoute wa =
+      a64_guest_gpr_write_route(context.regs, op.ra, context.pal_shadow);
+  if (wa.kind == A64GprRouteKind::kInvalid || wa.kind == A64GprRouteKind::kZero)
+    return {Error::kInvalidArgument, op.kind};
+  if (wa.kind == A64GprRouteKind::kDiscard)
+    return a64_completed_op_receipt(op);
+
+  a64::Assembler& a = context.assembler;
+  Error err = emit_a64_helper_call(a, context.offsets, context.helpers,
+      context.regs, context.pal_shadow, context.helpers.hw_mfpr_helper,
+      {{A64CallArgKind::kCpu, 0},
+       {A64CallArgKind::kImm32, op.ins},
+       {A64CallArgKind::kGuest, op.ra}});
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  if (wa.kind == A64GprRouteKind::kPinned)
+    err = a.mov(a64::x(static_cast<uint32_t>(wa.host)), a64::x0);
+  else
+    err = a.str(a64::x0, a64::ptr(RA::kRegs,
+                static_cast<int32_t>(wa.slot * sizeof(uint64_t))));
+  return a64_completed_op_receipt(op, err);
+}
+
 static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
     const A64DecodedOp& op, uint32_t index)
 {
@@ -2251,6 +2306,8 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
       return emit_a64_intl_logical(context, op);
     case A64OpKind::kBranchInt:
       return emit_a64_branch_int(context, op, index);
+    case A64OpKind::kHwMfpr:
+      return emit_a64_hw_mfpr(context, op);
   }
   return {};
 }
