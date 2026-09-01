@@ -192,7 +192,8 @@ enum class A64OpKind : uint8_t {
   kBranchInt,     // BR/BSR + conditional integer branches (0x30/0x34/0x38-0x3f)
   kHwMfpr,        // HW_MFPR (0x19), PALmode: Ra = IPR[fn] via the jit_hw_mfpr helper
   kIntsShift,     // INTS (0x12) SLL/SRL/SRA: LSLV/LSRV/ASRV share Alpha's mod-64 count
-  kLoadAddress    // LDA/LDAH (0x08/0x09): Ra = Rb + sext(disp16) (<<16) -- pure ALU
+  kLoadAddress,   // LDA/LDAH (0x08/0x09): Ra = Rb + sext(disp16) (<<16) -- pure ALU
+  kIntsZap        // INTS (0x12) ZAP/ZAPNOT: Rc = Ra & byte-expanded keep-mask
 };
 
 enum class A64TerminatorKind : uint8_t {
@@ -912,6 +913,7 @@ static constexpr bool a64_supported_op_kind(A64OpKind kind) noexcept
     case A64OpKind::kHwMfpr:
     case A64OpKind::kIntsShift:
     case A64OpKind::kLoadAddress:
+    case A64OpKind::kIntsZap:
       return true;
   }
   return false;
@@ -1151,10 +1153,13 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block) noexce
                   operate_reads, static_cast<uint8_t>(kA64GprRc)};
       }
       break;
-    case 0x12:   // INTS: the three shifts; (EXT/INS/MSK/ZAP) stays interpreted
+    case 0x12:   // INTS: shifts + ZAP; (EXT/INS/MSK) stays interpreted
       switch (func) {
         case 0x39: case 0x34: case 0x3c:   // SLL, SRL, SRA
           return {A64OpKind::kIntsShift, A64TerminatorKind::kNone,
+                  operate_reads, static_cast<uint8_t>(kA64GprRc)};
+        case 0x30: case 0x31:              // ZAP, ZAPNOT
+          return {A64OpKind::kIntsZap, A64TerminatorKind::kNone,
                   operate_reads, static_cast<uint8_t>(kA64GprRc)};
       }
       break;
@@ -1386,9 +1391,7 @@ static_assert(decode_a64_op(0x48e0d727u, true).kind == A64OpKind::kIntsShift
               && classify_a64_op((0x12u << 26) | (0x34u << 5), false).gpr_reads
                   == (kA64GprRa | kA64GprRb)    // register-form SRL reads Ra and Rb
               && classify_a64_op((0x12u << 26) | (0x06u << 5), false).kind
-                  == A64OpKind::kUnsupported    // EXTBL: byte-manip stays interpreted
-              && classify_a64_op((0x12u << 26) | (0x30u << 5), false).kind
-                  == A64OpKind::kUnsupported,   // ZAP: byte-manip stays interpreted
+                  == A64OpKind::kUnsupported,   // EXTBL: byte-manip stays interpreted
               "A64 INTS classification must accept only the three mod-64 shifts");
 // LDAH R2,0(R2).
 static_assert(decode_a64_op(0x24420000u, true).kind == A64OpKind::kLoadAddress
@@ -1400,6 +1403,20 @@ static_assert(decode_a64_op(0x24420000u, true).kind == A64OpKind::kLoadAddress
               && decode_a64_op(0x24420000u, true).gpr_writes == kA64GprRa
               && classify_a64_op(0x08u << 26, false).kind == A64OpKind::kLoadAddress,
               "A64 LDA/LDAH classification must write Ra from the Rb base");
+// ZAPNOT R13,#3,R13
+static_assert(decode_a64_op(0x49a0762du, true).kind == A64OpKind::kIntsZap
+              && decode_a64_op(0x49a0762du, true).terminator == A64TerminatorKind::kNone
+              && decode_a64_op(0x49a0762du, true).ra == 13
+              && decode_a64_op(0x49a0762du, true).rc == 13
+              && decode_a64_op(0x49a0762du, true).is_literal
+              && decode_a64_op(0x49a0762du, true).literal == 3
+              && classify_a64_op((0x12u << 26) | (0x30u << 5), false).kind
+                  == A64OpKind::kIntsZap        // register-form ZAP
+              && classify_a64_op((0x12u << 26) | (0x30u << 5), false).gpr_reads
+                  == (kA64GprRa | kA64GprRb)
+              && classify_a64_op((0x12u << 26) | (0x06u << 5), false).kind
+                  == A64OpKind::kUnsupported,   // EXTBL still interpreted
+              "A64 ZAP classification must cover both selector forms");
 static_assert(a64_scan_limit(3, 0).count == 3
               && a64_scan_limit(3, 0).stop == A64PlanStop::kBlockEnd
               && a64_scan_limit(65, 0).count == 64
@@ -2414,6 +2431,96 @@ static A64OpEmitReceipt emit_a64_load_address(A64EmitContext& context,
   return a64_completed_op_receipt(op, err);
 }
 
+// ZAP/ZAPNOT byte-expand
+static constexpr std::array<uint64_t, 256> g_a64_zapnot_mask = [] {
+  std::array<uint64_t, 256> t{};
+  for (int b = 0; b < 256; ++b) {
+    uint64_t m = 0;
+    for (int i = 0; i < 8; ++i) if (b & (1 << i)) m |= uint64_t(0xff) << (i * 8);
+    t[b] = m;
+  }
+  return t;
+}();
+static_assert(g_a64_zapnot_mask[0] == 0 && g_a64_zapnot_mask[0x03] == 0xffffu
+              && g_a64_zapnot_mask[0xf0] == 0xffffffff00000000u
+              && g_a64_zapnot_mask[0xff] == ~uint64_t(0),
+              "ZAP byte expansion must map selector bits to whole bytes");
+
+// Rc = Ra & keep-mask. 
+static A64OpEmitReceipt emit_a64_ints_zap(A64EmitContext& context,
+                                          const A64DecodedOp& op)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+
+  const A64GprRoute wc =
+      a64_guest_gpr_write_route(context.regs, op.rc, context.pal_shadow);
+  if (wc.kind == A64GprRouteKind::kInvalid || wc.kind == A64GprRouteKind::kZero)
+    return {Error::kInvalidArgument, op.kind};
+  if (wc.kind == A64GprRouteKind::kDiscard)   // Rc==31: architectural no-op
+    return a64_completed_op_receipt(op);
+
+  a64::Assembler& a = context.assembler;
+  Error err = Error::kOk;
+
+  auto source = [&](uint32_t raw_reg, const a64::Gp& scratch) -> a64::Gp {
+    const A64GprRoute route =
+        a64_guest_gpr_read_route(context.regs, raw_reg, context.pal_shadow);
+    switch (route.kind) {
+      case A64GprRouteKind::kZero:   return a64::xzr;
+      case A64GprRouteKind::kPinned: return a64::x(static_cast<uint32_t>(route.host));
+      case A64GprRouteKind::kMemory:
+        err = a.ldr(scratch, a64::ptr(RA::kRegs,
+                    static_cast<int32_t>(route.slot * sizeof(uint64_t))));
+        return scratch;
+      default:
+        err = Error::kInvalidArgument;
+        return scratch;
+    }
+  };
+
+  const a64::Gp op1 = source(op.ra, RA::kScratch0);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  const a64::Gp dst = wc.kind == A64GprRouteKind::kPinned
+      ? a64::x(static_cast<uint32_t>(wc.host)) : RA::kScratch2;
+  const bool is_zap = ((op.ins >> 5) & 0x7fu) == 0x30;
+
+  if (op.is_literal) {
+    const uint64_t keep = is_zap ? ~g_a64_zapnot_mask[op.literal]
+                                 : g_a64_zapnot_mask[op.literal];
+    if (keep == 0) {
+      err = a.mov(dst, a64::xzr);
+    } else if (keep == ~uint64_t(0)) {
+      if (dst.id() != op1.id()) err = a.mov(dst, op1);
+    } else {
+      if (arm::Utils::is_logical_imm(keep, 64)) {
+        err = a.and_(dst, op1, imm(keep));
+      } else {
+        err = emit_a64_mov_u64(a, RA::kScratch1, keep);
+        if (err == Error::kOk) err = a.and_(dst, op1, RA::kScratch1);
+      }
+    }
+  } else {
+    const a64::Gp sel = source(op.rb, RA::kScratch1);
+    if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+    err = a.and_(RA::kScratch1, sel, imm(0xff));            // selector byte (ZR-safe)
+    if (err == Error::kOk)
+      err = emit_a64_mov_u64(a, RA::kScratch3,
+          reinterpret_cast<uintptr_t>(g_a64_zapnot_mask.data()));
+    if (err == Error::kOk) err = a.lsl(RA::kScratch1, RA::kScratch1, imm(3));
+    if (err == Error::kOk) err = a.add(RA::kScratch3, RA::kScratch3, RA::kScratch1);
+    if (err == Error::kOk) err = a.ldr(RA::kScratch1, a64::ptr(RA::kScratch3));
+    if (err == Error::kOk && is_zap)
+      err = a.mvn(RA::kScratch1, RA::kScratch1);            // ZAP keeps the CLEAR bytes
+    if (err == Error::kOk) err = a.and_(dst, op1, RA::kScratch1);
+  }
+  if (err == Error::kOk && wc.kind == A64GprRouteKind::kMemory)
+    err = a.str(dst, a64::ptr(RA::kRegs,
+                static_cast<int32_t>(wc.slot * sizeof(uint64_t))));
+  return a64_completed_op_receipt(op, err);
+}
+
 // HW_MFPR: jit_hw_mfpr(cpu, ins, cur)
 static A64OpEmitReceipt emit_a64_hw_mfpr(A64EmitContext& context,
                                          const A64DecodedOp& op)
@@ -2464,6 +2571,8 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
       return emit_a64_ints_shift(context, op);
     case A64OpKind::kLoadAddress:
       return emit_a64_load_address(context, op);
+    case A64OpKind::kIntsZap:
+      return emit_a64_ints_zap(context, op);
   }
   return {};
 }
