@@ -150,6 +150,21 @@ static_assert(CJitEngine::RegAlloc::kScratch6.id()
 
 namespace {
 
+#ifdef JIT_DISASM
+// Log any asmjit emit failure.
+class JitErrorHandler : public asmjit::ErrorHandler {
+public:
+  FILE* fp = nullptr;   // disassembly trace file (falls back to stderr if unopened)
+  int   cpu_id = -1;
+  bool  failed = false;
+  void handle_error(asmjit::Error err, const char* message, asmjit::BaseEmitter*) override {
+    (void) err;
+    failed = true;
+    fprintf(fp ? fp : stderr, "[JIT][CPU%d][EMIT-ERROR] %s\n", cpu_id, message);
+  }
+};
+#endif
+
 // Every block body shares this exact mapping so a chained entry can inherit the
 // live pin bank without an adapter. R22/R23 name the main-bank slots; PAL-shadow
 // accesses to those architectural registers continue to route through memory.
@@ -2635,10 +2650,17 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   // Build a complete fixed frame.
   asmjit::CodeHolder code;
   if (code.init(rt->environment(), rt->cpu_features()) != asmjit::Error::kOk) return;
+#ifdef JIT_DISASM
+  // capture this block's disassembly and trap any emit failure 
+  asmjit::StringLogger logger;
+  code.set_logger(&logger);
+  JitErrorHandler eh; eh.cpu_id = m_cpu_id; eh.fp = m_disasm_fp;
+  code.set_error_handler(&eh);
+#endif
 
   asmjit::a64::Assembler a;
   if (code.attach(&a) != asmjit::Error::kOk) return;
-#ifndef NDEBUG
+#if !defined(NDEBUG) || defined(JIT_DISASM)
   a.add_diagnostic_options(asmjit::DiagnosticOptions::kValidateAssembler);
 #endif
   assert(a.is_initialized());
@@ -2692,6 +2714,18 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
       *b, plan, exit, body_emission, dram, dram_size, code, body, m_code_bytes);
   if (!pending.ready()) return;
   assert(pending.body_off != 0);  // Chained entry must remain past the cold prologue.
+
+#ifdef JIT_DISASM
+  {
+    FILE* out = m_disasm_fp ? m_disasm_fp : stderr;
+    fprintf(out, "[JIT][CPU%d] block @ %016llx%s  (%u instr, %llu bytes)\n%s\n",
+            m_cpu_id, (unsigned long long) (b->tag & ~(uint64_t) 1),
+            (b->tag & 1) ? " PAL" : "", plan.count,
+            (unsigned long long) pending.code_size, logger.data());
+    fflush(out);   // per-block flush: preserve the trace if JIT'd code later crashes
+  }
+  if (eh.failed) return;   // emit error already reported -- don't ship a broken block
+#endif
 
   JitFn fn = nullptr;
   if (rt->add(&fn, &code) != asmjit::Error::kOk) return;
