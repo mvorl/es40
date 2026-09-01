@@ -309,6 +309,15 @@ AS_IF([test "x$enable_asmjit" = "xyes"], [
 AM_CONDITIONAL([ES40_JIT_HOST_A64],
   [test "x$host_cpu" = "xaarch64" || test "x$host_cpu" = "xarm64"])
 
+# Auxiliary programs (debugger, lockstep pair, config tool) rebuild the whole
+# source tree per program; --disable-tools builds only the es40 emulator itself.
+AC_ARG_ENABLE([tools],
+  [AS_HELP_STRING([--disable-tools],
+    [build only the es40 emulator (skip es40_idb, es40_lss, es40_lsm, es40_cfg)])],
+  [],
+  [enable_tools=yes])
+AM_CONDITIONAL([ENABLE_TOOLS], [test "x$enable_tools" != "xno"])
+
 # Generate the various makefiles.
 AC_CONFIG_FILES([Makefile doc/Makefile m4/Makefile src/Makefile])
 AC_OUTPUT

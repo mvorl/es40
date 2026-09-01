@@ -45,7 +45,10 @@
 #
 ################################################################################
 
-bin_PROGRAMS = es40 es40_idb es40_lss es40_lsm es40_cfg
+bin_PROGRAMS = es40
+if ENABLE_TOOLS
+bin_PROGRAMS += es40_idb es40_lss es40_lsm es40_cfg
+endif
 
 # If we built with vmnet support, install the programs setuid to root
 if HAVE_VMNET
