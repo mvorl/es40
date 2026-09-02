@@ -176,6 +176,10 @@ public:
 };
 #endif
 
+// dirty kill switches for remote debugging
+static constexpr bool kA64DpcReuse = true;        // reuse {va, slot, bias} across memops
+static constexpr bool kA64ForwardValues = true;   // reuse x11's guest-register mirror
+
 // Every block body shares this exact mapping so a chained entry can inherit the
 // live pin bank without an adapter. R22/R23 name the main-bank slots; PAL-shadow
 // accesses to those architectural registers continue to route through memory.
@@ -3373,7 +3377,12 @@ static A64OpEmitReceipt emit_a64_mem_store(A64EmitContext& context,
   stub.index = index;
   stub.kind = A64ColdStub::kStore;
   stub.rederive = true;
-  stub.restore_fwd = static_cast<int8_t>(context.prev_fwd);   // the helper clobbers x11
+  {   // a forward survives this store only if the value doesn't pass through x11
+    const A64GprRoute v =
+        a64_guest_gpr_read_route(context.regs, op.ra, context.pal_shadow);
+    if (v.kind != A64GprRouteKind::kMemory || op.ra == context.prev_fwd)
+      stub.restore_fwd = static_cast<int8_t>(context.prev_fwd);   // helper clobbers x11
+  }
 
   const int size_bits = a64_int_mem_size_bits(op.opcode);
   Error err = emit_a64_dpc_enter(context, op, size_bits, force_align, true, stub.slow);
@@ -5137,6 +5146,8 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
 {
   context.prev_dpc = context.regs.dpc;
   context.prev_fwd = context.regs.fwd_reg;
+  if (!kA64DpcReuse) context.prev_dpc.live = false;   // kill-switches: bisect aids
+  if (!kA64ForwardValues) context.prev_fwd = -1;
   context.regs.dpc.live = false;
   context.regs.fwd_reg = -1;
   const A64OpEmitReceipt receipt = emit_a64_dispatch_op(context, op, index);
@@ -5146,11 +5157,15 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
   if (context.prev_fwd >= 0 && context.regs.fwd_reg < 0) {
     bool keep = false;
     switch (op.kind) {
-      case A64OpKind::kMemStore:
+      case A64OpKind::kMemStore: {
 #ifndef JIT_VERIFY
-        keep = true;    // the fast path never writes x11; the stub reloads it
+        // The fast path routes an unpinned store value through x11. Clobbers unless forwarded. 
+        const A64GprRoute v =
+            a64_guest_gpr_read_route(context.regs, op.ra, context.pal_shadow);
+        keep = v.kind != A64GprRouteKind::kMemory || op.ra == context.prev_fwd;
 #endif
         break;
+      }
       case A64OpKind::kBranchInt:
         keep = true; break;
       case A64OpKind::kIntlCmov:
