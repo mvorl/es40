@@ -215,7 +215,11 @@ enum class A64OpKind : uint8_t {
   kFltl,          // FLTL (0x17) non-arithmetic via jit_fltl (0/1 = FEN retry)
   kFltv,          // FLTV (0x15) VAX arith via jit_fltv (0/1 FEN retry/2 arith trap)
   kItof,          // ITFP ITOFS/ITOFF/ITOFT via jit_itof (0/1 = FEN retry)
-  kBranchFp       // FP branches (0x31-0x37): FPSTART gate + sign-magnitude compare
+  kBranchFp,      // FP branches (0x31-0x37): FPSTART gate + sign-magnitude compare
+  kFltiArith,     // FLTI ADDx/SUBx/MULx/DIVx (S+T): inline scalar FP, bail on edges
+  kFltiCmp,       // FLTI CMPTUN/EQ/LT/LE: fcmp+cset -> 2.0/0.0, NaN/denorm bails
+  kFltiCvt,       // FLTI CVTST/CVTTS/CVTTQ/CVTQT/CVTQS: inline converts w/ bails
+  kFsqrt          // ITFP SQRTS/SQRTT: fsqrt, same bail policy as the arith set
 };
 
 enum class A64TerminatorKind : uint8_t {
@@ -958,6 +962,10 @@ static constexpr bool a64_supported_op_kind(A64OpKind kind) noexcept
     case A64OpKind::kFltv:
     case A64OpKind::kItof:
     case A64OpKind::kBranchFp:
+    case A64OpKind::kFltiArith:
+    case A64OpKind::kFltiCmp:
+    case A64OpKind::kFltiCvt:
+    case A64OpKind::kFsqrt:
       return true;
   }
   return false;
@@ -1273,12 +1281,46 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block) noexce
       }
       break;
     }
-    case 0x14: {   // ITFP: via jit_itof; SQRT stays with FLTI-arithmetic landing.
+    case 0x14: {   // ITFP: int->FP moves via jit_itof + inline IEEE SQRT 
       const uint32_t f14 = (ins >> 5) & 0x7ffu;
       if ((ins & 0x1fu) == 31) break;
-      if (((ins >> 16) & 0x1fu) != 31) break;
+      const uint32_t sb = f14 & 0x3fu;
+      if (sb == 0x0b || sb == 0x2b) {              // SQRTS / SQRTT
+        const uint32_t r14 = (f14 >> 6) & 3u;
+        if (r14 == 0 || r14 == 1) break;
+        if (((f14 >> 8) & 7u) == 7) break;
+        return {A64OpKind::kFsqrt, A64TerminatorKind::kNone, 0, 0};
+      }
+      if (((ins >> 16) & 0x1fu) != 31) break;      // ITOFx: Rb must be 31
       if (f14 == 0x004 || f14 == 0x014 || f14 == 0x024)
         return {A64OpKind::kItof, A64TerminatorKind::kNone, 0, 0};
+      break;
+    }
+    case 0x16: {   // FLTI (IEEE): inline the steady-state paths
+      const uint32_t f16 = (ins >> 5) & 0x7ffu;
+      if ((ins & 0x1fu) == 31) break;
+      if (f16 == 0x2ac || f16 == 0x6ac)            // CVTST (before the invalid gate)
+        return {A64OpKind::kFltiCvt, A64TerminatorKind::kNone, 0, 0};
+      if ((f16 & 0x3fu) == 0x2f) {                 // CVTTQ: /C chop is valid
+        if (((f16 >> 6) & 3u) == 1) break;
+        if (((f16 >> 8) & 7u) == 7) break;
+        if (((f16 & 0x600u) == 0x200u) || ((f16 & 0x500u) == 0x400u)) break;
+        return {A64OpKind::kFltiCvt, A64TerminatorKind::kNone, 0, 0};
+      }
+      if (((f16 & 0x600u) == 0x200u) || ((f16 & 0x500u) == 0x400u)) break;
+      const uint32_t rnd16 = (f16 >> 6) & 3u;
+      if (rnd16 == 0 || rnd16 == 1) break;
+      if (((f16 >> 8) & 7u) == 7) break;
+      if (f16 == 0x0a4 || f16 == 0x5a4 || f16 == 0x0a5 || f16 == 0x5a5
+       || f16 == 0x0a6 || f16 == 0x5a6 || f16 == 0x0a7 || f16 == 0x5a7)
+        return {A64OpKind::kFltiCmp, A64TerminatorKind::kNone, 0, 0};
+      const uint32_t base16 = f16 & 0x3fu;
+      if (base16 <= 0x03 || (base16 >= 0x20 && base16 <= 0x23))
+        return {A64OpKind::kFltiArith, A64TerminatorKind::kNone, 0, 0};
+      if (base16 == 0x2c)                          // CVTTS
+        return {A64OpKind::kFltiCvt, A64TerminatorKind::kNone, 0, 0};
+      if ((base16 == 0x3e || base16 == 0x3c) && (f16 & 0x300u) != 0x100u)
+        return {A64OpKind::kFltiCvt, A64TerminatorKind::kNone, 0, 0};   // CVTQT/CVTQS
       break;
     }
     case 0x31: case 0x32: case 0x33:   // FBEQ FBLT FBLE: FPSTART + f[Fa] vs 0.0
@@ -1801,8 +1843,26 @@ static_assert(classify_a64_op((0x17u << 26) | (0x020u << 5) | 5u, false).kind
               && classify_a64_op((0x35u << 26) | (0x1fffffu), false).terminator
                   == A64TerminatorKind::kDirect
               && classify_a64_op((0x16u << 26) | (0x0beu << 5) | 1u, false).kind
-                  == A64OpKind::kUnsupported,  // FLTI (CVTQT) awaits its landing
-              "A64 FP helper families must mirror the x64 gates; FLTI stays closed");
+                  == A64OpKind::kFltiCvt,      // CVTQT (the punch) now compiles
+              "A64 FP helper families must mirror the x64 gates");
+// FLTI arithmetic 
+static_assert(classify_a64_op((0x16u << 26) | (0x0a0u << 5) | 2u, false).kind
+                  == A64OpKind::kFltiArith     // ADDT/N
+              && classify_a64_op((0x16u << 26) | (0x080u << 5) | 2u, false).kind
+                  == A64OpKind::kFltiArith     // ADDS/N (0x080: base 0, rnd 2)
+              && classify_a64_op((0x16u << 26) | (0x020u << 5) | 2u, false).kind
+                  == A64OpKind::kUnsupported   // ADDT/C: chopped rounding -> interp
+              && classify_a64_op((0x16u << 26) | (0x0a5u << 5) | 2u, false).kind
+                  == A64OpKind::kFltiCmp       // CMPTEQ
+              && classify_a64_op((0x16u << 26) | (0x7acu << 5) | 2u, false).kind
+                  == A64OpKind::kUnsupported   // CVTTS/SUI -> interp
+              && classify_a64_op((0x16u << 26) | (0x02fu << 5) | 2u, false).kind
+                  == A64OpKind::kFltiCvt       // CVTTQ/C: chop is valid here
+              && classify_a64_op((0x14u << 26) | (0x0abu << 5) | 3u, false).kind
+                  == A64OpKind::kFsqrt         // SQRTT/N
+              && classify_a64_op((0x14u << 26) | (0x02bu << 5) | 3u, false).kind
+                  == A64OpKind::kUnsupported,  // SQRTT/C -> interp
+              "A64 FLTI/SQRT classification must gate every rounding and trap edge");
 // HW_RET (R23) 
 static_assert(decode_a64_op(0x7bf7a000u, true).kind == A64OpKind::kJmpIndirect
               && decode_a64_op(0x7bf7a000u, true).terminator == A64TerminatorKind::kIndirect
@@ -4249,6 +4309,391 @@ static A64OpEmitReceipt emit_a64_branch_fp(A64EmitContext& context,
   return a64_completed_op_receipt(op, err);
 }
 
+// FLTI/SQRT inline support. 
+
+static asmjit::Error emit_a64_f_addr(A64EmitContext& c, uint32_t freg)
+{  // &state.f[freg] -> kScratch6
+  using RA = CJitEngine::RegAlloc;
+  return emit_a64_add_offset(c.assembler, RA::kScratch6, RA::kCpu,
+      static_cast<int64_t>(c.offsets.f_base) + 8 * static_cast<int64_t>(freg),
+      RA::kScratch5);
+}
+static asmjit::Error emit_a64_load_f(A64EmitContext& c, const asmjit::a64::Vec& d,
+                                     uint32_t freg)
+{
+  asmjit::Error err = emit_a64_f_addr(c, freg);
+  return err != asmjit::Error::kOk ? err
+      : c.assembler.ldr(d, asmjit::a64::ptr(CJitEngine::RegAlloc::kScratch6));
+}
+static asmjit::Error emit_a64_store_f(A64EmitContext& c, const asmjit::a64::Vec& d,
+                                      uint32_t freg)
+{
+  asmjit::Error err = emit_a64_f_addr(c, freg);
+  return err != asmjit::Error::kOk ? err
+      : c.assembler.str(d, asmjit::a64::ptr(CJitEngine::RegAlloc::kScratch6));
+}
+static asmjit::Error emit_a64_load_f_bits(A64EmitContext& c,
+                                          const asmjit::a64::Gp& x, uint32_t freg)
+{
+  asmjit::Error err = emit_a64_f_addr(c, freg);
+  return err != asmjit::Error::kOk ? err
+      : c.assembler.ldr(x, asmjit::a64::ptr(CJitEngine::RegAlloc::kScratch6));
+}
+static asmjit::Error emit_a64_store_f_bits(A64EmitContext& c,
+                                           const asmjit::a64::Gp& x, uint32_t freg)
+{
+  asmjit::Error err = emit_a64_f_addr(c, freg);
+  return err != asmjit::Error::kOk ? err
+      : c.assembler.str(x, asmjit::a64::ptr(CJitEngine::RegAlloc::kScratch6));
+}
+
+// FPSTART: fpen==0 -> FEN bail; exc_sum = 0.
+static asmjit::Error emit_a64_fp_start(A64EmitContext& c, const asmjit::Label& bail)
+{
+  using RA = CJitEngine::RegAlloc;
+  asmjit::a64::Assembler& a = c.assembler;
+  asmjit::Error err = emit_a64_load_cpu_u8(a, RA::kScratch3.w(), c.offsets.fpen, false);
+  if (err == asmjit::Error::kOk) err = a.cbz(RA::kScratch3.w(), bail);
+  if (err == asmjit::Error::kOk) err = emit_a64_mov_u64(a, RA::kScratch0, 0);
+  if (err == asmjit::Error::kOk)
+    err = emit_a64_store_cpu_u64(a, RA::kScratch0, c.offsets.exc_sum);
+  return err;
+}
+// FPCR.INE (bit 56) clear -> the first inexact would trap -> bail.
+static asmjit::Error emit_a64_fp_ine_gate(A64EmitContext& c, const asmjit::Label& bail)
+{
+  using RA = CJitEngine::RegAlloc;
+  asmjit::Error err = emit_a64_load_cpu_u64(c.assembler, RA::kScratch3, c.offsets.fpcr);
+  return err != asmjit::Error::kOk ? err
+      : c.assembler.tbz(RA::kScratch3, asmjit::imm(56), bail);
+}
+// /D dynamic rounding: bail unless FPCR<59:58> is round-to-nearest (2).
+static asmjit::Error emit_a64_fp_dyn_gate(A64EmitContext& c, const asmjit::Label& bail)
+{
+  using RA = CJitEngine::RegAlloc;
+  asmjit::a64::Assembler& a = c.assembler;
+  asmjit::Error err = emit_a64_load_cpu_u64(a, RA::kScratch3, c.offsets.fpcr);
+  if (err == asmjit::Error::kOk) err = a.lsr(RA::kScratch3, RA::kScratch3, asmjit::imm(58));
+  if (err == asmjit::Error::kOk)
+    err = a.and_(RA::kScratch3, RA::kScratch3, asmjit::imm(3));
+  if (err == asmjit::Error::kOk) err = a.cmp(RA::kScratch3, asmjit::imm(2));
+  return err != asmjit::Error::kOk ? err : a.b_ne(bail);
+}
+// Double class check: bail if denormal (always) or Inf/NaN (chk).
+static asmjit::Error emit_a64_dbl_class_bail(A64EmitContext& c,
+    const asmjit::a64::Vec& d, bool chk, const asmjit::Label& bail)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = c.assembler;
+  Error err = a.fmov(RA::kScratch3, d);
+  if (err == Error::kOk) err = a.lsr(RA::kScratch5, RA::kScratch3, imm(52));
+  if (err == Error::kOk) err = a.and_(RA::kScratch5, RA::kScratch5, imm(0x7ff));
+  if (err != Error::kOk) return err;
+  if (chk) {
+    err = a.cmp(RA::kScratch5, imm(0x7ff));
+    if (err == Error::kOk) err = a.b_eq(bail);
+    if (err != Error::kOk) return err;
+  }
+  const Label ok = a.new_label();
+  err = a.cbnz(RA::kScratch5, ok);
+  if (err == Error::kOk) err = a.lsl(RA::kScratch3, RA::kScratch3, imm(12));
+  if (err == Error::kOk) err = a.cbnz(RA::kScratch3, bail);
+  if (err == Error::kOk) err = a.bind(ok);
+  return err;
+}
+// Single class check (on an s-view value): same policy at single-precision fields.
+static asmjit::Error emit_a64_sgl_class_bail(A64EmitContext& c,
+    const asmjit::a64::Vec& s, bool chk, const asmjit::Label& bail)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = c.assembler;
+  Error err = a.fmov(RA::kScratch3.w(), s);
+  if (err == Error::kOk) err = a.lsr(RA::kScratch5.w(), RA::kScratch3.w(), imm(23));
+  if (err == Error::kOk) err = a.and_(RA::kScratch5.w(), RA::kScratch5.w(), imm(0xff));
+  if (err != Error::kOk) return err;
+  if (chk) {
+    err = a.cmp(RA::kScratch5.w(), imm(0xff));
+    if (err == Error::kOk) err = a.b_eq(bail);
+    if (err != Error::kOk) return err;
+  }
+  const Label ok = a.new_label();
+  err = a.cbnz(RA::kScratch5.w(), ok);
+  if (err == Error::kOk) err = a.lsl(RA::kScratch3.w(), RA::kScratch3.w(), imm(9));
+  if (err == Error::kOk) err = a.cbnz(RA::kScratch3.w(), bail);
+  if (err == Error::kOk) err = a.bind(ok);
+  return err;
+}
+
+// FLTI ADDx/SUBx/MULx/DIVx (S and T).
+static A64OpEmitReceipt emit_a64_flti_arith(A64EmitContext& context,
+                                            const A64DecodedOp& op, uint32_t index)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = context.assembler;
+  const uint32_t f = (op.ins >> 5) & 0x7ffu;
+  const bool dyn = ((op.ins >> 11) & 3u) == 3u;
+  const uint32_t baseop = f & 0x3fu;
+  const bool sgl = baseop < 0x20;
+  const uint32_t k = baseop & 3u;   // 0=add 1=sub 2=mul 3=div
+
+  const Label bail = a.new_label(), cont = a.new_label();
+  Error err = emit_a64_fp_start(context, bail);
+  if (err == Error::kOk) err = emit_a64_fp_ine_gate(context, bail);
+  if (err == Error::kOk && dyn) err = emit_a64_fp_dyn_gate(context, bail);
+  if (err == Error::kOk) err = emit_a64_load_f(context, a64::d16, op.ra);
+  if (err == Error::kOk) err = emit_a64_load_f(context, a64::d17, op.rb);
+  if (err == Error::kOk) err = emit_a64_dbl_class_bail(context, a64::d16, false, bail);
+  if (err == Error::kOk) err = emit_a64_dbl_class_bail(context, a64::d17, false, bail);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  if (sgl) {
+    err = a.fcvt(a64::s16, a64::d16);
+    if (err == Error::kOk) err = a.fcvt(a64::s17, a64::d17);
+    if (err == Error::kOk)
+      err = k == 0 ? a.fadd(a64::s16, a64::s16, a64::s17)
+          : k == 1 ? a.fsub(a64::s16, a64::s16, a64::s17)
+          : k == 2 ? a.fmul(a64::s16, a64::s16, a64::s17)
+                   : a.fdiv(a64::s16, a64::s16, a64::s17);
+    if (err == Error::kOk)
+      err = emit_a64_sgl_class_bail(context, a64::s16, true, bail);
+  } else {
+    err = k == 0 ? a.fadd(a64::d16, a64::d16, a64::d17)
+        : k == 1 ? a.fsub(a64::d16, a64::d16, a64::d17)
+        : k == 2 ? a.fmul(a64::d16, a64::d16, a64::d17)
+                 : a.fdiv(a64::d16, a64::d16, a64::d17);
+    if (err == Error::kOk)
+      err = emit_a64_dbl_class_bail(context, a64::d16, true, bail);
+  }
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  if (k == 2 || k == 3) {
+    const Label nz = a.new_label();
+    if (sgl) { err = a.fmov(RA::kScratch3.w(), a64::s16);
+               if (err == Error::kOk)
+                 err = a.lsl(RA::kScratch3.w(), RA::kScratch3.w(), imm(1));
+               if (err == Error::kOk) err = a.cbnz(RA::kScratch3.w(), nz); }
+    else     { err = a.fmov(RA::kScratch3, a64::d16);
+               if (err == Error::kOk)
+                 err = a.lsl(RA::kScratch3, RA::kScratch3, imm(1));
+               if (err == Error::kOk) err = a.cbnz(RA::kScratch3, nz); }
+    if (err == Error::kOk) err = emit_a64_load_f_bits(context, RA::kScratch3, op.ra);
+    if (err == Error::kOk) err = a.lsl(RA::kScratch3, RA::kScratch3, imm(1));
+    if (err == Error::kOk) err = a.cbz(RA::kScratch3, nz);      // Fa == +-0: exact zero
+    if (err == Error::kOk) err = emit_a64_load_f_bits(context, RA::kScratch3, op.rb);
+    if (err == Error::kOk) err = a.lsl(RA::kScratch3, RA::kScratch3, imm(1));
+    if (err == Error::kOk) {
+      if (k == 2) err = a.cbz(RA::kScratch3, nz);               // MUL: Fb == +-0
+      else {                                                    // DIV: Fb == +-Inf
+        err = emit_a64_mov_u64(a, RA::kScratch5, 0xFFE0000000000000ull);
+        if (err == Error::kOk) err = a.cmp(RA::kScratch3, RA::kScratch5);
+        if (err == Error::kOk) err = a.b_eq(nz);
+      }
+    }
+    if (err == Error::kOk) err = a.b(bail);                     // underflowed to zero
+    if (err == Error::kOk) err = a.bind(nz);
+    if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+  }
+  if (sgl) err = a.fcvt(a64::d16, a64::s16);                    // register (T) format
+  if (err == Error::kOk) err = emit_a64_store_f(context, a64::d16, op.rc);
+  if (err == Error::kOk) err = a.b(cont);
+  if (err == Error::kOk) err = a.bind(bail);
+  if (err == Error::kOk) err = emit_a64_retry_bail(context, index);
+  if (err == Error::kOk) err = a.bind(cont);
+  return a64_completed_op_receipt(op, err);
+}
+
+// FLTI CMPTUN/EQ/LT/LE
+static A64OpEmitReceipt emit_a64_flti_cmp(A64EmitContext& context,
+                                          const A64DecodedOp& op, uint32_t index)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = context.assembler;
+  const uint32_t f = (op.ins >> 5) & 0x7ffu;
+  const uint32_t which = f & 3u;   // a4=UN a5=EQ a6=LT a7=LE (low bits of the func)
+
+  const Label bail = a.new_label(), cont = a.new_label();
+  Error err = emit_a64_fp_start(context, bail);
+  if (err == Error::kOk) err = emit_a64_load_f(context, a64::d16, op.ra);
+  if (err == Error::kOk) err = emit_a64_load_f(context, a64::d17, op.rb);
+  // Compare-shaped class check: exp==0x7ff or exp==0 with a nonzero mantissa
+  // (NaN / denormal) bails; Inf and zero (mantissa 0) compare inline.
+  for (int i2 = 0; i2 < 2 && err == Error::kOk; ++i2) {
+    const a64::Vec& v = i2 ? a64::d17 : a64::d16;
+    const Label ok = a.new_label(), special = a.new_label();
+    err = a.fmov(RA::kScratch3, v);
+    if (err == Error::kOk) err = a.lsr(RA::kScratch5, RA::kScratch3, imm(52));
+    if (err == Error::kOk) err = a.and_(RA::kScratch5, RA::kScratch5, imm(0x7ff));
+    if (err == Error::kOk) err = a.cmp(RA::kScratch5, imm(0x7ff));
+    if (err == Error::kOk) err = a.b_eq(special);
+    if (err == Error::kOk) err = a.cbnz(RA::kScratch5, ok);
+    if (err == Error::kOk) err = a.bind(special);
+    if (err == Error::kOk) err = a.lsl(RA::kScratch3, RA::kScratch3, imm(12));
+    if (err == Error::kOk) err = a.cbnz(RA::kScratch3, bail);
+    if (err == Error::kOk) err = a.bind(ok);
+  }
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  if (which == 0) {                       // CMPTUN: both ordered -> false
+    err = emit_a64_mov_u64(a, RA::kScratch3, 0);
+  } else {
+    err = a.fcmp(a64::d16, a64::d17);
+    if (err == Error::kOk) {
+      const arm::CondCode cond = which == 1 ? arm::CondCode::kEQ
+                               : which == 2 ? arm::CondCode::kLO
+                                            : arm::CondCode::kLS;
+      err = a.cset(RA::kScratch3, imm(static_cast<uint32_t>(cond)));
+    }
+    if (err == Error::kOk)
+      err = a.lsl(RA::kScratch3, RA::kScratch3, imm(62));   // true -> 2.0 bits
+  }
+  if (err == Error::kOk) err = emit_a64_store_f_bits(context, RA::kScratch3, op.rc);
+  if (err == Error::kOk) err = a.b(cont);
+  if (err == Error::kOk) err = a.bind(bail);
+  if (err == Error::kOk) err = emit_a64_retry_bail(context, index);
+  if (err == Error::kOk) err = a.bind(cont);
+  return a64_completed_op_receipt(op, err);
+}
+
+// FLTI converts. CVTST: valid-T copy (denorm/Inf/NaN bail). 
+// CVTTS: narrow+rewiden with result-class and underflow guards. 
+// CVTQT/CVTQS: int->FP, exactness via a chop round-trip, else INE-gated. 
+// CVTTQ: FP->int; unlike x86's indefinite, 
+// A64 saturates and converts NaN to 0 -- so Inf/NaN bail up front and both sat values bail 
+static A64OpEmitReceipt emit_a64_flti_cvt(A64EmitContext& context,
+                                          const A64DecodedOp& op, uint32_t index)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = context.assembler;
+  const uint32_t f = (op.ins >> 5) & 0x7ffu;
+  const bool dyn = ((op.ins >> 11) & 3u) == 3u;
+
+  const Label bail = a.new_label(), cont = a.new_label();
+  Error err = emit_a64_fp_start(context, bail);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  if (f == 0x2ac || f == 0x6ac) {                         // CVTST
+    err = emit_a64_load_f(context, a64::d16, op.rb);
+    if (err == Error::kOk) err = emit_a64_dbl_class_bail(context, a64::d16, true, bail);
+    if (err == Error::kOk) err = emit_a64_store_f(context, a64::d16, op.rc);
+  } else if ((f & 0x3fu) == 0x2f) {                       // CVTTQ
+    const bool chop = ((op.ins >> 11) & 3u) == 0u;
+    if (dyn) err = emit_a64_fp_dyn_gate(context, bail);
+    if (err == Error::kOk) err = emit_a64_load_f(context, a64::d16, op.rb);
+    if (err == Error::kOk)
+      err = emit_a64_dbl_class_bail(context, a64::d16, true, bail);  // + Inf/NaN
+    if (err == Error::kOk)
+      err = chop ? a.fcvtzs(RA::kScratch1, a64::d16)
+                 : a.fcvtns(RA::kScratch1, a64::d16);
+    if (err == Error::kOk)
+      err = emit_a64_mov_u64(a, RA::kScratch5, 0x8000000000000000ull);
+    if (err == Error::kOk) err = a.cmp(RA::kScratch1, RA::kScratch5);
+    if (err == Error::kOk) err = a.b_eq(bail);            // negative saturation / -2^63
+    if (err == Error::kOk)
+      err = emit_a64_mov_u64(a, RA::kScratch5, 0x7fffffffffffffffull);
+    if (err == Error::kOk) err = a.cmp(RA::kScratch1, RA::kScratch5);
+    if (err == Error::kOk) err = a.b_eq(bail);            // positive saturation
+    if (err == Error::kOk) {
+      const Label exact = a.new_label();
+      err = a.scvtf(a64::d17, RA::kScratch1);
+      if (err == Error::kOk) err = a.fcmp(a64::d17, a64::d16);
+      if (err == Error::kOk) err = a.b_eq(exact);
+      if (err == Error::kOk) err = emit_a64_fp_ine_gate(context, bail);
+      if (err == Error::kOk) err = a.bind(exact);
+    }
+    if (err == Error::kOk)
+      err = emit_a64_store_f_bits(context, RA::kScratch1, op.rc);
+  } else if ((f & 0x3fu) == 0x2c) {                       // CVTTS
+    err = emit_a64_fp_ine_gate(context, bail);
+    if (err == Error::kOk && dyn) err = emit_a64_fp_dyn_gate(context, bail);
+    if (err == Error::kOk) err = emit_a64_load_f(context, a64::d16, op.rb);
+    if (err == Error::kOk) err = emit_a64_dbl_class_bail(context, a64::d16, false, bail);
+    if (err == Error::kOk) err = a.fcvt(a64::s16, a64::d16);
+    if (err == Error::kOk) err = emit_a64_sgl_class_bail(context, a64::s16, true, bail);
+    if (err == Error::kOk) {
+      const Label nz = a.new_label();
+      err = a.fmov(RA::kScratch3.w(), a64::s16);
+      if (err == Error::kOk) err = a.lsl(RA::kScratch3.w(), RA::kScratch3.w(), imm(1));
+      if (err == Error::kOk) err = a.cbnz(RA::kScratch3.w(), nz);
+      if (err == Error::kOk) err = emit_a64_load_f_bits(context, RA::kScratch3, op.rb);
+      if (err == Error::kOk) err = a.lsl(RA::kScratch3, RA::kScratch3, imm(1));
+      if (err == Error::kOk) err = a.cbz(RA::kScratch3, nz);   // Fb == +-0
+      if (err == Error::kOk) err = a.b(bail);                  // underflowed to zero
+      if (err == Error::kOk) err = a.bind(nz);
+    }
+    if (err == Error::kOk) err = a.fcvt(a64::d16, a64::s16);
+    if (err == Error::kOk) err = emit_a64_store_f(context, a64::d16, op.rc);
+  } else {                                                // CVTQT / CVTQS
+    const bool to_single = (f & 0x3fu) == 0x3c;
+    if (dyn) err = emit_a64_fp_dyn_gate(context, bail);
+    if (err == Error::kOk) {
+      if (op.rb == 31) err = emit_a64_mov_u64(a, RA::kScratch1, 0);
+      else             err = emit_a64_load_f_bits(context, RA::kScratch1, op.rb);
+    }
+    if (err == Error::kOk) {
+      if (to_single) {
+        err = a.scvtf(a64::s16, RA::kScratch1);
+        if (err == Error::kOk) err = a.fcvtzs(RA::kScratch5, a64::s16);
+      } else {
+        err = a.scvtf(a64::d16, RA::kScratch1);
+        if (err == Error::kOk) err = a.fcvtzs(RA::kScratch5, a64::d16);
+      }
+    }
+    if (err == Error::kOk) err = a.cmp(RA::kScratch5, RA::kScratch1);
+    if (err == Error::kOk) {
+      const Label fdone = a.new_label();
+      err = a.b_eq(fdone);                                // round-trip exact
+      if (err == Error::kOk) err = emit_a64_fp_ine_gate(context, bail);
+      if (err == Error::kOk) err = a.bind(fdone);
+    }
+    if (err == Error::kOk && to_single) err = a.fcvt(a64::d16, a64::s16);
+    if (err == Error::kOk) err = emit_a64_store_f(context, a64::d16, op.rc);
+  }
+  if (err == Error::kOk) err = a.b(cont);
+  if (err == Error::kOk) err = a.bind(bail);
+  if (err == Error::kOk) err = emit_a64_retry_bail(context, index);
+  if (err == Error::kOk) err = a.bind(cont);
+  return a64_completed_op_receipt(op, err);
+}
+
+// ITFP SQRTS/SQRTT
+static A64OpEmitReceipt emit_a64_fsqrt(A64EmitContext& context,
+                                       const A64DecodedOp& op, uint32_t index)
+{
+  using namespace asmjit;
+  a64::Assembler& a = context.assembler;
+  const uint32_t f14 = (op.ins >> 5) & 0x7ffu;
+  const bool is_t = (f14 & 0x3fu) == 0x2b;
+  const bool dyn = ((f14 >> 6) & 3u) == 3u;
+
+  const Label bail = a.new_label(), cont = a.new_label();
+  Error err = emit_a64_fp_start(context, bail);
+  if (err == Error::kOk) err = emit_a64_fp_ine_gate(context, bail);
+  if (err == Error::kOk && dyn) err = emit_a64_fp_dyn_gate(context, bail);
+  if (err == Error::kOk) err = emit_a64_load_f(context, a64::d16, op.rb);
+  if (err == Error::kOk) err = emit_a64_dbl_class_bail(context, a64::d16, false, bail);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+  if (is_t) {
+    err = a.fsqrt(a64::d16, a64::d16);
+    if (err == Error::kOk) err = emit_a64_dbl_class_bail(context, a64::d16, true, bail);
+  } else {
+    err = a.fcvt(a64::s16, a64::d16);
+    if (err == Error::kOk) err = a.fsqrt(a64::s16, a64::s16);
+    if (err == Error::kOk) err = emit_a64_sgl_class_bail(context, a64::s16, true, bail);
+    if (err == Error::kOk) err = a.fcvt(a64::d16, a64::s16);
+  }
+  if (err == Error::kOk) err = emit_a64_store_f(context, a64::d16, op.rc);
+  if (err == Error::kOk) err = a.b(cont);
+  if (err == Error::kOk) err = a.bind(bail);
+  if (err == Error::kOk) err = emit_a64_retry_bail(context, index);
+  if (err == Error::kOk) err = a.bind(cont);
+  return a64_completed_op_receipt(op, err);
+}
+
 // HW_MFPR: jit_hw_mfpr(cpu, ins, cur)
 static A64OpEmitReceipt emit_a64_hw_mfpr(A64EmitContext& context,
                                          const A64DecodedOp& op)
@@ -4345,6 +4790,14 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
       return emit_a64_itof(context, op, index);
     case A64OpKind::kBranchFp:
       return emit_a64_branch_fp(context, op, index);
+    case A64OpKind::kFltiArith:
+      return emit_a64_flti_arith(context, op, index);
+    case A64OpKind::kFltiCmp:
+      return emit_a64_flti_cmp(context, op, index);
+    case A64OpKind::kFltiCvt:
+      return emit_a64_flti_cvt(context, op, index);
+    case A64OpKind::kFsqrt:
+      return emit_a64_fsqrt(context, op, index);
   }
   return {};
 }
