@@ -487,6 +487,12 @@ void CJitEngine::note_trace_verify(int outcome)
 #endif
 
 #ifdef JIT_STATS
+#ifdef ES40_JIT_A64
+static const char* const kJitHostBytesLabel = "a64-bytes/instr";
+#else
+static const char* const kJitHostBytesLabel = "x86-bytes/instr";
+#endif
+
 // Short mnemonic for the opcode that ended a block's compiled prefix (the coverage gap).
 // Declared in jitengine_internal.h: the codegen backends print it too.
 const char* jit_opcode_name(unsigned op)
@@ -535,15 +541,16 @@ uint64_t CJitEngine::note_exec(uint32_t native_instr, uint32_t interp_instr, uin
          (unsigned long long) m_stat_native, (unsigned long long) total,
          chain, (unsigned long long) m_stat_hot, (unsigned long long) m_stat_miss);
   // Throughput + code expansion: the in-JIT proxy for the codegen-quality diagnosis. MIPS is
-  // wall-clock (clock-independent: cycles/instr = host_GHz / MIPS); x86-bytes/instr is the static
+  // wall-clock (clock-independent: cycles/instr = host_GHz / MIPS); host-bytes/instr is the static
   // average emitted expansion. Read these off the WORKER CPU; the first window includes warmup.
   const uint64_t now_ns = (uint64_t) std::chrono::duration_cast<std::chrono::nanoseconds>(
       stat_t0.time_since_epoch()).count();
   const uint64_t dt_ns  = (now_ns > m_stat_wall_last_ns) ? now_ns - m_stat_wall_last_ns : 0;
   const double   mips   = dt_ns ? (double) total * 1000.0 / (double) dt_ns : 0.0;
   const double   expand = m_stat_plen_sum ? (double) m_stat_code_bytes / (double) m_stat_plen_sum : 0.0;
-  printf("[JIT][STATS][CPU%d] throughput %.0f MIPS (%llu instr / %.1f ms) | %.1f x86-bytes/instr (static avg)\n",
-         m_cpu_id, mips, (unsigned long long) total, (double) dt_ns / 1e6, expand);
+  printf("[JIT][STATS][CPU%d] throughput %.0f MIPS (%llu instr / %.1f ms) | %.1f %s (static avg)\n",
+         m_cpu_id, mips, (unsigned long long) total, (double) dt_ns / 1e6, expand,
+         kJitHostBytesLabel);
   // Wall-time split (host TSC): where the window actually spent time -- compiled execution vs interp
   // fallback vs the dispatcher/chaining remainder. Separates the two bottleneck candidates the
   // instruction counts can't (chain length and interp rate both just track how hot/covered the code is).
@@ -675,9 +682,11 @@ void CJitEngine::regprof_report()
     exec_bytes += b.rp_hits * (uint64_t) b.rp_csz;
   }
   // Execution-weighted code expansion -- the HOT path, not the cold-block-skewed static average.
-  // x86-instrs/instr ~= this / ~3.5; with cycles/instr from the throughput line -> hot-path IPC.
-  printf("[JIT][REGPROF][CPU%d] exec-weighted expansion: %.1f x86-bytes/instr (hot path)\n",
-         m_cpu_id, exec_instr ? (double) exec_bytes / (double) exec_instr : 0.0);
+  // Host instrs/guest instr ~= this / avg host instr size (~3.5 on x86; exactly 4 on A64);
+  // with cycles/instr from the throughput line -> hot-path IPC.
+  printf("[JIT][REGPROF][CPU%d] exec-weighted expansion: %.1f %s (hot path)\n",
+         m_cpu_id, exec_instr ? (double) exec_bytes / (double) exec_instr : 0.0,
+         kJitHostBytesLabel);
   char buf[256];
   int  len = snprintf(buf, sizeof(buf), "[JIT][REGPROF][CPU%d] hot GPRs (exec x accesses):", m_cpu_id);
   for (int rank = 0; rank < 8 && len < (int) sizeof(buf) - 24; ++rank) {
