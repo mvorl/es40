@@ -209,7 +209,9 @@ enum class A64OpKind : uint8_t {
   kCallPal,       // CALL_PAL (0x00): OPCDEC gate, exc_addr, R23/R55 link, vector terminator
   kHwMtpr,        // HW_MTPR (0x1d): jit_hw_mtpr / no-op IPRs; I_CTL is the redispatch term
   kHwLd,          // HW_LD (0x1b): physical via jit_read_phys, virtual via jit_read_vpte
-  kHwSt           // HW_ST (0x1f): physical via jit_write_phys
+  kHwSt,          // HW_ST (0x1f): physical via jit_write_phys
+  kIntm,          // INTM (0x13) MULQ/MULL/UMULH -> mul / mul+sxtw / umulh
+  kFpMem          // FP memory (0x20-0x27): f[Fa] <-> MEM via jit_fp_read/jit_fp_write
 };
 
 enum class A64TerminatorKind : uint8_t {
@@ -946,6 +948,8 @@ static constexpr bool a64_supported_op_kind(A64OpKind kind) noexcept
     case A64OpKind::kHwMtpr:
     case A64OpKind::kHwLd:
     case A64OpKind::kHwSt:
+    case A64OpKind::kIntm:
+    case A64OpKind::kFpMem:
       return true;
   }
   return false;
@@ -1232,6 +1236,14 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block) noexce
           return {A64OpKind::kInta, A64TerminatorKind::kNone,
                   operate_reads, static_cast<uint8_t>(kA64GprRc)};
       }
+      break;
+    case 0x23: case 0x22: case 0x27: case 0x26:   // LDT LDS STT STS
+    case 0x20: case 0x21: case 0x24: case 0x25:   // LDF LDG STF STG (VAX)
+      return {A64OpKind::kFpMem, A64TerminatorKind::kNone, 0, 0};
+    case 0x13:   // INTM: MULQ/MULL/UMULH; MULL/V and MULQ/V overflow-trap -> interpret
+      if (func == 0x20 || func == 0x00 || func == 0x30)
+        return {A64OpKind::kIntm, A64TerminatorKind::kNone,
+                operate_reads, static_cast<uint8_t>(kA64GprRc)};
       break;
     case 0x11:   // INTL: fully covered (logicals, CMOVs, AMASK/IMPLVER)
       switch (func) {
@@ -1711,6 +1723,19 @@ static_assert(classify_a64_op(0x86u, false).kind == A64OpKind::kCallPal
               && classify_a64_op((0x1fu << 26) | (4u << 12), true).kind
                   == A64OpKind::kUnsupported,  // HW_ST virtual -> interp
               "A64 PAL-op classification must mirror the x64 gate lists exactly");
+// INTM, LDT F0,0x220(R3)
+static_assert(classify_a64_op((0x13u << 26) | (0x20u << 5), false).kind
+                  == A64OpKind::kIntm          // MULQ
+              && classify_a64_op((0x13u << 26) | (0x30u << 5), false).kind
+                  == A64OpKind::kIntm          // UMULH
+              && classify_a64_op((0x13u << 26) | (0x60u << 5), false).kind
+                  == A64OpKind::kUnsupported   // MULQ/V overflow-traps -> interp
+              && decode_a64_op(0x8c030220u, false).kind == A64OpKind::kFpMem
+              && decode_a64_op(0x8c030220u, false).ra == 0      // F0
+              && decode_a64_op(0x8c030220u, false).rb == 3
+              && classify_a64_op(0x26u << 26, false).kind == A64OpKind::kFpMem   // STS
+              && classify_a64_op(0x21u << 26, false).kind == A64OpKind::kFpMem,  // LDG
+              "A64 INTM and FP-memory classification must cover the x64 sets");
 // HW_RET (R23) 
 static_assert(decode_a64_op(0x7bf7a000u, true).kind == A64OpKind::kJmpIndirect
               && decode_a64_op(0x7bf7a000u, true).terminator == A64TerminatorKind::kIndirect
@@ -3914,6 +3939,106 @@ static A64OpEmitReceipt emit_a64_hw_st(A64EmitContext& context,
   return a64_completed_op_receipt(op, err);
 }
 
+// INTM
+static A64OpEmitReceipt emit_a64_intm(A64EmitContext& context,
+                                      const A64DecodedOp& op)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+
+  const A64GprRoute wc =
+      a64_guest_gpr_write_route(context.regs, op.rc, context.pal_shadow);
+  if (wc.kind == A64GprRouteKind::kInvalid || wc.kind == A64GprRouteKind::kZero)
+    return {Error::kInvalidArgument, op.kind};
+  if (wc.kind == A64GprRouteKind::kDiscard)   // Rc==31: architectural no-op
+    return a64_completed_op_receipt(op);
+
+  a64::Assembler& a = context.assembler;
+  Error err = Error::kOk;
+
+  auto source = [&](uint32_t raw_reg, const a64::Gp& scratch) -> a64::Gp {
+    const A64GprRoute route =
+        a64_guest_gpr_read_route(context.regs, raw_reg, context.pal_shadow);
+    switch (route.kind) {
+      case A64GprRouteKind::kZero:   return a64::xzr;
+      case A64GprRouteKind::kPinned: return a64::x(static_cast<uint32_t>(route.host));
+      case A64GprRouteKind::kMemory:
+        err = a.ldr(scratch, a64::ptr(RA::kRegs,
+                    static_cast<int32_t>(route.slot * sizeof(uint64_t))));
+        return scratch;
+      default:
+        err = Error::kInvalidArgument;
+        return scratch;
+    }
+  };
+  const a64::Gp op1 = source(op.ra, RA::kScratch0);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+  a64::Gp op2 = RA::kScratch1;
+  if (op.is_literal) {
+    if (op.literal == 0) op2 = a64::xzr;
+    else                 err = emit_a64_mov_u64(a, RA::kScratch1, op.literal);
+  } else {
+    op2 = source(op.rb, RA::kScratch1);
+  }
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  const a64::Gp dst = wc.kind == A64GprRouteKind::kPinned
+      ? a64::x(static_cast<uint32_t>(wc.host)) : RA::kScratch2;
+  switch ((op.ins >> 5) & 0x7fu) {
+    case 0x20: err = a.mul(dst, op1, op2); break;                  // MULQ
+    case 0x00: err = a.mul(dst, op1, op2);                         // MULL
+               if (err == Error::kOk) err = a.sxtw(dst, dst.w()); break;
+    case 0x30: err = a.umulh(dst, op1, op2); break;                // UMULH
+    default:   err = Error::kInvalidInstruction; break;
+  }
+  if (err == Error::kOk && wc.kind == A64GprRouteKind::kMemory)
+    err = a.str(dst, a64::ptr(RA::kRegs,
+                static_cast<int32_t>(wc.slot * sizeof(uint64_t))));
+  return a64_completed_op_receipt(op, err);
+}
+
+// FP memory: jit_fp_read/jit_fp_write(cpu, va, fa, (fmt<<16)|size) for fp reg access
+static A64OpEmitReceipt emit_a64_fp_mem(A64EmitContext& context,
+                                        const A64DecodedOp& op, uint32_t index)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = context.assembler;
+
+  const bool isload = op.opcode == 0x23 || op.opcode == 0x22
+                   || op.opcode == 0x20 || op.opcode == 0x21;
+  if (isload && op.ra == 31) return a64_completed_op_receipt(op);
+  const uint32_t fmt = (op.opcode == 0x22 || op.opcode == 0x26) ? 1u
+                     : (op.opcode == 0x20 || op.opcode == 0x24) ? 2u
+                     : (op.opcode == 0x21 || op.opcode == 0x25) ? 3u : 0u;
+  const uint32_t descr = (fmt << 16)
+                       | static_cast<uint32_t>((fmt == 1 || fmt == 2) ? 32 : 64);
+
+  Error err = emit_a64_mem_va(context, op, false);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+  err = emit_a64_helper_call(a, context.offsets, context.helpers, context.regs,
+      context.pal_shadow,
+      isload ? context.helpers.fp_read_helper : context.helpers.fp_write_helper,
+      {{A64CallArgKind::kCpu, 0},
+       {A64CallArgKind::kHost, RA::kScratch4.id()},
+       {A64CallArgKind::kImm32, op.ra},
+       {A64CallArgKind::kImm32, descr}});
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  const Label ok = a.new_label();
+  err = a.cbz(a64::w0, ok);
+  if (err == Error::kOk)
+    err = emit_a64_mov_u64(a, RA::kScratch0,
+                           a64_advance_pc(context.start_pc, index));
+  if (err == Error::kOk)
+    err = emit_a64_store_cpu_u64(a, RA::kScratch0, context.offsets.state_pc);
+  if (err == Error::kOk && index != 0)
+    err = a.add(RA::kChainCount, RA::kChainCount, imm(index));
+  if (err == Error::kOk) err = a.b(context.done);
+  if (err == Error::kOk) err = a.bind(ok);
+  return a64_completed_op_receipt(op, err);
+}
+
 // HW_MFPR: jit_hw_mfpr(cpu, ins, cur)
 static A64OpEmitReceipt emit_a64_hw_mfpr(A64EmitContext& context,
                                          const A64DecodedOp& op)
@@ -3998,6 +4123,10 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
       return emit_a64_hw_ld(context, op, index);
     case A64OpKind::kHwSt:
       return emit_a64_hw_st(context, op, index);
+    case A64OpKind::kIntm:
+      return emit_a64_intm(context, op);
+    case A64OpKind::kFpMem:
+      return emit_a64_fp_mem(context, op, index);
   }
   return {};
 }
