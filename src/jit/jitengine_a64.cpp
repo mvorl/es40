@@ -203,7 +203,8 @@ enum class A64OpKind : uint8_t {
   kFptiInt,       // FPTI (0x1c) SEXTB/SEXTW/CTLZ/CTTZ: sxtb/sxth/clz/rbit+clz
   kFtoi,          // FPTI FTOIT/FTOIS: Rc = int view of f[Fa] via jit_ftoi (FEN bail)
   kLoadLocked,    // LDL_L/LDQ_L via jit_read_locked (lock monitor lives in the helper)
-  kStoreCond      // STL_C/STQ_C via jit_stc: Ra = success; 0x100 = translation bail
+  kStoreCond,     // STL_C/STQ_C via jit_stc: Ra = success; 0x100 = translation bail
+  kInta           // INTA (0x10) add/sub/scaled/compares/CMPBGE (/V forms interpret)
 };
 
 enum class A64TerminatorKind : uint8_t {
@@ -934,6 +935,7 @@ static constexpr bool a64_supported_op_kind(A64OpKind kind) noexcept
     case A64OpKind::kFtoi:
     case A64OpKind::kLoadLocked:
     case A64OpKind::kStoreCond:
+    case A64OpKind::kInta:
       return true;
   }
   return false;
@@ -1165,6 +1167,18 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block) noexce
       static_cast<uint8_t>(kA64GprRa | (is_literal ? 0 : kA64GprRb));
 
   switch (opcode) {
+    case 0x10:   // INTA: non-trapping add/sub/scaled + compares + CMPBGE
+      switch (func) {
+        case 0x20: case 0x29: case 0x00: case 0x09:   // ADDQ SUBQ ADDL SUBL
+        case 0x22: case 0x32: case 0x2b: case 0x3b:   // S4ADDQ S8ADDQ S4SUBQ S8SUBQ
+        case 0x02: case 0x12: case 0x0b: case 0x1b:   // S4ADDL S8ADDL S4SUBL S8SUBL
+        case 0x0f:                                    // CMPBGE
+        case 0x2d: case 0x4d: case 0x6d:              // CMPEQ CMPLT CMPLE
+        case 0x1d: case 0x3d:                         // CMPULT CMPULE
+          return {A64OpKind::kInta, A64TerminatorKind::kNone,
+                  operate_reads, static_cast<uint8_t>(kA64GprRc)};
+      }
+      break;
     case 0x11:   // INTL: fully covered (logicals, CMOVs, AMASK/IMPLVER)
       switch (func) {
         case 0x00: case 0x20: case 0x40:   // AND, BIS, XOR
@@ -1570,6 +1584,24 @@ static_assert(decode_a64_op(0xba160000u, false).kind == A64OpKind::kStoreCond
               && classify_a64_op((0x2eu << 26) | (31u << 21), false).kind
                   == A64OpKind::kUnsupported,   // STx_C Ra==31: result-discard -> interp
               "A64 LL/SC classification must compile only the value-returning forms");
+// INTA
+static_assert(classify_a64_op((0x10u << 26) | (0x20u << 5), false).kind
+                  == A64OpKind::kInta          // ADDQ
+              && classify_a64_op((0x10u << 26) | (0x20u << 5), false).gpr_reads
+                  == (kA64GprRa | kA64GprRb)
+              && classify_a64_op((0x10u << 26) | (0x20u << 5), false).gpr_writes
+                  == kA64GprRc
+              && classify_a64_op((0x10u << 26) | (0x1du << 5), false).kind
+                  == A64OpKind::kInta          // CMPULT
+              && classify_a64_op((0x10u << 26) | (0x0fu << 5), false).kind
+                  == A64OpKind::kInta          // CMPBGE
+              && classify_a64_op((0x10u << 26) | (0x12u << 5), false).kind
+                  == A64OpKind::kInta          // S8ADDL
+              && classify_a64_op((0x10u << 26) | (0x60u << 5), false).kind
+                  == A64OpKind::kUnsupported   // ADDQ/V overflow-traps -> interp
+              && classify_a64_op((0x10u << 26) | (0x49u << 5), false).kind
+                  == A64OpKind::kUnsupported,  // SUBL/V -> interp
+              "A64 INTA classification must cover the non-trapping set only");
 // HW_RET (R23) 
 static_assert(decode_a64_op(0x7bf7a000u, true).kind == A64OpKind::kJmpIndirect
               && decode_a64_op(0x7bf7a000u, true).terminator == A64TerminatorKind::kIndirect
@@ -3425,6 +3457,119 @@ static A64OpEmitReceipt emit_a64_store_cond(A64EmitContext& context,
   return a64_completed_op_receipt(op, err);
 }
 
+// INTA
+static A64OpEmitReceipt emit_a64_inta(A64EmitContext& context,
+                                      const A64DecodedOp& op)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+
+  const A64GprRoute wc =
+      a64_guest_gpr_write_route(context.regs, op.rc, context.pal_shadow);
+  if (wc.kind == A64GprRouteKind::kInvalid || wc.kind == A64GprRouteKind::kZero)
+    return {Error::kInvalidArgument, op.kind};
+  if (wc.kind == A64GprRouteKind::kDiscard)   // Rc==31: architectural no-op
+    return a64_completed_op_receipt(op);
+
+  a64::Assembler& a = context.assembler;
+  Error err = Error::kOk;
+  const uint32_t func = (op.ins >> 5) & 0x7fu;
+
+  auto source = [&](uint32_t raw_reg, const a64::Gp& scratch) -> a64::Gp {
+    const A64GprRoute route =
+        a64_guest_gpr_read_route(context.regs, raw_reg, context.pal_shadow);
+    switch (route.kind) {
+      case A64GprRouteKind::kZero:   return a64::xzr;
+      case A64GprRouteKind::kPinned: return a64::x(static_cast<uint32_t>(route.host));
+      case A64GprRouteKind::kMemory:
+        err = a.ldr(scratch, a64::ptr(RA::kRegs,
+                    static_cast<int32_t>(route.slot * sizeof(uint64_t))));
+        return scratch;
+      default:
+        err = Error::kInvalidArgument;
+        return scratch;
+    }
+  };
+  const a64::Gp op1 = source(op.ra, RA::kScratch0);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+  const a64::Gp dst = wc.kind == A64GprRouteKind::kPinned
+      ? a64::x(static_cast<uint32_t>(wc.host)) : RA::kScratch2;
+
+  if (func == 0x0f) {                            // CMPBGE: per-byte unsigned Ra >= op2
+    if (op.is_literal) {                         // literal lives in byte 0; 1-7 are 0
+      err = emit_a64_mov_u64(a, RA::kScratch1, op.literal);
+    } else {
+      const a64::Gp op2 = source(op.rb, RA::kScratch1);
+      if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+      if (op2.id() != RA::kScratch1.id()) err = a.mov(RA::kScratch1, op2);
+    }
+    if (err == Error::kOk) err = a.fmov(a64::d16, op1);
+    if (err == Error::kOk) err = a.fmov(a64::d17, RA::kScratch1);
+    if (err == Error::kOk) err = a.cmhs(a64::v16.b8(), a64::v16.b8(), a64::v17.b8());
+    if (err == Error::kOk)
+      err = emit_a64_mov_u64(a, RA::kScratch1, 0x8040201008040201ull);
+    if (err == Error::kOk) err = a.fmov(a64::d17, RA::kScratch1);
+    if (err == Error::kOk) err = a.and_(a64::v16.b8(), a64::v16.b8(), a64::v17.b8());
+    if (err == Error::kOk) err = a.addv(a64::v16.b(), a64::v16.b8());
+    if (err == Error::kOk) err = a.umov(dst.w(), a64::v16.b(0));
+  } else if (func == 0x2d || func == 0x4d || func == 0x6d
+          || func == 0x1d || func == 0x3d) {     // compares -> cmp + cset
+    const arm::CondCode cond =
+        func == 0x2d ? arm::CondCode::kEQ
+      : func == 0x4d ? arm::CondCode::kLT
+      : func == 0x6d ? arm::CondCode::kLE
+      : func == 0x1d ? arm::CondCode::kLO : arm::CondCode::kLS;
+    if (op.is_literal) {
+      if (op1.id() == a64::xzr.id()) {           // 0 cmp lit folds (lit is 0..255)
+        const uint64_t r =
+            func == 0x2d ? uint64_t(op.literal == 0)      // 0 == lit
+          : func == 0x6d || func == 0x3d ? uint64_t(1)    // 0 <= lit always (lit >= 0)
+          : uint64_t(op.literal != 0);                    // 0 < lit (signed or unsigned)
+        return a64_completed_op_receipt(op,
+            emit_a64_mov_u64(a, dst, r));
+      }
+      err = a.cmp(op1, imm(op.literal));
+    } else {
+      const a64::Gp op2 = source(op.rb, RA::kScratch1);
+      if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+      err = a.cmp(op1, op2);                     // register form: ZR-safe both sides
+    }
+    if (err == Error::kOk)
+      err = a.cset(dst, imm(static_cast<uint32_t>(cond)));
+  } else {                                       // add/sub, optionally scaled, Q or L
+    const bool is_sub = func == 0x29 || func == 0x09 || func == 0x2b
+                     || func == 0x3b || func == 0x0b || func == 0x1b;
+    const bool is_long = (func & 0x20u) == 0;
+    const uint32_t sh =
+        (func == 0x22 || func == 0x2b || func == 0x02 || func == 0x0b) ? 2
+      : (func == 0x32 || func == 0x3b || func == 0x12 || func == 0x1b) ? 3 : 0;
+    a64::Gp val1 = op1;
+    if (sh != 0) {                               // lsl is bitfield-class: ZR-safe
+      err = a.lsl(RA::kScratch3, op1, imm(sh));
+      val1 = RA::kScratch3;
+    }
+    if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+    if (op.is_literal) {
+      if (val1.id() == a64::xzr.id()) {          // fold: imm forms can't base on xzr
+        err = emit_a64_mov_u64(a, dst,
+            is_sub ? uint64_t(0) - op.literal : op.literal);
+      } else {
+        err = is_sub ? a.sub(dst, val1, imm(op.literal))
+                     : a.add(dst, val1, imm(op.literal));
+      }
+    } else {
+      const a64::Gp op2 = source(op.rb, RA::kScratch1);
+      if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+      err = is_sub ? a.sub(dst, val1, op2) : a.add(dst, val1, op2);
+    }
+    if (err == Error::kOk && is_long) err = a.sxtw(dst, dst.w());
+  }
+  if (err == Error::kOk && wc.kind == A64GprRouteKind::kMemory)
+    err = a.str(dst, a64::ptr(RA::kRegs,
+                static_cast<int32_t>(wc.slot * sizeof(uint64_t))));
+  return a64_completed_op_receipt(op, err);
+}
+
 // HW_MFPR: jit_hw_mfpr(cpu, ins, cur)
 static A64OpEmitReceipt emit_a64_hw_mfpr(A64EmitContext& context,
                                          const A64DecodedOp& op)
@@ -3497,6 +3642,8 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
       return emit_a64_load_locked(context, op, index);
     case A64OpKind::kStoreCond:
       return emit_a64_store_cond(context, op, index);
+    case A64OpKind::kInta:
+      return emit_a64_inta(context, op);
   }
   return {};
 }
