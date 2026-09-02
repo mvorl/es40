@@ -211,7 +211,11 @@ enum class A64OpKind : uint8_t {
   kHwLd,          // HW_LD (0x1b): physical via jit_read_phys, virtual via jit_read_vpte
   kHwSt,          // HW_ST (0x1f): physical via jit_write_phys
   kIntm,          // INTM (0x13) MULQ/MULL/UMULH -> mul / mul+sxtw / umulh
-  kFpMem          // FP memory (0x20-0x27): f[Fa] <-> MEM via jit_fp_read/jit_fp_write
+  kFpMem,         // FP memory (0x20-0x27): f[Fa] <-> MEM via jit_fp_read/jit_fp_write
+  kFltl,          // FLTL (0x17) non-arithmetic via jit_fltl (0/1 = FEN retry)
+  kFltv,          // FLTV (0x15) VAX arith via jit_fltv (0/1 FEN retry/2 arith trap)
+  kItof,          // ITFP ITOFS/ITOFF/ITOFT via jit_itof (0/1 = FEN retry)
+  kBranchFp       // FP branches (0x31-0x37): FPSTART gate + sign-magnitude compare
 };
 
 enum class A64TerminatorKind : uint8_t {
@@ -950,6 +954,10 @@ static constexpr bool a64_supported_op_kind(A64OpKind kind) noexcept
     case A64OpKind::kHwSt:
     case A64OpKind::kIntm:
     case A64OpKind::kFpMem:
+    case A64OpKind::kFltl:
+    case A64OpKind::kFltv:
+    case A64OpKind::kItof:
+    case A64OpKind::kBranchFp:
       return true;
   }
   return false;
@@ -1237,6 +1245,45 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block) noexce
                   operate_reads, static_cast<uint8_t>(kA64GprRc)};
       }
       break;
+    case 0x17: {   // FLTL non-arithmetic
+      const uint32_t f17 = (ins >> 5) & 0x7ffu;
+      const bool ok17 = f17 == 0x010 || (f17 >= 0x020 && f17 <= 0x022)
+                     || f17 == 0x024 || f17 == 0x025
+                     || (f17 >= 0x02a && f17 <= 0x02f) || f17 == 0x030;
+      if (!ok17) break;
+      // f31-dest gate (the interp zeroes f[31] per instr): MF_FPCR writes f[Fa].
+      if (f17 == 0x025)      { if (((ins >> 21) & 0x1fu) == 31) break; }
+      else if (f17 != 0x024) { if ((ins & 0x1fu) == 31) break; }
+      return {A64OpKind::kFltl, A64TerminatorKind::kNone, 0, 0};
+    }
+    case 0x15: {   // FLTV VAX arith/convert/compare via jit_fltv (x64 gate list)
+      if ((ins & 0x1fu) == 31) break;   // Fc==31: interp zeroes f[31] per instr
+      const uint32_t f15 = (ins >> 5) & 0x7ffu;
+      if (f15 == 0x0a5 || f15 == 0x4a5 || f15 == 0x0a6 || f15 == 0x4a6
+       || f15 == 0x0a7 || f15 == 0x4a7 || f15 == 0x03c || f15 == 0x0bc
+       || f15 == 0x03e || f15 == 0x0be)
+        return {A64OpKind::kFltv, A64TerminatorKind::kNone, 0, 0};
+      if (f15 & 0x200u) break;          // invalid qualifier -> interp OPCDECs
+      switch (f15 & 0x7fu) {
+        case 0x000: case 0x001: case 0x002: case 0x003:   // ADDF/SUBF/MULF/DIVF
+        case 0x01e:                                       // CVTDG
+        case 0x020: case 0x021: case 0x022: case 0x023:   // ADDG/SUBG/MULG/DIVG
+        case 0x02c: case 0x02d: case 0x02f:               // CVTGF/CVTGD/CVTGQ
+          return {A64OpKind::kFltv, A64TerminatorKind::kNone, 0, 0};
+      }
+      break;
+    }
+    case 0x14: {   // ITFP: via jit_itof; SQRT stays with FLTI-arithmetic landing.
+      const uint32_t f14 = (ins >> 5) & 0x7ffu;
+      if ((ins & 0x1fu) == 31) break;
+      if (((ins >> 16) & 0x1fu) != 31) break;
+      if (f14 == 0x004 || f14 == 0x014 || f14 == 0x024)
+        return {A64OpKind::kItof, A64TerminatorKind::kNone, 0, 0};
+      break;
+    }
+    case 0x31: case 0x32: case 0x33:   // FBEQ FBLT FBLE: FPSTART + f[Fa] vs 0.0
+    case 0x35: case 0x36: case 0x37:   // FBNE FBGE FBGT
+      return {A64OpKind::kBranchFp, A64TerminatorKind::kDirect, 0, 0};
     case 0x23: case 0x22: case 0x27: case 0x26:   // LDT LDS STT STS
     case 0x20: case 0x21: case 0x24: case 0x25:   // LDF LDG STF STG (VAX)
       return {A64OpKind::kFpMem, A64TerminatorKind::kNone, 0, 0};
@@ -1586,7 +1633,7 @@ static_assert(decode_a64_op(0xc3402e1eu, true).kind == A64OpKind::kBranchInt
               && classify_a64_op(0x39u << 26, false).gpr_reads == kA64GprRa   // BEQ reads Ra
               && classify_a64_op(0x39u << 26, false).gpr_writes == 0
               && classify_a64_op(0x31u << 26, false).kind
-                  == A64OpKind::kUnsupported,   // FP branches stay interpreted
+                  == A64OpKind::kBranchFp,      // FP branches now compile (FPSTART gate)
               "A64 branch classification must link, read, and thin per the x64 contract");
 // HW_MFPR R4, IPR 0x2b
 static_assert(decode_a64_op(0x649f2b40u, true).kind == A64OpKind::kHwMfpr
@@ -1736,6 +1783,26 @@ static_assert(classify_a64_op((0x13u << 26) | (0x20u << 5), false).kind
               && classify_a64_op(0x26u << 26, false).kind == A64OpKind::kFpMem   // STS
               && classify_a64_op(0x21u << 26, false).kind == A64OpKind::kFpMem,  // LDG
               "A64 INTM and FP-memory classification must cover the x64 sets");
+// FLTL/FLTV/ITOF/FP-branch helpers
+static_assert(classify_a64_op((0x17u << 26) | (0x020u << 5) | 5u, false).kind
+                  == A64OpKind::kFltl          // CPYS to f5
+              && classify_a64_op((0x17u << 26) | (0x020u << 5) | 31u, false).kind
+                  == A64OpKind::kUnsupported   // Fc==31 -> interp (f31 zeroing)
+              && classify_a64_op((0x15u << 26) | (0x020u << 5) | 4u, false).kind
+                  == A64OpKind::kFltv          // ADDG
+              && classify_a64_op((0x15u << 26) | (0x220u << 5) | 4u, false).kind
+                  == A64OpKind::kUnsupported   // invalid VAX qualifier -> interp
+              && classify_a64_op((0x14u << 26) | (31u << 16) | (0x024u << 5) | 7u,
+                                 false).kind == A64OpKind::kItof   // ITOFT
+              && classify_a64_op((0x14u << 26) | (0x024u << 5) | 7u, false).kind
+                  == A64OpKind::kUnsupported   // ITOFx needs Rb==31
+              && classify_a64_op((0x35u << 26) | (0x1fffffu), false).kind
+                  == A64OpKind::kBranchFp      // FBNE backward
+              && classify_a64_op((0x35u << 26) | (0x1fffffu), false).terminator
+                  == A64TerminatorKind::kDirect
+              && classify_a64_op((0x16u << 26) | (0x0beu << 5) | 1u, false).kind
+                  == A64OpKind::kUnsupported,  // FLTI (CVTQT) awaits its landing
+              "A64 FP helper families must mirror the x64 gates; FLTI stays closed");
 // HW_RET (R23) 
 static_assert(decode_a64_op(0x7bf7a000u, true).kind == A64OpKind::kJmpIndirect
               && decode_a64_op(0x7bf7a000u, true).terminator == A64TerminatorKind::kIndirect
@@ -4039,6 +4106,149 @@ static A64OpEmitReceipt emit_a64_fp_mem(A64EmitContext& context,
   return a64_completed_op_receipt(op, err);
 }
 
+// Shared retry bail.
+static asmjit::Error emit_a64_retry_bail(A64EmitContext& context, uint32_t index)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = context.assembler;
+  Error err = emit_a64_mov_u64(a, RA::kScratch0,
+                               a64_advance_pc(context.start_pc, index));
+  if (err == Error::kOk)
+    err = emit_a64_store_cpu_u64(a, RA::kScratch0, context.offsets.state_pc);
+  if (err == Error::kOk && index != 0)
+    err = a.add(RA::kChainCount, RA::kChainCount, imm(index));
+  return err != Error::kOk ? err : a.b(context.done);
+}
+
+// FLTL non-arithmetic: jit_fltl(cpu, ins) does all effects in f[]/fpcr
+static A64OpEmitReceipt emit_a64_fltl(A64EmitContext& context,
+                                      const A64DecodedOp& op, uint32_t index)
+{
+  using namespace asmjit;
+  a64::Assembler& a = context.assembler;
+  Error err = emit_a64_helper_call(a, context.offsets, context.helpers,
+      context.regs, context.pal_shadow, context.helpers.fltl_helper,
+      {{A64CallArgKind::kCpu, 0}, {A64CallArgKind::kImm32, op.ins}});
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+  const Label ok = a.new_label();
+  err = a.cbz(a64::w0, ok);
+  if (err == Error::kOk) err = emit_a64_retry_bail(context, index);
+  if (err == Error::kOk) err = a.bind(ok);
+  return a64_completed_op_receipt(op, err);
+}
+
+// FLTV VAX arith
+static A64OpEmitReceipt emit_a64_fltv(A64EmitContext& context,
+                                      const A64DecodedOp& op, uint32_t index)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = context.assembler;
+  Error err = emit_a64_mov_u64(a, RA::kScratch0,
+                               a64_advance_pc(context.start_pc, index));
+  if (err == Error::kOk)
+    err = emit_a64_store_cpu_u64(a, RA::kScratch0,
+                                 context.offsets.state_current_pc);
+  if (err == Error::kOk)
+    err = emit_a64_helper_call(a, context.offsets, context.helpers,
+        context.regs, context.pal_shadow, context.helpers.fltv_helper,
+        {{A64CallArgKind::kCpu, 0}, {A64CallArgKind::kImm32, op.ins}});
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+  const Label ok = a.new_label(), retry = a.new_label();
+  err = a.cbz(a64::w0, ok);
+  if (err == Error::kOk) err = a.cmp(a64::w0, imm(2));
+  if (err == Error::kOk) err = a.b_ne(retry);
+  if (err == Error::kOk)
+    err = a.add(RA::kChainCount, RA::kChainCount, imm(index + 1));
+  if (err == Error::kOk) err = a.b(context.done);
+  if (err == Error::kOk) err = a.bind(retry);
+  if (err == Error::kOk) err = emit_a64_retry_bail(context, index);
+  if (err == Error::kOk) err = a.bind(ok);
+  return a64_completed_op_receipt(op, err);
+}
+
+// ITOFS/ITOFF/ITOFT: jit_itof(cpu, fc, Ra-or-zero, fmt 0=T/1=S/2=F); 1 = FEN retry.
+static A64OpEmitReceipt emit_a64_itof(A64EmitContext& context,
+                                      const A64DecodedOp& op, uint32_t index)
+{
+  using namespace asmjit;
+  a64::Assembler& a = context.assembler;
+  const uint32_t f14 = (op.ins >> 5) & 0x7ffu;
+  const uint32_t fmt = f14 == 0x004 ? 1u : f14 == 0x014 ? 2u : 0u;
+  Error err = emit_a64_helper_call(a, context.offsets, context.helpers,
+      context.regs, context.pal_shadow, context.helpers.itof_helper,
+      {{A64CallArgKind::kCpu, 0},
+       {A64CallArgKind::kImm32, op.rc},
+       {A64CallArgKind::kGuestOrZero, op.ra},
+       {A64CallArgKind::kImm32, fmt}});
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+  const Label ok = a.new_label();
+  err = a.cbz(a64::w0, ok);
+  if (err == Error::kOk) err = emit_a64_retry_bail(context, index);
+  if (err == Error::kOk) err = a.bind(ok);
+  return a64_completed_op_receipt(op, err);
+}
+
+// FP branches
+static A64OpEmitReceipt emit_a64_branch_fp(A64EmitContext& context,
+                                           const A64DecodedOp& op, uint32_t index)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = context.assembler;
+
+  const uint64_t fall = a64_advance_pc(context.start_pc, index + 1);
+  const uint64_t target = a64_branch_target(fall, op.ins);
+
+  const Label fen_ok = a.new_label();
+  Error err = emit_a64_load_cpu_u8(a, RA::kScratch3.w(),
+                                   context.offsets.fpen, false);
+  if (err == Error::kOk) err = a.cbnz(RA::kScratch3.w(), fen_ok);
+  if (err == Error::kOk) err = emit_a64_retry_bail(context, index);
+  if (err == Error::kOk) err = a.bind(fen_ok);
+  if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kScratch0, 0);
+  if (err == Error::kOk)
+    err = emit_a64_store_cpu_u64(a, RA::kScratch0, context.offsets.exc_sum);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  if (op.ra == 31) {   // f[31] = 0 -> s = 0: the condition folds
+    const bool taken = op.opcode == 0x31 || op.opcode == 0x33
+                    || op.opcode == 0x36;   // FBEQ / FBLE / FBGE on zero
+    if (taken) err = emit_a64_mov_u64(a, RA::kNextPc, target);
+    return a64_completed_op_receipt(op, err);
+  }
+
+  err = emit_a64_load_cpu_u64(a, RA::kScratch1,
+      context.offsets.f_base + 8u * op.ra);
+  if (err == Error::kOk) err = a.asr(RA::kScratch3, RA::kScratch1, imm(63));
+  if (err == Error::kOk)
+    err = a.and_(RA::kScratch1, RA::kScratch1, imm(0x7fffffffffffffffull));
+  if (err == Error::kOk)
+    err = a.eor(RA::kScratch1, RA::kScratch1, RA::kScratch3);
+  if (err == Error::kOk)
+    err = a.sub(RA::kScratch1, RA::kScratch1, RA::kScratch3);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  const Label skip = a.new_label();
+  switch (op.opcode) {
+    case 0x31: err = a.cbnz(RA::kScratch1, skip); break;          // FBEQ
+    case 0x35: err = a.cbz(RA::kScratch1, skip);  break;          // FBNE
+    case 0x32: err = a.cmp(RA::kScratch1, imm(0));                // FBLT
+               if (err == Error::kOk) err = a.b_ge(skip); break;
+    case 0x36: err = a.cmp(RA::kScratch1, imm(0));                // FBGE
+               if (err == Error::kOk) err = a.b_lt(skip); break;
+    case 0x33: err = a.cmp(RA::kScratch1, imm(0));                // FBLE
+               if (err == Error::kOk) err = a.b_gt(skip); break;
+    case 0x37: err = a.cmp(RA::kScratch1, imm(0));                // FBGT
+               if (err == Error::kOk) err = a.b_le(skip); break;
+    default:   return {Error::kInvalidInstruction, op.kind};
+  }
+  if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kNextPc, target);
+  if (err == Error::kOk) err = a.bind(skip);
+  return a64_completed_op_receipt(op, err);
+}
+
 // HW_MFPR: jit_hw_mfpr(cpu, ins, cur)
 static A64OpEmitReceipt emit_a64_hw_mfpr(A64EmitContext& context,
                                          const A64DecodedOp& op)
@@ -4127,6 +4337,14 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
       return emit_a64_intm(context, op);
     case A64OpKind::kFpMem:
       return emit_a64_fp_mem(context, op, index);
+    case A64OpKind::kFltl:
+      return emit_a64_fltl(context, op, index);
+    case A64OpKind::kFltv:
+      return emit_a64_fltv(context, op, index);
+    case A64OpKind::kItof:
+      return emit_a64_itof(context, op, index);
+    case A64OpKind::kBranchFp:
+      return emit_a64_branch_fp(context, op, index);
   }
   return {};
 }
