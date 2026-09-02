@@ -204,7 +204,8 @@ enum class A64OpKind : uint8_t {
   kFtoi,          // FPTI FTOIT/FTOIS: Rc = int view of f[Fa] via jit_ftoi (FEN bail)
   kLoadLocked,    // LDL_L/LDQ_L via jit_read_locked (lock monitor lives in the helper)
   kStoreCond,     // STL_C/STQ_C via jit_stc: Ra = success; 0x100 = translation bail
-  kInta           // INTA (0x10) add/sub/scaled/compares/CMPBGE (/V forms interpret)
+  kInta,          // INTA (0x10) add/sub/scaled/compares/CMPBGE (/V forms interpret)
+  kMisc           // MISC (0x18): barriers -> dmb ish, hints -> nothing, RPCC/RC/RS helper
 };
 
 enum class A64TerminatorKind : uint8_t {
@@ -936,6 +937,7 @@ static constexpr bool a64_supported_op_kind(A64OpKind kind) noexcept
     case A64OpKind::kLoadLocked:
     case A64OpKind::kStoreCond:
     case A64OpKind::kInta:
+    case A64OpKind::kMisc:
       return true;
   }
   return false;
@@ -1241,7 +1243,23 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block) noexce
     case 0x09:   // LDAH: Ra = Rb + (sext(disp16) << 16)
       return {A64OpKind::kLoadAddress, A64TerminatorKind::kNone,
               static_cast<uint8_t>(kA64GprRb), static_cast<uint8_t>(kA64GprRa)};
-    case 0x1c:   // FPTI. 
+    case 0x18:   // MISC
+      switch (ins & 0xffffu) {
+        case 0x0000: case 0x0400:            // TRAPB, EXCB
+        case 0x4000: case 0x4400:            // MB, WMB -> dmb ish
+        case 0x8000: case 0xA000: case 0xE800:   // FETCH, FETCH_M, ECB
+        case 0xF800: case 0xFC00:            // WH64, WH64EN -> no code
+          return {A64OpKind::kMisc, A64TerminatorKind::kNone, 0, 0};
+        case 0xC000:                         // RPCC
+          if (((ins >> 21) & 0x1fu) == 31) break;
+          return {A64OpKind::kMisc, A64TerminatorKind::kNone, 0,
+                  static_cast<uint8_t>(kA64GprRa)};
+        case 0xE000: case 0xF000:            // RC, RS
+          return {A64OpKind::kMisc, A64TerminatorKind::kNone, 0,
+                  static_cast<uint8_t>(kA64GprRa)};
+      }
+      break;
+    case 0x1c:   // FPTI.
       if (func == 0x00 || func == 0x01 || func == 0x30
           || func == 0x32 || func == 0x33)
         return {A64OpKind::kFptiInt, A64TerminatorKind::kNone,
@@ -1602,6 +1620,19 @@ static_assert(classify_a64_op((0x10u << 26) | (0x20u << 5), false).kind
               && classify_a64_op((0x10u << 26) | (0x49u << 5), false).kind
                   == A64OpKind::kUnsupported,  // SUBL/V -> interp
               "A64 INTA classification must cover the non-trapping set only");
+static_assert(classify_a64_op((0x18u << 26) | 0x4000u, false).kind
+                  == A64OpKind::kMisc          // MB -> dmb ish
+              && classify_a64_op((0x18u << 26) | 0xF800u, false).kind
+                  == A64OpKind::kMisc          // WH64 hint -> no code
+              && classify_a64_op((0x18u << 26) | (3u << 21) | 0xC000u, false).kind
+                  == A64OpKind::kMisc          // RPCC R3
+              && classify_a64_op((0x18u << 26) | (31u << 21) | 0xC000u, false).kind
+                  == A64OpKind::kUnsupported   // RPCC R31: pure no-op read -> interp
+              && classify_a64_op((0x18u << 26) | (31u << 21) | 0xE000u, false).kind
+                  == A64OpKind::kMisc          // RC R31 compiles (flag side effect)
+              && classify_a64_op((0x18u << 26) | 0x1234u, false).kind
+                  == A64OpKind::kUnsupported,  // unknown MISC form stays closed
+              "A64 MISC classification must split barriers, hints, and state reads");
 // HW_RET (R23) 
 static_assert(decode_a64_op(0x7bf7a000u, true).kind == A64OpKind::kJmpIndirect
               && decode_a64_op(0x7bf7a000u, true).terminator == A64TerminatorKind::kIndirect
@@ -3570,6 +3601,42 @@ static A64OpEmitReceipt emit_a64_inta(A64EmitContext& context,
   return a64_completed_op_receipt(op, err);
 }
 
+// MISC: TRAPB/EXCB/MB/WMB
+static A64OpEmitReceipt emit_a64_misc(A64EmitContext& context,
+                                      const A64DecodedOp& op)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = context.assembler;
+  const uint32_t fn = op.ins & 0xffffu;
+
+  switch (fn) {
+    case 0x0000: case 0x0400: case 0x4000: case 0x4400:
+      return a64_completed_op_receipt(op, a.dmb(imm(0xB)));   // ISH
+    case 0x8000: case 0xA000: case 0xE800: case 0xF800: case 0xFC00:
+      return a64_completed_op_receipt(op);                    // hint: no code
+    default:
+      break;
+  }
+
+  const uint32_t sel = fn == 0xC000 ? 0u : fn == 0xE000 ? 1u : 2u;
+  Error err = emit_a64_helper_call(a, context.offsets, context.helpers,
+      context.regs, context.pal_shadow, context.helpers.misc_helper,
+      {{A64CallArgKind::kCpu, 0}, {A64CallArgKind::kImm32, sel}});
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  const A64GprRoute wa =
+      a64_guest_gpr_write_route(context.regs, op.ra, context.pal_shadow);
+  if (wa.kind == A64GprRouteKind::kPinned)
+    err = a.mov(a64::x(static_cast<uint32_t>(wa.host)), a64::x0);
+  else if (wa.kind == A64GprRouteKind::kMemory)
+    err = a.str(a64::x0, a64::ptr(RA::kRegs,
+                static_cast<int32_t>(wa.slot * sizeof(uint64_t))));
+  else if (wa.kind != A64GprRouteKind::kDiscard)   // RC/RS Ra==31: flag-only
+    return {Error::kInvalidArgument, op.kind};
+  return a64_completed_op_receipt(op, err);
+}
+
 // HW_MFPR: jit_hw_mfpr(cpu, ins, cur)
 static A64OpEmitReceipt emit_a64_hw_mfpr(A64EmitContext& context,
                                          const A64DecodedOp& op)
@@ -3644,6 +3711,8 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
       return emit_a64_store_cond(context, op, index);
     case A64OpKind::kInta:
       return emit_a64_inta(context, op);
+    case A64OpKind::kMisc:
+      return emit_a64_misc(context, op);
   }
   return {};
 }
