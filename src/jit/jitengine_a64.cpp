@@ -1355,7 +1355,7 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block) noexce
                   0, static_cast<uint8_t>(kA64GprRc)};
       }
       break;
-    case 0x12:   // INTS: shifts + ZAP; (EXT/INS/MSK) stays interpreted
+    case 0x12:   // INTS: (shifts, ZAP, EXT/INS/MSK byte-manip)
       switch (func) {
         case 0x39: case 0x34: case 0x3c:   // SLL, SRL, SRA
           return {A64OpKind::kIntsShift, A64TerminatorKind::kNone,
@@ -2620,6 +2620,15 @@ static asmjit::Error emit_a64_helper_call(
   return a.blr(CJitEngine::RegAlloc::kCallTarget);
 }
 
+// Outlined memop slow path.
+struct A64ColdStub {
+  asmjit::Label slow;
+  asmjit::Label join;
+  A64DecodedOp op{};
+  uint32_t index = 0;
+  enum Kind : uint8_t { kLoad, kStore, kFpMem } kind = kLoad;
+};
+
 struct A64EmitContext {
   asmjit::a64::Assembler& assembler;
   const CJitEngine::JitOffsets& offsets;
@@ -2632,6 +2641,7 @@ struct A64EmitContext {
   const A64BlockPlan* plan = nullptr;
   A64OpEmitReceipt receipt{};
   uint32_t receipt_index = UINT32_MAX;
+  std::vector<A64ColdStub>* cold = nullptr;   // production memop slow paths
 };
 
 // Rc = Ra <logical> op2 -- each of the six is one A64 register-form op. The 8-bit
@@ -3056,6 +3066,136 @@ static asmjit::Error emit_a64_mem_result_bail(A64EmitContext& context,
   return err;
 }
 
+static constexpr int a64_int_mem_size_bits(uint8_t opcode) noexcept
+{
+  switch (opcode) {
+    case 0x29: case 0x0b: case 0x2d: case 0x0f: return 64;
+    case 0x28: case 0x2c: return 32;
+    case 0x0c: case 0x0d: return 16;
+    default:              return 8;   // 0x0a LDBU / 0x0e STB
+  }
+}
+
+// integer memop's full helper sequence 
+// VA is expected live in kScratch4. 
+// Loads end with the out-slot extraction into Ra's route, so this upholds the fastpath state.
+static asmjit::Error emit_a64_int_mem_helper_seq(A64EmitContext& context,
+    const A64DecodedOp& op, uint32_t index, bool is_store)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = context.assembler;
+  const int size_bits = a64_int_mem_size_bits(op.opcode);
+  void* const helper = is_store ? context.helpers.write_helper
+                                : context.helpers.read_helper;
+  const A64CallArg last = is_store
+      ? A64CallArg{A64CallArgKind::kGuestOrZero, op.ra}
+      : A64CallArg{A64CallArgKind::kOut, 0};
+  Error err = Error::kOk;
+#ifndef JIT_VERIFY
+  err = emit_a64_mov_u64(a, RA::kScratch0,
+                         a64_advance_pc(context.start_pc, index));
+  if (err == Error::kOk)
+    err = emit_a64_store_cpu_u64(a, RA::kScratch0,
+                                 context.offsets.state_current_pc);
+  if (err != Error::kOk) return err;
+  const uint64_t descr = (static_cast<uint64_t>(op.ins) << 32)
+                       | static_cast<uint32_t>(size_bits);
+  err = emit_a64_helper_call(a, context.offsets, context.helpers, context.regs,
+      context.pal_shadow, helper,
+      {{A64CallArgKind::kCpu, 0},
+       {A64CallArgKind::kHost, RA::kScratch4.id()},
+       {A64CallArgKind::kImm64, descr},
+       last});
+#else
+  err = emit_a64_helper_call(a, context.offsets, context.helpers, context.regs,
+      context.pal_shadow, helper,
+      {{A64CallArgKind::kCpu, 0},
+       {A64CallArgKind::kHost, RA::kScratch4.id()},
+       {A64CallArgKind::kImm32, static_cast<uint32_t>(size_bits)},
+       last});
+#endif
+  if (err == Error::kOk) err = emit_a64_mem_result_bail(context, index);
+  if (err != Error::kOk || is_store) return err;
+
+  const A64GprRoute wa =
+      a64_guest_gpr_write_route(context.regs, op.ra, context.pal_shadow);
+  const a64::Gp dst = wa.kind == A64GprRouteKind::kPinned
+      ? a64::x(static_cast<uint32_t>(wa.host)) : RA::kScratch2;
+  switch (size_bits) {   // LDL sign-extends; the BWX forms zero-extend
+    case 64: err = a.ldr(dst, a64_helper_out_mem()); break;
+    case 32: err = a.ldrsw(dst, a64_helper_out_mem()); break;
+    case 16: err = a.ldrh(dst.w(), a64_helper_out_mem()); break;
+    default: err = a.ldrb(dst.w(), a64_helper_out_mem()); break;
+  }
+  if (err == Error::kOk && wa.kind == A64GprRouteKind::kMemory)
+    err = a.str(dst, a64::ptr(RA::kRegs,
+                static_cast<int32_t>(wa.slot * sizeof(uint64_t))));
+  return err;
+}
+
+#ifndef JIT_VERIFY
+// DPC hit probe
+static asmjit::Error emit_a64_dpc_probe(A64EmitContext& c, int size_bits,
+    bool force_align, bool is_write, const asmjit::Label& slow)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = c.assembler;
+  const uint64_t amask = static_cast<uint64_t>(size_bits / 8) - 1;
+  const uint64_t tag_mask = ~uint64_t(0x1fff) | (force_align ? 0 : amask);
+  const uint32_t row = is_write ? c.offsets.dpc_write_row : 0;
+
+  // slot byte offset = ((va >> 13) & dpc_mask) * dpc_stride -> kScratch3
+  Error err = a.lsr(RA::kScratch3, RA::kScratch4, imm(13));
+  if (err != Error::kOk) return err;
+  if (arm::Utils::is_logical_imm(c.offsets.dpc_mask, 64)) {
+    err = a.and_(RA::kScratch3, RA::kScratch3, imm(c.offsets.dpc_mask));
+  } else {
+    err = emit_a64_mov_u64(a, RA::kScratch5, c.offsets.dpc_mask);
+    if (err == Error::kOk)
+      err = a.and_(RA::kScratch3, RA::kScratch3, RA::kScratch5);
+  }
+  if (err != Error::kOk) return err;
+  const uint32_t stride = c.offsets.dpc_stride;
+  if (stride != 0 && (stride & (stride - 1)) == 0) {
+    uint32_t sh = 0;
+    while ((1u << sh) < stride) ++sh;
+    if (sh) err = a.lsl(RA::kScratch3, RA::kScratch3, imm(sh));
+  } else {
+    err = emit_a64_mov_u64(a, RA::kScratch5, stride);
+    if (err == Error::kOk)
+      err = a.mul(RA::kScratch3, RA::kScratch3, RA::kScratch5);
+  }
+  if (err != Error::kOk) return err;
+
+  err = a.and_(RA::kScratch5, RA::kScratch4, imm(tag_mask));   // wrapped run: encodable
+  if (err == Error::kOk) err = a.add(RA::kScratch6, RA::kCpu, RA::kScratch3);
+  if (err != Error::kOk) return err;
+
+  const uint32_t voff = row + c.offsets.dpc_virt_page;
+  const uint32_t boff = row + c.offsets.dpc_host_bias;
+  if (voff <= 32760 && (voff & 7u) == 0 && boff <= 32760 && (boff & 7u) == 0) {
+    err = a.ldr(RA::kScratch1, a64::ptr(RA::kScratch6, static_cast<int32_t>(voff)));
+    if (err == Error::kOk) err = a.cmp(RA::kScratch1, RA::kScratch5);
+    if (err == Error::kOk) err = a.b_ne(slow);
+    if (err == Error::kOk)
+      err = a.ldr(RA::kScratch1, a64::ptr(RA::kScratch6, static_cast<int32_t>(boff)));
+  } else {
+    err = emit_a64_add_offset(a, RA::kScratch6, RA::kScratch6,
+                              static_cast<int64_t>(voff), RA::kScratch0);
+    if (err == Error::kOk) err = a.ldr(RA::kScratch1, a64::ptr(RA::kScratch6));
+    if (err == Error::kOk) err = a.cmp(RA::kScratch1, RA::kScratch5);
+    if (err == Error::kOk) err = a.b_ne(slow);
+    if (err == Error::kOk)
+      err = emit_a64_add_offset(a, RA::kScratch6, RA::kScratch6,
+          static_cast<int64_t>(boff) - static_cast<int64_t>(voff), RA::kScratch0);
+    if (err == Error::kOk) err = a.ldr(RA::kScratch1, a64::ptr(RA::kScratch6));
+  }
+  return err;
+}
+#endif
+
 static A64OpEmitReceipt emit_a64_mem_load(A64EmitContext& context,
                                           const A64DecodedOp& op, uint32_t index)
 {
@@ -3069,51 +3209,39 @@ static A64OpEmitReceipt emit_a64_mem_load(A64EmitContext& context,
   if (wa.kind == A64GprRouteKind::kDiscard)   // LDx to R31 is a NOP (x64 parity)
     return a64_completed_op_receipt(op);
 
-  const int size_bits = (op.opcode == 0x29 || op.opcode == 0x0b) ? 64
-                      : op.opcode == 0x28 ? 32
-                      : op.opcode == 0x0c ? 16 : 8;
   const bool force_align = op.opcode == 0x0b;   // LDQ_U
-
   a64::Assembler& a = context.assembler;
   Error err = emit_a64_mem_va(context, op, force_align);
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
-#ifndef JIT_VERIFY
-  err = emit_a64_mov_u64(a, RA::kScratch0,
-                         a64_advance_pc(context.start_pc, index));
-  if (err == Error::kOk)
-    err = emit_a64_store_cpu_u64(a, RA::kScratch0,
-                                 context.offsets.state_current_pc);
-  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
-  const uint64_t descr = (static_cast<uint64_t>(op.ins) << 32)
-                       | static_cast<uint32_t>(size_bits);
-  err = emit_a64_helper_call(a, context.offsets, context.helpers, context.regs,
-      context.pal_shadow, context.helpers.read_helper,
-      {{A64CallArgKind::kCpu, 0},
-       {A64CallArgKind::kHost, RA::kScratch4.id()},
-       {A64CallArgKind::kImm64, descr},
-       {A64CallArgKind::kOut, 0}});
+#ifdef JIT_VERIFY
+  (void) a;
+  err = emit_a64_int_mem_helper_seq(context, op, index, false);
 #else
-  err = emit_a64_helper_call(a, context.offsets, context.helpers, context.regs,
-      context.pal_shadow, context.helpers.read_helper,
-      {{A64CallArgKind::kCpu, 0},
-       {A64CallArgKind::kHost, RA::kScratch4.id()},
-       {A64CallArgKind::kImm32, static_cast<uint32_t>(size_bits)},
-       {A64CallArgKind::kOut, 0}});
-#endif
-  if (err == Error::kOk) err = emit_a64_mem_result_bail(context, index);
-  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+  if (context.cold == nullptr) return {Error::kInvalidState, op.kind};
+  A64ColdStub stub{};
+  stub.slow = a.new_label();
+  stub.join = a.new_label();
+  stub.op = op;
+  stub.index = index;
+  stub.kind = A64ColdStub::kLoad;
 
+  const int size_bits = a64_int_mem_size_bits(op.opcode);
+  err = emit_a64_dpc_probe(context, size_bits, force_align, false, stub.slow);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
   const a64::Gp dst = wa.kind == A64GprRouteKind::kPinned
       ? a64::x(static_cast<uint32_t>(wa.host)) : RA::kScratch2;
   switch (size_bits) {   // LDL sign-extends; the BWX forms zero-extend
-    case 64: err = a.ldr(dst, a64_helper_out_mem()); break;
-    case 32: err = a.ldrsw(dst, a64_helper_out_mem()); break;
-    case 16: err = a.ldrh(dst.w(), a64_helper_out_mem()); break;
-    default: err = a.ldrb(dst.w(), a64_helper_out_mem()); break;
+    case 64: err = a.ldr(dst, a64::ptr(RA::kScratch1, RA::kScratch4)); break;
+    case 32: err = a.ldrsw(dst, a64::ptr(RA::kScratch1, RA::kScratch4)); break;
+    case 16: err = a.ldrh(dst.w(), a64::ptr(RA::kScratch1, RA::kScratch4)); break;
+    default: err = a.ldrb(dst.w(), a64::ptr(RA::kScratch1, RA::kScratch4)); break;
   }
   if (err == Error::kOk && wa.kind == A64GprRouteKind::kMemory)
     err = a.str(dst, a64::ptr(RA::kRegs,
                 static_cast<int32_t>(wa.slot * sizeof(uint64_t))));
+  if (err == Error::kOk) err = a.bind(stub.join);
+  if (err == Error::kOk) context.cold->push_back(stub);
+#endif
   return a64_completed_op_receipt(op, err);
 }
 
@@ -3123,38 +3251,49 @@ static A64OpEmitReceipt emit_a64_mem_store(A64EmitContext& context,
   using RA = CJitEngine::RegAlloc;
   using namespace asmjit;
 
-  const int size_bits = (op.opcode == 0x2d || op.opcode == 0x0f) ? 64
-                      : op.opcode == 0x2c ? 32
-                      : op.opcode == 0x0d ? 16 : 8;
   const bool force_align = op.opcode == 0x0f;   // STQ_U
-
   a64::Assembler& a = context.assembler;
   Error err = emit_a64_mem_va(context, op, force_align);
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
-#ifndef JIT_VERIFY
-  err = emit_a64_mov_u64(a, RA::kScratch0,
-                         a64_advance_pc(context.start_pc, index));
-  if (err == Error::kOk)
-    err = emit_a64_store_cpu_u64(a, RA::kScratch0,
-                                 context.offsets.state_current_pc);
-  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
-  const uint64_t descr = (static_cast<uint64_t>(op.ins) << 32)
-                       | static_cast<uint32_t>(size_bits);
-  err = emit_a64_helper_call(a, context.offsets, context.helpers, context.regs,
-      context.pal_shadow, context.helpers.write_helper,
-      {{A64CallArgKind::kCpu, 0},
-       {A64CallArgKind::kHost, RA::kScratch4.id()},
-       {A64CallArgKind::kImm64, descr},
-       {A64CallArgKind::kGuestOrZero, op.ra}});
+#ifdef JIT_VERIFY
+  (void) a;
+  err = emit_a64_int_mem_helper_seq(context, op, index, true);
 #else
-  err = emit_a64_helper_call(a, context.offsets, context.helpers, context.regs,
-      context.pal_shadow, context.helpers.write_helper,
-      {{A64CallArgKind::kCpu, 0},
-       {A64CallArgKind::kHost, RA::kScratch4.id()},
-       {A64CallArgKind::kImm32, static_cast<uint32_t>(size_bits)},
-       {A64CallArgKind::kGuestOrZero, op.ra}});
+  if (context.cold == nullptr) return {Error::kInvalidState, op.kind};
+  A64ColdStub stub{};
+  stub.slow = a.new_label();
+  stub.join = a.new_label();
+  stub.op = op;
+  stub.index = index;
+  stub.kind = A64ColdStub::kStore;
+
+  const int size_bits = a64_int_mem_size_bits(op.opcode);
+  err = emit_a64_dpc_probe(context, size_bits, force_align, true, stub.slow);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+  // Store value: pin, xzr for R31, or a reload from the regs[] slot.
+  const A64GprRoute ra =
+      a64_guest_gpr_read_route(context.regs, op.ra, context.pal_shadow);
+  a64::Gp val = RA::kScratch2;
+  switch (ra.kind) {
+    case A64GprRouteKind::kZero:   val = a64::xzr; break;
+    case A64GprRouteKind::kPinned: val = a64::x(static_cast<uint32_t>(ra.host)); break;
+    case A64GprRouteKind::kMemory:
+      err = a.ldr(RA::kScratch2, a64::ptr(RA::kRegs,
+                  static_cast<int32_t>(ra.slot * sizeof(uint64_t))));
+      break;
+    default:
+      return {Error::kInvalidArgument, op.kind};
+  }
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+  switch (size_bits) {
+    case 64: err = a.str(val, a64::ptr(RA::kScratch1, RA::kScratch4)); break;
+    case 32: err = a.str(val.w(), a64::ptr(RA::kScratch1, RA::kScratch4)); break;
+    case 16: err = a.strh(val.w(), a64::ptr(RA::kScratch1, RA::kScratch4)); break;
+    default: err = a.strb(val.w(), a64::ptr(RA::kScratch1, RA::kScratch4)); break;
+  }
+  if (err == Error::kOk) err = a.bind(stub.join);
+  if (err == Error::kOk) context.cold->push_back(stub);
 #endif
-  if (err == Error::kOk) err = emit_a64_mem_result_bail(context, index);
   return a64_completed_op_receipt(op, err);
 }
 
@@ -4124,33 +4263,33 @@ static A64OpEmitReceipt emit_a64_intm(A64EmitContext& context,
   return a64_completed_op_receipt(op, err);
 }
 
-// FP memory: jit_fp_read/jit_fp_write(cpu, va, fa, (fmt<<16)|size) for fp reg access
-static A64OpEmitReceipt emit_a64_fp_mem(A64EmitContext& context,
-                                        const A64DecodedOp& op, uint32_t index)
+static asmjit::Error emit_a64_load_f_bits(A64EmitContext& c,
+                                          const asmjit::a64::Gp& x, uint32_t freg);
+static asmjit::Error emit_a64_store_f_bits(A64EmitContext& c,
+                                           const asmjit::a64::Gp& x, uint32_t freg);
+
+// FP-memory helper sequence: jit_fp_read/jit_fp_write(cpu, va, fa, (fmt<<16)|size)
+static asmjit::Error emit_a64_fp_mem_helper_seq(A64EmitContext& context,
+    const A64DecodedOp& op, uint32_t index)
 {
   using RA = CJitEngine::RegAlloc;
   using namespace asmjit;
   a64::Assembler& a = context.assembler;
-
   const bool isload = op.opcode == 0x23 || op.opcode == 0x22
                    || op.opcode == 0x20 || op.opcode == 0x21;
-  if (isload && op.ra == 31) return a64_completed_op_receipt(op);
   const uint32_t fmt = (op.opcode == 0x22 || op.opcode == 0x26) ? 1u
                      : (op.opcode == 0x20 || op.opcode == 0x24) ? 2u
                      : (op.opcode == 0x21 || op.opcode == 0x25) ? 3u : 0u;
   const uint32_t descr = (fmt << 16)
                        | static_cast<uint32_t>((fmt == 1 || fmt == 2) ? 32 : 64);
-
-  Error err = emit_a64_mem_va(context, op, false);
-  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
-  err = emit_a64_helper_call(a, context.offsets, context.helpers, context.regs,
-      context.pal_shadow,
+  Error err = emit_a64_helper_call(a, context.offsets, context.helpers,
+      context.regs, context.pal_shadow,
       isload ? context.helpers.fp_read_helper : context.helpers.fp_write_helper,
       {{A64CallArgKind::kCpu, 0},
        {A64CallArgKind::kHost, RA::kScratch4.id()},
        {A64CallArgKind::kImm32, op.ra},
        {A64CallArgKind::kImm32, descr}});
-  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+  if (err != Error::kOk) return err;
 
   const Label ok = a.new_label();
   err = a.cbz(a64::w0, ok);
@@ -4163,6 +4302,57 @@ static A64OpEmitReceipt emit_a64_fp_mem(A64EmitContext& context,
     err = a.add(RA::kChainCount, RA::kChainCount, imm(index));
   if (err == Error::kOk) err = a.b(context.done);
   if (err == Error::kOk) err = a.bind(ok);
+  return err;
+}
+
+// FP memory. LDT/STT (raw T-format) get the DPC fast path
+static A64OpEmitReceipt emit_a64_fp_mem(A64EmitContext& context,
+                                        const A64DecodedOp& op, uint32_t index)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = context.assembler;
+
+  const bool isload = op.opcode == 0x23 || op.opcode == 0x22
+                   || op.opcode == 0x20 || op.opcode == 0x21;
+  if (isload && op.ra == 31) return a64_completed_op_receipt(op);
+  const bool israw = op.opcode == 0x23 || op.opcode == 0x27;   // LDT / STT
+
+  Error err = emit_a64_mem_va(context, op, false);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+#ifndef JIT_VERIFY
+  if (israw) {
+    if (context.cold == nullptr) return {Error::kInvalidState, op.kind};
+    A64ColdStub stub{};
+    stub.slow = a.new_label();
+    stub.join = a.new_label();
+    stub.op = op;
+    stub.index = index;
+    stub.kind = A64ColdStub::kFpMem;
+
+    err = emit_a64_load_cpu_u8(a, RA::kScratch3.w(), context.offsets.fpen, false);
+    if (err == Error::kOk) err = a.cbz(RA::kScratch3.w(), stub.slow);
+    if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kScratch0, 0);
+    if (err == Error::kOk)
+      err = emit_a64_store_cpu_u64(a, RA::kScratch0, context.offsets.exc_sum);
+    if (err == Error::kOk)
+      err = emit_a64_dpc_probe(context, 64, false, !isload, stub.slow);
+    if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+    if (isload) {
+      err = a.ldr(RA::kScratch2, a64::ptr(RA::kScratch1, RA::kScratch4));
+      if (err == Error::kOk)
+        err = emit_a64_store_f_bits(context, RA::kScratch2, op.ra);
+    } else {
+      err = emit_a64_load_f_bits(context, RA::kScratch2, op.ra);
+      if (err == Error::kOk)
+        err = a.str(RA::kScratch2, a64::ptr(RA::kScratch1, RA::kScratch4));
+    }
+    if (err == Error::kOk) err = a.bind(stub.join);
+    if (err == Error::kOk) context.cold->push_back(stub);
+    return a64_completed_op_receipt(op, err);
+  }
+#endif
+  err = emit_a64_fp_mem_helper_seq(context, op, index);
   return a64_completed_op_receipt(op, err);
 }
 
@@ -5522,6 +5712,8 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   A64EmitContext emit_context{a, m_off, helpers, regalloc, done, b->tag,
                               pal_block, b->pal_shadow};
   emit_context.plan = &plan;
+  std::vector<A64ColdStub> cold_stubs;   // production memop slow paths (cold tail)
+  emit_context.cold = &cold_stubs;
   const A64BodyEmitReceipt body_emission = emit_a64_block_body(
       plan, [&](const A64DecodedOp& op, uint32_t index) {
         emit_op(&a, nullptr, &done, helpers, pal_block, b, op.ins, index,
@@ -5544,6 +5736,18 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   // Every dispatcher or bailout exit converges here while x20 still names state.r[].
   if (emit_a64_sync_guest_pins(a, regalloc) != asmjit::Error::kOk) return;
   if (emit_a64_epilogue(a) != asmjit::Error::kOk) return;
+#ifndef JIT_VERIFY
+  // Cold tail: the outlined memop slow paths .
+  for (const A64ColdStub& s : cold_stubs) {
+    if (a.bind(s.slow) != asmjit::Error::kOk) return;
+    const asmjit::Error serr = s.kind == A64ColdStub::kFpMem
+        ? emit_a64_fp_mem_helper_seq(emit_context, s.op, s.index)
+        : emit_a64_int_mem_helper_seq(emit_context, s.op, s.index,
+                                      s.kind == A64ColdStub::kStore);
+    if (serr != asmjit::Error::kOk) return;
+    if (a.b(s.join) != asmjit::Error::kOk) return;
+  }
+#endif
   if (a.finalize() != asmjit::Error::kOk) return;
 
   const A64PendingPublication pending = prepare_a64_block_publication(
