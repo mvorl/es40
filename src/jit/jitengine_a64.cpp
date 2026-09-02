@@ -42,12 +42,22 @@
 #define ASMJIT_STATIC
 #include <asmjit/a64.h>
 
+// Cross-op DPC reuse state (x64's dpc_live/base/disp)
+struct A64DpcState {
+  bool     live = false;
+  bool     write = false;
+  bool     force_align = false;
+  uint8_t  base = 31;
+  int32_t  disp = 0;
+};
+
 // register convention for both block and trace codegen:
 //   x9-x15 = transient expansion/tail scratch; x19 = CAlphaCPU*, x20 = state.r[] base,
 //   x21 = completed-instruction count, x22 = next guest PC / chain target,
 //   x23-x28 = guest-GPR pin bank.
 struct CJitEngine::RegAlloc {
   static constexpr uint32_t kGuestPinCount = 6;
+  A64DpcState dpc{};
 
   static constexpr asmjit::a64::Gp kArgCpu = asmjit::a64::x0;
   static constexpr asmjit::a64::Gp kArgRegs = asmjit::a64::x1;
@@ -2627,6 +2637,7 @@ struct A64ColdStub {
   A64DecodedOp op{};
   uint32_t index = 0;
   enum Kind : uint8_t { kLoad, kStore, kFpMem } kind = kLoad;
+  bool rederive = false;   // the op left DPC state live: rebuild it after the helper
 };
 
 struct A64EmitContext {
@@ -2642,6 +2653,7 @@ struct A64EmitContext {
   A64OpEmitReceipt receipt{};
   uint32_t receipt_index = UINT32_MAX;
   std::vector<A64ColdStub>* cold = nullptr;   // production memop slow paths
+  A64DpcState prev_dpc{};                     // DPC state entering the current op
 };
 
 // Rc = Ra <logical> op2 -- each of the six is one A64 register-form op. The 8-bit
@@ -3135,64 +3147,122 @@ static asmjit::Error emit_a64_int_mem_helper_seq(A64EmitContext& context,
 }
 
 #ifndef JIT_VERIFY
-// DPC hit probe
-static asmjit::Error emit_a64_dpc_probe(A64EmitContext& c, int size_bits,
-    bool force_align, bool is_write, const asmjit::Label& slow)
+// DPC fast path (mirrors jit_read/jit_write's cache path)
+
+// Loads a slot field into `dst`; slot fields may sit beyond the scaled-imm range.
+static asmjit::Error emit_a64_dpc_field(A64EmitContext& c, const asmjit::a64::Gp& dst,
+                                        uint32_t field_off)
 {
   using RA = CJitEngine::RegAlloc;
   using namespace asmjit;
   a64::Assembler& a = c.assembler;
-  const uint64_t amask = static_cast<uint64_t>(size_bits / 8) - 1;
-  const uint64_t tag_mask = ~uint64_t(0x1fff) | (force_align ? 0 : amask);
-  const uint32_t row = is_write ? c.offsets.dpc_write_row : 0;
+  if (field_off <= 32760 && (field_off & 7u) == 0)
+    return a.ldr(dst, a64::ptr(RA::kScratch6, static_cast<int32_t>(field_off)));
+  Error err = emit_a64_add_offset(a, RA::kScratch2, RA::kScratch6,
+                                  static_cast<int64_t>(field_off), RA::kScratch0);
+  return err != Error::kOk ? err : a.ldr(dst, a64::ptr(RA::kScratch2));
+}
 
-  // slot byte offset = ((va >> 13) & dpc_mask) * dpc_stride -> kScratch3
-  Error err = a.lsr(RA::kScratch3, RA::kScratch4, imm(13));
+// kScratch6 = cpu + ((va >> 13) & dpc_mask) * dpc_stride.
+static asmjit::Error emit_a64_dpc_slot(A64EmitContext& c)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = c.assembler;
+  Error err = a.lsr(RA::kScratch5, RA::kScratch4, imm(13));
   if (err != Error::kOk) return err;
   if (arm::Utils::is_logical_imm(c.offsets.dpc_mask, 64)) {
-    err = a.and_(RA::kScratch3, RA::kScratch3, imm(c.offsets.dpc_mask));
+    err = a.and_(RA::kScratch5, RA::kScratch5, imm(c.offsets.dpc_mask));
   } else {
-    err = emit_a64_mov_u64(a, RA::kScratch5, c.offsets.dpc_mask);
-    if (err == Error::kOk)
-      err = a.and_(RA::kScratch3, RA::kScratch3, RA::kScratch5);
+    err = emit_a64_mov_u64(a, RA::kScratch2, c.offsets.dpc_mask);
+    if (err == Error::kOk) err = a.and_(RA::kScratch5, RA::kScratch5, RA::kScratch2);
   }
   if (err != Error::kOk) return err;
   const uint32_t stride = c.offsets.dpc_stride;
   if (stride != 0 && (stride & (stride - 1)) == 0) {
     uint32_t sh = 0;
     while ((1u << sh) < stride) ++sh;
-    if (sh) err = a.lsl(RA::kScratch3, RA::kScratch3, imm(sh));
+    if (sh) err = a.lsl(RA::kScratch5, RA::kScratch5, imm(sh));
   } else {
-    err = emit_a64_mov_u64(a, RA::kScratch5, stride);
-    if (err == Error::kOk)
-      err = a.mul(RA::kScratch3, RA::kScratch3, RA::kScratch5);
+    err = emit_a64_mov_u64(a, RA::kScratch2, stride);
+    if (err == Error::kOk) err = a.mul(RA::kScratch5, RA::kScratch5, RA::kScratch2);
   }
-  if (err != Error::kOk) return err;
+  return err != Error::kOk ? err : a.add(RA::kScratch6, RA::kCpu, RA::kScratch5);
+}
 
-  err = a.and_(RA::kScratch5, RA::kScratch4, imm(tag_mask));   // wrapped run: encodable
-  if (err == Error::kOk) err = a.add(RA::kScratch6, RA::kCpu, RA::kScratch3);
-  if (err != Error::kOk) return err;
+// Sets flags: (va & tag_mask) == slot.virt_page. Caller branches on eq/ne.
+static asmjit::Error emit_a64_dpc_tag_cmp(A64EmitContext& c, uint64_t tag_mask,
+                                          bool is_write)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = c.assembler;
+  const uint32_t row = is_write ? c.offsets.dpc_write_row : 0;
+  Error err = a.and_(RA::kScratch5, RA::kScratch4, imm(tag_mask));   // wrapped run: encodable
+  if (err == Error::kOk)
+    err = emit_a64_dpc_field(c, RA::kScratch0, row + c.offsets.dpc_virt_page);
+  return err != Error::kOk ? err : a.cmp(RA::kScratch0, RA::kScratch5);
+}
 
-  const uint32_t voff = row + c.offsets.dpc_virt_page;
-  const uint32_t boff = row + c.offsets.dpc_host_bias;
-  if (voff <= 32760 && (voff & 7u) == 0 && boff <= 32760 && (boff & 7u) == 0) {
-    err = a.ldr(RA::kScratch1, a64::ptr(RA::kScratch6, static_cast<int32_t>(voff)));
-    if (err == Error::kOk) err = a.cmp(RA::kScratch1, RA::kScratch5);
-    if (err == Error::kOk) err = a.b_ne(slow);
-    if (err == Error::kOk)
-      err = a.ldr(RA::kScratch1, a64::ptr(RA::kScratch6, static_cast<int32_t>(boff)));
+static asmjit::Error emit_a64_dpc_bias(A64EmitContext& c, bool is_write)
+{
+  const uint32_t row = is_write ? c.offsets.dpc_write_row : 0;
+  return emit_a64_dpc_field(c, CJitEngine::RegAlloc::kScratch3,
+                            row + c.offsets.dpc_host_bias);
+}
+
+static constexpr uint64_t a64_dpc_tag_mask(int size_bits, bool force_align) noexcept
+{
+  const uint64_t amask = static_cast<uint64_t>(size_bits / 8) - 1;
+  return ~uint64_t(0x1fff) | (force_align ? 0 : amask);
+}
+
+// Full probe: VA in kScratch4 -> hit leaves bias in kScratch3, else `slow`.
+static asmjit::Error emit_a64_dpc_probe(A64EmitContext& c, int size_bits,
+    bool force_align, bool is_write, const asmjit::Label& slow)
+{
+  asmjit::Error err = emit_a64_dpc_slot(c);
+  if (err == asmjit::Error::kOk)
+    err = emit_a64_dpc_tag_cmp(c, a64_dpc_tag_mask(size_bits, force_align), is_write);
+  if (err == asmjit::Error::kOk) err = c.assembler.b_ne(slow);
+  return err != asmjit::Error::kOk ? err : emit_a64_dpc_bias(c, is_write);
+}
+
+// Cold-stub epilogue
+static asmjit::Error emit_a64_dpc_rederive(A64EmitContext& c, const A64DecodedOp& op,
+                                           bool force_align, bool is_write)
+{
+  asmjit::Error err = emit_a64_mem_va(c, op, force_align);
+  if (err == asmjit::Error::kOk) err = emit_a64_dpc_slot(c);
+  return err != asmjit::Error::kOk ? err : emit_a64_dpc_bias(c, is_write);
+}
+
+// Memop entry - (x64's reuse_dpc)
+static asmjit::Error emit_a64_dpc_enter(A64EmitContext& c, const A64DecodedOp& op,
+    int size_bits, bool force_align, bool is_write, const asmjit::Label& slow)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = c.assembler;
+  const A64DpcState& prev = c.prev_dpc;
+  const int32_t disp = static_cast<int16_t>(op.ins & 0xffffu);
+  const int32_t delta = disp - prev.disp;
+  const bool reuse = prev.live && prev.write == is_write && prev.base == op.rb
+                  && prev.force_align == force_align
+                  && (!force_align || (delta & 7) == 0);
+  const uint64_t tag_mask = a64_dpc_tag_mask(size_bits, force_align);
+  const Label ready = a.new_label();
+  Error err = Error::kOk;
+  if (reuse) {
+    if (delta != 0)
+      err = emit_a64_add_offset(a, RA::kScratch4, RA::kScratch4, delta, RA::kScratch0);
+    if (err == Error::kOk) err = emit_a64_dpc_tag_cmp(c, tag_mask, is_write);
+    if (err == Error::kOk) err = a.b_eq(ready);   // same page + aligned: keep slot/bias
   } else {
-    err = emit_a64_add_offset(a, RA::kScratch6, RA::kScratch6,
-                              static_cast<int64_t>(voff), RA::kScratch0);
-    if (err == Error::kOk) err = a.ldr(RA::kScratch1, a64::ptr(RA::kScratch6));
-    if (err == Error::kOk) err = a.cmp(RA::kScratch1, RA::kScratch5);
-    if (err == Error::kOk) err = a.b_ne(slow);
-    if (err == Error::kOk)
-      err = emit_a64_add_offset(a, RA::kScratch6, RA::kScratch6,
-          static_cast<int64_t>(boff) - static_cast<int64_t>(voff), RA::kScratch0);
-    if (err == Error::kOk) err = a.ldr(RA::kScratch1, a64::ptr(RA::kScratch6));
+    err = emit_a64_mem_va(c, op, force_align);
   }
-  return err;
+  if (err == Error::kOk) err = emit_a64_dpc_probe(c, size_bits, force_align, is_write, slow);
+  return err != Error::kOk ? err : a.bind(ready);
 }
 #endif
 
@@ -3211,11 +3281,9 @@ static A64OpEmitReceipt emit_a64_mem_load(A64EmitContext& context,
 
   const bool force_align = op.opcode == 0x0b;   // LDQ_U
   a64::Assembler& a = context.assembler;
-  Error err = emit_a64_mem_va(context, op, force_align);
-  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
 #ifdef JIT_VERIFY
-  (void) a;
-  err = emit_a64_int_mem_helper_seq(context, op, index, false);
+  Error err = emit_a64_mem_va(context, op, force_align);
+  if (err == Error::kOk) err = emit_a64_int_mem_helper_seq(context, op, index, false);
 #else
   if (context.cold == nullptr) return {Error::kInvalidState, op.kind};
   A64ColdStub stub{};
@@ -3224,23 +3292,29 @@ static A64OpEmitReceipt emit_a64_mem_load(A64EmitContext& context,
   stub.op = op;
   stub.index = index;
   stub.kind = A64ColdStub::kLoad;
+  stub.rederive = op.ra != op.rb;   // a load replacing its own base can't feed the next VA
 
   const int size_bits = a64_int_mem_size_bits(op.opcode);
-  err = emit_a64_dpc_probe(context, size_bits, force_align, false, stub.slow);
+  Error err = emit_a64_dpc_enter(context, op, size_bits, force_align, false, stub.slow);
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
   const a64::Gp dst = wa.kind == A64GprRouteKind::kPinned
       ? a64::x(static_cast<uint32_t>(wa.host)) : RA::kScratch2;
   switch (size_bits) {   // LDL sign-extends; the BWX forms zero-extend
-    case 64: err = a.ldr(dst, a64::ptr(RA::kScratch1, RA::kScratch4)); break;
-    case 32: err = a.ldrsw(dst, a64::ptr(RA::kScratch1, RA::kScratch4)); break;
-    case 16: err = a.ldrh(dst.w(), a64::ptr(RA::kScratch1, RA::kScratch4)); break;
-    default: err = a.ldrb(dst.w(), a64::ptr(RA::kScratch1, RA::kScratch4)); break;
+    case 64: err = a.ldr(dst, a64::ptr(RA::kScratch3, RA::kScratch4)); break;
+    case 32: err = a.ldrsw(dst, a64::ptr(RA::kScratch3, RA::kScratch4)); break;
+    case 16: err = a.ldrh(dst.w(), a64::ptr(RA::kScratch3, RA::kScratch4)); break;
+    default: err = a.ldrb(dst.w(), a64::ptr(RA::kScratch3, RA::kScratch4)); break;
   }
   if (err == Error::kOk && wa.kind == A64GprRouteKind::kMemory)
     err = a.str(dst, a64::ptr(RA::kRegs,
                 static_cast<int32_t>(wa.slot * sizeof(uint64_t))));
   if (err == Error::kOk) err = a.bind(stub.join);
-  if (err == Error::kOk) context.cold->push_back(stub);
+  if (err == Error::kOk) {
+    context.cold->push_back(stub);
+    context.regs.dpc = {stub.rederive, false, force_align,
+                        static_cast<uint8_t>(op.rb),
+                        static_cast<int32_t>(static_cast<int16_t>(op.ins & 0xffffu))};
+  }
 #endif
   return a64_completed_op_receipt(op, err);
 }
@@ -3253,11 +3327,9 @@ static A64OpEmitReceipt emit_a64_mem_store(A64EmitContext& context,
 
   const bool force_align = op.opcode == 0x0f;   // STQ_U
   a64::Assembler& a = context.assembler;
-  Error err = emit_a64_mem_va(context, op, force_align);
-  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
 #ifdef JIT_VERIFY
-  (void) a;
-  err = emit_a64_int_mem_helper_seq(context, op, index, true);
+  Error err = emit_a64_mem_va(context, op, force_align);
+  if (err == Error::kOk) err = emit_a64_int_mem_helper_seq(context, op, index, true);
 #else
   if (context.cold == nullptr) return {Error::kInvalidState, op.kind};
   A64ColdStub stub{};
@@ -3266,9 +3338,10 @@ static A64OpEmitReceipt emit_a64_mem_store(A64EmitContext& context,
   stub.op = op;
   stub.index = index;
   stub.kind = A64ColdStub::kStore;
+  stub.rederive = true;
 
   const int size_bits = a64_int_mem_size_bits(op.opcode);
-  err = emit_a64_dpc_probe(context, size_bits, force_align, true, stub.slow);
+  Error err = emit_a64_dpc_enter(context, op, size_bits, force_align, true, stub.slow);
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
   // Store value: pin, xzr for R31, or a reload from the regs[] slot.
   const A64GprRoute ra =
@@ -3286,13 +3359,17 @@ static A64OpEmitReceipt emit_a64_mem_store(A64EmitContext& context,
   }
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
   switch (size_bits) {
-    case 64: err = a.str(val, a64::ptr(RA::kScratch1, RA::kScratch4)); break;
-    case 32: err = a.str(val.w(), a64::ptr(RA::kScratch1, RA::kScratch4)); break;
-    case 16: err = a.strh(val.w(), a64::ptr(RA::kScratch1, RA::kScratch4)); break;
-    default: err = a.strb(val.w(), a64::ptr(RA::kScratch1, RA::kScratch4)); break;
+    case 64: err = a.str(val, a64::ptr(RA::kScratch3, RA::kScratch4)); break;
+    case 32: err = a.str(val.w(), a64::ptr(RA::kScratch3, RA::kScratch4)); break;
+    case 16: err = a.strh(val.w(), a64::ptr(RA::kScratch3, RA::kScratch4)); break;
+    default: err = a.strb(val.w(), a64::ptr(RA::kScratch3, RA::kScratch4)); break;
   }
   if (err == Error::kOk) err = a.bind(stub.join);
-  if (err == Error::kOk) context.cold->push_back(stub);
+  if (err == Error::kOk) {
+    context.cold->push_back(stub);
+    context.regs.dpc = {true, true, force_align, static_cast<uint8_t>(op.rb),
+                        static_cast<int32_t>(static_cast<int16_t>(op.ins & 0xffffu))};
+  }
 #endif
   return a64_completed_op_receipt(op, err);
 }
@@ -4339,13 +4416,13 @@ static A64OpEmitReceipt emit_a64_fp_mem(A64EmitContext& context,
       err = emit_a64_dpc_probe(context, 64, false, !isload, stub.slow);
     if (err != Error::kOk) return a64_completed_op_receipt(op, err);
     if (isload) {
-      err = a.ldr(RA::kScratch2, a64::ptr(RA::kScratch1, RA::kScratch4));
+      err = a.ldr(RA::kScratch2, a64::ptr(RA::kScratch3, RA::kScratch4));
       if (err == Error::kOk)
         err = emit_a64_store_f_bits(context, RA::kScratch2, op.ra);
     } else {
       err = emit_a64_load_f_bits(context, RA::kScratch2, op.ra);
       if (err == Error::kOk)
-        err = a.str(RA::kScratch2, a64::ptr(RA::kScratch1, RA::kScratch4));
+        err = a.str(RA::kScratch2, a64::ptr(RA::kScratch3, RA::kScratch4));
     }
     if (err == Error::kOk) err = a.bind(stub.join);
     if (err == Error::kOk) context.cold->push_back(stub);
@@ -4914,7 +4991,7 @@ static A64OpEmitReceipt emit_a64_hw_mfpr(A64EmitContext& context,
   return a64_completed_op_receipt(op, err);
 }
 
-static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
+static A64OpEmitReceipt emit_a64_dispatch_op(A64EmitContext& context,
     const A64DecodedOp& op, uint32_t index)
 {
   if (index >= A64BlockPlan::kMaxOps)
@@ -4990,6 +5067,51 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
       return emit_a64_fsqrt(context, op, index);
   }
   return {};
+}
+
+// Wrap the dispatch with the cross-op DPC-reuse.
+static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
+    const A64DecodedOp& op, uint32_t index)
+{
+  context.prev_dpc = context.regs.dpc;
+  context.regs.dpc.live = false;
+  const A64OpEmitReceipt receipt = emit_a64_dispatch_op(context, op, index);
+  if (receipt.error != asmjit::Error::kOk || !context.prev_dpc.live)
+    return receipt;
+
+  bool preserves = false;
+  uint32_t dest = 31;
+  switch (op.kind) {
+    case A64OpKind::kIntlLogical: case A64OpKind::kIntsShift:
+    case A64OpKind::kIntlCmov:    case A64OpKind::kIntlProbe:
+    case A64OpKind::kFptiInt:     case A64OpKind::kIntm:
+      preserves = true; dest = op.rc; break;
+    case A64OpKind::kLoadAddress:
+      preserves = true; dest = op.ra; break;
+    case A64OpKind::kInta: {   // the scaled forms use kScratch3 (the bias register)
+      const uint32_t f = (op.ins >> 5) & 0x7fu;
+      const bool scaled = f == 0x22 || f == 0x2b || f == 0x02 || f == 0x0b
+                       || f == 0x32 || f == 0x3b || f == 0x12 || f == 0x1b;
+      preserves = !scaled; dest = op.rc; break;
+    }
+    case A64OpKind::kIntsZap:   // register-form selector uses kScratch3
+      preserves = op.is_literal; dest = op.rc; break;
+    case A64OpKind::kMisc: {    // barriers / hints only (the reads call a helper)
+      const uint32_t fn = op.ins & 0xffffu;
+      preserves = fn != 0xC000 && fn != 0xE000 && fn != 0xF000; break;
+    }
+    case A64OpKind::kMemLoad:   // the R31 NOP skip emits nothing (real loads set their own)
+      preserves = op.ra == 31; break;
+    case A64OpKind::kFpMem: {   // likewise the f31 load NOP
+      const bool isload = op.opcode == 0x23 || op.opcode == 0x22
+                       || op.opcode == 0x20 || op.opcode == 0x21;
+      preserves = isload && op.ra == 31; break;
+    }
+    default: break;
+  }
+  if (preserves && dest != context.prev_dpc.base)
+    context.regs.dpc = context.prev_dpc;
+  return receipt;
 }
 
 template<typename EmitOne>
@@ -5745,6 +5867,12 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
         : emit_a64_int_mem_helper_seq(emit_context, s.op, s.index,
                                       s.kind == A64ColdStub::kStore);
     if (serr != asmjit::Error::kOk) return;
+    if (s.rederive) {   // rebuild {va, slot, bias} for a reusing successor
+      const bool fa = s.op.opcode == 0x0b || s.op.opcode == 0x0f;
+      if (emit_a64_dpc_rederive(emit_context, s.op, fa,
+                                s.kind == A64ColdStub::kStore) != asmjit::Error::kOk)
+        return;
+    }
     if (a.b(s.join) != asmjit::Error::kOk) return;
   }
 #endif
