@@ -2353,6 +2353,31 @@ void CSystem::tig_write(u32 a, u8 data)
 }
 
 /**
+ * Run one progress chunk of the SRM self-decompressor on CPU 0. Returns true
+ * once the decompressor has jumped below 0x200000 (into the inflated console).
+ **/
+static bool srm_decomp_chunk(CSystem* sys, CAlphaCPU* cpu)
+{
+#ifdef ES40_JIT
+	(void)sys;
+	for (int i = 0; i < 90000; i++)
+	{
+		cpu->jit_step(2000);
+		if (cpu->get_clean_pc() < U64(0x200000))
+			return true;
+	}
+#else
+	for (int i = 0; i < 1800000; i++)
+	{
+		sys->SingleStep();
+		if (cpu->get_clean_pc() < U64(0x200000))
+			return true;
+	}
+#endif
+	return false;
+}
+
+/**
  * Load ROM contents from file. Decompress cl67srmrom.exe (or the boot
  * firmware partition from flash) into low memory.
  **/
@@ -2397,12 +2422,7 @@ int CSystem::LoadROM()
 		j = 0;
 		while (acCPUs[0]->get_clean_pc() > U64(0x200000))
 		{
-			for (i = 0; i < 1800000; i++)
-			{
-				SingleStep();
-				if (acCPUs[0]->get_clean_pc() < U64(0x200000))
-					break;
-			}
+			srm_decomp_chunk(this, acCPUs[0]);
 			j++;
 			if (j < 50)
 			{
@@ -2465,13 +2485,7 @@ int CSystem::LoadROM()
 		j = 0;
 		while (acCPUs[0]->get_clean_pc() > 0x200000)
 		{
-			for (i = 0; i < 1800000; i++)
-			{
-				SingleStep();
-				if (acCPUs[0]->get_clean_pc() < 0x200000)
-					break;
-			}
-
+			srm_decomp_chunk(this, acCPUs[0]);
 			j++;
 			if (((j % 5) == 0) && (j < 50))
 				printf("%d%%", j * 2);
@@ -2497,6 +2511,12 @@ int CSystem::LoadROM()
 	WriteMem(U64(0x8bc94), 32, 0xe7e00000, 0);  // memory test (00)
 
 	//WriteMem(U64(0xb1158),32,0xe7e00000,0);   // CPU sync?
+#endif
+#ifdef ES40_JIT
+	// The chunked jit_step drive overshoots the decompressor's exit by up to a
+	// dispatch batch and may have compiled blocks over the patch sites above;
+	// drop them so the patched bytes take effect.
+	acCPUs[0]->flush_icache();
 #endif
 	printf("%%SYS-I-ROMLOADED: ROM Image loaded successfully!\n");
 	return 0;

@@ -848,6 +848,13 @@ void CAlphaCPU::jit_note_asn_change()
 }
 
 #ifdef ES40_JIT
+// wrapper: LoadROM's SRM self-decompression drives CPU 0 from the main()
+// just before the CPU threads exist.
+void CAlphaCPU::jit_step(int budget)
+{
+	jit_run(budget);
+}
+
 void CAlphaCPU::jit_flush_blocks()
 {
 	if (m_jit)
