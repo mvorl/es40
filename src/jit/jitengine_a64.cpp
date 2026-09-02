@@ -1214,8 +1214,9 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block) noexce
     case 0x09:   // LDAH: Ra = Rb + (sext(disp16) << 16)
       return {A64OpKind::kLoadAddress, A64TerminatorKind::kNone,
               static_cast<uint8_t>(kA64GprRb), static_cast<uint8_t>(kA64GprRa)};
-    case 0x1c:   // FPTI
-      if (func == 0x00 || func == 0x01 || func == 0x32 || func == 0x33)
+    case 0x1c:   // FPTI. 
+      if (func == 0x00 || func == 0x01 || func == 0x30
+          || func == 0x32 || func == 0x33)
         return {A64OpKind::kFptiInt, A64TerminatorKind::kNone,
                 static_cast<uint8_t>(is_literal ? 0 : kA64GprRb),
                 static_cast<uint8_t>(kA64GprRc)};
@@ -1457,7 +1458,7 @@ static_assert(decode_a64_op(0x73f30013u, false).kind == A64OpKind::kFptiInt
               && classify_a64_op((0x1cu << 26) | (0x32u << 5), false).kind
                   == A64OpKind::kFptiInt       // CTLZ
               && classify_a64_op((0x1cu << 26) | (0x30u << 5), false).kind
-                  == A64OpKind::kUnsupported   // CTPOP: no scalar popcount yet
+                  == A64OpKind::kFptiInt       // CTPOP via NEON (asimd baseline)
               && classify_a64_op((0x1cu << 26) | (31u << 16) | (0x70u << 5) | 3u,
                                  false).kind == A64OpKind::kFtoi   // FTOIT, Rb==31
               && classify_a64_op((0x1cu << 26) | (0x70u << 5) | 3u, false).kind
@@ -3206,6 +3207,7 @@ static A64OpEmitReceipt emit_a64_fpti_int(A64EmitContext& context,
       case 0x33: { r = 64; for (int b = 0; b < 64; ++b)
                      if ((v >> b) & 1) { r = static_cast<uint64_t>(b); break; }
                    break; }
+      case 0x30: { r = 0; for (int b = 0; b < 8; ++b) r += (v >> b) & 1; break; }
       default: return {Error::kInvalidInstruction, op.kind};
     }
     err = emit_a64_mov_u64(a, dst, r);
@@ -3230,6 +3232,12 @@ static A64OpEmitReceipt emit_a64_fpti_int(A64EmitContext& context,
       case 0x32: err = a.clz(dst, src); break;
       case 0x33: err = a.rbit(dst, src);
                  if (err == Error::kOk) err = a.clz(dst, dst); break;
+      case 0x30:   // CTPOP: NEON per-byte count + across-vector add (v16 transient)
+        err = a.fmov(a64::d16, src);
+        if (err == Error::kOk) err = a.cnt(a64::v16.b8(), a64::v16.b8());
+        if (err == Error::kOk) err = a.addv(a64::v16.b(), a64::v16.b8());
+        if (err == Error::kOk) err = a.umov(dst.w(), a64::v16.b(0));
+        break;
       default:   return {Error::kInvalidInstruction, op.kind};
     }
   }
