@@ -205,7 +205,11 @@ enum class A64OpKind : uint8_t {
   kLoadLocked,    // LDL_L/LDQ_L via jit_read_locked (lock monitor lives in the helper)
   kStoreCond,     // STL_C/STQ_C via jit_stc: Ra = success; 0x100 = translation bail
   kInta,          // INTA (0x10) add/sub/scaled/compares/CMPBGE (/V forms interpret)
-  kMisc           // MISC (0x18): barriers -> dmb ish, hints -> nothing, RPCC/RC/RS helper
+  kMisc,          // MISC (0x18): barriers -> dmb ish, hints -> nothing, RPCC/RC/RS helper
+  kCallPal,       // CALL_PAL (0x00): OPCDEC gate, exc_addr, R23/R55 link, vector terminator
+  kHwMtpr,        // HW_MTPR (0x1d): jit_hw_mtpr / no-op IPRs; I_CTL is the redispatch term
+  kHwLd,          // HW_LD (0x1b): physical via jit_read_phys, virtual via jit_read_vpte
+  kHwSt           // HW_ST (0x1f): physical via jit_write_phys
 };
 
 enum class A64TerminatorKind : uint8_t {
@@ -938,6 +942,10 @@ static constexpr bool a64_supported_op_kind(A64OpKind kind) noexcept
     case A64OpKind::kStoreCond:
     case A64OpKind::kInta:
     case A64OpKind::kMisc:
+    case A64OpKind::kCallPal:
+    case A64OpKind::kHwMtpr:
+    case A64OpKind::kHwLd:
+    case A64OpKind::kHwSt:
       return true;
   }
   return false;
@@ -1169,6 +1177,50 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block) noexce
       static_cast<uint8_t>(kA64GprRa | (is_literal ? 0 : kA64GprRb));
 
   switch (opcode) {
+    case 0x00: {   // CALL_PAL, WTINT interprets. HW format: no pin-mask roles.
+      const uint32_t fn = ins & 0x1fffffffu;
+      if (fn == 0x3E) break;
+      if (fn <= 0x3F || (fn >= 0x80 && fn <= 0xBF))
+        return {A64OpKind::kCallPal, A64TerminatorKind::kCallPal, 0, 0};
+      break;
+    }
+    case 0x1b: {   // HW_LD (PALmode)
+      if (!pal_block) break;
+      const uint32_t hwf = (ins >> 12) & 0xfu;
+      if (hwf == 0 || hwf == 1 || hwf == 4 || hwf == 5 || hwf >= 8)
+        return {A64OpKind::kHwLd, A64TerminatorKind::kNone, 0, 0};
+      break;
+    }
+    case 0x1d: {   // HW_MTPR (PALmode)
+      if (!pal_block) break;
+      const uint32_t mfn = (ins >> 8) & 0xffu;
+      if ((mfn & 0xc0u) == 0x40u) {   // AST/FPEN/PPCEN group; bit 0 writes ASN -> interp
+        if (mfn & 1u) break;
+        return {A64OpKind::kHwMtpr, A64TerminatorKind::kNone, 0, 0};
+      }
+      switch (mfn) {
+        case 0x00: case 0x14: case 0x20: case 0x26:   // ITB_TAG, PCTR_CTL, DTB_TAG0, DTB_ALTMODE
+        case 0x29: case 0xa0: case 0xc0:              // DC_CTL, DTB_TAG1, CC
+        case 0x01: case 0x21: case 0xa1:              // ITB_PTE, DTB_PTE0, DTB_PTE1
+        case 0x02: case 0x03: case 0x04:              // ITB_IAP, ITB_IA, ITB_IS
+        case 0x13:                                    // IC_FLUSH (lazy gen bump)
+        case 0x0a: case 0x09: case 0x0b: case 0x0c:   // IER, CM, IER_CM, SIRR
+        case 0x24: case 0xa4:                         // DTB_IS0/1
+        case 0x15: case 0x17: case 0x27:              // CLR_MAP, SLEEP, MM_STAT (no-ops)
+        case 0x2b: case 0x2c: case 0x2d:              // C_DATA, C_SHIFT, M_FIX (no-ops)
+          return {A64OpKind::kHwMtpr, A64TerminatorKind::kNone, 0, 0};
+        case 0x11:                                    // I_CTL: SDE/SPE/VA change -> redispatch
+          return {A64OpKind::kHwMtpr, A64TerminatorKind::kRedispatch, 0, 0};
+      }
+      break;
+    }
+    case 0x1f: {   // HW_ST (PALmode): physical funcs 0/1 only (x64 parity)
+      if (!pal_block) break;
+      const uint32_t hwf = (ins >> 12) & 0xfu;
+      if (hwf == 0 || hwf == 1)
+        return {A64OpKind::kHwSt, A64TerminatorKind::kNone, 0, 0};
+      break;
+    }
     case 0x10:   // INTA: non-trapping add/sub/scaled + compares + CMPBGE
       switch (func) {
         case 0x20: case 0x29: case 0x00: case 0x09:   // ADDQ SUBQ ADDL SUBL
@@ -1633,6 +1685,32 @@ static_assert(classify_a64_op((0x18u << 26) | 0x4000u, false).kind
               && classify_a64_op((0x18u << 26) | 0x1234u, false).kind
                   == A64OpKind::kUnsupported,  // unknown MISC form stays closed
               "A64 MISC classification must split barriers, hints, and state reads");
+//CALL_PAL / HWLD / HWMTPR / HWST).
+static_assert(classify_a64_op(0x86u, false).kind == A64OpKind::kCallPal
+              && classify_a64_op(0x86u, false).terminator == A64TerminatorKind::kCallPal
+              && classify_a64_op(0x3Eu, false).kind
+                  == A64OpKind::kUnsupported   // WTINT: native idle -> interp
+              && classify_a64_op(0x123456u, false).kind
+                  == A64OpKind::kUnsupported   // SRM-special range -> interp
+              && classify_a64_op((0x1bu << 26) | (1u << 12), true).kind
+                  == A64OpKind::kHwLd          // physical quad (the 1.5M form)
+              && classify_a64_op((0x1bu << 26) | (5u << 12), true).kind
+                  == A64OpKind::kHwLd          // virtual quad
+              && classify_a64_op((0x1bu << 26) | (2u << 12), true).kind
+                  == A64OpKind::kUnsupported   // physical locked -> interp
+              && classify_a64_op((0x1bu << 26) | (1u << 12), false).kind
+                  == A64OpKind::kUnsupported   // HW_LD outside PALmode -> interp
+              && classify_a64_op((0x1du << 26) | (0x11u << 8), true).terminator
+                  == A64TerminatorKind::kRedispatch   // I_CTL redispatches
+              && classify_a64_op((0x1du << 26) | (0x27u << 8), true).kind
+                  == A64OpKind::kHwMtpr        // MM_STAT no-op compiles (emits nothing)
+              && classify_a64_op((0x1du << 26) | (0x41u << 8), true).kind
+                  == A64OpKind::kUnsupported   // 0x40-group bit 0 = ASN write -> interp
+              && classify_a64_op((0x1fu << 26) | (1u << 12), true).kind
+                  == A64OpKind::kHwSt
+              && classify_a64_op((0x1fu << 26) | (4u << 12), true).kind
+                  == A64OpKind::kUnsupported,  // HW_ST virtual -> interp
+              "A64 PAL-op classification must mirror the x64 gate lists exactly");
 // HW_RET (R23) 
 static_assert(decode_a64_op(0x7bf7a000u, true).kind == A64OpKind::kJmpIndirect
               && decode_a64_op(0x7bf7a000u, true).terminator == A64TerminatorKind::kIndirect
@@ -2753,14 +2831,18 @@ static A64OpEmitReceipt emit_a64_ints_zap(A64EmitContext& context,
 
 // Memory ops run through jit_read/jit_write only.
 
-// VA = Rb + sext(disp16) into kScratch4 (a valid kHost call-arg source).
+// VA = Rb + sext(disp). Memory format carries a 16-bit displacement.
+// HW_LD/HW_ST forms carry 12 bits.
 static asmjit::Error emit_a64_mem_va(A64EmitContext& context,
-                                     const A64DecodedOp& op, bool force_align)
+                                     const A64DecodedOp& op, bool force_align,
+                                     bool hw_disp12 = false)
 {
   using RA = CJitEngine::RegAlloc;
   using namespace asmjit;
   a64::Assembler& a = context.assembler;
-  const int64_t disp = static_cast<int16_t>(op.ins & 0xffffu);
+  const int64_t disp = hw_disp12
+      ? (static_cast<int32_t>(op.ins << 20) >> 20)
+      : static_cast<int16_t>(op.ins & 0xffffu);
 
   Error err = Error::kOk;
   const A64GprRoute rb =
@@ -3637,6 +3719,201 @@ static A64OpEmitReceipt emit_a64_misc(A64EmitContext& context,
   return a64_completed_op_receipt(op, err);
 }
 
+// CALL_PAL
+static A64OpEmitReceipt emit_a64_call_pal(A64EmitContext& context,
+                                          const A64DecodedOp& op, uint32_t index)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = context.assembler;
+
+  const uint32_t fn = op.ins & 0x1fffffffu;
+  const uint64_t cpc = a64_advance_pc(context.start_pc, index);
+  const uint64_t ret = a64_advance_pc(context.start_pc, index + 1) & ~uint64_t(2);
+  const uint64_t voff = uint64_t(0x2000) | (uint64_t(fn & 0x80) << 5)
+                      | (uint64_t(fn & 0x3f) << 6) | 1u;
+  Error err = Error::kOk;
+
+  const Label do_vector = a.new_label();
+  if (fn < 0x40) {   // privileged: cm != 0 -> OPCDEC (cm is 0..3; low byte suffices)
+    err = emit_a64_load_cpu_u8(a, RA::kScratch3.w(), context.offsets.state_cm, false);
+    if (err == Error::kOk) err = a.cbz(RA::kScratch3.w(), do_vector);
+    if (err == Error::kOk)
+      err = emit_a64_helper_call(a, context.offsets, context.helpers, context.regs,
+          context.pal_shadow, context.helpers.opcdec_helper,
+          {{A64CallArgKind::kCpu, 0}, {A64CallArgKind::kImm64, cpc}});
+    if (err == Error::kOk)   // helper already wrote state.pc; count the CALL_PAL
+      err = a.add(RA::kChainCount, RA::kChainCount, imm(index + 1));
+    if (err == Error::kOk) err = a.b(context.done);
+  }
+  if (err == Error::kOk) err = a.bind(do_vector);
+  if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kScratch0, cpc);
+  if (err == Error::kOk)
+    err = emit_a64_store_cpu_u64(a, RA::kScratch0, context.offsets.exc_addr);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  // Return-address link: R23 or shadow R55 by the LIVE SDE (runtime state).
+  err = emit_a64_load_cpu_u8(a, RA::kScratch3.w(), context.offsets.sde, false);
+  if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kScratch5, ret);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+  {
+    const Label shadow = a.new_label(), linked = a.new_label();
+    err = a.cbnz(RA::kScratch3.w(), shadow);
+    const A64GprRoute r23 =
+        a64_guest_gpr_write_route(context.regs, 23, false);
+    if (err == Error::kOk && r23.kind == A64GprRouteKind::kPinned)
+      err = a.mov(a64::x(static_cast<uint32_t>(r23.host)), RA::kScratch5);
+    if (err == Error::kOk)
+      err = a.str(RA::kScratch5, a64::ptr(RA::kRegs, 23 * 8));
+    if (err == Error::kOk) err = a.b(linked);
+    if (err == Error::kOk) err = a.bind(shadow);
+    if (err == Error::kOk)
+      err = a.str(RA::kScratch5, a64::ptr(RA::kRegs, 55 * 8));
+    if (err == Error::kOk) err = a.bind(linked);
+    if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+  }
+
+  err = emit_a64_load_cpu_u64(a, RA::kScratch1, context.offsets.pal_base);
+  if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kScratch2, voff);
+  if (err == Error::kOk)
+    err = a.orr(RA::kNextPc, RA::kScratch1, RA::kScratch2);
+  return a64_completed_op_receipt(op, err);
+}
+
+// HW_MTPR: jit_hw_mtpr(cpu, mfn, Rb) 
+static A64OpEmitReceipt emit_a64_hw_mtpr(A64EmitContext& context,
+                                         const A64DecodedOp& op)
+{
+  using namespace asmjit;
+  const uint32_t mfn = (op.ins >> 8) & 0xffu;
+  if (mfn == 0x15 || mfn == 0x17 || mfn == 0x27
+   || mfn == 0x2b || mfn == 0x2c || mfn == 0x2d)
+    return a64_completed_op_receipt(op);   // no-op IPRs
+
+  const Error err = emit_a64_helper_call(context.assembler, context.offsets,
+      context.helpers, context.regs, context.pal_shadow,
+      context.helpers.hw_mtpr_helper,
+      {{A64CallArgKind::kCpu, 0},
+       {A64CallArgKind::kImm32, mfn},
+       {A64CallArgKind::kGuestOrZero, op.rb}});
+  return a64_completed_op_receipt(op, err);
+}
+
+// HW_LD
+static A64OpEmitReceipt emit_a64_hw_ld(A64EmitContext& context,
+                                       const A64DecodedOp& op, uint32_t index)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = context.assembler;
+
+  const uint32_t hwf = (op.ins >> 12) & 0xfu;
+  const bool virt = hwf == 4 || hwf == 5 || hwf >= 8;
+  const int size_bits = (hwf & 1u) ? 64 : 32;
+  if (!virt && op.ra == 31)
+    return a64_completed_op_receipt(op);   // physical R31: NOP (virtual forms probe)
+
+  Error err = emit_a64_mem_va(context, op, false, true);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  if (virt) {
+    err = emit_a64_mov_u64(a, RA::kScratch0,
+                           a64_advance_pc(context.start_pc, index));
+    if (err == Error::kOk)
+      err = emit_a64_store_cpu_u64(a, RA::kScratch0,
+                                   context.offsets.state_current_pc);
+    if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+    uint32_t descr = static_cast<uint32_t>(size_bits);
+    if (hwf == 4 || hwf == 5) descr |= 0x100;                       // VPTE
+    if (hwf >= 12) descr |= 0x200;                                  // ALT mode
+    if (hwf == 10 || hwf == 11 || hwf == 14 || hwf == 15) descr |= 0x400;  // WrChk
+    err = emit_a64_helper_call(a, context.offsets, context.helpers, context.regs,
+        context.pal_shadow, context.helpers.read_vpte_helper,
+        {{A64CallArgKind::kCpu, 0},
+         {A64CallArgKind::kHost, RA::kScratch4.id()},
+         {A64CallArgKind::kImm64, (static_cast<uint64_t>(op.ins) << 32) | descr},
+         {A64CallArgKind::kOut, 0}});
+  } else {
+    err = emit_a64_helper_call(a, context.offsets, context.helpers, context.regs,
+        context.pal_shadow, context.helpers.hw_ld_helper,
+        {{A64CallArgKind::kCpu, 0},
+         {A64CallArgKind::kHost, RA::kScratch4.id()},
+         {A64CallArgKind::kImm32, static_cast<uint32_t>(size_bits)},
+         {A64CallArgKind::kOut, 0}});
+  }
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  const Label ok = a.new_label(), retry = a.new_label();
+  err = a.cbz(a64::w0, ok);
+  if (virt) {
+    if (err == Error::kOk) err = a.cmp(a64::w0, imm(2));
+    if (err == Error::kOk) err = a.b_ne(retry);
+    if (err == Error::kOk)   // fault delivered: PAL entry PC stands, count this op
+      err = a.add(RA::kChainCount, RA::kChainCount, imm(index + 1));
+    if (err == Error::kOk) err = a.b(context.done);
+  }
+  if (err == Error::kOk) err = a.bind(retry);
+  if (err == Error::kOk)
+    err = emit_a64_mov_u64(a, RA::kScratch0,
+                           a64_advance_pc(context.start_pc, index));
+  if (err == Error::kOk)
+    err = emit_a64_store_cpu_u64(a, RA::kScratch0, context.offsets.state_pc);
+  if (err == Error::kOk && index != 0)
+    err = a.add(RA::kChainCount, RA::kChainCount, imm(index));
+  if (err == Error::kOk) err = a.b(context.done);
+  if (err == Error::kOk) err = a.bind(ok);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  if (op.ra != 31) {
+    const A64GprRoute wa =
+        a64_guest_gpr_write_route(context.regs, op.ra, context.pal_shadow);
+    if (wa.kind != A64GprRouteKind::kPinned && wa.kind != A64GprRouteKind::kMemory)
+      return {Error::kInvalidArgument, op.kind};
+    const a64::Gp dst = wa.kind == A64GprRouteKind::kPinned
+        ? a64::x(static_cast<uint32_t>(wa.host)) : RA::kScratch2;
+    err = size_bits == 32 ? a.ldrsw(dst, a64_helper_out_mem())
+                          : a.ldr(dst, a64_helper_out_mem());
+    if (err == Error::kOk && wa.kind == A64GprRouteKind::kMemory)
+      err = a.str(dst, a64::ptr(RA::kRegs,
+                  static_cast<int32_t>(wa.slot * sizeof(uint64_t))));
+  }
+  return a64_completed_op_receipt(op, err);
+}
+
+// HW_ST physical: jit_write_phys(cpu, phys, size, Ra)
+static A64OpEmitReceipt emit_a64_hw_st(A64EmitContext& context,
+                                       const A64DecodedOp& op, uint32_t index)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = context.assembler;
+
+  const int size_bits = (((op.ins >> 12) & 0xfu) & 1u) ? 64 : 32;
+  Error err = emit_a64_mem_va(context, op, false, true);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  err = emit_a64_helper_call(a, context.offsets, context.helpers, context.regs,
+      context.pal_shadow, context.helpers.hw_st_helper,
+      {{A64CallArgKind::kCpu, 0},
+       {A64CallArgKind::kHost, RA::kScratch4.id()},
+       {A64CallArgKind::kImm32, static_cast<uint32_t>(size_bits)},
+       {A64CallArgKind::kGuestOrZero, op.ra}});
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  const Label ok = a.new_label();
+  err = a.cbz(a64::w0, ok);
+  if (err == Error::kOk)
+    err = emit_a64_mov_u64(a, RA::kScratch0,
+                           a64_advance_pc(context.start_pc, index));
+  if (err == Error::kOk)
+    err = emit_a64_store_cpu_u64(a, RA::kScratch0, context.offsets.state_pc);
+  if (err == Error::kOk && index != 0)
+    err = a.add(RA::kChainCount, RA::kChainCount, imm(index));
+  if (err == Error::kOk) err = a.b(context.done);
+  if (err == Error::kOk) err = a.bind(ok);
+  return a64_completed_op_receipt(op, err);
+}
+
 // HW_MFPR: jit_hw_mfpr(cpu, ins, cur)
 static A64OpEmitReceipt emit_a64_hw_mfpr(A64EmitContext& context,
                                          const A64DecodedOp& op)
@@ -3713,6 +3990,14 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
       return emit_a64_inta(context, op);
     case A64OpKind::kMisc:
       return emit_a64_misc(context, op);
+    case A64OpKind::kCallPal:
+      return emit_a64_call_pal(context, op, index);
+    case A64OpKind::kHwMtpr:
+      return emit_a64_hw_mtpr(context, op);
+    case A64OpKind::kHwLd:
+      return emit_a64_hw_ld(context, op, index);
+    case A64OpKind::kHwSt:
+      return emit_a64_hw_st(context, op, index);
   }
   return {};
 }
