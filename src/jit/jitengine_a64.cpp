@@ -199,7 +199,9 @@ enum class A64OpKind : uint8_t {
   kJmpIndirect,   // JMP/JSR/RET (0x1a) + HW_RET (0x1e): computed-jump terminators
   kIntlCmov,      // INTL CMOVxx: Rc = cond(Ra) ? op2 : Rc (branch-over-store form)
   kIntlProbe,     // INTL AMASK (Ra==31 form) / IMPLVER: CPU feature constants
-  kIntsByte       // INTS EXT/INS/MSK byte-manip, pos = (op2 & 7) * 8 (cpu_bwx.h)
+  kIntsByte,      // INTS EXT/INS/MSK byte-manip, pos = (op2 & 7) * 8 (cpu_bwx.h)
+  kFptiInt,       // FPTI (0x1c) SEXTB/SEXTW/CTLZ/CTTZ: sxtb/sxth/clz/rbit+clz
+  kFtoi           // FPTI FTOIT/FTOIS: Rc = int view of f[Fa] via jit_ftoi (FEN bail)
 };
 
 enum class A64TerminatorKind : uint8_t {
@@ -926,6 +928,8 @@ static constexpr bool a64_supported_op_kind(A64OpKind kind) noexcept
     case A64OpKind::kIntlCmov:
     case A64OpKind::kIntlProbe:
     case A64OpKind::kIntsByte:
+    case A64OpKind::kFptiInt:
+    case A64OpKind::kFtoi:
       return true;
   }
   return false;
@@ -1210,6 +1214,17 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block) noexce
     case 0x09:   // LDAH: Ra = Rb + (sext(disp16) << 16)
       return {A64OpKind::kLoadAddress, A64TerminatorKind::kNone,
               static_cast<uint8_t>(kA64GprRb), static_cast<uint8_t>(kA64GprRa)};
+    case 0x1c:   // FPTI
+      if (func == 0x00 || func == 0x01 || func == 0x32 || func == 0x33)
+        return {A64OpKind::kFptiInt, A64TerminatorKind::kNone,
+                static_cast<uint8_t>(is_literal ? 0 : kA64GprRb),
+                static_cast<uint8_t>(kA64GprRc)};
+      if (func == 0x70 || func == 0x78) {   // FTOIT / FTOIS: Rb==31, Rc!=31 required
+        if (((ins >> 16) & 0x1fu) != 31 || (ins & 0x1fu) == 31) break;
+        return {A64OpKind::kFtoi, A64TerminatorKind::kNone, 0,
+                static_cast<uint8_t>(kA64GprRc)};
+      }
+      break;
     case 0x19: {   // HW_MFPR (PALmode only)
       if (!pal_block) break;
       const uint32_t fn = (ins >> 8) & 0xffu;
@@ -1431,6 +1446,25 @@ static_assert(decode_a64_op(0x482030c1u, false).kind == A64OpKind::kIntsByte
               && classify_a64_op((0x12u << 26) | (0x00u << 5), false).kind
                   == A64OpKind::kUnsupported,  // func 0x00 is not an INTS op
               "A64 INTS byte-manip classification must cover EXT/INS/MSK L+H forms");
+// SEXTB R19
+static_assert(decode_a64_op(0x73f30013u, false).kind == A64OpKind::kFptiInt
+              && decode_a64_op(0x73f30013u, false).terminator == A64TerminatorKind::kNone
+              && decode_a64_op(0x73f30013u, false).rb == 19
+              && decode_a64_op(0x73f30013u, false).rc == 19
+              && !decode_a64_op(0x73f30013u, false).is_literal
+              && decode_a64_op(0x73f30013u, false).gpr_reads == kA64GprRb
+              && decode_a64_op(0x73f30013u, false).gpr_writes == kA64GprRc
+              && classify_a64_op((0x1cu << 26) | (0x32u << 5), false).kind
+                  == A64OpKind::kFptiInt       // CTLZ
+              && classify_a64_op((0x1cu << 26) | (0x30u << 5), false).kind
+                  == A64OpKind::kUnsupported   // CTPOP: no scalar popcount yet
+              && classify_a64_op((0x1cu << 26) | (31u << 16) | (0x70u << 5) | 3u,
+                                 false).kind == A64OpKind::kFtoi   // FTOIT, Rb==31
+              && classify_a64_op((0x1cu << 26) | (0x70u << 5) | 3u, false).kind
+                  == A64OpKind::kUnsupported   // FTOIT with Rb!=31 -> interp
+              && classify_a64_op((0x1cu << 26) | (31u << 16) | (0x70u << 5) | 31u,
+                                 false).kind == A64OpKind::kUnsupported,  // Rc==31 -> interp
+              "A64 FPTI classification must cover the integer set and gate the FP moves");
 static_assert(decode_a64_op(0xc3402e1eu, true).kind == A64OpKind::kBranchInt
               && decode_a64_op(0xc3402e1eu, true).terminator == A64TerminatorKind::kDirect
               && decode_a64_op(0xc3402e1eu, true).ra == 26
@@ -3138,6 +3172,119 @@ static A64OpEmitReceipt emit_a64_ints_byte(A64EmitContext& context,
   return a64_completed_op_receipt(op, err);
 }
 
+// FPTI integer ops on op2: SEXTB/SEXTW = sxtb/sxth; CTLZ = clz (A64's zero-input = 64 matches Alpha, 
+// unlike x86 BSR); CTTZ -> rbit+clz. Literals fold.
+static A64OpEmitReceipt emit_a64_fpti_int(A64EmitContext& context,
+                                          const A64DecodedOp& op)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+
+  const A64GprRoute wc =
+      a64_guest_gpr_write_route(context.regs, op.rc, context.pal_shadow);
+  if (wc.kind == A64GprRouteKind::kInvalid || wc.kind == A64GprRouteKind::kZero)
+    return {Error::kInvalidArgument, op.kind};
+  if (wc.kind == A64GprRouteKind::kDiscard)
+    return a64_completed_op_receipt(op);
+
+  a64::Assembler& a = context.assembler;
+  Error err = Error::kOk;
+  const uint32_t func = (op.ins >> 5) & 0x7fu;
+  const a64::Gp dst = wc.kind == A64GprRouteKind::kPinned
+      ? a64::x(static_cast<uint32_t>(wc.host)) : RA::kScratch2;
+
+  if (op.is_literal) {
+    const uint64_t v = op.literal;
+    uint64_t r = 0;
+    switch (func) {
+      case 0x00: r = static_cast<uint64_t>(static_cast<int64_t>(
+                     static_cast<int8_t>(static_cast<uint8_t>(v)))); break;
+      case 0x01: r = v; break;   // an 8-bit literal is never word-negative
+      case 0x32: { r = 64; for (int b = 63; b >= 0; --b)
+                     if ((v >> b) & 1) { r = static_cast<uint64_t>(63 - b); break; }
+                   break; }
+      case 0x33: { r = 64; for (int b = 0; b < 64; ++b)
+                     if ((v >> b) & 1) { r = static_cast<uint64_t>(b); break; }
+                   break; }
+      default: return {Error::kInvalidInstruction, op.kind};
+    }
+    err = emit_a64_mov_u64(a, dst, r);
+  } else {
+    const A64GprRoute rb =
+        a64_guest_gpr_read_route(context.regs, op.rb, context.pal_shadow);
+    a64::Gp src = RA::kScratch1;
+    switch (rb.kind) {
+      case A64GprRouteKind::kZero:   src = a64::xzr; break;
+      case A64GprRouteKind::kPinned: src = a64::x(static_cast<uint32_t>(rb.host)); break;
+      case A64GprRouteKind::kMemory:
+        err = a.ldr(RA::kScratch1, a64::ptr(RA::kRegs,
+                    static_cast<int32_t>(rb.slot * sizeof(uint64_t))));
+        break;
+      default:
+        return {Error::kInvalidArgument, op.kind};
+    }
+    if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+    switch (func) {
+      case 0x00: err = a.sxtb(dst, src.w()); break;
+      case 0x01: err = a.sxth(dst, src.w()); break;
+      case 0x32: err = a.clz(dst, src); break;
+      case 0x33: err = a.rbit(dst, src);
+                 if (err == Error::kOk) err = a.clz(dst, dst); break;
+      default:   return {Error::kInvalidInstruction, op.kind};
+    }
+  }
+  if (err == Error::kOk && wc.kind == A64GprRouteKind::kMemory)
+    err = a.str(dst, a64::ptr(RA::kRegs,
+                static_cast<int32_t>(wc.slot * sizeof(uint64_t))));
+  return a64_completed_op_receipt(op, err);
+}
+
+// FTOIT/FTOIS
+static A64OpEmitReceipt emit_a64_ftoi(A64EmitContext& context,
+                                      const A64DecodedOp& op, uint32_t index)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+
+  const A64GprRoute wc =
+      a64_guest_gpr_write_route(context.regs, op.rc, context.pal_shadow);
+  if (wc.kind == A64GprRouteKind::kInvalid || wc.kind == A64GprRouteKind::kZero)
+    return {Error::kInvalidArgument, op.kind};
+  if (wc.kind == A64GprRouteKind::kDiscard)
+    return a64_completed_op_receipt(op);
+
+  a64::Assembler& a = context.assembler;
+  const uint32_t fmt = ((op.ins >> 5) & 0x7fu) == 0x78 ? 1u : 0u;
+  Error err = emit_a64_helper_call(a, context.offsets, context.helpers,
+      context.regs, context.pal_shadow, context.helpers.ftoi_helper,
+      {{A64CallArgKind::kCpu, 0},
+       {A64CallArgKind::kImm32, op.ra},
+       {A64CallArgKind::kImm32, fmt},
+       {A64CallArgKind::kOut, 0}});
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  const Label ok = a.new_label();
+  err = a.cbz(a64::w0, ok);
+  if (err == Error::kOk)
+    err = emit_a64_mov_u64(a, RA::kScratch0,
+                           a64_advance_pc(context.start_pc, index));
+  if (err == Error::kOk)
+    err = emit_a64_store_cpu_u64(a, RA::kScratch0, context.offsets.state_pc);
+  if (err == Error::kOk && index != 0)
+    err = a.add(RA::kChainCount, RA::kChainCount, imm(index));
+  if (err == Error::kOk) err = a.b(context.done);
+  if (err == Error::kOk) err = a.bind(ok);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  const a64::Gp dst = wc.kind == A64GprRouteKind::kPinned
+      ? a64::x(static_cast<uint32_t>(wc.host)) : RA::kScratch2;
+  err = a.ldr(dst, a64_helper_out_mem());
+  if (err == Error::kOk && wc.kind == A64GprRouteKind::kMemory)
+    err = a.str(dst, a64::ptr(RA::kRegs,
+                static_cast<int32_t>(wc.slot * sizeof(uint64_t))));
+  return a64_completed_op_receipt(op, err);
+}
+
 // HW_MFPR: jit_hw_mfpr(cpu, ins, cur)
 static A64OpEmitReceipt emit_a64_hw_mfpr(A64EmitContext& context,
                                          const A64DecodedOp& op)
@@ -3202,6 +3349,10 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
       return emit_a64_intl_probe(context, op);
     case A64OpKind::kIntsByte:
       return emit_a64_ints_byte(context, op);
+    case A64OpKind::kFptiInt:
+      return emit_a64_fpti_int(context, op);
+    case A64OpKind::kFtoi:
+      return emit_a64_ftoi(context, op, index);
   }
   return {};
 }
