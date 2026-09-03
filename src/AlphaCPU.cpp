@@ -488,6 +488,40 @@ void CAlphaCPU::idle_nap()
 }
 
 /**
+ * tick_hold: the instruction-paced envelope (timer.max_instr_per_tick) is full and the
+ * wall-clock interval tick is not due yet.  Hold this CPU thread until the tick time 
+ * or CPU0 must fire comes. 
+ **/
+CAlphaCPU::TickHold CAlphaCPU::tick_hold(u64 period_ns)
+{
+	using namespace std::chrono;
+
+	const u32 seq = tick_seen_seq;
+	auto deadline = steady_clock::now() + nanoseconds(2 * period_ns);   // secondaries: backstop if CPU0 is late
+	if (state.iProcNum == 0)
+	{
+		deadline = next_timer_fire;
+		if (tick_last_fire + nanoseconds(period_ns) > deadline)
+			deadline = tick_last_fire + nanoseconds(period_ns);
+	}
+
+	for (;;)
+	{
+		if (cSystem->get_tick_seq() != seq)
+			return TickHold::Ticked;
+		if (state.check_int || StopThread || cSystem->IsSystemResetRequested())
+			return TickHold::Doorbell;
+		const auto now = steady_clock::now();
+		if (now >= deadline)
+			return state.iProcNum == 0 ? TickHold::Ticked : TickHold::Expired;
+		auto nap = deadline - now;
+		if (nap > microseconds(100))
+			nap = microseconds(100);
+		std::this_thread::sleep_for(nap);
+	}
+}
+
+/**
  * Constructor.
  **/
 CAlphaCPU::CAlphaCPU(CConfigurator* cfg, CSystem* system) : CSystemComponent(cfg, system), mySemaphore(0, 1)
@@ -932,12 +966,16 @@ void CAlphaCPU::jit_run(int budget)
 		}
 	}
 
-	// Instruction-paced interval tick, for EVERY CPU.
+	// Instruction-paced interval-tick envelope, for EVERY CPU.
 	// Gated off for the firmware/VMS PALcode (base 0x8000, and the pre-PAL reset state):
 	// SRM runs under it, and SRM's per-CPU speed calibration counts cycles
 	// per tick in a tight spin. NT and OSF-style PALcodes load at other bases and are paced.
+	// A CPU that retires the envelope before the wall-clock tick is due shall sleep until
+	// the correct tick time, the cpu should never receive early/extra. 
 	// The RPCC/cycle counter is unaffected (it stays wall-clock accurate via sync_cc_wallclock).
-	if (m_max_instr_per_tick && theAli && state.pal_base && state.pal_base != U64(0x8000))
+	const u64 pace_period_ns = (m_max_instr_per_tick && theAli && state.pal_base && state.pal_base != U64(0x8000))
+		? theAli->get_interval_period_ns() : 0;   // 0 = pacing off, or the guest hasn't programmed the tick yet
+	if (pace_period_ns)
 	{
 		const u64 ic = state.instruction_count;
 		const u32 seq = cSystem->get_tick_seq();
@@ -948,11 +986,16 @@ void CAlphaCPU::jit_run(int budget)
 		}
 		else if ((ic - tick_last_icount) >= m_max_instr_per_tick)
 		{
-			cSystem->interrupt(-1, true);
-			tick_seen_seq = cSystem->get_tick_seq();
-			tick_last_icount = ic;
-			if (state.iProcNum == 0)
-				tick_last_fire = now;
+			switch (tick_hold(pace_period_ns))
+			{
+			case TickHold::Ticked:     // landed, or CPU0 fires it on re-entry: the window re-opens there
+				return;
+			case TickHold::Expired:    // secondary, CPU0 late: re-open the window rather than starve
+				tick_last_icount = ic;
+				break;
+			case TickHold::Doorbell:   // interrupt/stop/reset: run this batch, hold again next entry
+				break;
+			}
 		}
 	}
 

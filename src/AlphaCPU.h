@@ -259,6 +259,8 @@ public:
   virtual int   RestoreState(FILE* f);
   void          irq_h(int number, bool assert, int delay);
   void          idle_nap();
+  enum class TickHold { Ticked, Expired, Doorbell };
+  TickHold      tick_hold(u64 period_ns);   // instruction-paced envelope full: wait for the wall-clock tick (jit_run)
   int           get_cpuid();
   void          flush_icache();
 
