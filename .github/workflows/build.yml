@@ -230,7 +230,7 @@ jobs:
           fi
 
       - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: linux-${{ matrix.configuration }}
           path: ${{ runner.temp }}/linux-${{ matrix.configuration }}/
@@ -479,7 +479,7 @@ jobs:
             Copy-Item -Destination $artifactDir -Force
 
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: windows-${{ matrix.configuration }}-x64
           path: ${{ runner.temp }}/windows-${{ matrix.configuration }}/
@@ -530,6 +530,10 @@ jobs:
           if [[ "$configuration" =~ (^|[[:space:]])NN($|[[:space:]]) ]]; then
             is_no_network=1
           fi
+
+          # The runner image preinstalls aws/tap, which Homebrew's tap-trust
+          # check now warns about; nothing here uses it.
+          brew untap aws/tap || true
 
           brew update
           brew install \
@@ -700,7 +704,7 @@ jobs:
           fi
 
       - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: macos-${{ matrix.configuration }}
           path: ${{ runner.temp }}/macos-${{ matrix.configuration }}/
@@ -721,6 +725,10 @@ jobs:
       - name: Install build dependencies
         run: |
           set -euo pipefail
+
+          # The runner image preinstalls aws/tap, which Homebrew's tap-trust
+          # check now warns about; nothing here uses it.
+          brew untap aws/tap || true
 
           brew update
           brew install \
@@ -845,7 +853,7 @@ jobs:
           fi
 
       - name: Upload macOS x86-64 JIT artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: macos-x86_64-Release JIT
           path: ${{ runner.temp }}/macos-x86_64-Release JIT/
