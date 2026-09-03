@@ -355,6 +355,8 @@
 #include "diag_rpcc.h"
 #if defined(_M_X64) || defined(__x86_64__)
 #include <xmmintrin.h>   // _mm_setcsr: pin host MXCSR for the JIT SSE FP path
+#elif defined(_M_ARM64)
+#include <intrin.h>       // _WriteStatusReg: pin host FPCR for the JIT A64 FP path
 #endif
 #include <thread>        // std::this_thread::sleep_for (idle_nap)
 
@@ -385,6 +387,12 @@ void CAlphaCPU::run()
 		// Pin host SSE state for the JIT FP path: round-nearest, exceptions masked,
 		// FTZ/DAZ off (denormal results must materialize to hit the interp-bail).
 		_mm_setcsr(0x1F80);
+#elif defined(_M_ARM64)
+		// Same pin for the A64 JIT FP path: FPCR = 0 is RN, FZ/FZ16 off, DN off, traps masked.
+		_WriteStatusReg(ARM64_FPCR, 0);
+#elif defined(__aarch64__)
+		// Same pin for the A64 JIT FP path: FPCR = 0 is RN, FZ/FZ16 off, DN off, traps masked.
+		{ const unsigned long long fpcr_default = 0; __asm__ __volatile__("msr fpcr, %0" :: "r"(fpcr_default)); }
 #endif
 
 		// Re-base the timing-calibration epoch to when execution actually begins:
