@@ -161,8 +161,7 @@ static_assert(CJitEngine::RegAlloc::kScratch6.id()
 
 namespace {
 
-#ifdef JIT_DISASM
-// Log any asmjit emit failure.
+// Log any asmjit emit failure (stderr, or the disassembly trace file under JIT_DISASM).
 class JitErrorHandler : public asmjit::ErrorHandler {
 public:
   FILE* fp = nullptr;   // disassembly trace file (falls back to stderr if unopened)
@@ -174,7 +173,6 @@ public:
     fprintf(fp ? fp : stderr, "[JIT][CPU%d][EMIT-ERROR] %s\n", cpu_id, message);
   }
 };
-#endif
 
 // dirty kill switches for remote debugging
 static constexpr bool kA64DpcReuse = true;        // reuse {va, slot, bias} across memops
@@ -613,12 +611,11 @@ struct A64LinkProbe {
   uint64_t packed_vgen = 0;
   bool body_present = false;
 
-  constexpr bool matches(uint64_t target, uint64_t current_epoch,
+  // Epoch bumps proactively clear every patched LinkSlot
+  constexpr bool matches(uint64_t target,
                          A64LinkVariantPolicy variant_policy,
                          bool live_pal_shadow) const noexcept {
-    if (!body_present || tag != target
-        || a64_link_epoch(packed_vgen)
-            != (current_epoch & kA64LinkEpochMask))
+    if (!body_present || tag != target)
       return false;
     switch (variant_policy) {
       case A64LinkVariantPolicy::kNone:
@@ -635,13 +632,12 @@ struct A64LinkProbe {
 
 static constexpr int a64_find_link_probe(
     const std::array<A64LinkProbe, CJitEngine::kLinkSlots>& slots,
-    uint64_t target, uint64_t current_epoch,
+    uint64_t target,
     A64LinkVariantPolicy variant_policy,
     bool live_pal_shadow) noexcept
 {
   for (uint32_t i = 0; i < slots.size(); ++i)
-    if (slots[i].matches(target, current_epoch, variant_policy,
-                         live_pal_shadow))
+    if (slots[i].matches(target, variant_policy, live_pal_shadow))
       return static_cast<int>(i);
   return -1;
 }
@@ -877,27 +873,24 @@ static constexpr bool a64_link_probe_contract_probe() noexcept
       && !a64_link_pal_shadow(a64_pack_link_vgen(epoch, false))
       // A native target ignores the packed PAL variant; slot zero misses by tag.
       && a64_find_link_probe(
-          native_slots, native_target, epoch,
+          native_slots, native_target,
           A64LinkVariantPolicy::kNone, false) == 1
-      && a64_find_link_probe(native_slots, 0x4000, epoch,
+      && a64_find_link_probe(native_slots, 0x4000,
           A64LinkVariantPolicy::kNone, false) == -1
       // A PAL target skips the wrong variant in slot zero and reaches slot one.
-      && a64_find_link_probe(pal_slots, pal_target, epoch,
+      && a64_find_link_probe(pal_slots, pal_target,
           A64LinkVariantPolicy::kAlways, true) == 1
-      && a64_find_link_probe(pal_slots, pal_target, epoch,
+      && a64_find_link_probe(pal_slots, pal_target,
           A64LinkVariantPolicy::kAlways, false) == 0
       // HW_RET ignores the variant for a native target, but enforces it in PALmode.
-      && a64_find_link_probe(native_slots, native_target, epoch,
+      && a64_find_link_probe(native_slots, native_target,
           A64LinkVariantPolicy::kIfTargetPal, false) == 1
-      && a64_find_link_probe(pal_slots, pal_target, epoch,
+      && a64_find_link_probe(pal_slots, pal_target,
           A64LinkVariantPolicy::kIfTargetPal, true) == 1
       && a64_find_link_probe(
-          pal_slots, pal_target, epoch + 1,
+          empty_slots, pal_target,
           A64LinkVariantPolicy::kAlways, true) == -1
-      && a64_find_link_probe(
-          empty_slots, pal_target, epoch,
-          A64LinkVariantPolicy::kAlways, true) == -1
-      && a64_find_link_probe(pal_slots, pal_target, epoch,
+      && a64_find_link_probe(pal_slots, pal_target,
           static_cast<A64LinkVariantPolicy>(0xff), true) == -1;
 }
 
@@ -906,7 +899,7 @@ static_assert(a64_direct_chain_contract_probe(),
 static_assert(a64_indirect_chain_contract_probe(),
               "A64 indirect-chain policy must distinguish JMP and PAL-return gates");
 static_assert(a64_link_probe_contract_probe(),
-              "A64 link probes must reject stale, absent, mistagged, and wrong-variant snapshots");
+              "A64 link probes must reject absent, mistagged, and wrong-variant snapshots");
 
 struct A64BlockPlan {
   static constexpr uint32_t kMaxOps = kA64MaxBlockOps;
@@ -1175,6 +1168,7 @@ struct A64PendingPublication {
   uint32_t hash_len = 0;
   bool source_current = false;
   bool layout_complete = false;
+  bool source_raced = false;      // snapshot words no longer match guest memory (transient)
 
   constexpr bool ready() const noexcept {
     return source_current && layout_complete
@@ -1301,6 +1295,8 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block) noexce
       if ((ins & 0x1fu) == 31) break;
       const uint32_t sb = f14 & 0x3fu;
       if (sb == 0x0b || sb == 0x2b) {              // SQRTS / SQRTT
+        if (((ins >> 21) & 0x1fu) != 31) break;    // Ra must be R31 (else DO_SQRT* traps OPCDEC)
+        if (((f14 & 0x600u) == 0x200u) || ((f14 & 0x500u) == 0x400u)) break;  // invalid qualifier -> OPCDEC
         const uint32_t r14 = (f14 >> 6) & 3u;
         if (r14 == 0 || r14 == 1) break;
         if (((f14 >> 8) & 7u) == 7) break;
@@ -1587,8 +1583,10 @@ static A64PendingPublication prepare_a64_block_publication(
   for (uint32_t i = 0; i < pending.prefix_len; ++i) {
     const uint32_t word =
         load_a64_guest_u32(source + static_cast<size_t>(i) * sizeof(uint32_t));
-    if (word != plan.ops[i].ins)
+    if (word != plan.ops[i].ins) {
+      pending.source_raced = true;
       return pending;
+    }
     current_words[i] = word;
   }
 
@@ -1873,10 +1871,14 @@ static_assert(classify_a64_op((0x16u << 26) | (0x0a0u << 5) | 2u, false).kind
                   == A64OpKind::kUnsupported   // CVTTS/SUI -> interp
               && classify_a64_op((0x16u << 26) | (0x02fu << 5) | 2u, false).kind
                   == A64OpKind::kFltiCvt       // CVTTQ/C: chop is valid here
-              && classify_a64_op((0x14u << 26) | (0x0abu << 5) | 3u, false).kind
+              && classify_a64_op((0x14u << 26) | (31u << 21) | (0x0abu << 5) | 3u, false).kind
                   == A64OpKind::kFsqrt         // SQRTT/N
-              && classify_a64_op((0x14u << 26) | (0x02bu << 5) | 3u, false).kind
-                  == A64OpKind::kUnsupported,  // SQRTT/C -> interp
+              && classify_a64_op((0x14u << 26) | (31u << 21) | (0x02bu << 5) | 3u, false).kind
+                  == A64OpKind::kUnsupported   // SQRTT/C -> interp
+              && classify_a64_op((0x14u << 26) | (0x0abu << 5) | 3u, false).kind
+                  == A64OpKind::kUnsupported   // SQRTT with Ra != R31 -> OPCDEC (interp)
+              && classify_a64_op((0x14u << 26) | (31u << 21) | (0x2abu << 5) | 3u, false).kind
+                  == A64OpKind::kUnsupported,  // SQRTT invalid trap qualifier -> OPCDEC (interp)
               "A64 FLTI/SQRT classification must gate every rounding and trap edge");
 // HW_RET (R23) 
 static_assert(decode_a64_op(0x7bf7a000u, true).kind == A64OpKind::kJmpIndirect
@@ -2796,17 +2798,23 @@ static A64OpEmitReceipt emit_a64_branch_int(A64EmitContext& context,
     case 0x39: err = a.cbnz(src, not_taken); break;               // BEQ
     case 0x3d: err = a.cbz(src, not_taken);  break;               // BNE
     case 0x38: err = a.tst(src, imm(1));                          // BLBC
-               if (err == Error::kOk) err = a.b_ne(not_taken); break;
+               if (err == Error::kOk) err = a.b_ne(not_taken);
+               break;
     case 0x3c: err = a.tst(src, imm(1));                          // BLBS
-               if (err == Error::kOk) err = a.b_eq(not_taken); break;
+               if (err == Error::kOk) err = a.b_eq(not_taken);
+               break;
     case 0x3a: err = a.cmp(src, imm(0));                          // BLT
-               if (err == Error::kOk) err = a.b_ge(not_taken); break;
+               if (err == Error::kOk) err = a.b_ge(not_taken);
+               break;
     case 0x3b: err = a.cmp(src, imm(0));                          // BLE
-               if (err == Error::kOk) err = a.b_gt(not_taken); break;
+               if (err == Error::kOk) err = a.b_gt(not_taken);
+               break;
     case 0x3e: err = a.cmp(src, imm(0));                          // BGE
-               if (err == Error::kOk) err = a.b_lt(not_taken); break;
+               if (err == Error::kOk) err = a.b_lt(not_taken);
+               break;
     case 0x3f: err = a.cmp(src, imm(0));                          // BGT
-               if (err == Error::kOk) err = a.b_le(not_taken); break;
+               if (err == Error::kOk) err = a.b_le(not_taken);
+               break;
     default:   return {Error::kInvalidInstruction, op.kind};
   }
   if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kNextPc, target);
@@ -3304,7 +3312,7 @@ static asmjit::Error emit_a64_dpc_enter(A64EmitContext& c, const A64DecodedOp& o
 static A64OpEmitReceipt emit_a64_mem_load(A64EmitContext& context,
                                           const A64DecodedOp& op, uint32_t index)
 {
-  using RA = CJitEngine::RegAlloc;
+  [[maybe_unused]] typedef CJitEngine::RegAlloc RA;
   using namespace asmjit;
 
   const A64GprRoute wa =
@@ -3315,7 +3323,7 @@ static A64OpEmitReceipt emit_a64_mem_load(A64EmitContext& context,
     return a64_completed_op_receipt(op);
 
   const bool force_align = op.opcode == 0x0b;   // LDQ_U
-  a64::Assembler& a = context.assembler;
+  [[maybe_unused]] a64::Assembler& a = context.assembler;
 #ifdef JIT_VERIFY
   Error err = emit_a64_mem_va(context, op, force_align);
   if (err == Error::kOk) err = emit_a64_int_mem_helper_seq(context, op, index, false);
@@ -3360,11 +3368,11 @@ static A64OpEmitReceipt emit_a64_mem_load(A64EmitContext& context,
 static A64OpEmitReceipt emit_a64_mem_store(A64EmitContext& context,
                                            const A64DecodedOp& op, uint32_t index)
 {
-  using RA = CJitEngine::RegAlloc;
+  [[maybe_unused]] typedef CJitEngine::RegAlloc RA;
   using namespace asmjit;
 
   const bool force_align = op.opcode == 0x0f;   // STQ_U
-  a64::Assembler& a = context.assembler;
+  [[maybe_unused]] a64::Assembler& a = context.assembler;
 #ifdef JIT_VERIFY
   Error err = emit_a64_mem_va(context, op, force_align);
   if (err == Error::kOk) err = emit_a64_int_mem_helper_seq(context, op, index, true);
@@ -3528,17 +3536,23 @@ static A64OpEmitReceipt emit_a64_intl_cmov(A64EmitContext& context,
       case 0x24: err = a.cbnz(src, skip); break;                  // CMOVEQ
       case 0x26: err = a.cbz(src, skip);  break;                  // CMOVNE
       case 0x14: err = a.tst(src, imm(1));                        // CMOVLBS
-                 if (err == Error::kOk) err = a.b_eq(skip); break;
+                 if (err == Error::kOk) err = a.b_eq(skip);
+                 break;
       case 0x16: err = a.tst(src, imm(1));                        // CMOVLBC
-                 if (err == Error::kOk) err = a.b_ne(skip); break;
+                 if (err == Error::kOk) err = a.b_ne(skip);
+                 break;
       case 0x44: err = a.cmp(src, imm(0));                        // CMOVLT
-                 if (err == Error::kOk) err = a.b_ge(skip); break;
+                 if (err == Error::kOk) err = a.b_ge(skip);
+                 break;
       case 0x46: err = a.cmp(src, imm(0));                        // CMOVGE
-                 if (err == Error::kOk) err = a.b_lt(skip); break;
+                 if (err == Error::kOk) err = a.b_lt(skip);
+                 break;
       case 0x64: err = a.cmp(src, imm(0));                        // CMOVLE
-                 if (err == Error::kOk) err = a.b_gt(skip); break;
+                 if (err == Error::kOk) err = a.b_gt(skip);
+                 break;
       case 0x66: err = a.cmp(src, imm(0));                        // CMOVGT
-                 if (err == Error::kOk) err = a.b_le(skip); break;
+                 if (err == Error::kOk) err = a.b_le(skip);
+                 break;
       default:   return {Error::kInvalidInstruction, op.kind};
     }
     if (err != Error::kOk) return a64_completed_op_receipt(op, err);
@@ -3826,7 +3840,8 @@ static A64OpEmitReceipt emit_a64_fpti_int(A64EmitContext& context,
       case 0x01: err = a.sxth(dst, src.w()); break;
       case 0x32: err = a.clz(dst, src); break;
       case 0x33: err = a.rbit(dst, src);
-                 if (err == Error::kOk) err = a.clz(dst, dst); break;
+                 if (err == Error::kOk) err = a.clz(dst, dst);
+                 break;
       case 0x30:   // CTPOP: NEON per-byte count + across-vector add (v16 transient)
         err = a.fmov(a64::d16, src);
         if (err == Error::kOk) err = a.cnt(a64::v16.b8(), a64::v16.b8());
@@ -3993,11 +4008,15 @@ static A64OpEmitReceipt emit_a64_store_cond(A64EmitContext& context,
   if (err == Error::kOk) err = a.bind(nobail);
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
 
-  if (wa.kind == A64GprRouteKind::kPinned)
+  if (wa.kind == A64GprRouteKind::kPinned) {
     err = a.mov(a64::x(static_cast<uint32_t>(wa.host)), a64::x0);
-  else
-    err = a.str(a64::x0, a64::ptr(RA::kRegs,
-                static_cast<int32_t>(wa.slot * sizeof(uint64_t))));
+  } else {   // route the result through the mirror so the next op can forward it (x64 parity)
+    err = a.mov(RA::kScratch2, a64::x0);
+    if (err == Error::kOk)
+      err = a.str(RA::kScratch2, a64::ptr(RA::kRegs,
+                  static_cast<int32_t>(wa.slot * sizeof(uint64_t))));
+    if (err == Error::kOk) context.regs.fwd_reg = static_cast<int8_t>(op.ra);
+  }
   return a64_completed_op_receipt(op, err);
 }
 
@@ -4065,22 +4084,24 @@ static A64OpEmitReceipt emit_a64_inta(A64EmitContext& context,
       : func == 0x4d ? arm::CondCode::kLT
       : func == 0x6d ? arm::CondCode::kLE
       : func == 0x1d ? arm::CondCode::kLO : arm::CondCode::kLS;
+    bool folded = false;
     if (op.is_literal) {
       if (op1.id() == a64::xzr.id()) {           // 0 cmp lit folds (lit is 0..255)
         const uint64_t r =
             func == 0x2d ? uint64_t(op.literal == 0)      // 0 == lit
           : func == 0x6d || func == 0x3d ? uint64_t(1)    // 0 <= lit always (lit >= 0)
           : uint64_t(op.literal != 0);                    // 0 < lit (signed or unsigned)
-        return a64_completed_op_receipt(op,
-            emit_a64_mov_u64(a, dst, r));
+        err = emit_a64_mov_u64(a, dst, r);       // fall through: an unpinned Rc still needs the slot store
+        folded = true;
+      } else {
+        err = a.cmp(op1, imm(op.literal));
       }
-      err = a.cmp(op1, imm(op.literal));
     } else {
       const a64::Gp op2 = source(op.rb, RA::kScratch1);
       if (err != Error::kOk) return a64_completed_op_receipt(op, err);
       err = a.cmp(op1, op2);                     // register form: ZR-safe both sides
     }
-    if (err == Error::kOk)
+    if (err == Error::kOk && !folded)
       err = a.cset(dst, imm(static_cast<uint32_t>(cond)));
   } else {                                       // add/sub, optionally scaled, Q or L
     const bool is_sub = func == 0x29 || func == 0x09 || func == 0x2b
@@ -4399,7 +4420,8 @@ static A64OpEmitReceipt emit_a64_intm(A64EmitContext& context,
   switch ((op.ins >> 5) & 0x7fu) {
     case 0x20: err = a.mul(dst, op1, op2); break;                  // MULQ
     case 0x00: err = a.mul(dst, op1, op2);                         // MULL
-               if (err == Error::kOk) err = a.sxtw(dst, dst.w()); break;
+               if (err == Error::kOk) err = a.sxtw(dst, dst.w());
+               break;
     case 0x30: err = a.umulh(dst, op1, op2); break;                // UMULH
     default:   err = Error::kInvalidInstruction; break;
   }
@@ -4457,14 +4479,14 @@ static asmjit::Error emit_a64_fp_mem_helper_seq(A64EmitContext& context,
 static A64OpEmitReceipt emit_a64_fp_mem(A64EmitContext& context,
                                         const A64DecodedOp& op, uint32_t index)
 {
-  using RA = CJitEngine::RegAlloc;
+  [[maybe_unused]] typedef CJitEngine::RegAlloc RA;
   using namespace asmjit;
-  a64::Assembler& a = context.assembler;
+  [[maybe_unused]] a64::Assembler& a = context.assembler;
 
   const bool isload = op.opcode == 0x23 || op.opcode == 0x22
                    || op.opcode == 0x20 || op.opcode == 0x21;
   if (isload && op.ra == 31) return a64_completed_op_receipt(op);
-  const bool israw = op.opcode == 0x23 || op.opcode == 0x27;   // LDT / STT
+  [[maybe_unused]] const bool israw = op.opcode == 0x23 || op.opcode == 0x27;   // LDT / STT
 
   Error err = emit_a64_mem_va(context, op, false);
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
@@ -4633,13 +4655,17 @@ static A64OpEmitReceipt emit_a64_branch_fp(A64EmitContext& context,
     case 0x31: err = a.cbnz(RA::kScratch1, skip); break;          // FBEQ
     case 0x35: err = a.cbz(RA::kScratch1, skip);  break;          // FBNE
     case 0x32: err = a.cmp(RA::kScratch1, imm(0));                // FBLT
-               if (err == Error::kOk) err = a.b_ge(skip); break;
+               if (err == Error::kOk) err = a.b_ge(skip);
+               break;
     case 0x36: err = a.cmp(RA::kScratch1, imm(0));                // FBGE
-               if (err == Error::kOk) err = a.b_lt(skip); break;
+               if (err == Error::kOk) err = a.b_lt(skip);
+               break;
     case 0x33: err = a.cmp(RA::kScratch1, imm(0));                // FBLE
-               if (err == Error::kOk) err = a.b_gt(skip); break;
+               if (err == Error::kOk) err = a.b_gt(skip);
+               break;
     case 0x37: err = a.cmp(RA::kScratch1, imm(0));                // FBGT
-               if (err == Error::kOk) err = a.b_le(skip); break;
+               if (err == Error::kOk) err = a.b_le(skip);
+               break;
     default:   return {Error::kInvalidInstruction, op.kind};
   }
   if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kNextPc, target);
@@ -4983,8 +5009,15 @@ static A64OpEmitReceipt emit_a64_flti_cvt(A64EmitContext& context,
     }
     if (err == Error::kOk) err = a.cmp(RA::kScratch5, RA::kScratch1);
     if (err == Error::kOk) {
+      // Round-trip exact goes no INE.
+      // A64 FCVTZS saturates, INT64_MAX round-trips equal even though inexact. 
+      // X64 CVTTSD2SI redurns indefinite instead, so fix...
+      const Label fgate = a.new_label();
       const Label fdone = a.new_label();
-      err = a.b_eq(fdone);                                // round-trip exact
+      err = a.b_ne(fgate);
+      if (err == Error::kOk) err = a.eor(RA::kScratch5, RA::kScratch1, Imm(0x7fffffffffffffffull));
+      if (err == Error::kOk) err = a.cbnz(RA::kScratch5, fdone);
+      if (err == Error::kOk) err = a.bind(fgate);
       if (err == Error::kOk) err = emit_a64_fp_ine_gate(context, bail);
       if (err == Error::kOk) err = a.bind(fdone);
     }
@@ -5153,10 +5186,27 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
   const A64OpEmitReceipt receipt = emit_a64_dispatch_op(context, op, index);
   if (receipt.error != asmjit::Error::kOk) return receipt;
 
+  // Ops whose emitter returns before emitting anything
+  bool emits_nothing = false;
+  switch (op.kind) {
+    case A64OpKind::kIntlLogical: case A64OpKind::kIntsShift: case A64OpKind::kIntsZap:
+    case A64OpKind::kIntlCmov:    case A64OpKind::kIntlProbe: case A64OpKind::kIntsByte:
+    case A64OpKind::kFptiInt:     case A64OpKind::kIntm:      case A64OpKind::kInta:
+      emits_nothing = op.rc == 31; break;
+    case A64OpKind::kLoadAddress:
+      emits_nothing = op.ra == 31; break;
+    case A64OpKind::kHwMtpr: {
+      const uint32_t mfn = (op.ins >> 8) & 0xffu;
+      emits_nothing = mfn == 0x15 || mfn == 0x17 || mfn == 0x27
+                   || mfn == 0x2b || mfn == 0x2c || mfn == 0x2d; break;
+    }
+    default: break;
+  }
+
   // Value forwarding for ops that don't write scratch 2 or the mirror register
   if (context.prev_fwd >= 0 && context.regs.fwd_reg < 0) {
-    bool keep = false;
-    switch (op.kind) {
+    bool keep = emits_nothing;
+    if (!emits_nothing) switch (op.kind) {
       case A64OpKind::kMemStore: {
 #ifndef JIT_VERIFY
         // The fast path routes an unpinned store value through x11. Clobbers unless forwarded. 
@@ -5182,9 +5232,9 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
   }
   if (!context.prev_dpc.live) return receipt;
 
-  bool preserves = false;
+  bool preserves = emits_nothing;
   uint32_t dest = 31;
-  switch (op.kind) {
+  if (!emits_nothing) switch (op.kind) {
     case A64OpKind::kIntlLogical: case A64OpKind::kIntsShift:
     case A64OpKind::kIntlCmov:    case A64OpKind::kIntlProbe:
     case A64OpKind::kFptiInt:     case A64OpKind::kIntm:
@@ -5308,61 +5358,36 @@ static asmjit::Error emit_a64_source_pal_guard(asmjit::a64::Assembler& a,
 // Probe snapshots owned by the source block.
 static asmjit::Error emit_a64_link_slots_probe(asmjit::a64::Assembler& a,
     const CJitEngine::JitOffsets& offsets, const CJitEngine::LinkSlot* slots,
-    const uint64_t* current_epoch, A64LinkVariantPolicy variant_policy,
-    const asmjit::Label& miss)
+    A64LinkVariantPolicy variant_policy, const asmjit::Label& miss)
 {
   using RA = CJitEngine::RegAlloc;
   using namespace asmjit;
   using namespace asmjit::a64;
 
-  if (slots == nullptr || current_epoch == nullptr
+  if (slots == nullptr
       || (variant_policy != A64LinkVariantPolicy::kNone
           && variant_policy != A64LinkVariantPolicy::kAlways
           && variant_policy != A64LinkVariantPolicy::kIfTargetPal))
     return Error::kInvalidArgument;
 
-  Error err = emit_a64_mov_u64(a, RA::kScratch5,
-      reinterpret_cast<uintptr_t>(current_epoch));
-  if (err != Error::kOk) return err;
-  err = a.ldr(RA::kScratch5, ptr(RA::kScratch5));
-  if (err != Error::kOk) return err;
-  err = a.and_(RA::kScratch5, RA::kScratch5, imm(kA64LinkEpochMask));
-  if (err != Error::kOk) return err;
-
-  err = emit_a64_mov_u64(a, RA::kScratch1,
-                         reinterpret_cast<uintptr_t>(slots));
+  Error err = emit_a64_mov_u64(a, RA::kScratch1,
+                               reinterpret_cast<uintptr_t>(slots));
   if (err != Error::kOk) return err;
   if (variant_policy != A64LinkVariantPolicy::kNone) {
     err = emit_a64_load_cpu_u8(a, RA::kScratch6.w(), offsets.sde, false);
     if (err != Error::kOk) return err;
   }
 
+  // Epoch changes proactively clear every patched LinkSlot 
   for (uint32_t slot = 0; slot < CJitEngine::kLinkSlots; ++slot) {
     const Label next = slot + 1 < CJitEngine::kLinkSlots
         ? a.new_label() : miss;
     const int32_t base = static_cast<int32_t>(slot * sizeof(CJitEngine::LinkSlot));
 
-    // A null body always misses.
-    err = a.ldr(RA::kScratch4,
-                ptr(RA::kScratch1, base + offsetof(CJitEngine::LinkSlot, body)));
-    if (err != Error::kOk) return err;
-    err = a.cbz(RA::kScratch4, next);
-    if (err != Error::kOk) return err;
-
     err = a.ldr(RA::kScratch2,
                 ptr(RA::kScratch1, base + offsetof(CJitEngine::LinkSlot, tag)));
     if (err != Error::kOk) return err;
     err = a.cmp(RA::kScratch2, RA::kNextPc);
-    if (err != Error::kOk) return err;
-    err = a.b_ne(next);
-    if (err != Error::kOk) return err;
-
-    err = a.ldr(RA::kScratch3,
-                ptr(RA::kScratch1, base + offsetof(CJitEngine::LinkSlot, vgen)));
-    if (err != Error::kOk) return err;
-    err = a.and_(RA::kScratch4, RA::kScratch3, imm(kA64LinkEpochMask));
-    if (err != Error::kOk) return err;
-    err = a.cmp(RA::kScratch4, RA::kScratch5);
     if (err != Error::kOk) return err;
     err = a.b_ne(next);
     if (err != Error::kOk) return err;
@@ -5376,6 +5401,10 @@ static asmjit::Error emit_a64_link_slots_probe(asmjit::a64::Assembler& a,
       if (err != Error::kOk) return err;
     }
     if (variant_policy != A64LinkVariantPolicy::kNone) {
+      // Match the register-bank variant recorded in this link against the live SDE state.
+      err = a.ldr(RA::kScratch3,
+                  ptr(RA::kScratch1, base + offsetof(CJitEngine::LinkSlot, vgen)));
+      if (err != Error::kOk) return err;
       err = a.lsr(RA::kScratch4, RA::kScratch3, 63);
       if (err != Error::kOk) return err;
       err = a.cmp(RA::kScratch4.w(), RA::kScratch6.w());
@@ -5391,8 +5420,6 @@ static asmjit::Error emit_a64_link_slots_probe(asmjit::a64::Assembler& a,
     err = a.ldr(RA::kScratch4,
                 ptr(RA::kScratch1, base + offsetof(CJitEngine::LinkSlot, body)));
     if (err != Error::kOk) return err;
-    err = a.cbz(RA::kScratch4, next);
-    if (err != Error::kOk) return err;
     err = a.br(RA::kScratch4);
     if (err != Error::kOk) return err;
     if (slot + 1 < CJitEngine::kLinkSlots) {
@@ -5406,13 +5433,13 @@ static asmjit::Error emit_a64_link_slots_probe(asmjit::a64::Assembler& a,
 static asmjit::Error emit_a64_direct_chain_tail(asmjit::a64::Assembler& a,
     const CJitEngine::JitOffsets& offsets,
     const A64DirectChainContract& contract, CJitEngine::LinkSlot* slots,
-    const uint64_t* current_epoch, uint64_t source_tag,
+    uint64_t source_tag,
     const asmjit::Label& body, const asmjit::Label& done)
 {
   using RA = CJitEngine::RegAlloc;
   using namespace asmjit;
   if (!contract.valid() || !contract.eligible()
-      || slots == nullptr || current_epoch == nullptr)
+      || slots == nullptr)
     return Error::kInvalidArgument;
 
   Error err = a.add(RA::kChainCount, RA::kChainCount,
@@ -5424,6 +5451,7 @@ static asmjit::Error emit_a64_direct_chain_tail(asmjit::a64::Assembler& a,
   }
 
 #ifdef JIT_VERIFY
+  (void) source_tag; (void) body;   // no chain in the verify shape
   if (!contract.publish_pc_before_probe) {
     err = emit_a64_store_cpu_u64(a, RA::kNextPc, offsets.state_pc);
     if (err != Error::kOk) return err;
@@ -5455,7 +5483,7 @@ static asmjit::Error emit_a64_direct_chain_tail(asmjit::a64::Assembler& a,
 
   const A64LinkVariantPolicy variant = contract.target_pal_guard
       ? A64LinkVariantPolicy::kAlways : A64LinkVariantPolicy::kNone;
-  err = emit_a64_link_slots_probe(a, offsets, slots, current_epoch,
+  err = emit_a64_link_slots_probe(a, offsets, slots,
                                   variant, miss);
   if (err != Error::kOk) return err;
 
@@ -5481,12 +5509,12 @@ static asmjit::Error emit_a64_indirect_chain_tail(asmjit::a64::Assembler& a,
     const CJitEngine::JitOffsets& offsets, const CJitEngine::HelperSet& helpers,
     const CJitEngine::RegAlloc& regs,
     const A64IndirectChainContract& contract, CJitEngine::LinkSlot* slots,
-    const uint64_t* current_epoch, const asmjit::Label& done)
+    const asmjit::Label& done)
 {
   using RA = CJitEngine::RegAlloc;
   using namespace asmjit;
   if (!contract.valid() || !contract.eligible()
-      || slots == nullptr || current_epoch == nullptr)
+      || slots == nullptr)
     return Error::kInvalidArgument;
 #ifndef JIT_VERIFY
   if (helpers.indirect_helper == nullptr) return Error::kInvalidArgument;
@@ -5513,7 +5541,7 @@ static asmjit::Error emit_a64_indirect_chain_tail(asmjit::a64::Assembler& a,
   const Label resolver = a.new_label();
   err = emit_a64_chain_gate(a, offsets, contract.gate, bailout);
   if (err != Error::kOk) return err;
-  err = emit_a64_link_slots_probe(a, offsets, slots, current_epoch,
+  err = emit_a64_link_slots_probe(a, offsets, slots,
                                   contract.target_variant, resolver);
   if (err != Error::kOk) return err;
 
@@ -5686,7 +5714,6 @@ static bool a64_validate_tail_emitters(const asmjit::Environment& environment,
   CJitEngine::JitBlock block{};
   block.tag = 0x1001;
   block.pal_shadow = true;
-  uint64_t epoch = 0x12345678;
   CJitEngine::HelperSet helpers{};
   helpers.indirect_helper = reinterpret_cast<void*>(uintptr_t(1));
   const CJitEngine::RegAlloc regs = make_a64_block_regalloc();
@@ -5719,7 +5746,7 @@ static bool a64_validate_tail_emitters(const asmjit::Environment& environment,
     const A64DirectChainContract contract =
         plan_a64_direct_chain(exit, terminator_ins, pal_block, pal_shadow);
     if (emit_a64_direct_chain_tail(a, offsets, contract, &block.link[0],
-          &epoch, block.tag, body, done) != Error::kOk)
+          block.tag, body, done) != Error::kOk)
       return false;
     return finish(code, a, done);
   };
@@ -5741,7 +5768,7 @@ static bool a64_validate_tail_emitters(const asmjit::Environment& environment,
     const A64IndirectChainContract contract = plan_a64_indirect_chain(
         exit, opcode << 26, pal_block, pal_shadow);
     if (emit_a64_indirect_chain_tail(a, offsets, helpers, regs, contract,
-          &block.link[0], &epoch, done) != Error::kOk)
+          &block.link[0], done) != Error::kOk)
       return false;
     return finish(code, a, done);
   };
@@ -5888,13 +5915,18 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 
   // Build a complete fixed frame.
   asmjit::CodeHolder code;
-  if (code.init(rt->environment(), rt->cpu_features()) != asmjit::Error::kOk) return;
+  if (code.init(rt->environment(), rt->cpu_features()) != asmjit::Error::kOk) {
+    m_reclaim_pending = true;   // init only fails on OOM here: free code at the next
+    b->compiled = false;        // safe point and retry, don't latch the block interpreted
+    return;
+  }
+  JitErrorHandler eh; eh.cpu_id = m_cpu_id;
+  code.set_error_handler(&eh);
 #ifdef JIT_DISASM
-  // capture this block's disassembly and trap any emit failure 
+  // capture this block's disassembly; emit failures go to the trace file
+  eh.fp = m_disasm_fp;
   asmjit::StringLogger logger;
   code.set_logger(&logger);
-  JitErrorHandler eh; eh.cpu_id = m_cpu_id; eh.fp = m_disasm_fp;
-  code.set_error_handler(&eh);
 #endif
 
   asmjit::a64::Assembler a;
@@ -5950,9 +5982,9 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 
   const asmjit::Error tail_err = chain.eligible()
       ? emit_a64_direct_chain_tail(a, m_off, chain, &b->link[0],
-                                  &m_vgen_cur, b->tag, body, done)
+                                  b->tag, body, done)
       : emit_a64_indirect_chain_tail(a, m_off, helpers, regalloc, indirect,
-                                    &b->link[0], &m_vgen_cur, done);
+                                    &b->link[0], done);
   if (tail_err != asmjit::Error::kOk) return;
 
   if (a.bind(done) != asmjit::Error::kOk) return;
@@ -5990,7 +6022,11 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 
   const A64PendingPublication pending = prepare_a64_block_publication(
       *b, plan, exit, body_emission, dram, dram_size, code, body, m_code_bytes);
-  if (!pending.ready()) return;
+  if (!pending.ready()) {
+    // A source race is transient 
+    if (pending.source_raced) b->compiled = false;
+    return;
+  }
   assert(pending.body_off != 0);  // Chained entry must remain past the cold prologue.
 
 #ifdef JIT_DISASM
@@ -6002,16 +6038,29 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
             (unsigned long long) pending.code_size, logger.data());
     fflush(out);   // per-block flush: preserve the trace if JIT'd code later crashes
   }
-  if (eh.failed) return;   // emit error already reported -- don't ship a broken block
 #endif
+  if (eh.failed) return;   // emit error already reported so don't ship a broken block
 
   JitFn fn = nullptr;
-  if (rt->add(&fn, &code) != asmjit::Error::kOk) return;
-
+  const asmjit::Error add_err = rt->add(&fn, &code);
+  if (add_err != asmjit::Error::kOk) {
+    if (add_err == asmjit::Error::kOutOfMemory) {   // transient: reclaim at the next safe point, then retry
+      m_reclaim_pending = true;
+      b->compiled = false;
+    }                                                // any other add() error is deterministic -> stays terminal
+    printf("[JIT][CPU%d] JitRuntime::add failed (err=%u%s) for block @ %016llx\n", m_cpu_id,
+           (unsigned) add_err, add_err == asmjit::Error::kOutOfMemory ? ", OOM: will reclaim+retry" : ", terminal",
+           (unsigned long long) (b->tag & ~(uint64_t) 1));
+    return;
+  }
+  // add() can allocate/copy for long enough that another CPU modifies the guest source.
+  // Never publish old code with a hash of new bytes.
+  if (eh.failed) { (void)rt->release(fn); return; }   // late deterministic emit error -> terminal
   const A64PendingPublication committed = prepare_a64_block_publication(
       *b, plan, exit, body_emission, dram, dram_size, code, body, m_code_bytes);
   if (!committed.ready()) {
     (void)rt->release(fn);
+    if (committed.source_raced) b->compiled = false;   // post-add source race -> retry
     return;
   }
 
