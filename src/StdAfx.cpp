@@ -1,8 +1,7 @@
-/* ES40 emulator.
+/* ES40 Emulator.
  * Copyright (C) 2007 by Camiel Vanderhoeven
  *
- * Website: www.camicom.com
- * E-mail : camiel@camicom.com
+ * WWW    : https://github.com/ES40-Emu/es40
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -22,9 +21,6 @@
  * and receiving any modifications you may make to the source code that might serve
  * the general public.
  *
- * stdafx.cpp : source file that includes just the standard includes
- * AlphaSim.pch will be the pre-compiled header
- * stdafx.obj will contain the pre-compiled type information
  */
 
  /**

@@ -1,4 +1,4 @@
-/* ES40 emulator.
+/* ES40 Emulator.
  *
  * WWW    : https://github.com/ES40-Emu/es40
  *
@@ -19,6 +19,7 @@
  * Although this is not required, the author would appreciate being notified of,
  * and receiving any modifications you may make to the source code that might serve
  * the general public.
+ *
  */
 
 #include "StdAfx.h"

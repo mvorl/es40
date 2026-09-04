@@ -1,7 +1,7 @@
-/* ES40 emulator.
+/* ES40 Emulator.
  * Copyright (C) 2007-2026 by the ES40 Emulator Project
  *
- * WWW    : https://github.com/gdwnldsKSC/es40
+ * WWW    : https://github.com/ES40-Emu/es40
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -16,6 +16,11 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ *
+ * Although this is not required, the author would appreciate being notified of,
+ * and receiving any modifications you may make to the source code that might serve
+ * the general public.
+ *
  */
 
  /**

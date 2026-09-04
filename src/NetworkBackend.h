@@ -1,4 +1,4 @@
-/* ES40 emulator.
+/* ES40 Emulator.
  * Copyright (C) 2007-2008 by the ES40 Emulator Project
  * Copyright (C) 2020 Tomáš Glozar
  *
@@ -21,6 +21,7 @@
  * Although this is not required, the author would appreciate being notified of,
  * and receiving any modifications you may make to the source code that might serve
  * the general public.
+ *
  */
 
 /**
