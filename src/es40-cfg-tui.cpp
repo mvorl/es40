@@ -1602,6 +1602,11 @@ void validation_ev68cb_cpuspeed(FIELD *field)
     set_field_type(field, TYPE_INTEGER, 2, 10, 1250);
 }
 
+void validation_ev68cb_max_ticks(FIELD *field)
+{
+    set_field_type(field, TYPE_INTEGER, 1, 1, INT_MAX);
+}
+
 // Form for EV68CB
 void edit_ev68cb(const char *title)
 {
@@ -1633,6 +1638,14 @@ void edit_ev68cb(const char *title)
                          "and run the real SRM PALcode instead.",
                          validation_bool});
 #endif
+        const string max_ticks = cpu + ".timer.max_instr_per_tick";
+        entry.push_back({strdup(max_ticks.c_str()), "1250000", "timer.max_instr_per_tick",
+                         "Upper bound on guest instructions retired between 1024 Hz interval-timer\n"
+                        "ticks. Real Alpha silicon topped out at 1.25 GHz (EV68).\n"
+                        "A CPU that reaches this bound before the next wall-clock tick is due is\n"
+                        "held (slept) until the tick lands, so the guest never sees more than this\n"
+                        "many instructions per tick and its tick-counted clock stays wall-clock accurate.",
+                         validation_ev68cb_max_ticks});
     }
     const int num_entries = entry.size();
     const int entries_per_cpu = num_entries / MAX_CPUS;
