@@ -69,10 +69,16 @@ public:
   virtual int   RestoreState(FILE* f);
 
   void          set_request(int index, int channel, int data);
+
+  // Buffers and lengths are in bytes. 
+  // length 0 uses the programmed size.
+  // Transfers on channels 5-7 must cover whole words.
   void           send_data(int channel, void* data, size_t length = 0);
   void           recv_data(int channel, void* data, size_t length = 0);
+  // Raw byte/word count register (number of DMA units minus one).
   int           get_count(int channel) { return state.channel[channel].count; };
-  size_t        get_transfer_size(int channel) { return (size_t)state.channel[channel].count + 1; };
+  // Programmed transfer size in bytes.
+  size_t        get_transfer_size(int channel);
 
 private:
   void          do_dma();

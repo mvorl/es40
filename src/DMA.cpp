@@ -128,12 +128,24 @@ static int dma_page_channel(u64 address)
 	return channelmap[address];
 }
 
-static u64 dma_address(u16 pagebase, u16 current)
+static size_t dma_transfer_width(int channel)
+{
+	if (channel < 0 || channel >= 8 || channel == 4)
+		FAILURE(InvalidArgument, "dma: invalid device channel (channel 4 is cascade)");
+
+	return channel < 4 ? 1 : 2;
+}
+
+static u64 dma_address(u16 pagebase, u16 current, size_t width)
 {
 	if (!theAli || !(theAli->config_read(0, 0x42, 8) & 0x40))
 		pagebase &= 0x00ff;
 
-	return ((u64)pagebase << 16) | current;
+	// Word channels drive A16 from the current address, not low-page bit 0.
+	if (width == 2)
+		pagebase &= 0xfffe;
+
+	return ((u64)pagebase << 16) | ((u64)current * width);
 }
 
 #define DMA_INDEX(n) dma_index_names[n - DMA_IO_BASE].c_str()
@@ -528,12 +540,18 @@ void CDMA::do_dma()
 	}
 }
 
+size_t CDMA::get_transfer_size(int channel)
+{
+	size_t width = dma_transfer_width(channel);
+	return ((size_t)state.channel[channel].count + 1) * width;
+}
+
 /**
  * This can be called by a device to perform a DMA in one fell swoop.
  **/
-
 void CDMA::send_data(int channel, void* data, size_t length)
 {
+	size_t width = dma_transfer_width(channel);
 	int ctrlr = channel < 4 ? 0 : 1;
 	int local_channel = channel & 0x03;
 
@@ -542,9 +560,12 @@ void CDMA::send_data(int channel, void* data, size_t length)
 		if ((state.controller[ctrlr].mask & (1 << local_channel)) == 0)
 		{
 			u64 addr = dma_address(state.channel[channel].pagebase,
-				state.channel[channel].current);
+				state.channel[channel].current, width);
 			size_t count = get_transfer_size(channel);
 			if (length > 0 && length < count) count = length;
+			if (count % width)
+				FAILURE(InvalidArgument, "dma: word-channel transfer length must be even");
+			size_t units = count / width;
 
 			if (DMA_TRACE_CHANNEL(channel))
 			{
@@ -558,12 +579,12 @@ void CDMA::send_data(int channel, void* data, size_t length)
 				printf("\n");
 			}
 
-			// increment
+			// Device buffers are byte streams, even for word channels.
 			theAli->do_pci_write((u32)addr, data, 1, count);
 			if (state.channel[channel].mode & 0x20)
-				state.channel[channel].current -= (u16)count;
+				state.channel[channel].current -= (u16)units;
 			else
-				state.channel[channel].current += (u16)count;
+				state.channel[channel].current += (u16)units;
 			if (state.channel[channel].mode & 0x10)
 				state.channel[channel].current = state.channel[channel].base;
 
@@ -584,6 +605,7 @@ void CDMA::send_data(int channel, void* data, size_t length)
 
 void CDMA::recv_data(int channel, void* data, size_t length)
 {
+	size_t width = dma_transfer_width(channel);
 	int ctrlr = channel < 4 ? 0 : 1;
 	int local_channel = channel & 0x03;
 
@@ -592,17 +614,20 @@ void CDMA::recv_data(int channel, void* data, size_t length)
 		if ((state.controller[ctrlr].mask & (1 << local_channel)) == 0)
 		{
 			u64 addr = dma_address(state.channel[channel].pagebase,
-				state.channel[channel].current);
+				state.channel[channel].current, width);
 			size_t count = get_transfer_size(channel);
 			if (length > 0 && length < count) count = length;
+			if (count % width)
+				FAILURE(InvalidArgument, "dma: word-channel transfer length must be even");
+			size_t units = count / width;
 
 			if (DMA_TRACE_CHANNEL(channel))
 				printf("DMA recv_data:  %zx @ %16" PRIx64 "\n", count, addr);
 			theAli->do_pci_read((u32)addr, data, 1, count);
 			if (state.channel[channel].mode & 0x20)
-				state.channel[channel].current -= (u16)count;
+				state.channel[channel].current -= (u16)units;
 			else
-				state.channel[channel].current += (u16)count;
+				state.channel[channel].current += (u16)units;
 			if (state.channel[channel].mode & 0x10)
 				state.channel[channel].current = state.channel[channel].base;
 
