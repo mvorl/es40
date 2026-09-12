@@ -617,17 +617,29 @@ void CDMA::send_data(int channel, void* data, size_t length)
 			}
 
 			// Device buffers are byte streams, even for word channels.
-			size_t first_count = count;
-			if (!(state.channel[channel].mode & 0x20))
-				first_count = dma_increment_chunk_size(state.channel[channel].current,
-					width, count);
-			theAli->do_pci_write((u32)addr, data, 1, first_count);
-			// A programmed transfer contains at most 65536 units, so only one wrap is possible.
-			if (first_count < count)
+			if (state.channel[channel].mode & 0x20)
 			{
-				u64 wrap_addr = dma_address(state.channel[channel].pagebase, 0, width);
-				theAli->do_pci_write((u32)wrap_addr, (u8*)data + first_count, 1,
-					count - first_count);
+				u16 current = state.channel[channel].current;
+				// Decrement by units, preserving the byte order within each word.
+				for (size_t offset = 0; offset < count; offset += width)
+				{
+					addr = dma_address(state.channel[channel].pagebase, current, width);
+					theAli->do_pci_write((u32)addr, (u8*)data + offset, 1, width);
+					current--;
+				}
+			}
+			else
+			{
+				size_t first_count = dma_increment_chunk_size(state.channel[channel].current,
+					width, count);
+				theAli->do_pci_write((u32)addr, data, 1, first_count);
+				// A programmed transfer contains at most 65536 units, so only one wrap is possible.
+				if (first_count < count)
+				{
+					u64 wrap_addr = dma_address(state.channel[channel].pagebase, 0, width);
+					theAli->do_pci_write((u32)wrap_addr, (u8*)data + first_count, 1,
+						count - first_count);
+				}
 			}
 			advance_transfer(channel, units);
 		}
@@ -662,16 +674,27 @@ void CDMA::recv_data(int channel, void* data, size_t length)
 
 			if (DMA_TRACE_CHANNEL(channel))
 				printf("DMA recv_data:  %zx @ %16" PRIx64 "\n", count, addr);
-			size_t first_count = count;
-			if (!(state.channel[channel].mode & 0x20))
-				first_count = dma_increment_chunk_size(state.channel[channel].current,
-					width, count);
-			theAli->do_pci_read((u32)addr, data, 1, first_count);
-			if (first_count < count)
+			if (state.channel[channel].mode & 0x20)
 			{
-				u64 wrap_addr = dma_address(state.channel[channel].pagebase, 0, width);
-				theAli->do_pci_read((u32)wrap_addr, (u8*)data + first_count, 1,
-					count - first_count);
+				u16 current = state.channel[channel].current;
+				for (size_t offset = 0; offset < count; offset += width)
+				{
+					addr = dma_address(state.channel[channel].pagebase, current, width);
+					theAli->do_pci_read((u32)addr, (u8*)data + offset, 1, width);
+					current--;
+				}
+			}
+			else
+			{
+				size_t first_count = dma_increment_chunk_size(state.channel[channel].current,
+					width, count);
+				theAli->do_pci_read((u32)addr, data, 1, first_count);
+				if (first_count < count)
+				{
+					u64 wrap_addr = dma_address(state.channel[channel].pagebase, 0, width);
+					theAli->do_pci_read((u32)wrap_addr, (u8*)data + first_count, 1,
+						count - first_count);
+				}
 			}
 			advance_transfer(channel, units);
 		}
