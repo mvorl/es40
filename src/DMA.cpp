@@ -148,6 +148,13 @@ static u64 dma_address(u16 pagebase, u16 current, size_t width)
 	return ((u64)pagebase << 16) | ((u64)current * width);
 }
 
+static size_t dma_increment_chunk_size(u16 current, size_t width, size_t count)
+{
+	// The 16-bit current register wraps without carrying into the page registers.
+	size_t bytes_to_wrap = ((size_t)0x10000 - current) * width;
+	return count < bytes_to_wrap ? count : bytes_to_wrap;
+}
+
 #define DMA_INDEX(n) dma_index_names[n - DMA_IO_BASE].c_str()
 
 #if defined(DEBUG_DMA)
@@ -610,7 +617,18 @@ void CDMA::send_data(int channel, void* data, size_t length)
 			}
 
 			// Device buffers are byte streams, even for word channels.
-			theAli->do_pci_write((u32)addr, data, 1, count);
+			size_t first_count = count;
+			if (!(state.channel[channel].mode & 0x20))
+				first_count = dma_increment_chunk_size(state.channel[channel].current,
+					width, count);
+			theAli->do_pci_write((u32)addr, data, 1, first_count);
+			// A programmed transfer contains at most 65536 units, so only one wrap is possible.
+			if (first_count < count)
+			{
+				u64 wrap_addr = dma_address(state.channel[channel].pagebase, 0, width);
+				theAli->do_pci_write((u32)wrap_addr, (u8*)data + first_count, 1,
+					count - first_count);
+			}
 			advance_transfer(channel, units);
 		}
 		else
@@ -644,7 +662,17 @@ void CDMA::recv_data(int channel, void* data, size_t length)
 
 			if (DMA_TRACE_CHANNEL(channel))
 				printf("DMA recv_data:  %zx @ %16" PRIx64 "\n", count, addr);
-			theAli->do_pci_read((u32)addr, data, 1, count);
+			size_t first_count = count;
+			if (!(state.channel[channel].mode & 0x20))
+				first_count = dma_increment_chunk_size(state.channel[channel].current,
+					width, count);
+			theAli->do_pci_read((u32)addr, data, 1, first_count);
+			if (first_count < count)
+			{
+				u64 wrap_addr = dma_address(state.channel[channel].pagebase, 0, width);
+				theAli->do_pci_read((u32)wrap_addr, (u8*)data + first_count, 1,
+					count - first_count);
+			}
 			advance_transfer(channel, units);
 		}
 		else
