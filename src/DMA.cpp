@@ -116,6 +116,18 @@ std::string dma_index_names[] = {
 	"DMA1_IO_EXT"
 };
 
+static int dma_page_channel(u64 address)
+{
+	static const int channelmap[] = { 2, 3, 1, 0xff, 0xff, 0xff, 0,
+				 0xff, 6, 7, 5 };
+
+	if (address >= (sizeof(channelmap) / sizeof(channelmap[0])) ||
+		channelmap[address] == 0xff)
+		return -1;
+
+	return channelmap[address];
+}
+
 #define DMA_INDEX(n) dma_index_names[n - DMA_IO_BASE].c_str()
 
 #if defined(DEBUG_DMA)
@@ -191,6 +203,24 @@ u64 CDMA::ReadMem(int index, u64 address, int dsize)
 				data = state.controller[ctrlr].status | ((state.controller[ctrlr].request & 0x0f) << 4);
 				state.controller[ctrlr].status = 0;
 			}
+			else if (address == 7)
+			{
+				data = state.controller[ctrlr].mask & 0x0f;
+			}
+			break;
+
+		case DMA_IO_LPAGE:
+		case DMA_IO_HPAGE:
+			num = dma_page_channel(address);
+			if (num < 0)
+			{
+				data = 0xff;
+				break;
+			}
+			if (index == DMA_IO_LPAGE)
+				data = state.channel[num].pagebase & 0xff;
+			else
+				data = (state.channel[num].pagebase >> 8) & 0xff;
 			break;
 
 		default:
@@ -207,8 +237,6 @@ u64 CDMA::ReadMem(int index, u64 address, int dsize)
 void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 {
 	int num = 0;
-	int channelmap[] = { 2, 3, 1, 0xff, 0xff, 0xff, 0,
-				 0xff, 6, 7, 5, 0xff, 0xff, 0xff, 4 };
 	switch (dsize)
 	{
 	case 32:
@@ -339,11 +367,9 @@ void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 
 		case DMA_IO_LPAGE:
 		case DMA_IO_HPAGE:
-			if (channelmap[address] == 0xff) {
-				printf("dma: unknown page register %" PRIx64 "\n", address);
+			num = dma_page_channel(address);
+			if (num < 0)
 				return;
-			}
-			num = channelmap[address];
 			if (index == DMA_IO_LPAGE)
 				state.channel[num].pagebase = (state.channel[num].pagebase & 0xff00) | data;
 			else
