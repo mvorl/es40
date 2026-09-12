@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(ES40 VERSION 0.84 LANGUAGES C CXX)
+project(ES40 VERSION 0.85 LANGUAGES C CXX)
 
 # Single-config generators default to an empty build type. Fix that up. 
 get_property(ES40_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
