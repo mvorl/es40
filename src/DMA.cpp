@@ -547,7 +547,37 @@ size_t CDMA::get_transfer_size(int channel)
 }
 
 /**
- * This can be called by a device to perform a DMA in one fell swoop.
+ * Advance the current registers by transferred byte/word units.
+ **/
+void CDMA::advance_transfer(int channel, size_t units)
+{
+	int ctrlr = channel < 4 ? 0 : 1;
+	int local_channel = channel & 0x03;
+	// Check before narrowing: a full transfer can contain 65536 units.
+	bool terminal_count = units == (size_t)state.channel[channel].count + 1;
+
+	if (state.channel[channel].mode & 0x20)
+		state.channel[channel].current -= (u16)units;
+	else
+		state.channel[channel].current += (u16)units;
+	state.channel[channel].count -= (u16)units;
+
+	if (!terminal_count)
+		return;
+
+	state.controller[ctrlr].status |= 1 << local_channel;
+	state.controller[ctrlr].request &= ~(1 << local_channel);
+	if (state.channel[channel].mode & 0x10)
+	{
+		state.channel[channel].current = state.channel[channel].base;
+		state.channel[channel].count = state.channel[channel].base_count;
+	}
+	else
+		state.controller[ctrlr].mask |= 1 << local_channel;
+}
+
+/**
+ * Transfer device-buffer bytes to memory, up to the current DMA count.
  **/
 void CDMA::send_data(int channel, void* data, size_t length)
 {
@@ -581,16 +611,7 @@ void CDMA::send_data(int channel, void* data, size_t length)
 
 			// Device buffers are byte streams, even for word channels.
 			theAli->do_pci_write((u32)addr, data, 1, count);
-			if (state.channel[channel].mode & 0x20)
-				state.channel[channel].current -= (u16)units;
-			else
-				state.channel[channel].current += (u16)units;
-			if (state.channel[channel].mode & 0x10)
-				state.channel[channel].current = state.channel[channel].base;
-
-			// set the terminal count bit
-			state.controller[ctrlr].status |= 1 << local_channel;
-			state.controller[ctrlr].request &= ~(1 << local_channel);
+			advance_transfer(channel, units);
 		}
 		else
 		{
@@ -624,15 +645,7 @@ void CDMA::recv_data(int channel, void* data, size_t length)
 			if (DMA_TRACE_CHANNEL(channel))
 				printf("DMA recv_data:  %zx @ %16" PRIx64 "\n", count, addr);
 			theAli->do_pci_read((u32)addr, data, 1, count);
-			if (state.channel[channel].mode & 0x20)
-				state.channel[channel].current -= (u16)units;
-			else
-				state.channel[channel].current += (u16)units;
-			if (state.channel[channel].mode & 0x10)
-				state.channel[channel].current = state.channel[channel].base;
-
-			state.controller[ctrlr].status |= 1 << local_channel;
-			state.controller[ctrlr].request &= ~(1 << local_channel);
+			advance_transfer(channel, units);
 		}
 		else
 		{

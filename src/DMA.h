@@ -71,17 +71,18 @@ public:
   void          set_request(int index, int channel, int data);
 
   // Buffers and lengths are in bytes. 
-  // length 0 uses the programmed size.
+  // length 0 uses the current count.
   // Transfers on channels 5-7 must cover whole words.
   void           send_data(int channel, void* data, size_t length = 0);
   void           recv_data(int channel, void* data, size_t length = 0);
   // Raw byte/word count register (number of DMA units minus one).
   int           get_count(int channel) { return state.channel[channel].count; };
-  // Programmed transfer size in bytes.
+  // Current count plus one in bytes; independent of mask/enable state.
   size_t        get_transfer_size(int channel);
 
 private:
   void          do_dma();
+  void          advance_transfer(int channel, size_t units);
 
   /// The state structure contains all elements that need to be saved to the statefile.
   struct SDMA_state
