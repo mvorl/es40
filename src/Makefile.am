@@ -138,6 +138,9 @@ if ENABLE_ASMJIT
 include jit/asmjit.am
 AM_CPPFLAGS += -I$(top_srcdir)/src/jit -DES40_JIT \
                -I$(top_srcdir)/third_party/asmjit
+# release build needs this for ASMJIT, and that's mostly what we have, if we want 
+# asmjit debug, change to ASMJIT_BUILD_DEBUG. 
+AM_CPPFLAGS += -DASMJIT_BUILD_RELEASE
 # Build only the host-matching asmjit backend: x86-64 is the real codegen target;
 # ARM64 is scaffolding (a64 backend compiled for future use, no code emitted yet).
 if ES40_JIT_HOST_A64
