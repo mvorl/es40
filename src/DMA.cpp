@@ -128,6 +128,14 @@ static int dma_page_channel(u64 address)
 	return channelmap[address];
 }
 
+static u64 dma_address(u16 pagebase, u16 current)
+{
+	if (!theAli || !(theAli->config_read(0, 0x42, 8) & 0x40))
+		pagebase &= 0x00ff;
+
+	return ((u64)pagebase << 16) | current;
+}
+
 #define DMA_INDEX(n) dma_index_names[n - DMA_IO_BASE].c_str()
 
 #if defined(DEBUG_DMA)
@@ -533,7 +541,8 @@ void CDMA::send_data(int channel, void* data, size_t length)
 	{
 		if ((state.controller[ctrlr].mask & (1 << local_channel)) == 0)
 		{
-			u64 addr = (state.channel[channel].pagebase << 16) + state.channel[channel].current;
+			u64 addr = dma_address(state.channel[channel].pagebase,
+				state.channel[channel].current);
 			size_t count = get_transfer_size(channel);
 			if (length > 0 && length < count) count = length;
 
@@ -582,7 +591,8 @@ void CDMA::recv_data(int channel, void* data, size_t length)
 	{
 		if ((state.controller[ctrlr].mask & (1 << local_channel)) == 0)
 		{
-			u64 addr = (state.channel[channel].pagebase << 16) + state.channel[channel].current;
+			u64 addr = dma_address(state.channel[channel].pagebase,
+				state.channel[channel].current);
 			size_t count = get_transfer_size(channel);
 			if (length > 0 && length < count) count = length;
 
