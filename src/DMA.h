@@ -70,11 +70,25 @@ public:
 
   void          set_request(int index, int channel, int data);
 
-  // Buffers and lengths are in bytes. 
+  struct SDMA_result
+  {
+    size_t transferred;    // Bytes moved by this call, including the final unit.
+    bool blocked;          // No transfer; DMA registers and buffers are unchanged.
+    bool terminal_count;   // This call exhausted the count, even with auto-init.
+  };
+
+  // Buffers and lengths are in bytes.
   // length 0 uses the current count.
   // Transfers on channels 5-7 must cover whole words.
-  void           send_data(int channel, void* data, size_t length = 0);
-  void           recv_data(int channel, void* data, size_t length = 0);
+  // send: device to memory; recv: memory to device.
+  // Results do not clear the guest-visible terminal-count status.
+  SDMA_result   send_data(int channel, void* data, size_t length = 0);
+  SDMA_result   recv_data(int channel, void* data, size_t length = 0);
+  // One byte on channels 0-3, one little-endian word on channels 5-7.
+  // Byte sends use the low 8 bits; byte receives are zero-extended.
+  // A blocked receive leaves data unchanged.
+  SDMA_result   send_unit(int channel, u16 data);
+  SDMA_result   recv_unit(int channel, u16& data);
   // Raw byte/word count register (number of DMA units minus one).
   int           get_count(int channel) { return state.channel[channel].count; };
   // Current count plus one in bytes; independent of mask/enable state.
@@ -82,7 +96,7 @@ public:
 
 private:
   void          do_dma();
-  void          advance_transfer(int channel, size_t units);
+  bool          advance_transfer(int channel, size_t units);
 
   /// The state structure contains all elements that need to be saved to the statefile.
   struct SDMA_state

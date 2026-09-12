@@ -554,9 +554,9 @@ size_t CDMA::get_transfer_size(int channel)
 }
 
 /**
- * Advance the current registers by transferred byte/word units.
+ * Advance the current registers by transferred byte/word units and report TC.
  **/
-void CDMA::advance_transfer(int channel, size_t units)
+bool CDMA::advance_transfer(int channel, size_t units)
 {
 	int ctrlr = channel < 4 ? 0 : 1;
 	int local_channel = channel & 0x03;
@@ -570,7 +570,7 @@ void CDMA::advance_transfer(int channel, size_t units)
 	state.channel[channel].count -= (u16)units;
 
 	if (!terminal_count)
-		return;
+		return false;
 
 	state.controller[ctrlr].status |= 1 << local_channel;
 	state.controller[ctrlr].request &= ~(1 << local_channel);
@@ -581,16 +581,22 @@ void CDMA::advance_transfer(int channel, size_t units)
 	}
 	else
 		state.controller[ctrlr].mask |= 1 << local_channel;
+	return true;
 }
 
 /**
  * Transfer device-buffer bytes to memory, up to the current DMA count.
  **/
-void CDMA::send_data(int channel, void* data, size_t length)
+CDMA::SDMA_result CDMA::send_data(int channel, void* data, size_t length)
 {
 	size_t width = dma_transfer_width(channel);
 	int ctrlr = channel < 4 ? 0 : 1;
 	int local_channel = channel & 0x03;
+	SDMA_result result = { 0, true, false };
+
+	// The PCI helpers otherwise silently skip DMA when bus mastering is disabled.
+	if (!theAli || !(theAli->config_read(0, 0x04, 16) & 0x04))
+		return result;
 
 	if ((state.controller[ctrlr].command & 0x04) == 0)
 	{
@@ -641,24 +647,32 @@ void CDMA::send_data(int channel, void* data, size_t length)
 						count - first_count);
 				}
 			}
-			advance_transfer(channel, units);
+			result.terminal_count = advance_transfer(channel, units);
+			result.transferred = count;
+			result.blocked = false;
 		}
-		else
+		else if (DMA_TRACE_CHANNEL(channel))
 		{
 			printf("dma: dma requested by device on channel %d, but it is masked.\n", channel);
 		}
 	}
-	else
+	else if (DMA_TRACE_CONTROLLER(ctrlr))
 	{
 		printf("dma: dma requested by device, but controller %d is disabled.\n", ctrlr);
 	}
+	return result;
 }
 
-void CDMA::recv_data(int channel, void* data, size_t length)
+CDMA::SDMA_result CDMA::recv_data(int channel, void* data, size_t length)
 {
 	size_t width = dma_transfer_width(channel);
 	int ctrlr = channel < 4 ? 0 : 1;
 	int local_channel = channel & 0x03;
+	SDMA_result result = { 0, true, false };
+
+	// Avoid zero-filling the device buffer and advancing a blocked transfer.
+	if (!theAli || !(theAli->config_read(0, 0x04, 16) & 0x04))
+		return result;
 
 	if ((state.controller[ctrlr].command & 0x04) == 0)
 	{
@@ -696,15 +710,35 @@ void CDMA::recv_data(int channel, void* data, size_t length)
 						count - first_count);
 				}
 			}
-			advance_transfer(channel, units);
+			result.terminal_count = advance_transfer(channel, units);
+			result.transferred = count;
+			result.blocked = false;
 		}
-		else
+		else if (DMA_TRACE_CHANNEL(channel))
 		{
 			printf("dma: dma requested by device on channel %d, but it is masked.\n", channel);
 		}
 	}
-	else
+	else if (DMA_TRACE_CONTROLLER(ctrlr))
 	{
 		printf("dma: dma requested by device, but controller %d is disabled.\n", ctrlr);
 	}
+	return result;
+}
+
+CDMA::SDMA_result CDMA::send_unit(int channel, u16 data)
+{
+	size_t width = dma_transfer_width(channel);
+	u8 buffer[2] = { (u8)data, (u8)(data >> 8) };
+	return send_data(channel, buffer, width);
+}
+
+CDMA::SDMA_result CDMA::recv_unit(int channel, u16& data)
+{
+	size_t width = dma_transfer_width(channel);
+	u8 buffer[2] = { 0, 0 };
+	SDMA_result result = recv_data(channel, buffer, width);
+	if (result.transferred == width)
+		data = (u16)(buffer[0] | ((u16)buffer[1] << 8));
+	return result;
 }
