@@ -88,6 +88,8 @@ public:
   // Transfers on channels 5-7 must cover whole words.
   // send: device to memory; recv: memory to device.
   // Calls remain device-paced and do not require an explicit set_drq().
+  // A pending software request bypasses only that channel's mask; hardware
+  // DRQ does not. Controller enable and cascade requirements still apply.
   // Channels 0-3 also require controller 1 enabled and channel 4 unmasked
   // and programmed for cascade. Channel 4's address/count are not serviced.
   // Cascade mode, a wrong direction or an illegal transfer type is blocked.

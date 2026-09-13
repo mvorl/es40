@@ -665,7 +665,9 @@ CDMA::SDMA_result CDMA::send_data(int channel, void* data, size_t length, bool e
 
 	if ((state.controller[ctrlr].command & 0x04) == 0)
 	{
-		if ((state.controller[ctrlr].mask & (1 << local_channel)) == 0)
+		// The mask inhibits hardware requests, not the software request register.
+		if ((state.controller[ctrlr].mask & (1 << local_channel)) == 0 ||
+			(state.controller[ctrlr].request & (1 << local_channel)))
 		{
 			u8 transfer_type = state.channel[channel].mode & 0x0c;
 			// 8237 Write means device to memory; Verify has no data direction.
@@ -775,7 +777,9 @@ CDMA::SDMA_result CDMA::recv_data(int channel, void* data, size_t length, bool e
 
 	if ((state.controller[ctrlr].command & 0x04) == 0)
 	{
-		if ((state.controller[ctrlr].mask & (1 << local_channel)) == 0)
+		// The mask inhibits hardware requests, not the software request register.
+		if ((state.controller[ctrlr].mask & (1 << local_channel)) == 0 ||
+			(state.controller[ctrlr].request & (1 << local_channel)))
 		{
 			u8 transfer_type = state.channel[channel].mode & 0x0c;
 			// 8237 Read means memory to device.
