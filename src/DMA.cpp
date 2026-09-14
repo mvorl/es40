@@ -563,6 +563,25 @@ bool CDMA::cascade_enabled()
 }
 
 /**
+ * Check explicit requests for demand/single service, without consuming a unit.
+ **/
+bool CDMA::service_requested(int channel)
+{
+	dma_transfer_width(channel);
+	int ctrlr = channel < 4 ? 0 : 1;
+	u8 bit = 1 << (channel & 0x03);
+	u8 mode = state.channel[channel].mode & 0xc0;
+	// Single service accepts software requests even with the channel masked.
+	if (mode == 0x40 && (state.controller[ctrlr].request & bit))
+		return true;
+	// Block needs a retained request; cascade does not service device data.
+	if (mode != 0x00 && mode != 0x40)
+		return false;
+	// Demand follows hardware DRQ; a software request cannot keep it running.
+	return (state.controller[ctrlr].drq & ~state.controller[ctrlr].mask & bit) != 0;
+}
+
+/**
  * Perform a DMA if one is ready.
  *
  * \todo I'm not sure what would actually trigger this, so its mostly just a
@@ -863,5 +882,21 @@ CDMA::SDMA_result CDMA::recv_unit(int channel, u16& data, bool eop)
 	SDMA_result result = recv_data(channel, buffer, width, eop);
 	if (result.transferred == width)
 		data = (u16)(buffer[0] | ((u16)buffer[1] << 8));
+	return result;
+}
+
+CDMA::SDMA_result CDMA::service_send_unit(int channel, u16 data, bool eop)
+{
+	SDMA_result result = { 0, true, false, false };
+	if (service_requested(channel))
+		result = send_unit(channel, data, eop);
+	return result;
+}
+
+CDMA::SDMA_result CDMA::service_recv_unit(int channel, u16& data, bool eop)
+{
+	SDMA_result result = { 0, true, false, false };
+	if (service_requested(channel))
+		result = recv_unit(channel, data, eop);
 	return result;
 }

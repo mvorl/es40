@@ -111,6 +111,14 @@ public:
   // A blocked or verify receive leaves data unchanged.
   SDMA_result   send_unit(int channel, u16 data, bool eop = false);
   SDMA_result   recv_unit(int channel, u16& data, bool eop = false);
+  // Explicit-request service, at most one byte/word per call.
+  // Demand requires unmasked hardware DRQ; single also accepts a software request.
+  // A held DRQ can service successive calls; these calls never lower DRQ.
+  // Cascade cannot transfer data. return blocked. Existing enable/cascade and completion rules apply.
+  // Blocked or verify receives leave data unchanged; blocked calls ignore EOP.
+  // This checks requests, not inter-channel priority or bus timing.
+  SDMA_result   service_send_unit(int channel, u16 data, bool eop = false);
+  SDMA_result   service_recv_unit(int channel, u16& data, bool eop = false);
   // Raw byte/word count register (number of DMA units minus one).
   int           get_count(int channel) { return state.channel[channel].count; };
   // Current count plus one in bytes; independent of mask/enable state.
@@ -119,6 +127,7 @@ public:
 private:
   u8            get_requests(int ctrlr);
   bool          cascade_enabled();
+  bool          service_requested(int channel);
   void          do_dma();
   bool          advance_transfer(int channel, size_t units, bool eop);
   void          complete_transfer(int channel);
