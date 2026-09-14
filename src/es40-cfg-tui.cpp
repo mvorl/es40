@@ -66,12 +66,22 @@ using namespace std;
 #include <pcap/pcap.h>
 #endif
 
-#ifdef __MINGW32__
+#if defined(_WIN32) && !defined(__MINGW32__)
+// Visual Studio: PDCursesMod provides curses and panel, NetBSD libform/libmenu provide form and menu
+#include <stdarg.h>
+#include <curses.h>
+#include <panel.h>
+#include <menu.h>
+// NetBSD form.h declares the TYPE_* field types outside its own extern "C" block.
+extern "C" {
+#include <form.h>
+}
+#elif defined(__MINGW32__)
 // compile with -DNCURSES_STATIC to be able to link
 #include <ncurses/ncurses.h>
 #include <ncurses/panel.h>
-#include << ncurses / menu.h>
-#include << ncurses / form.h>
+#include <ncurses/menu.h>
+#include <ncurses/form.h>
 #else
 #include <ncurses.h>
 #include <panel.h>
@@ -541,7 +551,7 @@ int show_menu(
     ITEM **my_item = (ITEM **)calloc(num_entries + 1, sizeof(ITEM *));
     for (int i = 0; i < num_entries; ++i)
         if (entry[i].text != NULL)
-            my_item[i] = new_item(entry[i].text, NULL);
+            my_item[i] = new_item((char *)entry[i].text, NULL); // NetBSD libmenu takes non-const char *
         else
         {
             if (dashes[0] == '\0')
@@ -561,6 +571,11 @@ int show_menu(
     set_menu_grey(my_menu, A_NORMAL); // No multi-select, but unselectable items
     set_menu_win(my_menu, my_win);
     set_menu_sub(my_menu, derwin(my_win, nLines, nCols, 1, 1));
+#if defined(_WIN32)
+    // NetBSD libmenu defaults to 16 rows and blank-fills rows past the items; with a shorter
+    // subwindow the failed wmove() makes those blanks overwrite the first items.
+    set_menu_format(my_menu, nLines, 1);
+#endif
     post_menu(my_menu);
     update_panels();
     doupdate();
@@ -571,6 +586,11 @@ int show_menu(
     {
         ITEM *cur = current_item(my_menu);
         cur_idx = item_index(cur);
+#if defined(_WIN32)
+        // NetBSD libmenu draws into the derwin() without syncing it; PDCurses only refreshes touched windows.
+        touchwin(my_win);
+        wcursyncup(menu_sub(my_menu));
+#endif
         switch (wgetch(my_win))
         {
         case MYKEY_HELP:
@@ -686,7 +706,14 @@ FormValues_t show_form(
         // Coordinates relative to the form's derwin() window!
         my_fld[i] = new_field(1, nCols - 1, 2 * i + 1, 1, FALSE, 0);
         if (entry[i].preset != NULL)
+        {
             set_field_buffer(my_fld[i], 0, preset[i]);
+#if defined(_WIN32)
+            // NetBSD libform rejects an unmodified field when O_PASSOK is off instead of
+            // validating it (as ncurses does), so mark presets as modified.
+            set_field_status(my_fld[i], TRUE);
+#endif
+        }
         set_field_back(my_fld[i], A_UNDERLINE); // Make the field visible.
         field_opts_off(my_fld[i], O_AUTOSKIP);  // Don't skip to next field when running off the end.
         field_opts_off(my_fld[i], O_STATIC);    // Use a dynamic length field ...
@@ -726,6 +753,11 @@ FormValues_t show_form(
         {
             FIELD *cur_field = current_field(my_form);
             int cur_idx = field_index(cur_field);
+#if defined(_WIN32)
+            // NetBSD libform draws into the derwin() without syncing it; PDCurses only refreshes touched windows.
+            touchwin(my_win);
+            wcursyncup(form_sub(my_form));
+#endif
             switch (int c = wgetch(my_win))
             {
             case MYKEY_HELP:
@@ -939,14 +971,20 @@ void es40_banner(const char *title)
     doupdate();
 
     const int factor = 10;
+#if !defined(_WIN32)
     const timespec req = {0, 1000L * 1000 * 1000 / factor}; // = 100,000,000 ns = 0.1 seconds
+#endif
     int count = WAITSEC * factor;
     int maxx, maxy;
     getmaxyx(my_win, maxy, maxx);
     nodelay(my_win, TRUE);
     while (--count > 0 && wgetch(my_win) == ERR)
     {
+#if defined(_WIN32)
+        Sleep(1000 / factor);
+#else
         nanosleep(&req, NULL);
+#endif
         if (count % factor == 0)
         {
             string dur = string("(") + i2s(count / factor) + ")";
@@ -3309,8 +3347,10 @@ int main(int argc, char **argv)
     // see ncurses(3X) manpage
     setlocale(LC_ALL, "");
 
+#ifndef _WIN32
     // see https://invisible-island.net/ncurses/ncurses.faq.html#no_padding
     setenv("NCURSES_NO_PADDING", "1", FALSE);
+#endif
 
     atexit(reinterpret_cast<void (*)()>(endwin));
     initscr();
