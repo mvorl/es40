@@ -3379,18 +3379,25 @@ bool main_menu(void)
     return save_results;
 }
 
+enum OverwriteChoice
+{
+    OVERWRITE_BACK, // return to the main menu
+    OVERWRITE_YES,  // write the file
+    OVERWRITE_QUIT  // leave without writing
+};
+
 /**
  * Ask before replacing an existing output file.
- * Returns TRUE if the file may be written.
+ * A missing file or stdout ("-") needs no confirmation.
  **/
-bool confirm_overwrite(const char *filename)
+OverwriteChoice confirm_overwrite(const char *filename)
 {
     if (!strcmp(filename, "-"))
-        return TRUE;
+        return OVERWRITE_YES;
 
     FILE *f = fopen(filename, "rb");
     if (f == NULL)
-        return TRUE;
+        return OVERWRITE_YES;
     fclose(f);
 
     string title = string(filename) + " exists. Overwrite?";
@@ -3398,8 +3405,18 @@ bool confirm_overwrite(const char *filename)
         {"No", "Return to the main menu without writing the file.", NULL},
         {"Yes", "Replace the existing file with this configuration.\n"
                 "Comments and sections other than gui and sys0 are not kept.",
-         NULL}};
-    return show_menu(title.c_str(), entry, ARRAY_SIZE(entry), MENU_2ND_LEVEL) == 1;
+         NULL},
+        {"Quit without saving", "Leave the program without writing the file.", NULL}};
+
+    switch (show_menu(title.c_str(), entry, ARRAY_SIZE(entry), MENU_2ND_LEVEL))
+    {
+    case 1:
+        return OVERWRITE_YES;
+    case 2:
+        return OVERWRITE_QUIT;
+    default: // "No", or F2
+        return OVERWRITE_BACK;
+    }
 }
 
 int main(int argc, char **argv)
@@ -3484,12 +3501,12 @@ int main(int argc, char **argv)
 
         while (main_menu())
         {
-            if (confirm_overwrite(out_filename))
-            {
+            OverwriteChoice choice = confirm_overwrite(out_filename);
+            if (choice == OVERWRITE_YES)
                 write_configuration(out_filename);
+            if (choice != OVERWRITE_BACK)
                 break;
-            }
-            // Declined: back to the main menu, edits kept and the file untouched.
+            // Back: edits kept and the file untouched.
         }
     }
     catch (CException &e)
