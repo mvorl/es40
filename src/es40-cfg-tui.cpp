@@ -3379,6 +3379,29 @@ bool main_menu(void)
     return save_results;
 }
 
+/**
+ * Ask before replacing an existing output file.
+ * Returns TRUE if the file may be written.
+ **/
+bool confirm_overwrite(const char *filename)
+{
+    if (!strcmp(filename, "-"))
+        return TRUE;
+
+    FILE *f = fopen(filename, "rb");
+    if (f == NULL)
+        return TRUE;
+    fclose(f);
+
+    string title = string(filename) + " exists. Overwrite?";
+    MenuEntry_t entry[] = {
+        {"No", "Return to the main menu without writing the file.", NULL},
+        {"Yes", "Replace the existing file with this configuration.\n"
+                "Comments and sections other than gui and sys0 are not kept.",
+         NULL}};
+    return show_menu(title.c_str(), entry, ARRAY_SIZE(entry), MENU_2ND_LEVEL) == 1;
+}
+
 int main(int argc, char **argv)
 {
     const char *out_filename = NULL;
@@ -3459,10 +3482,15 @@ int main(int argc, char **argv)
     {
         es40_banner("AlphaServer ES40 emulator configuration utility");
 
-        bool save_results = main_menu();
-
-        if (save_results)
-            write_configuration(out_filename);
+        while (main_menu())
+        {
+            if (confirm_overwrite(out_filename))
+            {
+                write_configuration(out_filename);
+                break;
+            }
+            // Declined: back to the main menu, edits kept and the file untouched.
+        }
     }
     catch (CException &e)
     {
