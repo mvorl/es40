@@ -499,8 +499,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
 
           
+          # es40-cfg-tui-NOTICES.txt carries third-party license notices required with the TUI binary.
           Get-ChildItem -Path $configDir -File |
-            Where-Object { $_.Extension -in '.exe', '.dll', '.pdb' } |
+            Where-Object { $_.Extension -in '.exe', '.dll', '.pdb' -or $_.Name -eq 'es40-cfg-tui-NOTICES.txt' } |
             Copy-Item -Destination $artifactDir -Force
 
       - name: Upload Windows artifacts
@@ -1040,10 +1041,80 @@ jobs:
           path: ${{ runner.temp }}/out/${{ steps.package.outputs.name }}.tar.gz
           if-no-files-found: error
 
+  tui-package-windows:
+    # VS-native es40-cfg-tui: PDCursesMod + NetBSD libform/libmenu (submodules) via curses-win32.vcxproj.
+    name: es40-cfg-tui package (windows-x64)
+    runs-on: windows-2025-vs2026
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v3
+
+      - name: Provision Npcap SDK
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $npcapSdkVersion = "1.16"
+          $npcapZip = Join-Path $env:RUNNER_TEMP "npcap-sdk.zip"
+          $npcapExtract = Join-Path $env:RUNNER_TEMP "npcap-sdk"
+          & curl.exe --fail --location --silent --show-error --http1.1 `
+            --retry 5 --retry-all-errors --retry-delay 5 `
+            --connect-timeout 20 --max-time 180 `
+            --output $npcapZip "https://npcap.com/dist/npcap-sdk-$npcapSdkVersion.zip"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to download Npcap SDK $npcapSdkVersion." }
+          Expand-Archive -Path $npcapZip -DestinationPath $npcapExtract -Force
+
+          $includeSrc = Get-ChildItem -Path $npcapExtract -Recurse -Filter "pcap.h" |
+            Where-Object { $_.DirectoryName -match "Include$" } | Select-Object -First 1
+          $libSrc = Get-ChildItem -Path $npcapExtract -Recurse -Filter "wpcap.lib" |
+            Where-Object { $_.FullName -match "Lib\\x64\\wpcap\.lib$" } | Select-Object -First 1
+          if (-not $includeSrc -or -not $libSrc) { throw "Unexpected Npcap SDK layout." }
+
+          New-Item -ItemType Directory -Force -Path "C:\dev\npcap-sdk\include", "C:\dev\npcap-sdk\lib\x64" | Out-Null
+          Copy-Item -Recurse -Force (Join-Path $includeSrc.DirectoryName "*") "C:\dev\npcap-sdk\include"
+          Copy-Item -Force $libSrc.FullName "C:\dev\npcap-sdk\lib\x64\wpcap.lib"
+
+      - name: Build es40-cfg-tui
+        shell: pwsh
+        run: |
+          msbuild "src/Visual Studio/es40-cfg-tui.vcxproj" /m /p:Configuration=Release /p:Platform=x64 /p:WindowsTargetPlatformVersion="10.0"
+          if ($LASTEXITCODE -ne 0) { throw "msbuild failed ($LASTEXITCODE)" }
+
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          # -h exits before curses initializes; wpcap.dll is delay-loaded, so Npcap needn't be installed.
+          & "src/Visual Studio/x64/Release/es40-cfg-tui.exe" -h
+          if ($LASTEXITCODE -ne 0) { throw "es40-cfg-tui -h failed ($LASTEXITCODE)" }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $pkg = Join-Path $env:RUNNER_TEMP "es40-cfg-tui-windows-x64"
+          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
+          Copy-Item "src/Visual Studio/x64/Release/es40-cfg-tui.exe" $pkg
+          Copy-Item "src/Visual Studio/x64/Release/es40-cfg-tui-NOTICES.txt" $pkg
+          Copy-Item COPYING $pkg
+          Get-ChildItem $pkg
+
+      - name: Upload package
+        uses: actions/upload-artifact@v6
+        with:
+          name: es40-cfg-tui-windows-x64
+          path: ${{ runner.temp }}/es40-cfg-tui-windows-x64/
+          if-no-files-found: error
+
   cleanup-runs:
     name: Delete runs older than the previous 4
     runs-on: ubuntu-latest
-    needs: [linux-build, windows-build, macos-build, macos-x86_64-jit-build, tui-package]
+    needs: [linux-build, windows-build, macos-build, macos-x86_64-jit-build, tui-package, tui-package-windows]
     # Run even when builds fail, but only once per push (skip pull_request duplicates).
     if: ${{ always() && github.event_name == 'push' }}
     # Housekeeping only: a pruning hiccup must not mark the build run as failed.
