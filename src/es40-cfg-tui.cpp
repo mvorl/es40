@@ -107,6 +107,20 @@ inline int es40_set_field_type(FIELD *field, FIELDTYPE *type, char **list, C che
 }
 
 #define set_field_type es40_set_field_type
+
+// NetBSD libform's REQ_END_LINE is bad, puts cursor one beyond. Fix here. 
+inline int es40_form_driver(FORM *form, int c)
+{
+    if (c != REQ_END_LINE && c != REQ_END_FIELD)
+        return form_driver(form, c);
+
+    int status = form_driver(form, REQ_BEG_LINE);
+    for (int i = 0; i < 1024 && form_driver(form, REQ_NEXT_CHAR) == E_OK; ++i)
+        ;
+    return status;
+}
+
+#define form_driver es40_form_driver
 #elif defined(__MINGW32__)
 // compile with -DNCURSES_STATIC to be able to link
 #include <ncurses/ncurses.h>
@@ -668,11 +682,18 @@ int show_menu(
     }
 
     // Clean up
+#if defined(_WIN32)
+    // PDCurses' delwin() refuses a window that still has subwindows (and asserts in Debug builds).
+    WINDOW *my_sub = menu_sub(my_menu);
+#endif
     unpost_menu(my_menu);
     free_menu(my_menu);
     del_panel(my_panel);
     wclear(my_win);
     wrefresh(my_win);
+#if defined(_WIN32)
+    delwin(my_sub);
+#endif
     delwin(my_win);
     update_panels();
     doupdate();
@@ -899,11 +920,18 @@ FormValues_t show_form(
     } while (!checked);
 
     // Clean up
+#if defined(_WIN32)
+    // PDCurses' delwin() refuses a window that still has subwindows (and asserts in Debug builds).
+    WINDOW *my_sub = form_sub(my_form);
+#endif
     unpost_form(my_form);
     free_form(my_form);
     del_panel(my_panel);
     wclear(my_win);
     wrefresh(my_win);
+#if defined(_WIN32)
+    delwin(my_sub);
+#endif
     delwin(my_win);
     update_panels();
     doupdate();
@@ -3350,15 +3378,39 @@ bool main_menu(void)
 int main(int argc, char **argv)
 {
     const char *out_filename = NULL;
+    const char *in_filename = NULL;
 
     if (argc >= 2 && argv[1][0] != '\0')
     {
         if (!strcmp(argv[1], "-h") || !strcmp(argv[1], "-?"))
         {
-            printf("Usage: %s [input-filename] [output-filename]\n", argv[0]);
+            printf("Usage: %s [input-filename] [output-filename]\n"
+                   "Without input-filename, es40.cfg in the current directory is read if present.\n"
+                   "output-filename defaults to es40.cfg.\n",
+                   argv[0]);
             return 0;
         }
-        read_configuration(argv[1]); // initializes theConfig
+        in_filename = argv[1];
+    }
+    else if (FILE *existing = fopen("es40.cfg", "rb"))
+    {
+        // No input file given: edit the es40.cfg in the current directory.
+        fclose(existing);
+        in_filename = "es40.cfg";
+    }
+
+    if (in_filename != NULL)
+    {
+        try
+        {
+            read_configuration(in_filename); // initializes theConfig
+        }
+        catch (CException &e)
+        {
+            // Don't fall back to a fresh configuration: saving it would overwrite the file.
+            printf("Failure reading %s: %s\n", in_filename, e.displayText().c_str());
+            return 1;
+        }
     }
     else
     {
