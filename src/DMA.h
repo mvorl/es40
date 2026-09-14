@@ -77,7 +77,7 @@ public:
 
   struct SDMA_result
   {
-    size_t transferred;    // Bytes moved by this call; zero for verify.
+    size_t transferred;    // Bytes moved; zero for verify or standalone EOP.
     bool blocked;          // No DMA service; registers and buffers are unchanged.
     bool terminal_count;   // This call exhausted the count, even with auto-init.
     bool external_eop;     // This call honored the device's EOP indication.
@@ -127,6 +127,8 @@ public:
   // Failed calls and idle register writes do not rotate. Bus timing is not modeled.
   SDMA_result   service_send_unit(int channel, u16 data, bool eop = false);
   SDMA_result   service_recv_unit(int channel, u16& data, bool eop = false);
+  // End an accepted demand/block service without consuming another unit.
+  SDMA_result   service_eop(int channel);
   // Raw byte/word count register (number of DMA units minus one).
   int           get_count(int channel) { return state.channel[channel].count; };
   // Current count plus one in bytes; independent of mask/enable state.

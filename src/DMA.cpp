@@ -1053,3 +1053,27 @@ CDMA::SDMA_result CDMA::service_recv_unit(int channel, u16& data, bool eop)
 	}
 	return result;
 }
+
+CDMA::SDMA_result CDMA::service_eop(int channel)
+{
+	dma_transfer_width(channel);
+	SDMA_result result = { 0, true, false, false };
+	int ctrlr = channel < 4 ? 0 : 1;
+	u8 bit = 1 << (channel & 0x03);
+	u8 mode = state.channel[channel].mode & 0xc0;
+	// EOP cannot acquire service or terminate a channel while it is idle.
+	if (state.controller[ctrlr].command & 0x04)
+		return result;
+	if (!((mode == 0x00 && (state.controller[ctrlr].demand_active & bit)) ||
+		(mode == 0x80 && (state.controller[ctrlr].block_active & bit))))
+		return result;
+	// A retained lower request may have lost its accepted upper grant.
+	if (channel < 4 && (!state.cascade_active || !cascade_enabled()))
+		return result;
+
+	// No new memory cycle or arbitration: complete only the accepted service.
+	complete_transfer(channel);
+	result.blocked = false;
+	result.external_eop = true;
+	return result;
+}
