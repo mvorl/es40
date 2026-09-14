@@ -1,3 +1,9 @@
 [submodule "third_party/asmjit"]
 	path = third_party/asmjit
 	url = https://github.com/asmjit/asmjit.git
+[submodule "third_party/PDCursesMod"]
+	path = third_party/PDCursesMod
+	url = https://github.com/Bill-Gray/PDCursesMod.git
+[submodule "third_party/netbsd-curses"]
+	path = third_party/netbsd-curses
+	url = https://github.com/sabotage-linux/netbsd-curses.git
