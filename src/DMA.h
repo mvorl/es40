@@ -120,10 +120,11 @@ public:
   // A held DRQ can service successive calls; these calls never lower DRQ.
   // Cascade returns blocked. Existing enable/cascade and completion rules apply.
   // Blocked or verify receives leave data unchanged; blocked calls ignore EOP.
-  // Fixed priority selects local channels 0-3, with channel 4 cascading the
-  // lower controller. An ongoing demand/block service wins over new requests.
+  // Command bit 4 selects rotating priority; otherwise local order is 0-3.
+  // Rotation makes the released channel lowest priority, including channel 4
+  // for lower-controller service. Ongoing demand/block service is not preempted.
   // Demand releases on DRQ withdrawal; single re-arbitrates for every unit.
-  // Rotating priority and bus timing are not implemented yet.
+  // Failed calls and idle register writes do not rotate. Bus timing is not modeled.
   SDMA_result   service_send_unit(int channel, u16 data, bool eop = false);
   SDMA_result   service_recv_unit(int channel, u16& data, bool eop = false);
   // Raw byte/word count register (number of DMA units minus one).
@@ -136,7 +137,9 @@ private:
   bool          cascade_enabled();
   bool          service_requested(int channel);
   int           select_service_channel(int ctrlr);
-  void          retain_service(int channel, const SDMA_result& result);
+  void          rotate_priority(int channel);
+  void          release_service(int channel);
+  void          finish_service(int channel, const SDMA_result& result);
   void          do_dma();
   bool          advance_transfer(int channel, size_t units, bool eop);
   void          complete_transfer(int channel);
@@ -164,9 +167,11 @@ private:
       u8  drq;     // device-driven request levels, independent of mask/command
       u8  block_active; // accepted request-aware block services, not DRQ levels
       u8  demand_active; // held demand services, released when DRQ falls
+      u8  next_priority; // first local channel considered in rotating mode
       u8  mask;
       bool lobyte; // low byte is next for address or count access
     } controller[2];
+    bool cascade_active; // accepted upper channel-4 grant, not lower HRQ
   }
   state;
 };
