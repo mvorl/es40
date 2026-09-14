@@ -1926,11 +1926,15 @@ void edit_tsunami(const char *title)
     preset = (FormValues_t)calloc(num_entries, sizeof(char *));
 
     idx = fentry_index(entry, num_entries, "memory size");
+    string memory_size; // keeps the memory size preset alive until show_form() returns
     for (int i = 0; i < num_entries; ++i)
     {
         char *p;
         if (i == idx && (p = sys0->get_text_value("memory.bits", NULL)))
-            preset[i] = (char *)memory_bits2size(atoi(p)).c_str();
+        {
+            memory_size = memory_bits2size(atoi(p));
+            preset[i] = (char *)memory_size.c_str();
+        }
         else if (entry[i].name != NULL && (p = sys0->get_text_value(entry[i].name)) != NULL)
             preset[i] = p;
         else
