@@ -8,11 +8,36 @@ on:
 
 jobs:
   linux-build:
-    name: Linux build (${{ matrix.configuration }})
-    runs-on: ubuntu-latest
+    name: Linux build (${{ matrix.configuration }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    env:
+      # x86_64 keeps the historical artifact names so release asset names don't change.
+      ARTIFACT_NAME: ${{ matrix.arch == 'arm64' && format('linux-arm64-{0}', matrix.configuration) || format('linux-{0}', matrix.configuration) }}
     strategy:
       fail-fast: false
       matrix:
+        arch:
+          - x86_64
+          - arm64
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+        exclude:
+          # --with-arch only affects x86 hosts; SSE2 variants would duplicate the base arm64 builds.
+          - arch: arm64
+            configuration: Release - SSE2
+          - arch: arm64
+            configuration: Release NS - SSE2
+          - arch: arm64
+            configuration: Release IDB - SSE2
+          - arch: arm64
+            configuration: Release NN - SSE2
+          - arch: arm64
+            configuration: Release NN NS - SSE2
+          - arch: arm64
+            configuration: Release JIT - SSE2
         configuration:
           - Debug
           - Profile
@@ -38,7 +63,7 @@ jobs:
           - Release IDB - SSE2
           - Release NN - SSE2
           - Release NN NS - SSE2
-          # JIT (AsmJit) builds -- adds --enable-asmjit (x86-64 host)
+          # JIT (AsmJit) builds -- adds --enable-asmjit (x64 backend on x86_64, a64 on arm64)
           - Release JIT
           - Release JIT - SSE2
 
@@ -102,7 +127,7 @@ jobs:
           set -euo pipefail
           
           SDL_RELEASES_JSON="$(curl -fsSL -H 'User-Agent: github-actions' -H "Authorization: Bearer ${GH_TOKEN}" https://api.github.com/repos/libsdl-org/SDL/releases?per_page=10 || echo '[]')"
-          SDL3_URL="$(printf '%s' "$SDL_RELEASES_JSON" | python -c 'import sys,json,re; data=json.load(sys.stdin); data=[data] if isinstance(data,dict) else data; print(next((a.get("browser_download_url","") for rel in data for a in rel.get("assets",[]) if re.match(r"^SDL3-[0-9.]+\\.tar\\.gz$", a.get("name",""))), ""))')"
+          SDL3_URL="$(printf '%s' "$SDL_RELEASES_JSON" | python3 -c 'import sys,json,re; data=json.load(sys.stdin); data=[data] if isinstance(data,dict) else data; print(next((a.get("browser_download_url","") for rel in data for a in rel.get("assets",[]) if re.match(r"^SDL3-[0-9.]+\\.tar\\.gz$", a.get("name",""))), ""))')"
 
           if [ -z "$SDL3_URL" ]; then
             echo "Falling back to releases/latest redirect parsing for SDL3 tarball URL"
@@ -206,7 +231,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          artifact_dir="$RUNNER_TEMP/linux-${{ matrix.configuration }}"
+          artifact_dir="$RUNNER_TEMP/$ARTIFACT_NAME"
           rm -rf "$artifact_dir"
           mkdir -p "$artifact_dir"
 
@@ -232,8 +257,8 @@ jobs:
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: linux-${{ matrix.configuration }}
-          path: ${{ runner.temp }}/linux-${{ matrix.configuration }}/
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/${{ env.ARTIFACT_NAME }}/
           if-no-files-found: error
 
   windows-build:
@@ -560,7 +585,7 @@ jobs:
 
           # Prefer release assets; gracefully handle API throttling/error payloads.
           SDL_RELEASES_JSON="$(curl -fsSL -H 'User-Agent: github-actions' -H "Authorization: Bearer ${GH_TOKEN}" https://api.github.com/repos/libsdl-org/SDL/releases?per_page=10 || echo '[]')"
-          SDL3_URL="$(printf '%s' "$SDL_RELEASES_JSON" | python -c 'import sys,json,re; data=json.load(sys.stdin); data=[data] if isinstance(data,dict) else data; print(next((a.get("browser_download_url","") for rel in data for a in rel.get("assets",[]) if re.match(r"^SDL3-[0-9.]+\\.tar\\.gz$", a.get("name",""))), ""))')"
+          SDL3_URL="$(printf '%s' "$SDL_RELEASES_JSON" | python3 -c 'import sys,json,re; data=json.load(sys.stdin); data=[data] if isinstance(data,dict) else data; print(next((a.get("browser_download_url","") for rel in data for a in rel.get("assets",[]) if re.match(r"^SDL3-[0-9.]+\\.tar\\.gz$", a.get("name",""))), ""))')"
 
           if [ -z "$SDL3_URL" ]; then
             echo "Falling back to releases/latest redirect parsing for SDL3 tarball URL"
@@ -871,6 +896,9 @@ jobs:
           - os: linux
             arch: x86_64
             runner: ubuntu-latest
+          - os: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
           - os: macos
             arch: arm64
             runner: macos-latest
@@ -952,7 +980,7 @@ jobs:
           set -euo pipefail
 
           configure_args=(--enable-tui --enable-asmjit)
-          if [[ "$RUNNER_OS" == "Linux" ]]; then
+          if [[ "${{ matrix.arch }}" == "x86_64" && "$RUNNER_OS" == "Linux" ]]; then
             # A configuration editor must not require AVX2 hosts.
             configure_args+=(--with-arch=sse2)
           fi
