@@ -1289,7 +1289,8 @@ u32 CLSI53C1020::read_l_host_int_status() const
 	u32 value = 0;
 	if (state.doorbell_interrupt)
 		value |= LSI_HIS_DOORBELL_INTERRUPT;
-	if (state.reply_post_count != 0U)
+	/* bit3 is held sticky until the host reads the reply FIFO empty */
+	if (state.reply_post_count != 0U || state.reply_int_sticky)
 		value |= LSI_HIS_REPLY_INTERRUPT;
 	return value;
 }
@@ -1625,8 +1626,15 @@ u32 CLSI53C1020::read_l_register(u32 reg, bool io_space)
 			value = state.reply_post_fifo[state.reply_post_head];
 			state.reply_post_head = (state.reply_post_head + 1U) % LSI_REPLY_FIFO_DEPTH;
 			state.reply_post_count--;
+			/* bit3 stays asserted (sticky) until the empty read below */
 			eval_interrupts();
 			return value;
+		}
+		/* empty (p.4-42): this read clears the sticky reply interrupt */
+		if (state.reply_int_sticky)
+		{
+			state.reply_int_sticky = false;
+			eval_interrupts();
 		}
 		return 0xFFFFFFFFU;
 
@@ -1814,6 +1822,7 @@ void CLSI53C1020::clear_transport()
 	state.reply_post_head = 0;
 	state.reply_post_count = 0;
 	memset(state.reply_post_fifo, 0, sizeof(state.reply_post_fifo));
+	state.reply_int_sticky = false;
 	state.reply_free_head = 0;
 	state.reply_free_count = 0;
 	memset(state.reply_free_fifo, 0, sizeof(state.reply_free_fifo));
@@ -1977,6 +1986,7 @@ void CLSI53C1020::post_address_reply(const u8* frame, u32 frame_bytes)
 	const u32 tail = (state.reply_post_head + state.reply_post_count) % LSI_REPLY_FIFO_DEPTH;
 	state.reply_post_fifo[tail] = reply;
 	state.reply_post_count++;
+	state.reply_int_sticky = true;
 	trace("reply-post push 0x%08x count=%u", reply, (unsigned)state.reply_post_count);
 	eval_interrupts();
 }

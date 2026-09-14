@@ -248,6 +248,7 @@ private:
     u32 reply_post_fifo[LSI_REPLY_FIFO_DEPTH];
     u32 reply_post_head;
     u32 reply_post_count;
+    bool reply_int_sticky;
     u32 reply_free_fifo[LSI_REPLY_FIFO_DEPTH];
     u32 reply_free_head;
     u32 reply_free_count;
