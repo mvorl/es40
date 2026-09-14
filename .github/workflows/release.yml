@@ -68,6 +68,11 @@ jobs:
 
           mkdir -p assets
           for d in dist/*/; do
+            # Prebuilt packages (only .tar.gz inside) ship as-is; re-zipping drops the exec bit.
+            if compgen -G "$d*.tar.gz" > /dev/null && [ -z "$(find "$d" -type f ! -name '*.tar.gz' -print -quit)" ]; then
+              cp "$d"*.tar.gz assets/
+              continue
+            fi
             name="$(basename "$d")"
             # GitHub mangles spaces in release asset names; use underscores instead.
             name="${name// /_}"
@@ -119,4 +124,4 @@ jobs:
           if [ "$DRAFT" = "true" ]; then
             args+=(--draft)
           fi
-          gh release create "$TAG" "${args[@]}" assets/*.zip
+          gh release create "$TAG" "${args[@]}" assets/*

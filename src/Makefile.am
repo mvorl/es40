@@ -47,6 +47,9 @@ bin_PROGRAMS = es40 es40_cfg
 if ENABLE_TOOLS
 bin_PROGRAMS += es40_idb es40_lss es40_lsm
 endif
+if BUILD_TUI
+bin_PROGRAMS += es40_cfg_tui
+endif
 
 # vmnet needs root, but AppKit refuses to run in a setuid process so
 # small helper to work with vmnet directly - OS X only. 
@@ -164,4 +167,12 @@ es40_lss_CXXFLAGS = -DIDB -DLS_SLAVE
 es40_lsm_CXXFLAGS = -DIDB -DLS_MASTER
 
 es40_cfg_SOURCES = es40-cfg.cpp \
+    base/Exception.cpp
+
+# CONFIGURATION_ONLY strips device code out of Configurator.cpp; the per-target
+# flags also keep these objects separate from es40's Configurator.o.
+es40_cfg_tui_CPPFLAGS = $(AM_CPPFLAGS) $(TUI_CFLAGS) -DCONFIGURATION_ONLY
+es40_cfg_tui_LDADD = $(TUI_LIBS) $(PCAP_LIBS)
+es40_cfg_tui_SOURCES = es40-cfg-tui.cpp \
+    Configurator.cpp \
     base/Exception.cpp

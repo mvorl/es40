@@ -322,6 +322,39 @@ ES40_LIBS="$LIBS"
 AC_SUBST([ES40_LIBS])
 LIBS=
 
+# es40_cfg_tui, the ncurses configuration editor: needs ncurses plus its form,
+# menu and panel libraries. Checked after LIBS is cleared so es40 never links them.
+AC_ARG_ENABLE([tui],
+  [AS_HELP_STRING([--enable-tui@<:@=yes|no|auto@:>@],
+    [build es40_cfg_tui, the ncurses configuration editor (default: auto)])],
+  [],
+  [enable_tui=auto])
+
+have_tui=no
+AS_IF([test "x$enable_tui" != "xno"], [
+  PKG_CHECK_MODULES([TUI], [ncurses form menu panel], [have_tui=yes], [
+    # macOS ships ncurses without .pc files; fall back to header and link checks.
+    have_tui=yes
+    TUI_CFLAGS=
+    TUI_LIBS=
+    AC_CHECK_HEADERS([ncurses.h form.h menu.h panel.h], [], [have_tui=no])
+    AS_IF([test "x$have_tui" = "xyes"], [
+      AC_CHECK_LIB([ncurses], [initscr], [TUI_LIBS="-lncurses"], [have_tui=no])
+    ])
+    AS_IF([test "x$have_tui" = "xyes"], [
+      AC_CHECK_LIB([panel], [new_panel], [TUI_LIBS="-lpanel $TUI_LIBS"], [have_tui=no], [$TUI_LIBS])
+      AC_CHECK_LIB([menu], [new_menu], [TUI_LIBS="-lmenu $TUI_LIBS"], [have_tui=no], [$TUI_LIBS])
+      AC_CHECK_LIB([form], [new_form], [TUI_LIBS="-lform $TUI_LIBS"], [have_tui=no], [$TUI_LIBS])
+    ])
+  ])
+  AS_IF([test "x$enable_tui" = "xyes" -a "x$have_tui" = "xno"], [
+    AC_MSG_FAILURE([--enable-tui requires ncurses with the form, menu and panel libraries])
+  ])
+])
+AC_SUBST([TUI_CFLAGS])
+AC_SUBST([TUI_LIBS])
+AM_CONDITIONAL([BUILD_TUI], [test "x$have_tui" = "xyes"])
+
 # Generate the various makefiles.
 AC_CONFIG_FILES([Makefile doc/Makefile m4/Makefile src/Makefile])
 AC_OUTPUT

@@ -433,6 +433,7 @@ src/libasmjit.a
 src/es40
 src/es40_idb
 src/es40_cfg
+src/es40_cfg_tui
 src/es40_lss
 src/es40_lsm
 
