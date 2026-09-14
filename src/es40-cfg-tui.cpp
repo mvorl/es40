@@ -852,6 +852,9 @@ FormValues_t show_form(
                     form_driver(my_form, REQ_NEXT_CHAR);
                 break;
             case KEY_BACKSPACE: // Ctrl-H
+#if defined(_WIN32)
+            case 0x08: // PDCurses returns ^H for Backspace; its KEY_BACKSPACE is a separate code
+#endif
             case MYKEY_DEL:
                 if (field_type(cur_field) != TYPE_ENUM)
                     form_driver(my_form, REQ_DEL_PREV);
