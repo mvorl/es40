@@ -294,6 +294,8 @@ void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 		{
 			int ctrlr = (index == DMA1_IO_CHANNEL) ? 1 : 0;
 			num = ((address & 0x0e) >> 1) + (ctrlr * 4);
+			// Reprogramming a channel starts a fresh service, not a retained block.
+			state.controller[ctrlr].block_active &= ~(1 << (num & 0x03));
 			if (address & 1)
 			{
 				if (state.controller[ctrlr].lobyte)
@@ -332,6 +334,8 @@ void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 				if (DMA_TRACE_CONTROLLER(num))
 					printf("dma: command register %d written with %" PRIx64 "\n", num, data);
 				state.controller[num].command = data;
+				if (data & 0x04)
+					state.controller[num].block_active = 0;
 				break;
 
 			case 1: // request
@@ -342,6 +346,9 @@ void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 				if (DMA_TRACE_CHANNEL((num * 4) + (data & 0x03)))
 					printf("dma: mask single on %d : %" PRId64 " %s\n", num, data & 0x03, data & 0x4 ? "Masked" : "Unmasked");
 				state.controller[num].mask = (state.controller[num].mask & ~(1 << (data & 0x03))) | (((data & 0x04) >> 2) << (data & 0x03));
+				// Explicit mask-set writes cancel accepted service between calls.
+				if (data & 0x04)
+					state.controller[num].block_active &= ~(1 << (data & 0x03));
 				if (DMA_TRACE_CHANNEL((num * 4) + (data & 0x03)))
 					printf("     Mask status: %x\n", state.controller[num].mask);
 				do_dma();
@@ -360,6 +367,7 @@ void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 
 
 				state.channel[(num * 4) + (data & 0x03)].mode = data;
+				state.controller[num].block_active &= ~(1 << (data & 0x03));
 				break;
 
 			case 4: // clear flipflop(s)
@@ -376,6 +384,7 @@ void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 				state.controller[num].command = 0;
 				state.controller[num].status = 0;
 				state.controller[num].request = 0;
+				state.controller[num].block_active = 0;
 				// Reset the controller, not the request lines driven by devices.
 				state.controller[num].mask = 0x0f;
 				break;
@@ -388,6 +397,7 @@ void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 
 			case 7: // master mask
 				state.controller[num].mask = data & 0x0f;
+				state.controller[num].block_active &= ~state.controller[num].mask;
 				do_dma();
 				break;
 			}
@@ -399,6 +409,7 @@ void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 			num = dma_page_channel(address);
 			if (num < 0)
 				return;
+			state.controller[num < 4 ? 0 : 1].block_active &= ~(1 << (num & 0x03));
 			if (index == DMA_IO_LPAGE)
 				state.channel[num].pagebase = (state.channel[num].pagebase & 0xff00) | data;
 			else
@@ -546,9 +557,9 @@ u8 CDMA::get_requests(int ctrlr)
 {
 	u8 requests = state.controller[ctrlr].request | state.controller[ctrlr].drq;
 	// Controller 0's HRQ drives controller 1's channel-4 request input.
-	// Software requests bypass the channel mask; hardware DRQ does not.
+	// Software and retained block requests bypass the mask; incoming DRQ does not.
 	if (ctrlr == 1 && !(state.controller[0].command & 0x04) &&
-		((state.controller[0].request |
+		((state.controller[0].request | state.controller[0].block_active |
 		(state.controller[0].drq & ~state.controller[0].mask)) & 0x0f))
 		requests |= 0x01;
 	return requests & 0x0f;
@@ -563,7 +574,7 @@ bool CDMA::cascade_enabled()
 }
 
 /**
- * Check explicit requests for demand/single service, without consuming a unit.
+ * Check explicit or retained requests without consuming a unit.
  **/
 bool CDMA::service_requested(int channel)
 {
@@ -571,14 +582,27 @@ bool CDMA::service_requested(int channel)
 	int ctrlr = channel < 4 ? 0 : 1;
 	u8 bit = 1 << (channel & 0x03);
 	u8 mode = state.channel[channel].mode & 0xc0;
-	// Single service accepts software requests even with the channel masked.
-	if (mode == 0x40 && (state.controller[ctrlr].request & bit))
+	// A block keeps its accepted request after either request source drops.
+	if (mode == 0x80 && (state.controller[ctrlr].block_active & bit))
 		return true;
-	// Block needs a retained request; cascade does not service device data.
-	if (mode != 0x00 && mode != 0x40)
+	// Single and block service accept software requests even while masked.
+	if ((mode == 0x40 || mode == 0x80) && (state.controller[ctrlr].request & bit))
+		return true;
+	if (mode == 0xc0) // Cascade does not service device data.
 		return false;
 	// Demand follows hardware DRQ; a software request cannot keep it running.
 	return (state.controller[ctrlr].drq & ~state.controller[ctrlr].mask & bit) != 0;
+}
+
+/**
+ * Retain only a block that actually serviced a unit and has not just completed.
+ **/
+void CDMA::retain_block_request(int channel, const SDMA_result& result)
+{
+	// Verify services a unit despite transferring zero bytes.
+	if (!result.blocked && !result.terminal_count && !result.external_eop &&
+		(state.channel[channel].mode & 0xc0) == 0x80)
+		state.controller[channel < 4 ? 0 : 1].block_active |= 1 << (channel & 0x03);
 }
 
 /**
@@ -597,9 +621,10 @@ void CDMA::do_dma()
 			for (int chnl = 0; chnl < 4; chnl++)
 			{
 				if ((state.controller[ctrlr].mask & (1 << chnl)) == 0 ||
-					(state.controller[ctrlr].request & (1 << chnl)))
+					((state.controller[ctrlr].request | state.controller[ctrlr].block_active) &
+					(1 << chnl)))
 				{
-					if (get_requests(ctrlr) & (1 << chnl))
+					if ((get_requests(ctrlr) | state.controller[ctrlr].block_active) & (1 << chnl))
 					{
 						// Do it!
 					}
@@ -644,6 +669,7 @@ void CDMA::complete_transfer(int channel)
 	state.controller[ctrlr].status |= 1 << local_channel;
 	// TC and EOP clear the software request; the device owns its DRQ level.
 	state.controller[ctrlr].request &= ~(1 << local_channel);
+	state.controller[ctrlr].block_active &= ~(1 << local_channel);
 	if (state.channel[channel].mode & 0x10)
 	{
 		state.channel[channel].current = state.channel[channel].base;
@@ -684,9 +710,10 @@ CDMA::SDMA_result CDMA::send_data(int channel, void* data, size_t length, bool e
 
 	if ((state.controller[ctrlr].command & 0x04) == 0)
 	{
-		// The mask inhibits hardware requests, not the software request register.
+		// The mask inhibits incoming DRQ, not software or retained block requests.
 		if ((state.controller[ctrlr].mask & (1 << local_channel)) == 0 ||
-			(state.controller[ctrlr].request & (1 << local_channel)))
+			((state.controller[ctrlr].request | state.controller[ctrlr].block_active) &
+			(1 << local_channel)))
 		{
 			u8 transfer_type = state.channel[channel].mode & 0x0c;
 			// 8237 Write means device to memory; Verify has no data direction.
@@ -796,9 +823,10 @@ CDMA::SDMA_result CDMA::recv_data(int channel, void* data, size_t length, bool e
 
 	if ((state.controller[ctrlr].command & 0x04) == 0)
 	{
-		// The mask inhibits hardware requests, not the software request register.
+		// The mask inhibits incoming DRQ, not software or retained block requests.
 		if ((state.controller[ctrlr].mask & (1 << local_channel)) == 0 ||
-			(state.controller[ctrlr].request & (1 << local_channel)))
+			((state.controller[ctrlr].request | state.controller[ctrlr].block_active) &
+			(1 << local_channel)))
 		{
 			u8 transfer_type = state.channel[channel].mode & 0x0c;
 			// 8237 Read means memory to device.
@@ -889,7 +917,10 @@ CDMA::SDMA_result CDMA::service_send_unit(int channel, u16 data, bool eop)
 {
 	SDMA_result result = { 0, true, false, false };
 	if (service_requested(channel))
+	{
 		result = send_unit(channel, data, eop);
+		retain_block_request(channel, result);
+	}
 	return result;
 }
 
@@ -897,6 +928,9 @@ CDMA::SDMA_result CDMA::service_recv_unit(int channel, u16& data, bool eop)
 {
 	SDMA_result result = { 0, true, false, false };
 	if (service_requested(channel))
+	{
 		result = recv_unit(channel, data, eop);
+		retain_block_request(channel, result);
+	}
 	return result;
 }

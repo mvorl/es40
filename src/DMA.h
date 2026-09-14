@@ -88,8 +88,8 @@ public:
   // Transfers on channels 5-7 must cover whole words.
   // send: device to memory; recv: memory to device.
   // Calls remain device-paced and do not require an explicit set_drq().
-  // A pending software request bypasses only that channel's mask; hardware
-  // DRQ does not. Controller enable and cascade requirements still apply.
+  // A software request or retained block bypasses only that channel's mask;
+  // incoming hardware DRQ does not. Enable and cascade requirements still apply.
   // Channels 0-3 also require controller 1 enabled and channel 4 unmasked
   // and programmed for cascade. Channel 4's address/count are not serviced.
   // Cascade mode, a wrong direction or an illegal transfer type is blocked.
@@ -113,8 +113,12 @@ public:
   SDMA_result   recv_unit(int channel, u16& data, bool eop = false);
   // Explicit-request service, at most one byte/word per call.
   // Demand requires unmasked hardware DRQ; single also accepts a software request.
+  // Block starts from either request and, after successful service, retains it
+  // until TC/EOP even if DRQ or the software request drops. Auto-init releases it.
+  // Between calls, own mask-set/disable/reset or channel reprogramming drops
+  // retention without generating TC/EOP. Pending requests can start a new service.
   // A held DRQ can service successive calls; these calls never lower DRQ.
-  // Cascade cannot transfer data. return blocked. Existing enable/cascade and completion rules apply.
+  // Cascade returns blocked. Existing enable/cascade and completion rules apply.
   // Blocked or verify receives leave data unchanged; blocked calls ignore EOP.
   // This checks requests, not inter-channel priority or bus timing.
   SDMA_result   service_send_unit(int channel, u16 data, bool eop = false);
@@ -128,6 +132,7 @@ private:
   u8            get_requests(int ctrlr);
   bool          cascade_enabled();
   bool          service_requested(int channel);
+  void          retain_block_request(int channel, const SDMA_result& result);
   void          do_dma();
   bool          advance_transfer(int channel, size_t units, bool eop);
   void          complete_transfer(int channel);
@@ -153,6 +158,7 @@ private:
       u8  command;
       u8  request; // software request bits
       u8  drq;     // device-driven request levels, independent of mask/command
+      u8  block_active; // accepted request-aware block services, not DRQ levels
       u8  mask;
       bool lobyte; // low byte is next for address or count access
     } controller[2];
