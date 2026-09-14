@@ -295,8 +295,7 @@ void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 			int ctrlr = (index == DMA1_IO_CHANNEL) ? 1 : 0;
 			num = ((address & 0x0e) >> 1) + (ctrlr * 4);
 			// Reprogramming a channel releases any held service.
-			state.controller[ctrlr].block_active &= ~(1 << (num & 0x03));
-			state.controller[ctrlr].demand_active &= ~(1 << (num & 0x03));
+			release_service(num);
 			if (address & 1)
 			{
 				if (state.controller[ctrlr].lobyte)
@@ -334,12 +333,13 @@ void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 			case 0: // command
 				if (DMA_TRACE_CONTROLLER(num))
 					printf("dma: command register %d written with %" PRIx64 "\n", num, data);
-				state.controller[num].command = data;
 				if (data & 0x04)
 				{
-					state.controller[num].block_active = 0;
-					state.controller[num].demand_active = 0;
+					// Release under the old priority mode before changing command.
+					for (int channel = 0; channel < 4; channel++)
+						release_service(num * 4 + channel);
 				}
+				state.controller[num].command = data;
 				break;
 
 			case 1: // request
@@ -352,10 +352,7 @@ void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 				state.controller[num].mask = (state.controller[num].mask & ~(1 << (data & 0x03))) | (((data & 0x04) >> 2) << (data & 0x03));
 				// Explicit mask-set writes cancel accepted service between calls.
 				if (data & 0x04)
-				{
-					state.controller[num].block_active &= ~(1 << (data & 0x03));
-					state.controller[num].demand_active &= ~(1 << (data & 0x03));
-				}
+					release_service(num * 4 + (data & 0x03));
 				if (DMA_TRACE_CHANNEL((num * 4) + (data & 0x03)))
 					printf("     Mask status: %x\n", state.controller[num].mask);
 				do_dma();
@@ -373,9 +370,8 @@ void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 				}
 
 
+				release_service(num * 4 + (data & 0x03));
 				state.channel[(num * 4) + (data & 0x03)].mode = data;
-				state.controller[num].block_active &= ~(1 << (data & 0x03));
-				state.controller[num].demand_active &= ~(1 << (data & 0x03));
 				break;
 
 			case 4: // clear flipflop(s)
@@ -388,12 +384,13 @@ void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 #if defined(DEBUG_DMA)
 				printf("DMA-I-RESET: DMA %d reset.", index - DMA_IO_BASE);
 #endif
+				for (int channel = 0; channel < 4; channel++)
+					release_service(num * 4 + channel);
 				state.controller[num].lobyte = true;
 				state.controller[num].command = 0;
 				state.controller[num].status = 0;
 				state.controller[num].request = 0;
-				state.controller[num].block_active = 0;
-				state.controller[num].demand_active = 0;
+				state.controller[num].next_priority = 0;
 				// Reset the controller, not the request lines driven by devices.
 				state.controller[num].mask = 0x0f;
 				break;
@@ -406,8 +403,11 @@ void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 
 			case 7: // master mask
 				state.controller[num].mask = data & 0x0f;
-				state.controller[num].block_active &= ~state.controller[num].mask;
-				state.controller[num].demand_active &= ~state.controller[num].mask;
+				for (int channel = 0; channel < 4; channel++)
+				{
+					if (data & (1 << channel))
+						release_service(num * 4 + channel);
+				}
 				do_dma();
 				break;
 			}
@@ -419,8 +419,7 @@ void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 			num = dma_page_channel(address);
 			if (num < 0)
 				return;
-			state.controller[num < 4 ? 0 : 1].block_active &= ~(1 << (num & 0x03));
-			state.controller[num < 4 ? 0 : 1].demand_active &= ~(1 << (num & 0x03));
+			release_service(num);
 			if (index == DMA_IO_LPAGE)
 				state.channel[num].pagebase = (state.channel[num].pagebase & 0xff00) | data;
 			else
@@ -560,7 +559,8 @@ void CDMA::set_drq(int channel, bool asserted)
 	{
 		state.controller[ctrlr].drq &= ~(1 << local_channel);
 		// Even a drop followed by reassertion before the next unit releases demand.
-		state.controller[ctrlr].demand_active &= ~(1 << local_channel);
+		if (state.controller[ctrlr].demand_active & (1 << local_channel))
+			release_service(channel);
 	}
 	do_dma();
 }
@@ -638,14 +638,18 @@ int CDMA::select_service_channel(int ctrlr)
 
 	// Demand/block service is not preempted by a newly arriving request.
 	// In particular, an upper owner must win before a new cascade request.
-	u8 held = requests & (state.controller[ctrlr].block_active |
-		state.controller[ctrlr].demand_active);
+	u8 held = state.controller[ctrlr].block_active | state.controller[ctrlr].demand_active;
+	if (ctrlr == 1 && state.cascade_active)
+		held |= 0x01;
+	held &= requests;
 	if (held)
 		requests = held;
 
-	// Fixed order for now; rotating priority needs separate release tracking.
-	for (int local_channel = 0; local_channel < 4; local_channel++)
+	int first = state.controller[ctrlr].command & 0x10 ?
+		state.controller[ctrlr].next_priority : 0;
+	for (int offset = 0; offset < 4; offset++)
 	{
+		int local_channel = (first + offset) & 0x03;
 		if (requests & (1 << local_channel))
 			return ctrlr == 1 && local_channel == 0 ?
 				cascade_channel : ctrlr * 4 + local_channel;
@@ -654,20 +658,70 @@ int CDMA::select_service_channel(int ctrlr)
 }
 
 /**
- * Retain only demand/block service that succeeded and has not just completed.
+ * Record a service release without advancing again on repeated notification.
  **/
-void CDMA::retain_service(int channel, const SDMA_result& result)
+void CDMA::rotate_priority(int channel)
+{
+	int ctrlr = channel < 4 ? 0 : 1;
+	if (state.controller[ctrlr].command & 0x10)
+		state.controller[ctrlr].next_priority = ((channel & 0x03) + 1) & 0x03;
+}
+
+/**
+ * Release accepted service, without changing requests, counts or TC status.
+ **/
+void CDMA::release_service(int channel)
+{
+	int ctrlr = channel < 4 ? 0 : 1;
+	u8 bit = 1 << (channel & 0x03);
+	bool held = ((state.controller[ctrlr].block_active |
+		state.controller[ctrlr].demand_active) & bit) != 0;
+	state.controller[ctrlr].block_active &= ~bit;
+	state.controller[ctrlr].demand_active &= ~bit;
+	if (channel == 4)
+	{
+		held = held || state.cascade_active;
+		state.cascade_active = false;
+	}
+	if (!held)
+		return;
+	rotate_priority(channel);
+	if (channel < 4 && state.cascade_active)
+	{
+		state.cascade_active = false;
+		rotate_priority(4);
+	}
+}
+
+/**
+ * Retain ongoing demand/block service, or rotate after a successful release.
+ **/
+void CDMA::finish_service(int channel, const SDMA_result& result)
 {
 	// Verify services a unit despite transferring zero bytes.
-	if (result.blocked || result.terminal_count || result.external_eop)
+	if (result.blocked)
 		return;
 	int ctrlr = channel < 4 ? 0 : 1;
 	u8 bit = 1 << (channel & 0x03);
 	u8 mode = state.channel[channel].mode & 0xc0;
+	if (result.terminal_count || result.external_eop || mode == 0x40 ||
+		(mode == 0x00 && !(state.controller[ctrlr].drq & bit)))
+	{
+		release_service(channel);
+		// Completion may already have recorded a previously held service.
+		// These idempotent assignments also cover a first unit ending at TC/EOP
+		// and a lower service that has just reacquired its upper cascade grant.
+		rotate_priority(channel);
+		if (channel < 4)
+			rotate_priority(4);
+		return;
+	}
 	if (mode == 0x80)
 		state.controller[ctrlr].block_active |= bit;
-	else if (mode == 0x00 && (state.controller[ctrlr].drq & bit))
+	else if (mode == 0x00)
 		state.controller[ctrlr].demand_active |= bit;
+	if (channel < 4)
+		state.cascade_active = true;
 }
 
 /**
@@ -734,8 +788,7 @@ void CDMA::complete_transfer(int channel)
 	state.controller[ctrlr].status |= 1 << local_channel;
 	// TC and EOP clear the software request; the device owns its DRQ level.
 	state.controller[ctrlr].request &= ~(1 << local_channel);
-	state.controller[ctrlr].block_active &= ~(1 << local_channel);
-	state.controller[ctrlr].demand_active &= ~(1 << local_channel);
+	release_service(channel);
 	if (state.channel[channel].mode & 0x10)
 	{
 		state.channel[channel].current = state.channel[channel].base;
@@ -985,7 +1038,7 @@ CDMA::SDMA_result CDMA::service_send_unit(int channel, u16 data, bool eop)
 	if (service_requested(channel) && select_service_channel(1) == channel)
 	{
 		result = send_unit(channel, data, eop);
-		retain_service(channel, result);
+		finish_service(channel, result);
 	}
 	return result;
 }
@@ -996,7 +1049,7 @@ CDMA::SDMA_result CDMA::service_recv_unit(int channel, u16& data, bool eop)
 	if (service_requested(channel) && select_service_channel(1) == channel)
 	{
 		result = recv_unit(channel, data, eop);
-		retain_service(channel, result);
+		finish_service(channel, result);
 	}
 	return result;
 }

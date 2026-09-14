@@ -76,6 +76,37 @@ using namespace std;
 extern "C" {
 #include <form.h>
 }
+
+// NetBSD libform keeps the caller's TYPE_ENUM list pointer
+// Copy the list and translate the flags.
+template <typename... Args>
+inline int es40_set_field_type(FIELD *field, FIELDTYPE *type, Args... args)
+{
+    return set_field_type(field, type, args...);
+}
+
+template <typename C, typename U>
+inline int es40_set_field_type(FIELD *field, FIELDTYPE *type, const char **list, C checkcase, U checkunique)
+{
+    if (type != TYPE_ENUM)
+        return set_field_type(field, type, list, checkcase, checkunique);
+
+    size_t n = 0;
+    while (list[n] != NULL)
+        ++n;
+    char **copy = (char **)calloc(n + 1, sizeof(char *));
+    for (size_t i = 0; i < n; ++i)
+        copy[i] = strdup(list[i]);
+    return set_field_type(field, TYPE_ENUM, copy, checkcase ? FALSE : TRUE, TRUE);
+}
+
+template <typename C, typename U>
+inline int es40_set_field_type(FIELD *field, FIELDTYPE *type, char **list, C checkcase, U checkunique)
+{
+    return es40_set_field_type(field, type, (const char **)list, checkcase, checkunique);
+}
+
+#define set_field_type es40_set_field_type
 #elif defined(__MINGW32__)
 // compile with -DNCURSES_STATIC to be able to link
 #include <ncurses/ncurses.h>
