@@ -84,6 +84,7 @@
 #define INCLUDED_SYSTEMCOMPONENT_H
 
 #include "Configurator.h"
+#include <typeinfo>
 
   /**
    * \brief Abstract base class for devices that connect to the Typhoon chipset.
@@ -93,6 +94,15 @@ class CSystemComponent
 public:
   virtual int   RestoreState(FILE* f) = 0;
   virtual int   SaveState(FILE* f) = 0;
+  virtual void  prepare_snapshot() {}
+  virtual void  flush_storage() {}
+  // Commit persistent side effects only after every device restored successfully.
+  virtual void  finalize_restore() noexcept {}
+  virtual std::string snapshot_identity() const
+  {
+    return std::string(typeid(*this).name()) + ":" +
+      (myCfg ? myCfg->get_device_path() : std::string());
+  }
 
   CSystemComponent(class CConfigurator* cfg, class CSystem* system);
   virtual       ~CSystemComponent();

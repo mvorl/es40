@@ -83,6 +83,8 @@
 #if !defined(__CONFIGURATOR_H__)
 #define __CONFIGURATOR_H__
 
+#include <string>
+
 #define CFG_MAX_CHILDREN  25
 #define CFG_MAX_VALUES    50
 
@@ -127,6 +129,15 @@ typedef enum
 class CConfigurator
 {
 public:
+  std::string get_device_path() const
+  {
+    std::string path = pParent ? pParent->get_device_path() : std::string();
+    const std::string name = myName ? myName : "";
+    const std::string value = myValue ? myValue : "";
+    return path + "/" + std::to_string(name.size()) + ":" + name +
+      "=" + std::to_string(value.size()) + ":" + value;
+  }
+
   CConfigurator(class CConfigurator* parent, char* name, char* value,
     char* text, size_t textlen);
   ~CConfigurator(void);

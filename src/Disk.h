@@ -117,6 +117,7 @@ public:
   virtual size_t  read_bytes(void* dest, size_t bytes) = 0;
   virtual size_t  write_bytes(void* src, size_t bytes) = 0;
   virtual void    flush() {};  // Override in subclasses that need to sync to storage
+  void            flush_storage() override { flush(); }
   virtual bool    eject_media() { return false; }
 
   bool seek_block(off_t_large lba)
