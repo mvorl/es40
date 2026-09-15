@@ -1581,7 +1581,10 @@ int CTraceEngine::parse(char command[100][100])
 
 			if (!strncasecmp(command[1], "STATE", strlen(command[1])))
 			{
-				theSystem->RestoreState(command[2]);
+				theSystem->stop_threads();
+				if (!theSystem->RestoreState(command[2]))
+					printf("%%IDB-W-LOADSTATE: Restore skipped; current state is unchanged.\n");
+				theSystem->start_threads();
 				return 0;
 			}
 
@@ -1602,7 +1605,17 @@ int CTraceEngine::parse(char command[100][100])
 		{
 			if (!strncasecmp(command[1], "STATE", strlen(command[1])))
 			{
-				theSystem->SaveState(command[2]);
+				theSystem->stop_threads();
+				try
+				{
+					theSystem->SaveState(command[2]);
+				}
+				catch (const CException& e)
+				{
+					printf("%%IDB-E-SAVESTATE: Could not save state: %s\n",
+						e.displayText().c_str());
+				}
+				theSystem->start_threads();
 				return 0;
 			}
 
