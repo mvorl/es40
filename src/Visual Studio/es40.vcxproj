@@ -2346,6 +2346,7 @@
     <ClInclude Include="..\Sym53C810.h" />
     <ClInclude Include="..\Sym53C895.h" />
     <ClInclude Include="..\System.h" />
+    <ClInclude Include="..\SnapshotFile.h" />
     <ClInclude Include="..\SystemComponent.h" />
     <ClInclude Include="..\telnet.h" />
     <ClInclude Include="..\TraceEngine.h" />

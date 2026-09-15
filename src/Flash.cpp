@@ -93,6 +93,7 @@
 #include "Flash.h"
 #include "System.h"
 #include "AlphaCPU.h"
+#include <memory>
 
   // These are the modes for our flash-state-machine.
 #define MODE_READ         0
@@ -109,6 +110,8 @@
 // Magic from the obsolete wrapped ES40 flash state-file format. Retained so we
 // can recognize and warn about those files when loading flash.rom.
 static const u32 flash_magic1 = 0xFF3E3FF3;
+static const u32 flash_snapshot_magic1 = 0x464c5331;
+static const u32 flash_snapshot_magic2 = 0x464c5332;
 
 // SRM partition CPQ signature offsets within a real ES40 flash image.
 static const u32 srm_partition_offset = 0x00010000;
@@ -141,7 +144,20 @@ CFlash::CFlash(CConfigurator* cfg, CSystem* c) : CSystemComponent(cfg, c)
  **/
 CFlash::~CFlash()
 {
-	FlushIfDirty();
+	try
+	{
+		FlushIfDirty();
+	}
+	catch (const CException& e)
+	{
+		printf("%%FLS-F-NOSAVE: %s: %s\n", e.what(), e.message().c_str());
+	}
+	catch (...)
+	{
+		printf("%%FLS-F-NOSAVE: Could not save flash during shutdown.\n");
+	}
+	if (theSROM == this)
+		theSROM = nullptr;
 }
 
 bool CFlash::HasBootFirmware() const
@@ -466,23 +482,26 @@ void CFlash::WriteMem(int index, u64 address, int dsize, u64 data)
 /**
  * Save flash contents as a raw 2 MiB image.
  **/
-void CFlash::SaveStateF(char* fn)
+void CFlash::save_raw_image(const char* fn)
 {
 	FILE* ff = fopen(fn, "wb");
 	if (!ff)
-	{
-		printf("%%FLS-F-NOSAVE: Flash could not be saved to %s\n", fn);
-		return;
-	}
+		FAILURE_1(Runtime, "Flash could not be saved to %s", fn);
 
 	const size_t n = fwrite(state.Flash, 1, sizeof(state.Flash), ff);
-	fclose(ff);
+	const int close_result = fclose(ff);
 
 	if (n != sizeof(state.Flash))
-		printf("%%FLS-F-NOSAVE: Short write (%zu of %zu bytes) to %s\n",
+		FAILURE_3(Runtime, "Short flash write (%zu of %zu bytes) to %s",
 			n, sizeof(state.Flash), fn);
-	else
-		printf("%%FLS-I-SAVEST: Flash saved to %s\n", fn);
+	if (close_result != 0)
+		FAILURE_1(Runtime, "Could not finish writing flash image %s", fn);
+	printf("%%FLS-I-SAVEST: Flash saved to %s\n", fn);
+}
+
+void CFlash::SaveStateF(char* fn)
+{
+	save_raw_image(fn);
 }
 
 void CFlash::SaveStateF()
@@ -513,10 +532,12 @@ void CFlash::RestoreStateF(char* fn)
 			return;
 		}
 		const size_t n = fwrite(state.Flash, 1, sizeof(state.Flash), wf);
-		fclose(wf);
+		const int close_result = fclose(wf);
 		if (n != sizeof(state.Flash))
 			printf("%%FLS-F-NOCREATE: Short write (%zu of %zu bytes) creating %s\n",
 				n, sizeof(state.Flash), fn);
+		else if (close_result != 0)
+			printf("%%FLS-F-NOCREATE: Could not finish creating flash image %s\n", fn);
 		else
 			printf("%%FLS-I-CREATE: Blank 2 MiB flash image created at %s\n", fn);
 		return;
@@ -567,7 +588,16 @@ void CFlash::RestoreStateF()
  **/
 int CFlash::SaveState(FILE* f)
 {
-	fwrite(state.Flash, 1, sizeof(state.Flash), f);
+	if (state.mode < MODE_READ || state.mode > MODE_CONFIRM_1)
+		return -1;
+	const u32 size = (u32)sizeof(state.Flash);
+	const u32 mode = (u32)state.mode;
+	if (fwrite(&flash_snapshot_magic1, sizeof(flash_snapshot_magic1), 1, f) != 1 ||
+		fwrite(&size, sizeof(size), 1, f) != 1 ||
+		fwrite(&mode, sizeof(mode), 1, f) != 1 ||
+		fwrite(state.Flash, 1, sizeof(state.Flash), f) != sizeof(state.Flash) ||
+		fwrite(&flash_snapshot_magic2, sizeof(flash_snapshot_magic2), 1, f) != 1)
+		return -1;
 	return 0;
 }
 
@@ -576,13 +606,26 @@ int CFlash::SaveState(FILE* f)
  **/
 int CFlash::RestoreState(FILE* f)
 {
-	const size_t r = fread(state.Flash, 1, sizeof(state.Flash), f);
-	if (r != sizeof(state.Flash))
-	{
-		printf("flash: unexpected end of file!\n");
+	u32 magic = 0, size = 0, mode = 0;
+	if (fread(&magic, sizeof(magic), 1, f) != 1 || magic != flash_snapshot_magic1 ||
+		fread(&size, sizeof(size), 1, f) != 1 || size != sizeof(state.Flash) ||
+		fread(&mode, sizeof(mode), 1, f) != 1 || mode > MODE_CONFIRM_1)
 		return -1;
-	}
+	std::unique_ptr<void, decltype(&free)> restored(malloc(sizeof(state.Flash)), &free);
+	if (!restored || fread(restored.get(), 1, sizeof(state.Flash), f) != sizeof(state.Flash) ||
+		fread(&magic, sizeof(magic), 1, f) != 1 || magic != flash_snapshot_magic2)
+		return -1;
+	memcpy(state.Flash, restored.get(), sizeof(state.Flash));
+	state.mode = (int)mode;
+	// It may still fail a restore at a later component, so let's not write, even if save state was dirty.
+	dirty = false;
 	return 0;
+}
+
+void CFlash::finalize_restore() noexcept
+{
+	dirty = true;
+	last_dirty = time(nullptr);
 }
 
 CFlash* theSROM = 0;

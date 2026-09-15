@@ -74,6 +74,9 @@ public:
   virtual bool    seek_byte(off_t_large byte);
   virtual size_t  read_bytes(void* dest, size_t bytes);
   virtual size_t  write_bytes(void* src, size_t bytes);
+  int            SaveState(FILE* f) override;
+  int            RestoreState(FILE* f) override;
+  std::string    snapshot_identity() const override;
 protected:
   void* ramdisk;
 };

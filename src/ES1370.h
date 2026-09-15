@@ -116,10 +116,12 @@ static const unsigned dac1_samplerate[] = { 5512, 11025, 22050, 44100 };
 class CES1370 : public CPCIDevice
 {
 public:
-  virtual int   SaveState(FILE* f) { return 0;  }
-  virtual int   RestoreState(FILE* f) { return 0;  }
+  virtual int   SaveState(FILE* f) override;
+  virtual int   RestoreState(FILE* f) override;
   virtual void  check_state() {}
   virtual void  init();
+  virtual void  start_threads() override;
+  virtual void  stop_threads() override;
 
   virtual void  WriteMem_Bar(int func, int bar, u32 address, int dsize, u32 data);
   virtual u32   ReadMem_Bar(int func, int bar, u32 address, int dsize);
@@ -149,6 +151,18 @@ private:
     uint32_t codec;
     uint32_t sctl;
   } state;
+
+  // Protected by the system bus mutex
+  bool audio_running = false;
+
+  struct ES1370SavedState {
+    uint32_t ctl, status, mempage, codec, sctl;
+    struct {
+      uint32_t leftover, scount, frame_addr, frame_cnt;
+    } channel[NB_CHANNELS];
+  };
+
+  void unbind_voices();
 
   struct chan_bits {
     uint32_t ctl_en;
@@ -185,7 +199,8 @@ private:
   void es1370_update_status(ES1370State* s, uint32_t new_status);
   void es1370_reset(ES1370State* s);
   void es1370_maybe_lower_irq(ES1370State* s, uint32_t sctl);
-  void es1370_update_voices(ES1370State* s, uint32_t ctl, uint32_t sctl);
+  void es1370_update_voices(ES1370State* s, uint32_t ctl, uint32_t sctl,
+    bool force = false);
   uint32_t es1370_fixup(ES1370State* s, uint32_t addr);
   void es1370_write(void* opaque, u64 addr, uint64_t val, unsigned size);
   uint64_t es1370_read(void* opaque, u64 addr, unsigned size);

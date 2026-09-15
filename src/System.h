@@ -232,6 +232,7 @@ public:
   unsigned int  get_memory_bits();
   bool          RestoreState(const char* fn);
   void          SaveState(const char* fn);
+  void          flush_storage();
   u64           PCI_Phys(int pcibus, u32 address);
   u64           PCI_Phys_direct_mapped(u32 address, u64 wsm, u64 tba);
   u64           PCI_Phys_scatter_gather(u32 address, u64 wsm, u64 tba);

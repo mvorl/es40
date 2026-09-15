@@ -80,6 +80,10 @@
   **/
 #include "StdAfx.h"
 #include "DiskRam.h"
+#include <memory>
+
+static const u32 ramdisk_magic1 = 0x52414d31;
+static const u32 ramdisk_magic2 = 0x52414d32;
 
 CDiskRam::CDiskRam(CConfigurator* cfg, CSystem* sys, CDiskController* c,
 	int idebus, int idedev) : CDisk(cfg, sys, c, idebus, idedev)
@@ -151,6 +155,49 @@ CDiskRam::~CDiskRam(void)
 		free(ramdisk);
 		ramdisk = 0;
 	}
+}
+
+std::string CDiskRam::snapshot_identity() const
+{
+	return CSystemComponent::snapshot_identity() + "|ram-bytes=" +
+		std::to_string(byte_size) + "|read-only=" + (read_only ? "1" : "0") +
+		"|cdrom=" + (is_cdrom ? "1" : "0");
+}
+
+int CDiskRam::SaveState(FILE* f)
+{
+	if (byte_size < 0 || (u64)byte_size > SIZE_MAX || (byte_size && !ramdisk))
+		return -1;
+	const u64 size = (u64)byte_size;
+	// payload before record so restorestate can verify first
+	if (fwrite(&ramdisk_magic1, sizeof(ramdisk_magic1), 1, f) != 1 ||
+		fwrite(&size, sizeof(size), 1, f) != 1 ||
+		(size && fwrite(ramdisk, 1, (size_t)size, f) != (size_t)size) ||
+		fwrite(&ramdisk_magic2, sizeof(ramdisk_magic2), 1, f) != 1)
+		return -1;
+	return CDisk::SaveState(f);
+}
+
+int CDiskRam::RestoreState(FILE* f)
+{
+	u32 magic = 0;
+	u64 size = 0;
+	if (fread(&magic, sizeof(magic), 1, f) != 1 || magic != ramdisk_magic1 ||
+		fread(&size, sizeof(size), 1, f) != 1 || byte_size < 0 ||
+		size != (u64)byte_size || size > SIZE_MAX || (size && !ramdisk))
+		return -1;
+
+	// the file cannot enlarge the live allocation. 
+	// if either this payload or the following disk protocol record is invalid.
+	std::unique_ptr<void, decltype(&free)> restored(size ? malloc((size_t)size) : nullptr, &free);
+	if (size && (!restored || fread(restored.get(), 1, (size_t)size, f) != (size_t)size))
+		return -1;
+	if (fread(&magic, sizeof(magic), 1, f) != 1 || magic != ramdisk_magic2 ||
+		CDisk::RestoreState(f))
+		return -1;
+	if (size)
+		memcpy(ramdisk, restored.get(), (size_t)size);
+	return 0;
 }
 
 bool CDiskRam::seek_byte(off_t_large byte)

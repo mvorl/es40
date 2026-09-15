@@ -124,6 +124,7 @@ es40_SOURCES = AliM1543C.cpp \
        Sym53C895.cpp \
        SystemComponent.cpp \
        System.cpp \
+       SnapshotFile.h \
        TraceEngine.cpp \
        VGA.cpp \
        i2c_spd.cpp \

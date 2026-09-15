@@ -270,7 +270,7 @@ void segv_handler(int signum)
 #endif // __GNUG__
 #endif
 
-static void run_emulator(int argc, char* argv[]);
+static int run_emulator(int argc, char* argv[]);
 
 /**
  * Entry point for the application.
@@ -479,30 +479,32 @@ int main(int argc, char* argv[])
 			theSystem->stop_threads();
 			delete theSystem;
 		}
-		return 0;
+		return 1;
 	}
 
 	// A GUI that owns main() pumps its event loop there while the emulator,
 	// including its shutdown, runs on a worker thread. Everything the GUI
 	// thread posts back has to keep being dispatched until that worker has
 	// joined the GUI thread, so run_emulator() ends the pump itself.
+	int result = 0;
 	if (bx_gui && bx_gui->requires_main_thread())
 	{
-		std::thread emulator(run_emulator, argc, argv);
+		std::thread emulator([&] { result = run_emulator(argc, argv); });
 		bx_gui->main_thread_pump();
 		emulator.join();
 	}
 	else
-		run_emulator(argc, argv);
+		result = run_emulator(argc, argv);
 
-	return 0;
+	return result;
 }
 
 /**
  * Run the emulator, and clean up after it terminates.
  **/
-static void run_emulator(int argc, char* argv[])
+static int run_emulator(int argc, char* argv[])
 {
+	int result = 0;
 	try
 	{
 #if defined(IDB)
@@ -520,60 +522,70 @@ static void run_emulator(int argc, char* argv[])
 	{
 		printf("Exiting gracefully: %s\n", e.displayText().c_str());
 
-		theSystem->stop_threads();
+		try
+		{
+			theSystem->stop_threads();
+			theSystem->flush_storage();
 
-		// save flash and dpr rom only if not terminated with a fatal error
-		theSROM->SaveStateF();
-		theDPR->SaveStateF();
-		if (theAli)
-			theAli->save_toy_nvram(true);
+			// save flash and dpr rom only if not terminated with a fatal error
+			theSROM->SaveStateF();
+			theDPR->SaveStateF();
+			if (theAli)
+				theAli->save_toy_nvram(true);
 
 #if defined(PROFILE)
-		{
-			FILE* p_fp;
-			u64     p_max = 0;
-			u64     p_i;
-			int     p_j;
-
-			printf("Writing profile to profile.txt");
-
-			p_fp = fopen("profile.txt", "w");
-			for (p_i = PROFILE_FROM; p_i < PROFILE_TO; p_i += (4 * PROFILE_BUCKSIZE))
 			{
-				if (PROFILE_BUCKET(p_i) > p_max)
-					p_max = PROFILE_BUCKET(p_i);
-			}
-			fprintf
-			(
-				p_fp, "p_max = %10" PRId64 "; %10" PRId64 " profiled instructions.\n\n", p_max,
-				profiled_insts
-			);
-			for (p_i = PROFILE_FROM; p_i < PROFILE_TO; p_i += (4 * PROFILE_BUCKSIZE))
-			{
-				if (PROFILE_BUCKET(p_i))
+				FILE* p_fp;
+				u64     p_max = 0;
+				u64     p_i;
+				int     p_j;
+
+				printf("Writing profile to profile.txt");
+
+				p_fp = fopen("profile.txt", "w");
+				for (p_i = PROFILE_FROM; p_i < PROFILE_TO; p_i += (4 * PROFILE_BUCKSIZE))
 				{
-					fprintf(p_fp, "%016" PRIx64 ": %10" PRId64 " ", p_i, PROFILE_BUCKET(p_i));
-					for (p_j = 0; p_j < (((float)PROFILE_BUCKET(p_i) / (float)p_max) * 100);
-						p_j++)
-						fprintf(p_fp, "*");
-					fprintf(p_fp, "\n");
+					if (PROFILE_BUCKET(p_i) > p_max)
+						p_max = PROFILE_BUCKET(p_i);
 				}
+				fprintf
+				(
+					p_fp, "p_max = %10" PRId64 "; %10" PRId64 " profiled instructions.\n\n", p_max,
+					profiled_insts
+				);
+				for (p_i = PROFILE_FROM; p_i < PROFILE_TO; p_i += (4 * PROFILE_BUCKSIZE))
+				{
+					if (PROFILE_BUCKET(p_i))
+					{
+						fprintf(p_fp, "%016" PRIx64 ": %10" PRId64 " ", p_i, PROFILE_BUCKET(p_i));
+						for (p_j = 0; p_j < (((float)PROFILE_BUCKET(p_i) / (float)p_max) * 100);
+							p_j++)
+							fprintf(p_fp, "*");
+						fprintf(p_fp, "\n");
+					}
+				}
+				fclose(p_fp);
 			}
-			fclose(p_fp);
-		}
 #endif
-		delete theSystem;
+		}
+		catch (const CException& save_error)
+		{
+			printf("Shutdown save failure: %s\n", save_error.displayText().c_str());
+			result = 1;
+		}
 	}
 	catch (CException& e)
 	{
 		printf("Emulator Failure: %s\n", e.displayText().c_str());
-		if (theSystem)
-		{
-			theSystem->stop_threads();
-			delete theSystem;
-		}
+		result = 1;
 	}
 
+	if (theSystem)
+	{
+		theSystem->stop_threads();
+		delete theSystem;
+	}
 	if (bx_gui)
 		bx_gui->main_thread_stop();
+	return result;
 }

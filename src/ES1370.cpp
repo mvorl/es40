@@ -127,6 +127,7 @@ CES1370::CES1370(CConfigurator* cfg, class CSystem* c, int pcibus, int pcidev) :
 
 CES1370::~CES1370()
 {
+    stop_threads();
     SDL_DestroyAudioStream(state.adc_voice);
     SDL_DestroyAudioStream(state.dac_voice[0]);
     SDL_DestroyAudioStream(state.dac_voice[1]);
@@ -136,10 +137,122 @@ CES1370::~CES1370()
 
 void CES1370::init()
 {
+    std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
     add_function(0, es_cfg_data, es_cfg_mask);
     ResetPCI();
     es1370_reset(&state);
     es1370_update_voices(&state, state.ctl, state.sctl);
+}
+
+void CES1370::unbind_voices()
+{
+    SDL_UnbindAudioStream(state.adc_voice);
+    SDL_UnbindAudioStream(state.dac_voice[0]);
+    SDL_UnbindAudioStream(state.dac_voice[1]);
+}
+
+void CES1370::stop_threads()
+{
+    std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
+    audio_running = false;
+    unbind_voices();
+}
+
+void CES1370::start_threads()
+{
+    std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
+    if (audio_running)
+        return;
+
+    if (!SDL_ClearAudioStream(state.adc_voice) ||
+        !SDL_ClearAudioStream(state.dac_voice[0]) ||
+        !SDL_ClearAudioStream(state.dac_voice[1]))
+        FAILURE_1(SDL, "Unable to clear resumed audio streams: %s", SDL_GetError());
+    try
+    {
+        es1370_update_voices(&state, state.ctl, state.sctl, true);
+    }
+    catch (...)
+    {
+        unbind_voices();
+        throw;
+    }
+    audio_running = true;
+}
+
+static const u32 es1370_magic1 = 0x45533137;
+static const u32 es1370_magic2 = 0x37315345;
+
+int CES1370::SaveState(FILE* f)
+{
+    std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
+    if (!f || audio_running)
+        return -1;
+    const int res = CPCIDevice::SaveState(f);
+    if (res)
+        return res;
+
+    ES1370SavedState saved{};
+    saved.ctl = state.ctl;
+    saved.status = state.status;
+    saved.mempage = state.mempage;
+    saved.codec = state.codec;
+    saved.sctl = state.sctl;
+    for (size_t i = 0; i < NB_CHANNELS; ++i)
+    {
+        saved.channel[i].leftover = state.chan[i].leftover;
+        saved.channel[i].scount = state.chan[i].scount;
+        saved.channel[i].frame_addr = state.chan[i].frame_addr;
+        saved.channel[i].frame_cnt = state.chan[i].frame_cnt;
+    }
+    static_assert(sizeof(ES1370SavedState) == 17 * sizeof(u32),
+        "Audio snapshot contains only fixed-width guest fields");
+    const u32 size = sizeof(saved);
+    if (fwrite(&es1370_magic1, sizeof(es1370_magic1), 1, f) != 1 ||
+        fwrite(&size, sizeof(size), 1, f) != 1 ||
+        fwrite(&saved, sizeof(saved), 1, f) != 1 ||
+        fwrite(&es1370_magic2, sizeof(es1370_magic2), 1, f) != 1)
+        return -1;
+    return 0;
+}
+
+int CES1370::RestoreState(FILE* f)
+{
+    std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
+    if (!f || audio_running)
+        return -1;
+    const int res = CPCIDevice::RestoreState(f);
+    if (res)
+        return res;
+
+    ES1370SavedState saved{};
+    u32 magic = 0, size = 0;
+    if (fread(&magic, sizeof(magic), 1, f) != 1 || magic != es1370_magic1 ||
+        fread(&size, sizeof(size), 1, f) != 1 || size != sizeof(saved) ||
+        fread(&saved, sizeof(saved), 1, f) != 1 ||
+        fread(&magic, sizeof(magic), 1, f) != 1 || magic != es1370_magic2 ||
+        saved.mempage > 0xf)
+        return -1;
+    for (size_t i = 0; i < NB_CHANNELS; ++i)
+        if (saved.channel[i].leftover > 3)
+            return -1;
+
+    state.ctl = saved.ctl;
+    state.status = saved.status;
+    state.mempage = saved.mempage;
+    state.codec = saved.codec;
+    state.sctl = saved.sctl;
+    for (size_t i = 0; i < NB_CHANNELS; ++i)
+    {
+        const auto& b = es1370_chan_bits[i];
+        const u32 fmt = (state.sctl & b.sctl_fmt) >> b.sctl_sh_fmt;
+        state.chan[i].shift = (fmt & 1) + (fmt >> 1);
+        state.chan[i].leftover = saved.channel[i].leftover;
+        state.chan[i].scount = saved.channel[i].scount;
+        state.chan[i].frame_addr = saved.channel[i].frame_addr;
+        state.chan[i].frame_cnt = saved.channel[i].frame_cnt;
+    }
+    return 0;
 }
 
 void CES1370::es1370_update_status(ES1370State* s, uint32_t new_status)
@@ -220,7 +333,8 @@ void CES1370::es1370_dac2_and_adc_calc_freq(ES1370State* s, uint32_t ctl,
 	*old_freq = DAC2_DIVTOSR(old_pclkdiv);
 }
 
-void CES1370::es1370_update_voices(ES1370State* s, uint32_t ctl, uint32_t sctl)
+void CES1370::es1370_update_voices(ES1370State* s, uint32_t ctl, uint32_t sctl,
+    bool force)
 {
 	size_t i;
 	uint32_t old_freq, new_freq, old_fmt, new_fmt;
@@ -233,9 +347,9 @@ void CES1370::es1370_update_voices(ES1370State* s, uint32_t ctl, uint32_t sctl)
 		old_fmt = (s->sctl & b->sctl_fmt) >> b->sctl_sh_fmt;
 
 		b->calc_freq(s, ctl, &old_freq, &new_freq);
-		if ((old_fmt != new_fmt) || (old_freq != new_freq)) {
+		if (force || (old_fmt != new_fmt) || (old_freq != new_freq)) {
 			d->shift = (new_fmt & 1) + (new_fmt >> 1);
-			if (new_freq) {
+			if (new_freq && (audio_running || force)) {
 				//struct audsettings as;
 				SDL_AudioSpec as;
 
@@ -243,28 +357,28 @@ void CES1370::es1370_update_voices(ES1370State* s, uint32_t ctl, uint32_t sctl)
 				as.channels = 1 << (new_fmt & 1);
 				as.format = (new_fmt & 2) ? SDL_AUDIO_S16LE : SDL_AUDIO_U8;
 
-				if (i == ADC_CHANNEL) {
-					SDL_SetAudioStreamFormat(s->adc_voice, &as, &as);
-				}
-				else {
-					SDL_SetAudioStreamFormat(s->dac_voice[i], &as, &as);
-				}
+                SDL_AudioStream* voice = i == ADC_CHANNEL ? s->adc_voice : s->dac_voice[i];
+                if (!SDL_SetAudioStreamFormat(voice, &as, &as) && force)
+                    FAILURE_1(SDL, "Unable to restore audio format: %s", SDL_GetError());
 			}
 		}
 
-		if (((ctl ^ s->ctl) & b->ctl_en) || ((sctl ^ s->sctl) & b->sctl_pause)) {
+		if ((audio_running || force) &&
+            (force || ((ctl ^ s->ctl) & b->ctl_en) || ((sctl ^ s->sctl) & b->sctl_pause))) {
 			int on = (ctl & b->ctl_en) && !(sctl & b->sctl_pause);
 
 			if (i == ADC_CHANNEL) {
 				if (on) {
-					SDL_BindAudioStream(s->audio_be_in, s->adc_voice);
+					if (!SDL_BindAudioStream(s->audio_be_in, s->adc_voice) && force)
+                        FAILURE_1(SDL, "Unable to resume audio capture: %s", SDL_GetError());
 				}
 				else {
 					SDL_UnbindAudioStream(s->adc_voice);
 				}
 			} else {
 				if (on) {
-					SDL_BindAudioStream(s->audio_be_out, s->dac_voice[i]);
+					if (!SDL_BindAudioStream(s->audio_be_out, s->dac_voice[i]) && force)
+                        FAILURE_1(SDL, "Unable to resume audio playback: %s", SDL_GetError());
 				}
 				else {
 					SDL_UnbindAudioStream(s->dac_voice[i]);
@@ -620,7 +734,7 @@ void CES1370::es1370_dac_callback_dac1(void* userdata, SDL_AudioStream* stream, 
     CES1370* dev = (CES1370*)userdata;
     std::unique_lock<std::recursive_mutex> bus_lock(
         dev->cSystem->get_device_bus_mutex(), std::try_to_lock);
-    if (!bus_lock.owns_lock())
+    if (!bus_lock.owns_lock() || !dev->audio_running)
         return;
     ES1370State* s = &dev->state;
     dev->es1370_run_channel(s, 0, additional_amount);
@@ -631,7 +745,7 @@ void CES1370::es1370_dac_callback_dac2(void* userdata, SDL_AudioStream* stream, 
     CES1370* dev = (CES1370*)userdata;
     std::unique_lock<std::recursive_mutex> bus_lock(
         dev->cSystem->get_device_bus_mutex(), std::try_to_lock);
-    if (!bus_lock.owns_lock())
+    if (!bus_lock.owns_lock() || !dev->audio_running)
         return;
     ES1370State* s = &dev->state;
     dev->es1370_run_channel(s, 1, additional_amount);
@@ -642,7 +756,7 @@ void CES1370::es1370_dac_callback_adc(void* userdata, SDL_AudioStream* stream, i
     CES1370* dev = (CES1370*)userdata;
     std::unique_lock<std::recursive_mutex> bus_lock(
         dev->cSystem->get_device_bus_mutex(), std::try_to_lock);
-    if (!bus_lock.owns_lock())
+    if (!bus_lock.owns_lock() || !dev->audio_running)
         return;
     ES1370State* s = &dev->state;
     dev->es1370_run_channel(s, 2, additional_amount);

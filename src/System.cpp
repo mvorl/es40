@@ -318,6 +318,7 @@
 #include "lockstep.h"
 #include "DPR.h"
 #include "Flash.h"
+#include "SnapshotFile.h"
 
 #include <ctype.h>
 #include <stdlib.h>
@@ -3006,17 +3007,34 @@ void CSystem::stop_threads()
 
 // 2.2 includes complete S3 graphics and NIC packet state. 
 // Reject 2.1 before changing RAM.
+// 2.3 adds a device/media manifest, audio, RAM-disk and flash command state.
 static const u32 system_state_magic = 0xa1fae540;
-static const u32 system_state_version = 0x00020002;
+static const u32 system_state_version = 0x00020003;
+static const u32 snapshot_identity_limit = 65536;
+
+void CSystem::flush_storage()
+{
+	std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
+	for (int i = 0; i < iNumComponents; ++i)
+		acComponents[i]->flush_storage();
+}
 
 /**
  * Save system state to a state file. Callers must first stop device threads.
  **/
 void CSystem::SaveState(const char* fn)
 {
-	std::unique_ptr<FILE, decltype(&fclose)> file(fopen(fn, "wb"), &fclose);
-	if (!file)
-		FAILURE_1(Runtime, "Can't open state file %s for writing", fn);
+	std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
+	std::vector<std::string> identities;
+	for (int i = 0; i < iNumComponents; ++i)
+		acComponents[i]->prepare_snapshot();
+	for (int i = 0; i < iNumComponents; ++i)
+	{
+		identities.push_back(acComponents[i]->snapshot_identity());
+		if (identities.back().empty() || identities.back().size() > snapshot_identity_limit)
+			FAILURE(Runtime, "Invalid snapshot device identity");
+	}
+	CSnapshotFile file(fn);
 	FILE* f = file.get();
 	const auto write = [f](const void* data, size_t size)
 	{
@@ -3031,6 +3049,12 @@ void CSystem::SaveState(const char* fn)
 	write(&memory_size, sizeof(memory_size));
 	write(&system_size, sizeof(system_size));
 	write(&component_count, sizeof(component_count));
+	for (const auto& identity : identities)
+	{
+		const u32 length = (u32)identity.size();
+		write(&length, sizeof(length));
+		write(identity.data(), length);
+	}
 
 	const int* mem = (const int*)memory;
 	const u64 memints = memory_size / sizeof(int);
@@ -3054,13 +3078,10 @@ void CSystem::SaveState(const char* fn)
 	write(&state, sizeof(state));
 	for (int i = 0; i < iNumComponents; i++)
 	{
-		std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
 		if (acComponents[i]->SaveState(f) || ferror(f))
 			FAILURE(Runtime, "Unable to save component state");
 	}
-	// Buffered write failures may only become visible when the file closes.
-	if (fclose(file.release()) != 0)
-		FAILURE(Runtime, "Unable to finish writing system state");
+	file.publish();
 }
 
 /**
@@ -3069,6 +3090,7 @@ void CSystem::SaveState(const char* fn)
  **/
 bool CSystem::RestoreState(const char* fn)
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
 	std::unique_ptr<FILE, decltype(&fclose)> file(fopen(fn, "rb"), &fclose);
 	if (!file)
 	{
@@ -3089,7 +3111,7 @@ bool CSystem::RestoreState(const char* fn)
 	if (version != system_state_version)
 	{
 		printf("%%SYS-I-VERSION: State file %s is incompatible; "
-			"version 2.2 is required.\n", fn);
+			"version 2.3 is required.\n", fn);
 		return false;
 	}
 	if (fread(&memory_size, sizeof(memory_size), 1, f) != 1 ||
@@ -3100,6 +3122,37 @@ bool CSystem::RestoreState(const char* fn)
 	{
 		printf("%%SYS-F-CONFIG: State file %s has an incomplete or "
 			"incompatible system header.\n", fn);
+		return false;
+	}
+
+	// Validate every device and backing medium before replacing any guest RAM.
+	try
+	{
+		for (int i = 0; i < iNumComponents; ++i)
+			acComponents[i]->prepare_snapshot();
+		for (int i = 0; i < iNumComponents; ++i)
+		{
+			u32 length = 0;
+			if (fread(&length, sizeof(length), 1, f) != 1 ||
+				!length || length > snapshot_identity_limit)
+			{
+				printf("%%SYS-F-MANIFEST: Invalid state device manifest.\n");
+				return false;
+			}
+			std::string identity(length, '\0');
+			if (fread(&identity[0], length, 1, f) != 1 ||
+				identity != acComponents[i]->snapshot_identity())
+			{
+				printf("%%SYS-F-MANIFEST: State device or media does not match %s.\n",
+					acComponents[i]->devid_string);
+				return false;
+			}
+		}
+	}
+	catch (const CException& e)
+	{
+		printf("%%SYS-F-MANIFEST: Unable to verify state media: %s\n",
+			e.displayText().c_str());
 		return false;
 	}
 
@@ -3137,10 +3190,11 @@ bool CSystem::RestoreState(const char* fn)
 	//
 	for (int i = 0; i < iNumComponents; i++)
 	{
-		std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
 		if (acComponents[i]->RestoreState(f) || ferror(f) || feof(f))
 			FAILURE(Runtime, "Unable to restore system state");
 	}
+	for (int i = 0; i < iNumComponents; ++i)
+		acComponents[i]->finalize_restore();
 	return true;
 }
 

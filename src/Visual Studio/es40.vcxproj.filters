@@ -395,6 +395,9 @@
     <ClInclude Include="..\System.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\SnapshotFile.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\SystemComponent.h">
       <Filter>Header Files</Filter>
     </ClInclude>

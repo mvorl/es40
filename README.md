@@ -117,15 +117,16 @@ See `CMakeLists.txt` for options to define. To point `cmake` to the SDL3 install
 ## Status  
   
 ## 9/15/26 - Saved-state compatibility  
-
-Saved-state format 2.2 includes VGA/S3 registers, video memory, the graphics  
-accelerator, and pending network packet data. Older 2.1 state files are  
-rejected; create new saves with this build.  
   
-Use the same emulator build, memory/device configuration, and disk images from  
-the time the state was saved. State files do not contain copies of the  
-disk images.  
-
+Saved-state format 2.3 includes VGA/S3 registers, video memory, the graphics  
+accelerator, adds device/media checks, audio state, RAM-disk contents,  
+and flash command state. Older state files are rejected. Failed saves preserve  
+the previous state file.  
+  
+Use the same emulator build, memory/device configuration, and unchanged mounted  
+disk images. File-backed image contents are not included. Physical disk devices  
+do not yet support snapshots.  
+  
 ## 7/30/26 - JIT large pages
 On Windows, there is a JIT large page functionality that requires the
 SeLockMemoryPrivilege in windows. You may have to enable this if you do not see

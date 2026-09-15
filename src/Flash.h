@@ -85,6 +85,7 @@ public:
   virtual       ~CFlash();
   virtual int   SaveState(FILE* f);
   virtual int   RestoreState(FILE* f);
+  void          finalize_restore() noexcept override;
   virtual void  check_state();
   void          SaveStateF();
   void          RestoreStateF();
@@ -97,6 +98,7 @@ public:
   void FlushIfDirty();
 
 protected:
+  void   save_raw_image(const char* fn);
   bool   dirty       = false;
   time_t last_dirty  = 0;   // wall-clock when dirty was last (re)set
 
