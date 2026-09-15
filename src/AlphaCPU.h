@@ -257,6 +257,7 @@ public:
   virtual int   SaveState(FILE* f);
   virtual int   RestoreState(FILE* f);
   void          irq_h(int number, bool assert, int delay);
+  void          kick_int_if_pending();
   void          idle_nap();
   enum class TickHold { Ticked, Expired, Doorbell };
   u64           tick_next_gap_ns(u64 period_ns);   // draws the modulated repay gap for the next fire
@@ -998,6 +999,15 @@ inline u64 CAlphaCPU::va_form(u64 address, bool bIBOX)
 inline int CAlphaCPU::get_cpuid()
 {
   return state.iProcNum;
+}
+
+// CPU-local mode.
+inline void CAlphaCPU::kick_int_if_pending()
+{
+  if ((state.eien & state.eir) || (state.sien & state.sir)
+      || (state.asten
+          && (state.aster & state.astrr & ((1 << (state.cm + 1)) - 1))))
+    state.check_int = true;
 }
 
 /**

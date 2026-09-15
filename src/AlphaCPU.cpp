@@ -2345,8 +2345,8 @@ u64 CAlphaCPU::jit_hw_mfpr(CAlphaCPU* cpu, u32 ins, u64 cur)
 
 /* HW_MTPR (PALmode): the IPR write selected by `function` (value = Rb). Mirrors DO_HW_MTPR
  * (cpu_pal.h) verbatim. Pure stores are verify-compared via the IPR snapshot; TB fills and
- * single-entry invalidates forward to their idempotent helpers; the check_int=true kick
- * (IER/CM/SIRR/AST) can only force an interrupt poll, never suppress one. The 0x40-7f ASN write
+ * single-entry invalidates forward to their idempotent helpers; the conditional interrupt kick
+ * (IER/CM/SIRR/AST) preserves any pending poll. The 0x40-7f ASN write
  * (bit 0) is excluded -- classify() never compiles it (it flushes the DPC + bumps the ASN epoch). */
 void CAlphaCPU::jit_hw_mtpr(CAlphaCPU* cpu, u32 function, u64 value)
 {
@@ -2354,10 +2354,11 @@ void CAlphaCPU::jit_hw_mtpr(CAlphaCPU* cpu, u32 function, u64 value)
 	// ASN write (bit 0, dpc flush + asn-epoch bump) is never compiled -- classify() routes it to OP_NONE.
 	if ((function & 0xc0) == 0x40)
 	{
-		if (function & 2) { cpu->state.aster = (int)(value >> 5) & 0xf; cpu->state.check_int = true; }
-		if (function & 4) { cpu->state.astrr = (int)(value >> 9) & 0xf; cpu->state.check_int = true; }
+		if (function & 2) cpu->state.aster = (int)(value >> 5) & 0xf;
+		if (function & 4) cpu->state.astrr = (int)(value >> 9) & 0xf;
 		if (function & 8)    cpu->state.ppcen = (int)(value >> 1) & 1;
 		if (function & 16)   cpu->state.fpen = (int)(value >> 2) & 1;
+		if (function & 6) cpu->kick_int_if_pending();
 		return;
 	}
 	switch (function)
@@ -2371,12 +2372,11 @@ void CAlphaCPU::jit_hw_mtpr(CAlphaCPU* cpu, u32 function, u64 value)
 	case 0x09:                                                                   // CM (current mode)
 		cpu->state.cm = (int)(value >> 3) & 3;
 		cpu->flush_data_page_cache();
-		cpu->state.check_int = true;
+		cpu->kick_int_if_pending();
 		break;
 	case 0x0b:                                                                   // IER_CM: write CM, then fall into IER
 		cpu->state.cm = (int)(value >> 3) & 3;
 		cpu->flush_data_page_cache();
-		cpu->state.check_int = true;
 		[[fallthrough]];
 	case 0x0a:                                                                   // IER
 		cpu->state.asten = (int)(value >> 13) & 1;
@@ -2385,11 +2385,11 @@ void CAlphaCPU::jit_hw_mtpr(CAlphaCPU* cpu, u32 function, u64 value)
 		cpu->state.cren = (int)(value >> 31) & 1;
 		cpu->state.slen = (int)(value >> 32) & 1;
 		cpu->state.eien = (int)(value >> 33) & 0x3f;
-		cpu->state.check_int = true;                       // newly enabled pending ints must be polled
+		cpu->kick_int_if_pending();                       // check the completed IER or IER_CM write
 		break;
 	case 0x0c:                                                                   // SIRR (software interrupt request)
 		cpu->state.sir = (int)(value >> 13) & 0xfffe;
-		cpu->state.check_int = true;
+		cpu->kick_int_if_pending();
 		break;
 	case 0x11:                                                                   // I_CTL (terminator; mirrors DO_HW_MTPR)
 		cpu->state.i_ctl_other = (value & U64(0x00000000006e2f67)) | U64(0x0000000000100000);  // bit 20 hardwired-on (EV6/EV68)

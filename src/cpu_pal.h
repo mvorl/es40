@@ -223,17 +223,17 @@
     if(function & 2)                                                             \
     {                                                                            \
       state.aster = (int) (state.r[REG_2] >> 5) & 0xf;                           \
-      state.check_int = true;                                                    \
     }                                                                            \
     if(function & 4)                                                             \
     {                                                                            \
       state.astrr = (int) (state.r[REG_2] >> 9) & 0xf;                           \
-      state.check_int = true;                                                    \
     }                                                                            \
     if(function & 8)                                                             \
       state.ppcen = (int) (state.r[REG_2] >> 1) & 1;                             \
     if(function & 16)                                                            \
       state.fpen = (int) (state.r[REG_2] >> 2) & 1;                              \
+    if(function & 6)                                                             \
+      kick_int_if_pending();                                                     \
   }                                                                              \
   else                                                                           \
   {                                                                              \
@@ -262,13 +262,12 @@
     case 0x09:  /* CM */                                                         \
       state.cm = (int) (state.r[REG_2] >> 3) & 3;                                \
       flush_data_page_cache();                                                   \
-      state.check_int = true;                                                    \
+      kick_int_if_pending();                                                     \
       break;                                                                     \
                                                                             \
     case 0x0b:  /* IER_CM */                                                     \
       state.cm = (int) (state.r[REG_2] >> 3) & 3;                                \
       flush_data_page_cache();                                                   \
-      state.check_int = true;                                                    \
       [[fallthrough]];                                                           \
     case 0x0a:  /* IER */                                                        \
       state.asten = (int) (state.r[REG_2] >> 13) & 1;                            \
@@ -277,12 +276,12 @@
       state.cren = (int) (state.r[REG_2] >> 31) & 1;                             \
       state.slen = (int) (state.r[REG_2] >> 32) & 1;                             \
       state.eien = (int) (state.r[REG_2] >> 33) & 0x3f;                          \
-      state.check_int = true;                                                    \
+      kick_int_if_pending();                                                     \
       break;                                                                     \
                                                                             \
     case 0x0c:  /* SIRR */                                                       \
       state.sir = (int) (state.r[REG_2] >> 13) & 0xfffe;                         \
-      state.check_int = true;                                                    \
+      kick_int_if_pending();                                                     \
       break;                                                                     \
                                                                             \
     case 0x0e:  /* HW_INT_CLR */                                                 \

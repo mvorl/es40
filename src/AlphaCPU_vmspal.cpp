@@ -285,7 +285,7 @@ void CAlphaCPU::vmspal_call_swpctx()
 	state.astrr = (int)(p4 >> 4) & 0xf;
 	state.fpen = (int)p5 & 1;
 	state.ppcen = (int)(p5 >> 0x3e) & 1;
-	state.check_int = true;
+	kick_int_if_pending();
 
 	hw_ldq(r16 + 0x40, p7);
 	hw_ldq(r16 + 0x20, p6);
@@ -321,7 +321,7 @@ void CAlphaCPU::vmspal_call_mtpr_asten()
 	r0 = state.aster;
 	state.aster &= r16;
 	state.aster |= (r16 >> 4) & 0xf;
-	state.check_int = true;
+	kick_int_if_pending();
 }
 
 /**
@@ -332,7 +332,7 @@ void CAlphaCPU::vmspal_call_mtpr_astsr()
 	r0 = state.astrr;
 	state.astrr &= r16;
 	state.astrr |= (r16 >> 4) & 0xf;
-	state.check_int = true;
+	kick_int_if_pending();
 }
 
 /**
@@ -406,7 +406,7 @@ void CAlphaCPU::vmspal_call_mtpr_ipl()
 	state.pcen = ipl_ier_mask[r16][3];
 	state.sien = ipl_ier_mask[r16][4];
 	state.asten = ipl_ier_mask[r16][5];
-	state.check_int = true;
+	kick_int_if_pending();
 }
 
 /**
@@ -485,7 +485,7 @@ void CAlphaCPU::vmspal_call_mtpr_sirr()
 	if (r16 > 0 && r16 < 16)
 	{
 		state.sir |= 1 << r16;
-		state.check_int = true;
+		kick_int_if_pending();
 	}
 }
 
@@ -803,6 +803,7 @@ int CAlphaCPU::vmspal_call_rei()
 		p20 |= p5;
 		hw_stq(p7, p20);
 		hw_ldq(p6, r30);
+		kick_int_if_pending();
 		set_pc(p23);
 		return 0;
 	}
@@ -839,7 +840,7 @@ int CAlphaCPU::vmspal_call_rei()
 		state.pcen = ipl_ier_mask[0][3];
 		state.sien = ipl_ier_mask[0][4];
 		state.asten = ipl_ier_mask[0][5];
-		state.check_int = true;
+		kick_int_if_pending();
 		set_pc(p23);
 		return 0;
 	}
@@ -858,7 +859,7 @@ int CAlphaCPU::vmspal_call_rei()
 	state.pcen = ipl_ier_mask[p7][3];
 	state.sien = ipl_ier_mask[p7][4];
 	state.asten = ipl_ier_mask[p7][5];
-	state.check_int = true;
+	kick_int_if_pending();
 	set_pc(p23);
 	return 0;
 }
@@ -872,7 +873,7 @@ void CAlphaCPU::vmspal_call_swasten()
 	if (r16 & 1)
 	{
 		state.aster |= (1 << ((p22 >> 3) & 3));
-		state.check_int = true;
+		kick_int_if_pending();
 	}
 	else
 		state.aster &= ~(1 << ((p22 >> 3) & 3));
@@ -1089,7 +1090,7 @@ int CAlphaCPU::vmspal_ent_sw_int(int si)
 	state.pcen = ipl_ier_mask[x][3];
 	state.sien = ipl_ier_mask[x][4];
 	state.asten = ipl_ier_mask[x][5];
-	state.check_int = true;
+	kick_int_if_pending();
 	p20 = (u64)x << 8;
 	p20 |= 4;
 	hw_stq(p21 + 0x128, p20);
@@ -1220,7 +1221,7 @@ int CAlphaCPU::vmspal_ent_ext_int(int ei)
 		state.pcen = ipl_ier_mask[p7][3];
 		state.sien = ipl_ier_mask[p7][4];
 		state.asten = ipl_ier_mask[p7][5];
-		state.check_int = true;
+		kick_int_if_pending();
 		p20 = p7 << 8;
 		p20 |= 4;
 		hw_stq(p21 + 0x128, p20);
