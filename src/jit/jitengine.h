@@ -142,6 +142,7 @@ public:
 #endif
     uint32_t prefix_len;  // # safe ALU ops in code
     bool     compiled;    // compile has been attempted
+    uint8_t  compile_encounters; // eligible cold passes, saturated at 2; separate from trace hotness
     uint32_t body_off;    // jit_body's offset within code -- restores the chained entry on revalidate
     uint64_t src_sum;     // hash of the source words at compile time (revalidate vs self-mod)
     uint32_t hash_len;    // word count src_sum covers -- frozen at compile time; n_instr drifts

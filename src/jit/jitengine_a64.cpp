@@ -3026,7 +3026,7 @@ static A64OpEmitReceipt emit_a64_ints_zap(A64EmitContext& context,
     if (err == Error::kOk) err = a.add(RA::kScratch3, RA::kScratch3, RA::kScratch1);
     if (err == Error::kOk) err = a.ldr(RA::kScratch1, a64::ptr(RA::kScratch3));
     if (err == Error::kOk && is_zap)
-      err = a.mvn(RA::kScratch1, RA::kScratch1);            // ZAP keeps the CLEAR bytes
+      err = (a.mvn)(RA::kScratch1, RA::kScratch1);          // ZAP keeps the CLEAR bytes; avoid the MSVC mvn macro.
     if (err == Error::kOk) err = a.and_(dst, op1, RA::kScratch1);
   }
   if (err == Error::kOk && wc.kind == A64GprRouteKind::kMemory) {
@@ -3745,7 +3745,7 @@ static A64OpEmitReceipt emit_a64_ints_byte(A64EmitContext& context,
       if (err == Error::kOk)
         err = is_high ? a.lsr(RA::kScratch1, RA::kScratch1, RA::kScratch5)
                       : a.lsl(RA::kScratch1, RA::kScratch1, RA::kScratch5);
-      if (err == Error::kOk) err = a.mvn(RA::kScratch1, RA::kScratch1);
+      if (err == Error::kOk) err = (a.mvn)(RA::kScratch1, RA::kScratch1);
       if (err != Error::kOk) return a64_completed_op_receipt(op, err);
       if (is_high) {
         // MSKxH pos==0 keeps Ra: select via branch (op1 stays intact).
@@ -5841,6 +5841,11 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     void* read_wchk_helper, void* itof_helper, void* ftoi_helper, void* fltl_helper,
     void* fp_read_helper, void* fp_write_helper, void* fltv_helper)
 {
+  // Only the interpreted miss path calls this for an uncompiled block. Keep the
+  // first encounter interpreted; compiled dispatch and chaining pay no counter cost.
+  if (b->compile_encounters < 2) ++b->compile_encounters;
+  if (b->compile_encounters < 2) return;
+
   // Match the x64 cold-path lifecycle.
   if (m_rt && m_code_bytes >= kReclaimBytes) {
     reclaim_code();

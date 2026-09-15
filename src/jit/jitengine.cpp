@@ -222,7 +222,7 @@ CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uin
   JitBlock& b = *victim;
   b.vgen = m_vgen_cur;
 #ifdef JIT_STATS
-  // Why is this a FRESH compile? With ways, "asn" no longer means "the index can't tell processes
+  // Why is this a FRESH record? With ways, "asn" no longer means "the index can't tell processes
   // apart" -- it means the set ran OUT of ways for this PC, i.e. kWays is too small. "tag" is plain
   // capacity/conflict pressure on the set (the cache-size lever).
   if (hit) {
@@ -254,6 +254,7 @@ CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uin
 #endif
   b.prefix_len = 0;
   b.compiled = false;
+  b.compile_encounters = 0; // eviction, remap or a flush without reusable code starts admission over
   b.hot = 0;              // fresh block: restart the trace-promotion counter 
 #ifdef JIT_REGPROF
   b.rp_hits = 0;          // fresh block: restart the exec counter (resurrect/revalidate keep theirs)
@@ -575,11 +576,11 @@ uint64_t CJitEngine::note_exec(uint32_t native_instr, uint32_t interp_instr, uin
            (unsigned long long) m_stat_hot,
            m_jmp_attempt ? 100.0 * (double) m_jmp_hit / (double) m_jmp_attempt : 0.0);
   }
-  // Fresh-compile reason (per window): tag=cache aliasing, asn=cross-process same-PC, phys=remap,
-  // hash=self-mod, cold=genuine new/warmup. Sums to the window's `recorded` growth (the churn cost).
+  // Fresh-record reason (per window): tag=cache aliasing, asn=cross-process same-PC, phys=remap,
+  // hash=failed reuse after a flush, cold=new/warmup. Admission can defer actual compilation.
   const uint64_t fresh = m_fresh_tag + m_fresh_asn + m_fresh_phys + m_fresh_hash + m_fresh_cold;
   if (fresh)
-    printf("[JIT][STATS][CPU%d] fresh-cause: tag %llu | asn %llu | phys %llu | hash %llu | cold %llu (of %llu recompiled)\n",
+    printf("[JIT][STATS][CPU%d] fresh-cause: tag %llu | asn %llu | phys %llu | hash %llu | cold %llu (of %llu records)\n",
            m_cpu_id, (unsigned long long) m_fresh_tag, (unsigned long long) m_fresh_asn,
            (unsigned long long) m_fresh_phys, (unsigned long long) m_fresh_hash,
            (unsigned long long) m_fresh_cold, (unsigned long long) fresh);

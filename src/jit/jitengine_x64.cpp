@@ -2182,6 +2182,11 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
 
 void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_size, void* read_helper, void* write_helper, void* opcdec_helper, void* hw_mfpr_helper, void* hw_ld_helper, void* hw_mtpr_helper, void* hw_st_helper, void* indirect_helper, void* read_locked_helper, void* stc_helper, void* misc_helper, void* read_vpte_helper, void* read_wchk_helper, void* itof_helper, void* ftoi_helper, void* fltl_helper, void* fp_read_helper, void* fp_write_helper, void* fltv_helper)
 {
+  // Only the interpreted miss path calls this for an uncompiled block. Keep the
+  // first encounter interpreted; compiled dispatch and chaining pay no counter cost.
+  if (b->compile_encounters < 2) ++b->compile_encounters;
+  if (b->compile_encounters < 2) return;
+
   using namespace asmjit;
   // Reclaim must self-trigger here, NOT only in flush(): flush() runs when the guest executes
   // IMB/IC_FLUSH, and a compute-heavy phase can go minutes without one while recompiles keep
