@@ -1503,7 +1503,7 @@ void CKeyboard::ctrl_to_mouse(u8 value)
 		{
 		case 0xe6:  // Set Mouse Scaling to 1:1
 			controller_enQ(0xFA, 1);  // ACK
-			state.mouse.scaling = 2;
+			state.mouse.scaling = 1;
 #ifdef DEBUG_KBD
 			BX_DEBUG(("[mouse] Scaling set to 1:1"));
 #endif
