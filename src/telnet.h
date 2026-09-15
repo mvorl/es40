@@ -168,7 +168,7 @@ typedef unsigned int  socklen_t;
 #define TELOPT_LFLOW  33  /* remote flow control */
 
 #else // defined(_WIN32) || defined(__VMS)
-#define INVALID_SOCKET  1
+#define INVALID_SOCKET  -1
 #endif // defined (_WIN32) || defined(__VMS)
 
 /* inet_aton -- Emulate BSD inet_aton via inet_addr.

@@ -305,31 +305,69 @@ void CSerial::init()
 	}
 
 	// Start Telnet server
+	listenSocket = INVALID_SOCKET;
+	connectSocket = INVALID_SOCKET;
 #if defined(_WIN32)
 
   // Windows Sockets only work after calling WSAStartup.
 	WSADATA wsa;
-	WSAStartup(0x0101, &wsa);
+	const int startup_error = WSAStartup(0x0101, &wsa);
+	if (startup_error != 0)
+		FAILURE_3(Configuration,
+			"%s: serial port %d WSAStartup failed (Winsock error %d)",
+			devid_string, listenPort, startup_error);
 #endif // defined (_WIN32)
-	struct sockaddr_in  Address;
-
-	socklen_t           nAddressSize = sizeof(struct sockaddr_in);
-
-	listenSocket = (int)socket(AF_INET, SOCK_STREAM, 0);
-	if (listenSocket == INVALID_SOCKET)
+	const auto listener_failure = [this](const char* operation)
 	{
-		printf("Could not open socket to listen on!\n");
-	}
+		// Capture the original error before cleanup changes it.
+#if defined(_WIN32)
+		const int error = WSAGetLastError();
+		if (listenSocket != INVALID_SOCKET)
+			closesocket(listenSocket);
+		listenSocket = INVALID_SOCKET;
+		WSACleanup();
+		char error_text[256] = {};
+		FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+			nullptr, error, 0, error_text, sizeof(error_text), nullptr);
+		error_text[strcspn(error_text, "\r\n")] = '\0';
+		FAILURE_5(Configuration,
+			"%s: serial port %d %s failed: %s (Winsock error %d)",
+			devid_string, listenPort, operation, error_text, error);
+#else
+		const int error = errno;
+		if (listenSocket != INVALID_SOCKET)
+			close(listenSocket);
+		listenSocket = INVALID_SOCKET;
+		FAILURE_5(Configuration,
+			"%s: serial port %d %s failed: %s (errno %d)",
+			devid_string, listenPort, operation, strerror(error), error);
+#endif
+	};
 
+	listenSocket = socket(AF_INET, SOCK_STREAM, 0);
+	if (listenSocket == INVALID_SOCKET)
+		listener_failure("socket");
+
+	struct sockaddr_in Address = {};
 	Address.sin_addr.s_addr = INADDR_ANY;
 	Address.sin_port = htons((u16)(listenPort));
 	Address.sin_family = AF_INET;
 
 	int optval = 1;
-	setsockopt(listenSocket, SOL_SOCKET, SO_REUSEADDR, (char*)&optval,
-		sizeof(optval));
-	bind(listenSocket, (struct sockaddr*)&Address, sizeof(Address));
-	listen(listenSocket, 8);
+#if defined(_WIN32)
+	// Windows SO_REUSEADDR can share an occupied port with another listener.
+	const int reuse_option = SO_EXCLUSIVEADDRUSE;
+#else
+	const int reuse_option = SO_REUSEADDR;
+#endif
+	if (setsockopt(listenSocket, SOL_SOCKET, reuse_option, (char*)&optval,
+		sizeof(optval)) != 0)
+		listener_failure("setsockopt");
+	// Do not let listen() auto-bind an ephemeral port after a failed bind().
+	if (bind(listenSocket, (struct sockaddr*)&Address, sizeof(Address)) != 0)
+		listener_failure("bind");
+	if (listen(listenSocket, 8) != 0)
+		listener_failure("listen");
 
 	printf("%s: Waiting for connection on port %d.\n", devid_string, listenPort);
 
@@ -1221,7 +1259,7 @@ void CSerial::WaitForConnection()
 		tv.tv_sec = 0;
 		tv.tv_usec = 100000;
 		if (select(listenSocket + 1, &readset, NULL, NULL, &tv) > 0)
-			connectSocket = (int)accept(listenSocket, (struct sockaddr*)&Address,
+			connectSocket = accept(listenSocket, (struct sockaddr*)&Address,
 				&nAddressSize);
 	}
 
