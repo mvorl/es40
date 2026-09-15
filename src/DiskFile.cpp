@@ -123,7 +123,8 @@
 CDiskFileMediaMailbox::CDiskFileMediaMailbox(const std::string& label,
     bool floppy, bool initial_read_only) :
     device_label(label), floppy_device(floppy),
-    read_only(initial_read_only), guest_locked(false), active(true)
+    read_only(initial_read_only), guest_locked(false), active(true),
+    actions_pending(false)
 {
 }
 
@@ -140,6 +141,7 @@ bool CDiskFileMediaMailbox::request_image_change(
         pending_actions.push_back(
             { EDiskFileMediaAction::ChangeImage, path, 0, false,
               force_locked });
+        actions_pending.store(true, std::memory_order_release);
         return true;
     }
     catch (...)
@@ -161,6 +163,7 @@ bool CDiskFileMediaMailbox::request_blank_floppy(
         pending_actions.push_back(
             { EDiskFileMediaAction::CreateBlankFloppy, path, image_size,
               false, false });
+        actions_pending.store(true, std::memory_order_release);
         return true;
     }
     catch (...)
@@ -179,6 +182,7 @@ bool CDiskFileMediaMailbox::request_eject(bool force_locked) noexcept
         pending_actions.push_back(
             { EDiskFileMediaAction::Eject, std::string(), 0, false,
               force_locked });
+        actions_pending.store(true, std::memory_order_release);
         return true;
     }
     catch (...)
@@ -201,6 +205,7 @@ bool CDiskFileMediaMailbox::request_read_only_toggle() noexcept
         pending_actions.push_back(
             { EDiskFileMediaAction::SetReadOnly, std::string(), 0,
               desired, false });
+        actions_pending.store(true, std::memory_order_release);
         read_only.store(desired, std::memory_order_release);
         return true;
     }
@@ -215,10 +220,15 @@ bool CDiskFileMediaMailbox::take_pending_actions(
 {
     try
     {
+        if (!actions_pending.load(std::memory_order_acquire))
+            return false;
         std::lock_guard<std::mutex> lock(mutex);
         if (!active || pending_actions.empty())
             return false;
         actions.swap(pending_actions);
+        // Callers normally supply an empty deque. 
+        // Keep the flag accurate if the swap instead leaves their previous contents.
+        actions_pending.store(!pending_actions.empty(), std::memory_order_release);
         return true;
     }
     catch (...)
@@ -279,6 +289,7 @@ void CDiskFileMediaMailbox::deactivate() noexcept
         std::lock_guard<std::mutex> lock(mutex);
         active = false;
         pending_actions.clear();
+        actions_pending.store(false, std::memory_order_relaxed);
     }
     catch (...)
     {
@@ -799,7 +810,8 @@ bool CDiskFile::load_file_transactional(const char* _filename,
 
 void CDiskFile::check_state()
 {
-    if (!cdrom() || !media_mailbox)
+    // Don't lock while the mailbox is empty, which is the normal state.
+    if (!cdrom() || !media_mailbox || !media_mailbox->has_pending_actions())
         return;
 
     std::lock_guard<std::recursive_mutex> lock(media_action_mutex);
@@ -815,10 +827,11 @@ void CDiskFile::scsi_select_me(int bus)
 
 void CDiskFile::service_pending_media_actions()
 {
-    std::lock_guard<std::recursive_mutex> lock(media_action_mutex);
-
-    if (!media_mailbox)
+    // avoid the mutex and penalties if nothing to do
+    if (!media_mailbox || !media_mailbox->has_pending_actions())
         return;
+
+    std::lock_guard<std::recursive_mutex> lock(media_action_mutex);
 
     std::deque<SDiskFileMediaAction> actions;
     if (!media_mailbox->take_pending_actions(actions))

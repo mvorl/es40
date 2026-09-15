@@ -97,6 +97,10 @@ public:
   bool request_eject(bool force_locked = false) noexcept;
   bool request_read_only_toggle() noexcept;
   bool take_pending_actions(std::deque<SDiskFileMediaAction>& actions) noexcept;
+  bool has_pending_actions() const noexcept
+  {
+    return actions_pending.load(std::memory_order_acquire);
+  }
   void deactivate() noexcept;
   void reconcile_read_only(bool actual_value) noexcept;
   void update_mounted_image(const std::string& path) noexcept;
@@ -123,6 +127,7 @@ private:
   std::atomic<bool> read_only;
   std::atomic<bool> guest_locked;
   bool active;
+  std::atomic<bool> actions_pending;
   mutable std::mutex mutex;
   std::string mounted_image;
   std::deque<SDiskFileMediaAction> pending_actions;
@@ -156,6 +161,10 @@ public:
   virtual void    check_state() override;
   virtual void    scsi_select_me(int bus) override;
   virtual void    service_pending_media_actions() override;
+  virtual bool    has_pending_media_actions() const noexcept override
+  {
+    return media_mailbox && media_mailbox->has_pending_actions();
+  }
   FILE*           get_handle() { return handle; }
 
   // ---------------------------------------------------------------

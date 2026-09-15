@@ -142,6 +142,18 @@ void CFloppyController::service_pending_media_actions_if_idle()
 
 void CFloppyController::check_state()
 {
+	// Drives are registered before emulation starts. Only the atomic mailbox
+	// flag is inspected here; controller state still requires both locks below.
+	bool pending = false;
+	for (int drive = 0; drive < 2; drive++)
+		if (FDISK(drive) != NULL && FDISK(drive)->has_pending_media_actions())
+		{
+			pending = true;
+			break;
+		}
+	if (!pending)
+		return;
+
 	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	std::lock_guard<std::recursive_mutex> lock(controller_mutex);
 	service_pending_media_actions_if_idle();
