@@ -439,8 +439,26 @@ int main(int argc, char* argv[])
 #if defined(IDB)
 		trc = new CTraceEngine(theSystem);
 #endif
-		theSystem->LoadROM();
-		theDPR->init();
+		// Components are initialized and no workers have started. 
+		// Restore the whole file before deciding to skip firmware loading.
+		// This way, we restore into a resumable state or not at all. 
+		const char* restore_file = getenv("ES40_RESTORE");
+		bool restored = false;
+		if (restore_file && *restore_file)
+		{
+			printf("%%SYS-I-RESTORE: Restoring state from %s before startup.\n",
+				restore_file);
+			restored = theSystem->RestoreState(restore_file);
+			if (restored)
+				printf("%%SYS-I-RESTORED: State restored; firmware loading skipped.\n");
+			else
+				printf("%%SYS-W-NORESTORE: State was not loaded; cold booting.\n");
+		}
+		if (!restored)
+		{
+			theSystem->LoadROM();
+			theDPR->init();
+		}
 
 #if defined(PROFILE)
 		{

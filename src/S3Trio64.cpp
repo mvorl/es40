@@ -3916,7 +3916,10 @@ int CS3Trio64::RestoreState(FILE* f)
 	s3_define_video_mode();
 	recompute_params();
 	vga.dac.dirty = 1;
-	palette_update();
+	if (m_gui_initialized)
+		palette_update();
+	else
+		CVGA::palette_update();
 	on_crtc_linear_regs_changed();
 	state.last_bpp = 0;
 	state.vga_mem_updated = true;

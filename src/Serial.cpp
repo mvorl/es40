@@ -778,9 +778,10 @@ void CSerial::serial_menu()
 {
 	fd_set          readset;
 	unsigned char   buffer[FIFO_SIZE + 1];
-	ssize_t         size;
+	int             size;
 	struct timeval  tv;
 	bool            exitLoop = false;
+	bool            waitForChoice = false;
 
 	cSystem->stop_threads();
 
@@ -793,6 +794,7 @@ void CSerial::serial_menu()
 	write_cstr("     2. Abort emulator (no changes saved)\r\n");
 	write_cstr("     3. Save state to autosave.axp and continue\r\n");
 	write_cstr("     4. Load state from autosave.axp and continue\r\n");
+	write_cstr("     5. Save state to autosave.axp and exit\r\n");
 #endif
 	while (!exitLoop)
 	{
@@ -800,9 +802,14 @@ void CSerial::serial_menu()
 		FD_SET(connectSocket, &readset);
 		tv.tv_sec = 60;
 		tv.tv_usec = 0;
-		if (select(connectSocket + 1, &readset, NULL, NULL, &tv) <= 0)
+		int ready = select(connectSocket + 1, &readset, NULL, NULL,
+			waitForChoice ? NULL : &tv);
+		if (ready <= 0)
 		{
-			write_cstr("%SRL-I-TIMEOUT: no timely answer received. Continuing emulation.\r\n");
+			if (ready < 0)
+				printf("%%SRL-W-DISCONNECT: Serial menu connection failed. Continuing emulation.\n");
+			else
+				write_cstr("%SRL-I-TIMEOUT: no timely answer received. Continuing emulation.\r\n");
 			break;  // leave loop
 		}
 
@@ -811,6 +818,11 @@ void CSerial::serial_menu()
 #else
 		size = read(connectSocket, &buffer, FIFO_SIZE);
 #endif
+		if (size <= 0)
+		{
+			printf("%%SRL-W-DISCONNECT: Serial menu connection closed or failed. Continuing emulation.\n");
+			break;
+		}
 		switch (buffer[0])
 		{
 		case '0':
@@ -847,9 +859,28 @@ void CSerial::serial_menu()
 
 		case '4':
 			write_cstr("%SRL-I-LOADSTATE: Loading state from autosave.axp.\r\n");
-			cSystem->RestoreState("autosave.axp");
+			if (!cSystem->RestoreState("autosave.axp"))
+				write_cstr("%SRL-W-LOADSTATE: Restore skipped; current state is unchanged.\r\n");
 			write_cstr("%SRL-I-CONTINUE: continuing emulation.\r\n");
 			exitLoop = true;
+			break;
+
+		case '5':
+			write_cstr("%SRL-I-SAVESTATE: Saving state to autosave.axp.\r\n");
+			try
+			{
+				cSystem->SaveState("autosave.axp");
+			}
+			catch (const CException& e)
+			{
+				write_cstr("%SRL-E-SAVESTATE: Could not save state: ");
+				write_cstr(e.displayText().c_str());
+				write_cstr("\r\n%SRL-I-STOPPED: Emulation remains stopped. Choose 5 to retry, 0 to continue, or 1 to exit.\r\n");
+				waitForChoice = true;
+				break;
+			}
+			write_cstr("%SRL-I-EXIT: State saved; exiting emulation gracefully.\r\n");
+			FAILURE(Graceful, "Graceful exit");
 			break;
 
 		default:

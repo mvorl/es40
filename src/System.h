@@ -230,7 +230,7 @@ public:
   void          DumpMemory(unsigned int filenum);
   char* PtrToMem(u64 address);
   unsigned int  get_memory_bits();
-  void          RestoreState(const char* fn);
+  bool          RestoreState(const char* fn);
   void          SaveState(const char* fn);
   u64           PCI_Phys(int pcibus, u32 address);
   u64           PCI_Phys_direct_mapped(u32 address, u64 wsm, u64 tba);

@@ -3064,15 +3064,16 @@ void CSystem::SaveState(const char* fn)
 }
 
 /**
- * Restore system state from a state file.
+ * Restore system state with device threads stopped. Return false only when
+ * the file is rejected before changing guest state; failures after that throw.
  **/
-void CSystem::RestoreState(const char* fn)
+bool CSystem::RestoreState(const char* fn)
 {
 	std::unique_ptr<FILE, decltype(&fclose)> file(fopen(fn, "rb"), &fclose);
 	if (!file)
 	{
 		printf("%%SYS-F-NOFILE: Can't open restore file %s\n", fn);
-		return;
+		return false;
 	}
 	FILE* f = file.get();
 	u32 magic = 0, version = 0, system_size = 0, component_count = 0;
@@ -3083,13 +3084,13 @@ void CSystem::RestoreState(const char* fn)
 		fread(&version, sizeof(version), 1, f) != 1)
 	{
 		printf("%%SYS-F-FORMAT: %s does not appear to be a state file.\n", fn);
-		return;
+		return false;
 	}
 	if (version != system_state_version)
 	{
 		printf("%%SYS-I-VERSION: State file %s is incompatible; "
 			"version 2.2 is required.\n", fn);
-		return;
+		return false;
 	}
 	if (fread(&memory_size, sizeof(memory_size), 1, f) != 1 ||
 		fread(&system_size, sizeof(system_size), 1, f) != 1 ||
@@ -3099,7 +3100,7 @@ void CSystem::RestoreState(const char* fn)
 	{
 		printf("%%SYS-F-CONFIG: State file %s has an incomplete or "
 			"incompatible system header.\n", fn);
-		return;
+		return false;
 	}
 
 	// After mutation begins a failure must stop emulation, rather than resume.
@@ -3140,6 +3141,7 @@ void CSystem::RestoreState(const char* fn)
 		if (acComponents[i]->RestoreState(f) || ferror(f) || feof(f))
 			FAILURE(Runtime, "Unable to restore system state");
 	}
+	return true;
 }
 
 /**
