@@ -94,8 +94,8 @@
 #include "PCIDevice.h"
 #include "DEC21143_mii.h"
 #include "DEC21143_tulipreg.h"
-#include "Ethernet.h"
-#include "NetworkBackend.h"
+#include "network/Ethernet.h"
+#include "network/NetworkBackend.h"
 #include "base/Semaphore.h"
 #include <atomic>
 #include <chrono>

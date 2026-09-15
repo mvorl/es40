@@ -22,12 +22,12 @@
  *
  */
 
-#include "StdAfx.h"
+#include "../StdAfx.h"
 
 #if defined(HAVE_TAP_NET)
 
 #include "NetworkTap.h"
-#include "Configurator.h"
+#include "../Configurator.h"
 
 #include <arpa/inet.h>
 #include <errno.h>

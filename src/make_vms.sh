@@ -178,7 +178,7 @@ es40_SOURCES="${es40_VMS_SOURCES}${es40_REG_SOURCES}"
 for current_CONFIG in $es40_CONFIGS; do
 
   es40_DEFINES=ES40,__USE_STD_IOSTREAM
-  es40_INCLUDE="\"''ES40_ROOT'/GUI\",\"''ES40_ROOT'/BASE'\""
+  es40_INCLUDE="\"''ES40_ROOT'\",\"''ES40_ROOT'/GUI\",\"''ES40_ROOT'/BASE'\""
   es40_OPTIMIZE="LEVEL=4,INLINE=SPEED,TUNE=HOST"
   es40_ARCH="HOST"
   es40_STANDARD="GNU"
@@ -213,6 +213,10 @@ VMS_EOF
       source_FILE=${source_FILE#base/}
       object_FILE="base_$source_FILE"
       source_FILE="[.base]$source_FILE"
+    elif test "${source_FILE:0:8}" = "network/"; then
+      source_FILE=${source_FILE#network/}
+      object_FILE="network_$source_FILE"
+      source_FILE="[.network]$source_FILE"
     else
       object_FILE=$source_FILE
     fi

@@ -22,7 +22,7 @@
  *
  */
 
-#include "StdAfx.h"
+#include "../StdAfx.h"
 
 #if defined(HAVE_VMNET)
 

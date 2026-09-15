@@ -164,7 +164,7 @@
 #include "System.h"
 #include "DPR.h"
 #include "Flash.h"
-#include "lockstep.h"
+#include "network/lockstep.h"
 #include <signal.h>
 
 CTraceEngine* trc;

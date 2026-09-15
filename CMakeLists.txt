@@ -293,19 +293,19 @@ list(APPEND ES40_SOURCES
     src/DPR.cpp
     src/es40_debug.cpp
     src/ES1370.cpp
-    src/Ethernet.cpp
+    src/network/Ethernet.cpp
     src/Flash.cpp
     src/FloppyController.cpp
     src/i2c_spd.cpp
     src/ibm8514a.cpp
     src/Keyboard.cpp
-    src/lockstep.cpp
+    src/network/lockstep.cpp
     src/MPU401.cpp
-    src/NetworkBackend.cpp
-    src/NetworkPcap.cpp
-    src/NetworkTap.cpp
-    src/NetworkVmnet.cpp
-    src/NetworkVmnetIPC.cpp
+    src/network/NetworkBackend.cpp
+    src/network/NetworkPcap.cpp
+    src/network/NetworkTap.cpp
+    src/network/NetworkVmnet.cpp
+    src/network/NetworkVmnetIPC.cpp
     src/PCIDevice.cpp
     src/Port80.cpp
     src/S3Trio64.cpp
@@ -434,7 +434,7 @@ endif()
 if (ES40_HAVE_VMNET)
     # Keep the setuid vmnet process isolated from ES40's other dependencies.
     add_executable(es40_vmnet_helper
-        src/es40_vmnet_helper.cpp)
+        src/network/es40_vmnet_helper.cpp)
     target_compile_definitions(es40_vmnet_helper PRIVATE HAVE_VMNET)
     target_link_libraries(es40_vmnet_helper PRIVATE
         $<LINK_LIBRARY:FRAMEWORK,vmnet>)

@@ -2210,15 +2210,18 @@
     <ClCompile Include="..\MPU401.cpp" />
     <ClCompile Include="..\Configurator.cpp" />
     <ClCompile Include="..\DEC21143.cpp" />
-    <ClCompile Include="..\NetworkBackend.cpp" />
-    <ClCompile Include="..\NetworkPcap.cpp" />
-    <ClCompile Include="..\NetworkTap.cpp">
+    <ClCompile Include="..\network\NetworkBackend.cpp" />
+    <ClCompile Include="..\network\NetworkPcap.cpp" />
+    <ClCompile Include="..\network\NetworkTap.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="..\NetworkVmnetIPC.cpp">
+    <ClCompile Include="..\network\NetworkVmnet.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="..\es40_vmnet_helper.cpp">
+    <ClCompile Include="..\network\NetworkVmnetIPC.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="..\network\es40_vmnet_helper.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="..\Disk.cpp" />
@@ -2229,7 +2232,7 @@
     <ClCompile Include="..\DMA.cpp" />
     <ClCompile Include="..\DPR.cpp" />
     <ClCompile Include="..\es40_debug.cpp" />
-    <ClCompile Include="..\Ethernet.cpp" />
+    <ClCompile Include="..\network\Ethernet.cpp" />
     <ClCompile Include="..\base\Exception.cpp" />
     <ClCompile Include="..\Flash.cpp" />
     <ClCompile Include="..\FloppyController.cpp" />
@@ -2239,7 +2242,7 @@
     <ClCompile Include="..\ibm8514a.cpp" />
     <ClCompile Include="..\Keyboard.cpp" />
     <ClCompile Include="..\gui\keymap.cpp" />
-    <ClCompile Include="..\lockstep.cpp" />
+    <ClCompile Include="..\network\lockstep.cpp" />
     <ClCompile Include="..\PCIDevice.cpp" />
     <ClCompile Include="..\Port80.cpp" />
     <ClCompile Include="..\S3Trio64.cpp" />
@@ -2311,12 +2314,13 @@
     <ClInclude Include="..\ES1370.h" />
     <ClInclude Include="..\es40_debug.h" />
     <ClInclude Include="..\es40_endian.h" />
-    <ClInclude Include="..\Ethernet.h" />
-    <ClInclude Include="..\NetworkBackend.h" />
-    <ClInclude Include="..\NetworkPcap.h" />
-    <ClInclude Include="..\NetworkTap.h" />
-    <ClInclude Include="..\NetworkVmnetIPC.h" />
-    <ClInclude Include="..\NetworkVmnetProto.h" />
+    <ClInclude Include="..\network\Ethernet.h" />
+    <ClInclude Include="..\network\NetworkBackend.h" />
+    <ClInclude Include="..\network\NetworkPcap.h" />
+    <ClInclude Include="..\network\NetworkTap.h" />
+    <ClInclude Include="..\network\NetworkVmnet.h" />
+    <ClInclude Include="..\network\NetworkVmnetIPC.h" />
+    <ClInclude Include="..\network\NetworkVmnetProto.h" />
     <ClInclude Include="..\Flash.h" />
     <ClInclude Include="..\FloppyController.h" />
     <ClInclude Include="..\gui\gui.h" />
@@ -2326,7 +2330,7 @@
     <ClInclude Include="..\jit\jitengine_internal.h" />
     <ClInclude Include="..\Keyboard.h" />
     <ClInclude Include="..\gui\keymap.h" />
-    <ClInclude Include="..\lockstep.h" />
+    <ClInclude Include="..\network\lockstep.h" />
     <ClInclude Include="..\logmacro.h" />
     <ClInclude Include="..\mame_shims.h" />
     <ClInclude Include="..\MPU401.h" />
@@ -2348,7 +2352,7 @@
     <ClInclude Include="..\System.h" />
     <ClInclude Include="..\SnapshotFile.h" />
     <ClInclude Include="..\SystemComponent.h" />
-    <ClInclude Include="..\telnet.h" />
+    <ClInclude Include="..\network\telnet.h" />
     <ClInclude Include="..\TraceEngine.h" />
     <ClInclude Include="..\gui\vga.h" />
     <ClInclude Include="..\VGA.h" />

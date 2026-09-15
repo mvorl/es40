@@ -22,13 +22,13 @@
  *
  */
 
-#include "StdAfx.h"
+#include "../StdAfx.h"
 
 #if defined(HAVE_VMNET)
 
 #include "NetworkVmnet.h"
 #include "NetworkVmnetIPC.h"
-#include "Configurator.h"
+#include "../Configurator.h"
 
 #include <vmnet/vmnet.h>
 #include <xpc/xpc.h>

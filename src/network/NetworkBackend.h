@@ -36,7 +36,7 @@
 #if !defined(INCLUDED_NETWORK_BACKEND_H_)
 #define INCLUDED_NETWORK_BACKEND_H_
 
-#include "StdAfx.h"
+#include "../StdAfx.h"
 
 class CConfigurator;
 

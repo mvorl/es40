@@ -200,7 +200,7 @@
 #include "AliM1543C.h"
 #include "banner.h"
 
-#include "lockstep.h"
+#include "network/lockstep.h"
 #include "gui/gui.h"
 
 #include <thread>

@@ -43,6 +43,12 @@
     <Filter Include="Source Files\jit">
       <UniqueIdentifier>{afc55d99-1707-459d-8bd0-c5f33acd4dea}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\network">
+      <UniqueIdentifier>{f24d4a49-2b9b-4205-9136-c5c85e1b533e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\network">
+      <UniqueIdentifier>{b29c1411-aef3-4be3-bdc3-1ac39d8d7aa1}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\AliM1543C.cpp">
@@ -81,20 +87,23 @@
     <ClCompile Include="..\DEC21143.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\NetworkBackend.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\network\NetworkBackend.cpp">
+      <Filter>Source Files\network</Filter>
     </ClCompile>
-    <ClCompile Include="..\NetworkPcap.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\network\NetworkPcap.cpp">
+      <Filter>Source Files\network</Filter>
     </ClCompile>
-    <ClCompile Include="..\NetworkTap.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\network\NetworkTap.cpp">
+      <Filter>Source Files\network</Filter>
     </ClCompile>
-    <ClCompile Include="..\NetworkVmnetIPC.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\network\NetworkVmnet.cpp">
+      <Filter>Source Files\network</Filter>
     </ClCompile>
-    <ClCompile Include="..\es40_vmnet_helper.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\network\NetworkVmnetIPC.cpp">
+      <Filter>Source Files\network</Filter>
+    </ClCompile>
+    <ClCompile Include="..\network\es40_vmnet_helper.cpp">
+      <Filter>Source Files\network</Filter>
     </ClCompile>
     <ClCompile Include="..\Disk.cpp">
       <Filter>Source Files</Filter>
@@ -120,8 +129,8 @@
     <ClCompile Include="..\es40_debug.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\Ethernet.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\network\Ethernet.cpp">
+      <Filter>Source Files\network</Filter>
     </ClCompile>
     <ClCompile Include="..\Flash.cpp">
       <Filter>Source Files</Filter>
@@ -132,8 +141,8 @@
     <ClCompile Include="..\Keyboard.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\lockstep.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\network\lockstep.cpp">
+      <Filter>Source Files\network</Filter>
     </ClCompile>
     <ClCompile Include="..\PCIDevice.cpp">
       <Filter>Source Files</Filter>
@@ -332,23 +341,26 @@
     <ClInclude Include="..\es40_endian.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\Ethernet.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\network\Ethernet.h">
+      <Filter>Header Files\network</Filter>
     </ClInclude>
-    <ClInclude Include="..\NetworkBackend.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\network\NetworkBackend.h">
+      <Filter>Header Files\network</Filter>
     </ClInclude>
-    <ClInclude Include="..\NetworkPcap.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\network\NetworkPcap.h">
+      <Filter>Header Files\network</Filter>
     </ClInclude>
-    <ClInclude Include="..\NetworkTap.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\network\NetworkTap.h">
+      <Filter>Header Files\network</Filter>
     </ClInclude>
-    <ClInclude Include="..\NetworkVmnetIPC.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\network\NetworkVmnet.h">
+      <Filter>Header Files\network</Filter>
     </ClInclude>
-    <ClInclude Include="..\NetworkVmnetProto.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\network\NetworkVmnetIPC.h">
+      <Filter>Header Files\network</Filter>
+    </ClInclude>
+    <ClInclude Include="..\network\NetworkVmnetProto.h">
+      <Filter>Header Files\network</Filter>
     </ClInclude>
     <ClInclude Include="..\Flash.h">
       <Filter>Header Files</Filter>
@@ -359,8 +371,8 @@
     <ClInclude Include="..\Keyboard.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\lockstep.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\network\lockstep.h">
+      <Filter>Header Files\network</Filter>
     </ClInclude>
     <ClInclude Include="..\PCIDevice.h">
       <Filter>Header Files</Filter>
@@ -401,8 +413,8 @@
     <ClInclude Include="..\SystemComponent.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\telnet.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\network\telnet.h">
+      <Filter>Header Files\network</Filter>
     </ClInclude>
     <ClInclude Include="..\TraceEngine.h">
       <Filter>Header Files</Filter>

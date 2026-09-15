@@ -22,12 +22,12 @@
  *
  */
 
-#include "StdAfx.h"
+#include "../StdAfx.h"
 
 #if defined(HAVE_PCAP) || defined(HAVE_TAP_NET) || defined(HAVE_VMNET)
 
 #include "NetworkBackend.h"
-#include "Configurator.h"
+#include "../Configurator.h"
 
 #if defined(HAVE_PCAP)
 #include "NetworkPcap.h"

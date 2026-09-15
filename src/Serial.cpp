@@ -217,7 +217,7 @@
 #include "System.h"
 #include "AliM1543C.h"
 
-#include "lockstep.h"
+#include "network/lockstep.h"
 
 #define UART_BASE_CLOCK  1843200
 #define CYCLE_TIME_MS    20

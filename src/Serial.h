@@ -97,7 +97,7 @@
 #define INCLUDED_SERIAL_H
 
 #include "SystemComponent.h"
-#include "telnet.h"
+#include "network/telnet.h"
 
 #define STAGE_SIZE 8192
 

@@ -41,7 +41,7 @@
   *
   * \author Camiel Vanderhoeven (camiel@camicom.com / http://www.camicom.com)
   **/
-#include "StdAfx.h"
+#include "../StdAfx.h"
 
 #include "lockstep.h"
 

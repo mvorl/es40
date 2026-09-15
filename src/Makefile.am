@@ -55,7 +55,7 @@ endif
 # small helper to work with vmnet directly - OS X only. 
 if HAVE_VMNET
 bin_PROGRAMS += es40_vmnet_helper
-es40_vmnet_helper_SOURCES = es40_vmnet_helper.cpp NetworkVmnetProto.h
+es40_vmnet_helper_SOURCES = network/es40_vmnet_helper.cpp network/NetworkVmnetProto.h
 es40_vmnet_helper_LDFLAGS = -framework vmnet
 EXTRA_es40_DEPENDENCIES = es40_vmnet_helper$(EXEEXT)
 
@@ -101,17 +101,17 @@ es40_SOURCES = AliM1543C.cpp \
        DPR.cpp \
        es40_debug.cpp \
        ES1370.cpp \
-       Ethernet.cpp \
+       network/Ethernet.cpp \
        Flash.cpp \
        FloppyController.cpp \
        Keyboard.cpp \
-       lockstep.cpp \
-       NetworkBackend.cpp \
-       NetworkPcap.cpp \
-       NetworkTap.cpp \
-       NetworkVmnet.cpp \
-       NetworkVmnetIPC.cpp \
-       NetworkVmnetIPC.h \
+       network/lockstep.cpp \
+       network/NetworkBackend.cpp \
+       network/NetworkPcap.cpp \
+       network/NetworkTap.cpp \
+       network/NetworkVmnet.cpp \
+       network/NetworkVmnetIPC.cpp \
+       network/NetworkVmnetIPC.h \
        PCIDevice.cpp \
        Port80.cpp \
        S3Trio64.cpp \

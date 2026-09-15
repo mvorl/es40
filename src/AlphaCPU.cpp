@@ -338,7 +338,7 @@
 #include "jit/jitengine.h"
 #include "AliM1543C.h"
 #include "TraceEngine.h"
-#include "lockstep.h"
+#include "network/lockstep.h"
 #include "cpu_memory.h"
 #include "cpu_control.h"
 #include "cpu_arith.h"

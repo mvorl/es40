@@ -315,7 +315,7 @@
 #include "StdAfx.h"
 #include "System.h"
 #include "AlphaCPU.h"
-#include "lockstep.h"
+#include "network/lockstep.h"
 #include "DPR.h"
 #include "Flash.h"
 #include "SnapshotFile.h"
