@@ -56,7 +56,10 @@
 
 #if defined(_WIN32)
 #include <WinIoCtl.h>
+#else
+#include <unistd.h>
 #endif
+#include <cerrno>
 CDiskDevice::CDiskDevice(CConfigurator* cfg, CSystem* sys, CDiskController* c,
 	int idebus, int idedev) : CDisk(cfg, sys, c, idebus, idedev)
 {
@@ -148,13 +151,33 @@ CDiskDevice::CDiskDevice(CConfigurator* cfg, CSystem* sys, CDiskController* c,
 
 CDiskDevice::~CDiskDevice(void)
 {
-	printf("%s: Closing file.\n", devid_string);
+    printf("%s: Closing file.\n", devid_string);
+    try
+    {
+        flush();
+    }
+    catch (const CException& error)
+    {
+        printf("%s: Could not flush device on close: %s\n",
+               devid_string, error.message().c_str());
+    }
+    catch (const std::exception& error)
+    {
+        printf("%s: Could not flush device on close: %s\n",
+               devid_string, error.what());
+    }
+    catch (...)
+    {
+        printf("%s: Could not flush device on close.\n", devid_string);
+    }
 #if defined(_WIN32)
-	if (handle != INVALID_HANDLE_VALUE)
-		CloseHandle(handle);
+    if (handle != INVALID_HANDLE_VALUE && !CloseHandle(handle))
+        printf("%s: Could not close device %s (error %lu).\n",
+               devid_string, filename, GetLastError());
 #else
-	if (handle)
-		fclose(handle);
+    if (handle && fclose(handle) != 0)
+        printf("%s: Could not close device %s: %s\n",
+               devid_string, filename, strerror(errno));
 #endif
 }
 
@@ -317,9 +340,22 @@ void CDiskDevice::flush()
 	if (read_only)
 		return;
 #if defined(_WIN32)
-	FlushFileBuffers(handle);
+	if (!FlushFileBuffers(handle))
+		FAILURE_2(Runtime, "Could not flush device %s (error %lu)",
+		          filename, GetLastError());
 #else
-	if (handle)
-		fflush(handle);
+	if (handle && (fflush(handle) != 0 || fsync(fileno(handle)) != 0))
+		FAILURE_2(Runtime, "Could not flush device %s: %s",
+		          filename, strerror(errno));
 #endif
+}
+
+void CDiskDevice::prepare_snapshot()
+{
+    FAILURE(Runtime, "Snapshots do not support physical disk devices; use file or RAM disks");
+}
+
+std::string CDiskDevice::snapshot_identity() const
+{
+    FAILURE(Runtime, "Snapshots do not support physical disk devices; use file or RAM disks");
 }

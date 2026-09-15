@@ -119,6 +119,93 @@
 #include <exception>
 #include <string>
 #include <string.h>
+#include <cerrno>
+#include <climits>
+#include <sstream>
+#include <sys/stat.h>
+#if defined(_WIN32)
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
+namespace
+{
+// Length-prefix paths so arbitrary filename characters cannot alias fields.
+void append_identity_string(std::ostringstream& out, const std::string& value)
+{
+    out << value.size() << ':' << value << ';';
+}
+
+std::string image_identity(FILE* image, const std::string& path)
+{
+    if (!image)
+        FAILURE(Runtime, "Snapshot image has no open backing file");
+    std::ostringstream out;
+#if defined(_WIN32)
+    const HANDLE native = (HANDLE)_get_osfhandle(_fileno(image));
+    BY_HANDLE_FILE_INFORMATION info;
+    if (!GetFileInformationByHandle(native, &info))
+        FAILURE_1(Runtime, "Cannot identify snapshot image: %s", path.c_str());
+    const DWORD path_flags = FILE_NAME_NORMALIZED;
+    const DWORD needed = GetFinalPathNameByHandleA(native, nullptr, 0, path_flags);
+    if (!needed)
+        FAILURE_2(Runtime, "Cannot resolve snapshot image %s (error %lu)",
+                  path.c_str(), GetLastError());
+    if (needed == MAXDWORD)
+        FAILURE(Runtime, "Snapshot image path is too long");
+    std::string canonical(static_cast<size_t>(needed) + 1, '\0');
+    const DWORD length = GetFinalPathNameByHandleA(native, &canonical[0],
+        static_cast<DWORD>(canonical.size()), path_flags);
+    if (!length || length >= canonical.size())
+        FAILURE_1(Runtime, "Cannot resolve snapshot image: %s", path.c_str());
+    canonical.resize(length);
+
+    // The mounted handle and its pathname must still refer to the same file.
+    // IF not, we end up opening a replacement image.... whoops. 
+    const HANDLE named = CreateFileA(path.c_str(), 0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (named == INVALID_HANDLE_VALUE)
+        FAILURE_1(Runtime, "Cannot reopen snapshot image identity: %s", path.c_str());
+    BY_HANDLE_FILE_INFORMATION named_info;
+    const BOOL identified = GetFileInformationByHandle(named, &named_info);
+    const BOOL closed = CloseHandle(named);
+    if (!identified || !closed ||
+        info.dwVolumeSerialNumber != named_info.dwVolumeSerialNumber ||
+        info.nFileIndexHigh != named_info.nFileIndexHigh ||
+        info.nFileIndexLow != named_info.nFileIndexLow)
+        FAILURE_1(Runtime, "Snapshot image pathname was replaced: %s", path.c_str());
+    append_identity_string(out, canonical);
+    out << info.dwVolumeSerialNumber << ':'
+        << info.nFileIndexHigh << ':' << info.nFileIndexLow << ':'
+        << info.nFileSizeHigh << ':' << info.nFileSizeLow << ':'
+        << info.ftLastWriteTime.dwHighDateTime << ':'
+        << info.ftLastWriteTime.dwLowDateTime;
+#else
+    struct stat info;
+    if (fstat(fileno(image), &info) != 0)
+        FAILURE_1(Runtime, "Cannot identify snapshot image: %s", path.c_str());
+    std::unique_ptr<char, decltype(&free)> canonical(
+        realpath(path.c_str(), nullptr), &free);
+    if (!canonical)
+        FAILURE_1(Runtime, "Cannot resolve snapshot image: %s", path.c_str());
+    struct stat named_info;
+    if (stat(canonical.get(), &named_info) != 0 ||
+        info.st_dev != named_info.st_dev || info.st_ino != named_info.st_ino)
+        FAILURE_1(Runtime, "Snapshot image pathname was replaced: %s", path.c_str());
+    append_identity_string(out, canonical.get());
+    out << info.st_dev << ':' << info.st_ino << ':' << info.st_size << ':'
+        << info.st_mtime;
+#if defined(__APPLE__)
+    out << ':' << info.st_mtimespec.tv_nsec;
+#elif defined(__linux__) || defined(__FreeBSD__) || defined(__NetBSD__)
+    out << ':' << info.st_mtim.tv_nsec;
+#endif
+#endif
+    return out.str();
+}
+}
 
 CDiskFileMediaMailbox::CDiskFileMediaMailbox(const std::string& label,
     bool floppy, bool initial_read_only) :
@@ -372,6 +459,24 @@ CDiskFile::CDiskFile(CConfigurator* cfg, CSystem* sys, CDiskController* c,
 CDiskFile::~CDiskFile(void)
 {
     printf("%s: Closing file.\n", devid_string);
+    try
+    {
+        prepare_snapshot();
+    }
+    catch (const CException& error)
+    {
+        printf("%s: Could not flush image on close: %s\n",
+               devid_string, error.message().c_str());
+    }
+    catch (const std::exception& error)
+    {
+        printf("%s: Could not flush image on close: %s\n",
+               devid_string, error.what());
+    }
+    catch (...)
+    {
+        printf("%s: Could not flush image on close.\n", devid_string);
+    }
 
     if (media_mailbox)
     {
@@ -393,11 +498,7 @@ CDiskFile::~CDiskFile(void)
     }
 
     // Close the plain-file handle (nullptr when bin/cue is active).
-    if (handle)
-    {
-        fclose(handle);
-        handle = nullptr;
-    }
+    close_image(handle, filename.c_str());
 }
 
 
@@ -477,15 +578,11 @@ bool CDiskFile::eject_media()
         return true;
     }
 
-    if (handle && !read_only && fflush(handle) != 0)
+    if (!flush_before_media_change())
         return false;
 
     reset_bincue_state();
-    if (handle)
-    {
-        fclose(handle);
-        handle = nullptr;
-    }
+    const bool closed = close_image(handle, filename.c_str());
 
     filename.clear();
     byte_size = 0;
@@ -496,6 +593,9 @@ bool CDiskFile::eject_media()
     state.scsi.media_changed = 1;
     if (media_mailbox)
         media_mailbox->update_mounted_image(filename);
+    if (!closed)
+        printf("%s: Media is now ejected, but closing its image reported an error.\n",
+               devid_string);
     return true;
 }
 
@@ -516,7 +616,7 @@ bool CDiskFile::set_read_only(bool desired_read_only)
     if (!handle || filename.empty())
         return false;
 
-    if (desired_read_only && fflush(handle) != 0)
+    if (!flush_before_media_change())
         return false;
 
     FILE* replacement = fopen_large(filename.c_str(),
@@ -526,14 +626,14 @@ bool CDiskFile::set_read_only(bool desired_read_only)
 
     if (fseek_large(replacement, state.byte_pos, SEEK_SET) != 0)
     {
-        fclose(replacement);
+        close_image(replacement, filename.c_str());
         return false;
     }
 
     FILE* old_handle = handle;
     handle = replacement;
     read_only = desired_read_only;
-    fclose(old_handle);
+    close_image(old_handle, filename.c_str());
     return true;
 }
 
@@ -570,12 +670,8 @@ bool CDiskFile::load_file_transactional(const char* _filename,
         state.byte_pos, state.scsi.media_changed
     };
 
-    if (old.handle && !read_only && fflush(old.handle) != 0)
-    {
-        printf("%s: Could not flush the current image before media change.\n",
-               devid_string);
+    if (!flush_before_media_change())
         return false;
-    }
 
     handle           = nullptr;
     is_bincue        = false;
@@ -589,11 +685,7 @@ bool CDiskFile::load_file_transactional(const char* _filename,
     auto discard_current = [this]()
     {
         reset_bincue_state();
-        if (handle)
-        {
-            fclose(handle);
-            handle = nullptr;
-        }
+        close_image(handle, "replacement image");
     };
 
     auto restore_old = [this, &old, &discard_current]()
@@ -613,19 +705,19 @@ bool CDiskFile::load_file_transactional(const char* _filename,
         state.scsi.media_changed = old.media_changed;
     };
 
-    auto discard_old = [&old]()
+    auto discard_old = [this, &old, &new_filename]()
     {
         if (old.tracks)
         {
             for (int i = 0; i < old.track_count; i++)
             {
-                if (old.tracks[i].fileHandle)
-                    fclose(old.tracks[i].fileHandle);
+                close_image(old.tracks[i].fileHandle, old.tracks[i].filename);
             }
             free(old.tracks);
         }
-        if (old.handle)
-            fclose(old.handle);
+        if (!close_image(old.handle, new_filename.c_str()))
+            printf("%s: Replacement image is mounted; closing the previous image reported an error.\n",
+                   devid_string);
     };
 
     try
@@ -933,6 +1025,50 @@ void CDiskFile::service_pending_media_actions()
 //  CDisk virtual interface overrides
 // ===========================================================================
 
+int CDiskFile::RestoreState(FILE* f)
+{
+    const int result = CDisk::RestoreState(f);
+    if (result != 0)
+        return result;
+
+    // seek_byte() and read_bytes() keep the saved position equal to the BIN/CUE 
+    // logical position. Physical seeks happen on read.
+    if (is_bincue)
+    {
+        if (state.byte_pos / 2048 > LONG_MAX)
+        {
+            printf("%s: Restored BIN/CUE position is not representable.\n",
+                   devid_string);
+            return -1;
+        }
+        logical_byte_pos = state.byte_pos;
+        current_lba = (long)(state.byte_pos / 2048);
+        return 0;
+    }
+    if (!handle)
+    {
+        if (!filename.empty() || byte_size != 0 || state.byte_pos != 0)
+        {
+            printf("%s: Restored image position has no backing file.\n",
+                   devid_string);
+            return -1;
+        }
+        logical_byte_pos = 0;
+        current_lba = 0;
+        return 0;
+    }
+
+    // Restore saved host cursor to correct position, otherwise bad things happen
+    if (fseek_large(handle, state.byte_pos, SEEK_SET) != 0 ||
+        ftell_large(handle) != state.byte_pos)
+    {
+        printf("%s: Could not restore image cursor for %s: %s\n",
+               devid_string, filename.c_str(), strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
 /**
  * \brief Seek to an absolute logical byte position.
  *
@@ -1093,15 +1229,108 @@ size_t CDiskFile::write_bytes(void* src, size_t bytes)
  * \brief Flush write buffers.
  *
  * BIN/CUE images are read-only so there is nothing to flush.
- * Plain image behaviour is identical to the original code.
+ * Synchronizing the backing store is reserved for snapshot preparation,
+ * media changes and shutdown; guest flush requests retain their prior cost.
  **/
 void CDiskFile::flush()
 {
     if (is_bincue)
         return;
 
-    if (handle && !read_only)
-        fflush(handle);
+    if (handle && !read_only && (fflush(handle) != 0 || ferror(handle)))
+        FAILURE_2(Runtime, "Could not flush image %s: %s",
+                  filename.c_str(), strerror(errno));
+}
+
+void CDiskFile::prepare_snapshot()
+{
+    flush();
+    if (!handle || read_only || is_bincue)
+        return;
+#if defined(_WIN32)
+    const int result = _commit(_fileno(handle));
+#else
+    const int result = fsync(fileno(handle));
+#endif
+    if (result != 0)
+        FAILURE_2(Runtime, "Could not synchronize image %s: %s",
+                  filename.c_str(), strerror(errno));
+}
+
+bool CDiskFile::flush_before_media_change()
+{
+    try
+    {
+        prepare_snapshot();
+        return true;
+    }
+    catch (const CException& error)
+    {
+        printf("%s: Media remains mounted: %s\n",
+               devid_string, error.message().c_str());
+        return false;
+    }
+    catch (const std::exception& error)
+    {
+        printf("%s: Media remains mounted: %s\n", devid_string, error.what());
+        return false;
+    }
+}
+
+bool CDiskFile::close_image(FILE*& image, const char* path) const noexcept
+{
+    if (!image)
+        return true;
+    FILE* closing = image;
+    image = nullptr; // fclose consumes the stream even when it reports failure.
+    if (fclose(closing) == 0)
+        return true;
+    const int error = errno;
+    printf("%s: Could not close image %s: %s\n",
+           devid_string, path, strerror(error));
+    return false;
+}
+
+std::string CDiskFile::snapshot_identity() const
+{
+    std::ostringstream out;
+    append_identity_string(out, CDisk::snapshot_identity());
+    out << "disk-file-v1:" << read_only << ':' << is_cdrom << ':'
+        << floppy_device << ':' << byte_size << ':';
+    if (!handle && !is_bincue && filename.empty())
+    {
+        out << "empty";
+        return out.str();
+    }
+    if (!is_bincue)
+    {
+        out << "raw:";
+        append_identity_string(out, image_identity(handle, filename));
+        return out.str();
+    }
+
+    out << "cue:" << track_count << ':';
+    // The CUE itself is closed after parsing. But, we need to show guest the correct
+    // layout, even if it changed somehow....
+    std::unique_ptr<FILE, decltype(&fclose)> cue(
+        fopen(filename.c_str(), "rb"), &fclose);
+    if (!cue)
+        FAILURE_1(Runtime, "Cannot identify mounted CUE: %s", filename.c_str());
+    append_identity_string(out, image_identity(cue.get(), filename));
+    for (int i = 0; i < track_count; ++i)
+    {
+        const CueTrack& track = tracks[i];
+        out << track.number << ':' << track.mode << ':' << track.sectorSize
+            << ':' << track.dataOffset << ':' << track.dataSize << ':'
+            << track.startLBA << ':' << track.endLBA << ':' << track.pregapLBA
+            << ':' << track.fileOffset << ':';
+        append_identity_string(out,
+            image_identity(track.fileHandle, track.filename));
+    }
+    FILE* closing = cue.release();
+    if (!close_image(closing, filename.c_str()))
+        FAILURE(Runtime, "Could not close CUE identity handle");
+    return out.str();
 }
 
 
@@ -1571,8 +1800,7 @@ void CDiskFile::close_bin_handles()
     {
         if (tracks[i].fileHandle)
         {
-            fclose(tracks[i].fileHandle);
-            tracks[i].fileHandle = nullptr;
+            close_image(tracks[i].fileHandle, tracks[i].filename);
         }
     }
 }

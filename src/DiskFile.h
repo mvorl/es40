@@ -148,11 +148,15 @@ public:
   CDiskFile(CConfigurator* cfg, CSystem* sys, CDiskController* c,
             int idebus, int idedev);
   virtual         ~CDiskFile(void);
+  virtual int     RestoreState(FILE* f) override;
 
   virtual bool    seek_byte(off_t_large byte);
   virtual size_t  read_bytes(void* dest, size_t bytes);
   virtual size_t  write_bytes(void* src, size_t bytes);
   virtual void    flush();
+  virtual void    prepare_snapshot() override;
+  virtual void    flush_storage() override { prepare_snapshot(); }
+  virtual std::string snapshot_identity() const override;
   virtual bool    eject_media() override;
 
   bool            reload_file(const char* filename);
@@ -224,6 +228,8 @@ private:
   bool            try_parse_cue(const char* cue_path);
   bool            open_bin_files();
   void            close_bin_handles();
+  bool            flush_before_media_change();
+  bool            close_image(FILE*& image, const char* path) const noexcept;
 
   CueTrackMode    parse_mode_string(const char* mode_str,
                                     int& sector_size,
