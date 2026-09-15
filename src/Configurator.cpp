@@ -747,7 +747,7 @@ static const char* const kv_disk_ram[] = {
   "rev_num", "read_only", "cdrom", 0 };
 static const char* const kv_gui_sdl[] = {
   "keyboard.use_mapping", "keyboard.map", "mouse.speed", "mouse.invert_x",
-  "mouse.invert_y", "video.linear", "video.scale_ratio",
+  "mouse.invert_y", "mouse.absolute", "video.linear", "video.scale_ratio",
   "video.scale_change_enable", "hotkey.mouse_capture", "hotkey.media",
   "hotkey.ctrl_alt_delete", "hotkey.reset_window", "hotkey.scale_up",
   "hotkey.scale_down", 0 };

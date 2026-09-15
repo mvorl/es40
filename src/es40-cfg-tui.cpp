@@ -1592,6 +1592,13 @@ void edit_gui_sdl_mouse(const char *title)
         {"mouse invert y?", STR_NO, "mouse.invert_y",
          "Reverse the direction of host mouse motion on the vertical axis.",
          validation_yes_no},
+        {"absolute pointer input? (normal desktop: no)", STR_NO, "mouse.absolute",
+         "Choose no for normal desktop operation (recommended default).\n"
+         "Choose yes if your input source supplies absolute pointer coordinates.\n"
+         "This uses successive host window coordinates while captured.\n"
+         "The guest still receives relative PS/2 movement; its pointer is not\n"
+         "guaranteed to match an exact host pixel. Speed and inversion still apply.",
+         validation_yes_no},
         {"hotkey.mouse_capture", "Ctrl+F10", "hotkey.mouse_capture",
          "Host key combination used to toggle mouse capture.\n" HOTKEY_HELP,
          validation_hotkey}};
@@ -1606,7 +1613,19 @@ void edit_gui_sdl_mouse(const char *title)
     {
         char *p;
         if (entry[i].name != NULL && c != nullptr && (p = c->get_text_value(entry[i].name)) != NULL)
+        {
+            // Boolean configuration values also accept true/false and 1/0.
             preset[i] = p;
+            if (entry[i].validation_callback == validation_yes_no)
+            {
+                if (!strcasecmp(p, "yes") || !strcasecmp(p, "true") ||
+                    !strcmp(p, "1"))
+                    preset[i] = (char *)STR_YES;
+                else if (!strcasecmp(p, "no") || !strcasecmp(p, "false") ||
+                         !strcmp(p, "0"))
+                    preset[i] = (char *)STR_NO;
+            }
+        }
         else
             preset[i] = (char *)entry[i].preset;
     }

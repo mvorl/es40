@@ -163,6 +163,10 @@ private:
 	double         mouse_speed = 1.0;
 	bool           mouse_invert_x = false;
 	bool           mouse_invert_y = false;
+	bool           mouse_absolute = false;
+	bool           mouse_position_valid = false;
+	double         mouse_last_x = 0.0;
+	double         mouse_last_y = 0.0;
 	sdl_hotkey_binding hotkey_mouse_capture;
 	sdl_hotkey_binding hotkey_media;
 	sdl_hotkey_binding hotkey_ctrl_alt_delete;
@@ -195,6 +199,7 @@ private:
 	void           send_guest_ctrl_alt_delete();
 	void           clear_hotkey_release_state();
 	void           reconcile_hotkey_release_state();
+	void           reset_absolute_mouse_position();
 };
 
 // declare one instance of the gui object and call macro to insert the
@@ -315,6 +320,15 @@ static int          sdl_mouse_button_state = 0;
 // events so multipliers < 1.0 don't drop slow movement.
 static double       sdl_mouse_accum_x = 0.0;
 static double       sdl_mouse_accum_y = 0.0;
+
+void bx_sdl_gui_c::reset_absolute_mouse_position()
+{
+	if (!mouse_absolute)
+		return;
+	mouse_position_valid = false;
+	sdl_mouse_accum_x = 0.0;
+	sdl_mouse_accum_y = 0.0;
+}
 
 static std::string trim_hotkey_text(const std::string& value)
 {
@@ -615,6 +629,8 @@ void bx_sdl_gui_c::specific_init_impl(unsigned x_tilesize, unsigned y_tilesize)
 
 	this->mouse_invert_x = myCfg->get_bool_value("mouse.invert_x", false);
 	this->mouse_invert_y = myCfg->get_bool_value("mouse.invert_y", false);
+	this->mouse_absolute = myCfg->get_bool_value("mouse.absolute", false);
+	reset_absolute_mouse_position();
 	load_hotkeys();
 	build_window_titles();
 	clear_hotkey_release_state();
@@ -931,6 +947,28 @@ void bx_sdl_gui_c::handle_events_impl(void)
 			sdl_media_handle_event(&sdl_event))
 			continue;
 
+		// Absolute positions belong to one window.
+		if (mouse_absolute)
+		{
+			SDL_WindowID event_window = 0;
+			bool has_window = true;
+			if (sdl_event.type >= SDL_EVENT_WINDOW_FIRST &&
+				sdl_event.type <= SDL_EVENT_WINDOW_LAST)
+				event_window = sdl_event.window.windowID;
+			else if (sdl_event.type == SDL_EVENT_MOUSE_MOTION)
+				event_window = sdl_event.motion.windowID;
+			else if (sdl_event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+				sdl_event.type == SDL_EVENT_MOUSE_BUTTON_UP)
+				event_window = sdl_event.button.windowID;
+			else if (sdl_event.type == SDL_EVENT_MOUSE_WHEEL)
+				event_window = sdl_event.wheel.windowID;
+			else
+				has_window = false;
+			if (has_window && (!sdl_window ||
+				event_window != SDL_GetWindowID(sdl_window)))
+				continue;
+		}
+
 		switch (sdl_event.type)
 		{
 		case SDL_EVENT_WINDOW_EXPOSED:
@@ -952,13 +990,40 @@ void bx_sdl_gui_c::handle_events_impl(void)
 			}
 			break;
 
+		case SDL_EVENT_WINDOW_MOUSE_ENTER:
+		case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+		case SDL_EVENT_WINDOW_MOVED:
+		case SDL_EVENT_WINDOW_RESIZED:
+		case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+			reset_absolute_mouse_position();
+			break;
+
 		case SDL_EVENT_MOUSE_MOTION:
 			if (sdl_grab)
 			{
+				double rel_x = (double)sdl_event.motion.xrel;
+				double rel_y = (double)sdl_event.motion.yrel;
+				if (mouse_absolute)
+				{
+					const double x = (double)sdl_event.motion.x;
+					const double y = (double)sdl_event.motion.y;
+					if (!mouse_position_valid)
+					{
+						mouse_last_x = x;
+						mouse_last_y = y;
+						mouse_position_valid = true;
+						break;
+					}
+					rel_x = x - mouse_last_x;
+					rel_y = y - mouse_last_y;
+					mouse_last_x = x;
+					mouse_last_y = y;
+				}
+
 				// PS/2 mouse Y is positive-up, SDL is positive-down; hence the
 				// baseline Y negation. invert_x/y flip on top of that.
-				double mx = (double)sdl_event.motion.xrel * mouse_speed;
-				double my = -(double)sdl_event.motion.yrel * mouse_speed;
+				double mx = rel_x * mouse_speed;
+				double my = -rel_y * mouse_speed;
 				sdl_mouse_accum_x += mouse_invert_x ? -mx : mx;
 				sdl_mouse_accum_y += mouse_invert_y ? -my : my;
 
@@ -1020,6 +1085,7 @@ void bx_sdl_gui_c::handle_events_impl(void)
 		{
 			release_all_guest_keys();
 			clear_hotkey_release_state();
+			reset_absolute_mouse_position();
 			if (sdl_grab)
 				bx_gui->mouse_enabled_changed(false);
 			break;
@@ -1210,6 +1276,7 @@ void bx_sdl_gui_c::dimension_update(unsigned x, unsigned y, unsigned fheight,
 void bx_sdl_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheight,
 	unsigned fwidth, unsigned bpp)
 {
+	reset_absolute_mouse_position();
 	SDL_DisplayID display;
 	float scaled_x, scaled_y;
 	float content_scale = 1.0f;
@@ -1293,6 +1360,7 @@ void bx_sdl_gui_c::reset_window_size()
 	if (!sdl_window || last_driven_w == 0 || last_driven_h == 0)
 		return;
 
+	reset_absolute_mouse_position();
 	SDL_WindowFlags flags = SDL_GetWindowFlags(sdl_window);
 	if (flags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN))
 		SDL_RestoreWindow(sdl_window);
@@ -1336,13 +1404,14 @@ void bx_sdl_gui_c::mouse_enabled_changed_specific(bool val)
 
 void bx_sdl_gui_c::mouse_enabled_changed_specific_impl(bool val)
 {
+	reset_absolute_mouse_position();
 	if (val)
 	{
 		SDL_HideCursor();
 		if (sdl_window)
 		{
 			SDL_SetWindowKeyboardGrab(sdl_window, true);
-			SDL_SetWindowRelativeMouseMode(sdl_window, true);
+			SDL_SetWindowRelativeMouseMode(sdl_window, !mouse_absolute);
 			SDL_SetWindowTitle(sdl_window, window_title_grabbed.c_str());
 		}
 	}

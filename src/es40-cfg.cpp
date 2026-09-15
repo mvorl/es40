@@ -595,6 +595,25 @@ int main(int argc, char* argv[])
 
 		if (gui_q.getAnswer() == "sdl")
 		{
+			MultipleChoiceQuestion mouse_absolute_q;
+			mouse_absolute_q.setQuestion(
+				"Use absolute pointer input? (normal desktop: no)");
+			mouse_absolute_q.setExplanation(
+				"Choose no for normal desktop operation (recommended default). "
+				"Choose yes if your input source supplies absolute pointer "
+				"coordinates. "
+				"SDL derives movement from successive window "
+				"positions while capture is enabled. The guest still receives "
+				"relative PS/2 movement, so its pointer is not guaranteed to match "
+				"an exact host pixel. Mouse speed and inversion settings still "
+				"apply.");
+			mouse_absolute_q.addAnswer("no", "false",
+				"Normal desktop mouse input (recommended default).");
+			mouse_absolute_q.addAnswer("yes", "true",
+				"Use absolute coordinates supplied by the input source.");
+			mouse_absolute_q.setDefault("no");
+			os << "  mouse.absolute = " << mouse_absolute_q.ask() << ";\n";
+
 			cout << "\nSDL GUI runtime hotkey defaults:\n";
 			for (size_t i = 0;
 				i < sizeof(sdl_hotkey_prompts) / sizeof(sdl_hotkey_prompts[0]); i++)
