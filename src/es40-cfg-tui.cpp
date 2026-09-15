@@ -50,6 +50,11 @@
 // TODO: For PCI cards, implement adding multiple cards of the same type.
 // TODO: Add the option to remove things.
 
+#if defined(_WIN32) && !defined(HAVE_CONFIG_H)
+// Set the API baseline before PCap or curses can include Windows headers.
+#include "config_win32.h"
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

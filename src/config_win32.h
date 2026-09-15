@@ -326,15 +326,18 @@
 /* Define as `fork' if `vfork' does not work. */
 /* #undef vfork */
 
+// Windows 7 API baseline, independent of the selected Windows SDK version.
 #ifndef _WIN32_WINNT
-#define _WIN32_WINNT  0x0502
+#define _WIN32_WINNT  0x0601
+#endif
+
+#ifndef WINVER
+#define WINVER  _WIN32_WINNT
 #endif
 
 #define WIN32_LEAN_AND_MEAN // Exclude rarely-used stuff from Windows headers
 
 #define _CRT_SECURE_NO_DEPRECATE  1
 #define _CRT_SECURE_NO_WARNINGS 1
-
-#define WINVER  0x0502
 
 #include <stdint.h>

@@ -26,6 +26,10 @@
  */
 #ifdef ES40_JIT
 
+#ifdef _WIN32
+#include "../config_win32.h"
+#endif
+
 #include "jitengine.h"
 #include "jitengine_internal.h"
 #include <cassert>
@@ -48,7 +52,6 @@
 // 
 // All paths return zeroed memory.
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 #else
