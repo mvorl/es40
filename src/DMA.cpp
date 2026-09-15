@@ -171,6 +171,7 @@ static size_t dma_increment_chunk_size(u16 current, size_t width, size_t count)
 
 u64 CDMA::ReadMem(int index, u64 address, int dsize)
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	u64 ret;
 	u8  data = 0;
 	int ctrlr;
@@ -264,6 +265,7 @@ u64 CDMA::ReadMem(int index, u64 address, int dsize)
 
 void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	int num = 0;
 	switch (dsize)
 	{
@@ -455,6 +457,7 @@ static u32  dma_magic2 = 0x24092875;
  **/
 int CDMA::SaveState(FILE* f)
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	long  ss = sizeof(state);
 
 	if (fwrite(&dma_magic1, sizeof(u32), 1, f) != 1 ||
@@ -475,6 +478,7 @@ int CDMA::SaveState(FILE* f)
  **/
 int CDMA::RestoreState(FILE* f)
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	long    ss = 0;
 	u32     m1 = 0;
 	u32     m2 = 0;
@@ -536,6 +540,7 @@ int CDMA::RestoreState(FILE* f)
  * Set the software request bit for a channel, and initiate DMA
  **/
 void CDMA::set_request(int num, int channel, int data) {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	channel &= 0x03;
 	if (data)
 		state.controller[num].request |= (1 << channel);
@@ -549,6 +554,7 @@ void CDMA::set_request(int num, int channel, int data) {
  **/
 void CDMA::set_drq(int channel, bool asserted)
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	// Apply the same device-channel validation as the transfer interfaces.
 	dma_transfer_width(channel);
 	int ctrlr = channel < 4 ? 0 : 1;
@@ -753,8 +759,15 @@ void CDMA::do_dma()
 	}
 }
 
+int CDMA::get_count(int channel)
+{
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
+	return state.channel[channel].count;
+}
+
 size_t CDMA::get_transfer_size(int channel)
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	size_t width = dma_transfer_width(channel);
 	return ((size_t)state.channel[channel].count + 1) * width;
 }
@@ -803,6 +816,7 @@ void CDMA::complete_transfer(int channel)
  **/
 CDMA::SDMA_result CDMA::send_data(int channel, void* data, size_t length, bool eop)
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	size_t width = dma_transfer_width(channel);
 	int ctrlr = channel < 4 ? 0 : 1;
 	int local_channel = channel & 0x03;
@@ -917,6 +931,7 @@ CDMA::SDMA_result CDMA::send_data(int channel, void* data, size_t length, bool e
 
 CDMA::SDMA_result CDMA::recv_data(int channel, void* data, size_t length, bool eop)
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	size_t width = dma_transfer_width(channel);
 	int ctrlr = channel < 4 ? 0 : 1;
 	int local_channel = channel & 0x03;
@@ -1017,6 +1032,7 @@ CDMA::SDMA_result CDMA::recv_data(int channel, void* data, size_t length, bool e
 
 CDMA::SDMA_result CDMA::send_unit(int channel, u16 data, bool eop)
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	size_t width = dma_transfer_width(channel);
 	u8 buffer[2] = { (u8)data, (u8)(data >> 8) };
 	return send_data(channel, buffer, width, eop);
@@ -1024,6 +1040,7 @@ CDMA::SDMA_result CDMA::send_unit(int channel, u16 data, bool eop)
 
 CDMA::SDMA_result CDMA::recv_unit(int channel, u16& data, bool eop)
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	size_t width = dma_transfer_width(channel);
 	u8 buffer[2] = { 0, 0 };
 	SDMA_result result = recv_data(channel, buffer, width, eop);
@@ -1034,6 +1051,7 @@ CDMA::SDMA_result CDMA::recv_unit(int channel, u16& data, bool eop)
 
 CDMA::SDMA_result CDMA::service_send_unit(int channel, u16 data, bool eop)
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	SDMA_result result = { 0, true, false, false };
 	if (service_requested(channel) && select_service_channel(1) == channel)
 	{
@@ -1045,6 +1063,7 @@ CDMA::SDMA_result CDMA::service_send_unit(int channel, u16 data, bool eop)
 
 CDMA::SDMA_result CDMA::service_recv_unit(int channel, u16& data, bool eop)
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	SDMA_result result = { 0, true, false, false };
 	if (service_requested(channel) && select_service_channel(1) == channel)
 	{
@@ -1056,6 +1075,7 @@ CDMA::SDMA_result CDMA::service_recv_unit(int channel, u16& data, bool eop)
 
 CDMA::SDMA_result CDMA::service_eop(int channel)
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	dma_transfer_width(channel);
 	SDMA_result result = { 0, true, false, false };
 	int ctrlr = channel < 4 ? 0 : 1;

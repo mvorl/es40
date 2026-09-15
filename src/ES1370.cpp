@@ -26,6 +26,7 @@
 #include "ES1370.h"
 
 #include <algorithm>
+#include <mutex>
 
 #ifndef MAX
 #define MAX(a,b)            (((a) > (b)) ? (a) : (b))
@@ -611,9 +612,16 @@ void CES1370::es1370_run_channel(ES1370State* s, size_t chan, int free_or_avail)
     }
 }
 
+// SDL holds the stream lock during these callbacks, so we should never wait for the 
+// bus gate here. 
+// Deferring a callback leaves DMA state and queued capture data intact.
 void CES1370::es1370_dac_callback_dac1(void* userdata, SDL_AudioStream* stream, int additional_amount, int total_amount)
 {
     CES1370* dev = (CES1370*)userdata;
+    std::unique_lock<std::recursive_mutex> bus_lock(
+        dev->cSystem->get_device_bus_mutex(), std::try_to_lock);
+    if (!bus_lock.owns_lock())
+        return;
     ES1370State* s = &dev->state;
     dev->es1370_run_channel(s, 0, additional_amount);
 }
@@ -621,6 +629,10 @@ void CES1370::es1370_dac_callback_dac1(void* userdata, SDL_AudioStream* stream, 
 void CES1370::es1370_dac_callback_dac2(void* userdata, SDL_AudioStream* stream, int additional_amount, int total_amount)
 {
     CES1370* dev = (CES1370*)userdata;
+    std::unique_lock<std::recursive_mutex> bus_lock(
+        dev->cSystem->get_device_bus_mutex(), std::try_to_lock);
+    if (!bus_lock.owns_lock())
+        return;
     ES1370State* s = &dev->state;
     dev->es1370_run_channel(s, 1, additional_amount);
 }
@@ -628,6 +640,10 @@ void CES1370::es1370_dac_callback_dac2(void* userdata, SDL_AudioStream* stream, 
 void CES1370::es1370_dac_callback_adc(void* userdata, SDL_AudioStream* stream, int additional_amount, int total_amount)
 {
     CES1370* dev = (CES1370*)userdata;
+    std::unique_lock<std::recursive_mutex> bus_lock(
+        dev->cSystem->get_device_bus_mutex(), std::try_to_lock);
+    if (!bus_lock.owns_lock())
+        return;
     ES1370State* s = &dev->state;
     dev->es1370_run_channel(s, 2, additional_amount);
 }

@@ -68,6 +68,10 @@ public:
   virtual int   SaveState(FILE* f);
   virtual int   RestoreState(FILE* f);
 
+  // State accesses use the system's shared device-bus lock. 
+  // Device callers must take that lock before their own locks. 
+  // Even across multi-call sequences such as reading the count and transferring a buffer.
+
   // Software request register: controller 0-1, local channel 0-3.
   void          set_request(int index, int channel, int data);
   // Device request line: global channel 0-3 or 5-7.
@@ -130,7 +134,7 @@ public:
   // End an accepted demand/block service without consuming another unit.
   SDMA_result   service_eop(int channel);
   // Raw byte/word count register (number of DMA units minus one).
-  int           get_count(int channel) { return state.channel[channel].count; };
+  int           get_count(int channel);
   // Current count plus one in bytes; independent of mask/enable state.
   size_t        get_transfer_size(int channel);
 

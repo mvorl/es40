@@ -528,6 +528,8 @@ void CSym53C810::run()
 			bool fresh_wake = true;
 			for (;;)
 			{
+				// Peer DMA can enter another device: take the bus before the register lock.
+				std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 				CScopedLock<CMutex> regLock(myRegLock);
 				if (fresh_wake)
 				{
@@ -1609,6 +1611,7 @@ void CSym53C810::execute_scripts_inline()
  **/
 void CSym53C810::check_state()
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	if (myThread && !myThread->isRunning())
 		FAILURE(Thread, "SYM thread has died");
 

@@ -142,6 +142,7 @@ void CFloppyController::service_pending_media_actions_if_idle()
 
 void CFloppyController::check_state()
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	std::lock_guard<std::recursive_mutex> lock(controller_mutex);
 	service_pending_media_actions_if_idle();
 }
@@ -493,6 +494,7 @@ void CFloppyController::finish_pio_transfer(bool ok)
 
 void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	std::lock_guard<std::recursive_mutex> lock(controller_mutex);
 
 	if (index == 1537)
@@ -1111,6 +1113,7 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 
 u64 CFloppyController::ReadMem(int index, u64 address, int dsize)
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	std::lock_guard<std::recursive_mutex> lock(controller_mutex);
 
 	u64 data = 0;
@@ -1240,6 +1243,8 @@ static u32 fdc_magic1 = 0x0fdc0fdc;
 static u32 fdc_magic2 = 0xfdc0fdc0;
 
 int CFloppyController::SaveState(FILE* f) {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
+	std::lock_guard<std::recursive_mutex> lock(controller_mutex);
 	long  ss = sizeof(state);
 
 	fwrite(&fdc_magic1, sizeof(u32), 1, f);
@@ -1252,6 +1257,8 @@ int CFloppyController::SaveState(FILE* f) {
 
 int CFloppyController::RestoreState(FILE* f)
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
+	std::lock_guard<std::recursive_mutex> lock(controller_mutex);
 	long    ss;
 	u32     m1;
 	u32     m2;

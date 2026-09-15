@@ -610,11 +610,14 @@ void CSym53C895::run()
 			mySemaphore.wait();
 			if (StopThread)
 				return;
-			while (state.executing)
+			for (;;)
 			{
-				MUTEX_LOCK(myRegLock);
+				// Peer DMA can enter another device: take the bus before the register lock.
+				std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
+				CScopedLock<CMutex> regLock(myRegLock);
+				if (!state.executing)
+					break;
 				execute();
-				MUTEX_UNLOCK(myRegLock);
 			}
 		}
 	}
@@ -1624,6 +1627,7 @@ void CSym53C895::post_dsp_write()
  **/
 void CSym53C895::check_state()
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	if (myThread && !myThread->isRunning())
 		FAILURE(Thread, "SYM thread has died");
 

@@ -508,6 +508,7 @@ int CSystem::RegisterCPU(class CAlphaCPU* cpu)
 int CSystem::RegisterMemory(CSystemComponent* component, int index, u64 base,
 	u64 length)
 {
+	std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
 	struct SMemoryUser* m;
 	int                   i;
 
@@ -751,9 +752,12 @@ bool CSystem::ProcessPendingReset()
 
 	ResetInProgressGuard rip(this);
 	stop_threads();
-	ResetChipsetState();
-	for (int dev = 0; dev < iNumComponents; dev++)
-		acComponents[dev]->ResetPCI();
+	{
+		std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
+		ResetChipsetState();
+		for (int dev = 0; dev < iNumComponents; dev++)
+			acComponents[dev]->ResetPCI();
+	}
 	for (int cpu = 0; cpu < iNumCPUs; cpu++)
 		acCPUs[cpu]->ResetForSystemReset();
 	LoadROM();
@@ -1034,6 +1038,7 @@ void CSystem::WriteMem(u64 address, int dsize, u64 data, CSystemComponent* sourc
 
 	if (a >> iNumMemoryBits) // non-memory
 	{
+		std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
 		// check registered device memory ranges
 		for (i = 0; i < iNumMemories; i++)
 		{
@@ -1294,6 +1299,7 @@ u64 CSystem::ReadMem(u64 address, int dsize, CSystemComponent* source)
 	a = address & U64(0x00000807ffffffff);
 	if (a >> iNumMemoryBits) // Non Memory
 	{
+		std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
 		// check registered device memory ranges
 		for (i = 0; i < iNumMemories; i++)
 		{
@@ -3052,7 +3058,10 @@ void CSystem::SaveState(const char* fn)
 		//  Components should also save any non-initial memory-registrations and re-register upon restore!
 		//
 		for (i = 0; i < iNumComponents; i++)
+		{
+			std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
 			acComponents[i]->SaveState(f);
+		}
 		fclose(f);
 	}
 }
@@ -3114,6 +3123,7 @@ void CSystem::RestoreState(const char* fn)
 	//
 	for (i = 0; i < iNumComponents; i++)
 	{
+		std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
 		if (acComponents[i]->RestoreState(f))
 			FAILURE(Runtime, "Unable to restore system state");
 	}

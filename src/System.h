@@ -242,6 +242,10 @@ public:
   u64           ReadMem(u64 address, int dsize, CSystemComponent* source);
   void          WriteMem(u64 address, int dsize, u64 data,
     CSystemComponent* source);
+  // Take before device-private locks when it can perform DMA or mapped I/O. 
+  // Recursive for nested device dispatch; never hold across thread waits/joins. 
+  // Host callbacks already holding a host lock must not wait here.
+  std::recursive_mutex& get_device_bus_mutex() { return device_bus_mutex; }
   void          Run();
   int           SingleStep();
 
@@ -357,6 +361,8 @@ private:
   // Serializes drir RMW + delivery in interrupt() across device threads. On
   // CSystem (not in saved 'state'), so SaveState is unaffected.
   std::mutex    drir_lock;
+  // Shared by mapped-device dispatch and DMA; not part of saved guest state.
+  std::recursive_mutex device_bus_mutex;
   std::atomic<u32> m_tick_seq{ 0 };  // interval-tick sequence; CPU instruction pacing
 
   /// The state structure contains all elements that need to be saved to the statefile.
