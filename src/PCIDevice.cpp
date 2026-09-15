@@ -623,6 +623,7 @@ int CPCIDevice::RestoreState(FILE* f)
 	u32     m1;
 	u32     m2;
 	size_t  r;
+	SPCI_state restored_state;
 
 	r = fread(&m1, sizeof(u32), 1, f);
 	if (r != 1)
@@ -637,7 +638,7 @@ int CPCIDevice::RestoreState(FILE* f)
 		return -1;
 	}
 
-	fread(&ss, sizeof(long), 1, f);
+	r = fread(&ss, sizeof(long), 1, f);
 	if (r != 1)
 	{
 		printf("%s: unexpected end of file!\n", devid_string);
@@ -650,7 +651,7 @@ int CPCIDevice::RestoreState(FILE* f)
 		return -1;
 	}
 
-	fread(&pci_state, sizeof(pci_state), 1, f);
+	r = fread(&restored_state, sizeof(restored_state), 1, f);
 	if (r != 1)
 	{
 		printf("%s: unexpected end of file!\n", devid_string);
@@ -666,8 +667,30 @@ int CPCIDevice::RestoreState(FILE* f)
 
 	if (m2 != pci_magic2)
 	{
-		printf("%s: PCI MAGIC 1 does not match!\n", devid_string);
+		printf("%s: PCI MAGIC 2 does not match!\n", devid_string);
 		return -1;
+	}
+
+	pci_state = restored_state;
+	// Config-space bytes alone do not move the active I/O/MMIO apertures.
+	// Rebuild them through the normal write path, including its 64-bit BAR,
+	for (int func = 0; func < 8; ++func)
+	{
+		if (!device_at[func])
+			continue;
+
+		for (int bar = 0; bar < 7; ++bar)
+		{
+			cSystem->RegisterMemory(this, PCI_RANGE_BASE + func * 8 + bar, 0, 0);
+			pci_range_is_io[func][bar] = false;
+		}
+		for (int bar = 0; bar < 7; ++bar)
+		{
+			const u32 address = bar == 6 ? 0x30U : 0x10U + bar * 4U;
+			if (pci_state.config_mask[func][address / 4] != 0)
+				config_write(func, address, 32,
+					endian_32(pci_state.config_data[func][address / 4]));
+		}
 	}
 
 	printf("%s: %d PCI bytes restored.\n", devid_string, (int)ss);

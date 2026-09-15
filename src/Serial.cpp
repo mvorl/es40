@@ -792,7 +792,17 @@ void CSerial::serial_menu()
 
 		case '3':
 			write_cstr("%SRL-I-SAVESTATE: Saving state to autosave.axp.\r\n");
-			cSystem->SaveState("autosave.axp");
+			try
+			{
+				cSystem->SaveState("autosave.axp");
+			}
+			catch (const CException& e)
+			{
+				// Saving does not replace live guest state, so a failed write can safely resume. 
+				write_cstr("%SRL-E-SAVESTATE: Could not save state: ");
+				write_cstr(e.displayText().c_str());
+				write_cstr("\r\n");
+			}
 			write_cstr("%SRL-I-CONTINUE: continuing emulation.\r\n");
 			exitLoop = true;
 			break;

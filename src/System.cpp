@@ -322,6 +322,7 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <memory>
 
 #define CLOCK_RATIO 10000
 
@@ -3003,67 +3004,63 @@ void CSystem::stop_threads()
 	printf("\n");
 }
 
+// 2.2 includes complete S3 graphics and NIC packet state. 
+// Reject 2.1 before changing RAM.
+static const u32 system_state_magic = 0xa1fae540;
+static const u32 system_state_version = 0x00020002;
+
 /**
- * Save system state to a state file.
+ * Save system state to a state file. Callers must first stop device threads.
  **/
 void CSystem::SaveState(const char* fn)
 {
-	FILE* f;
-	int           i;
-	u64           m;
-	unsigned int  j;
-	int* mem = (int*)memory;
-	int           int0 = 0;
-	u64           memints = (U64(1) << iNumMemoryBits) / sizeof(int);
-	u32           temp_32;
-
-	f = fopen(fn, "wb");
-	if (f)
+	std::unique_ptr<FILE, decltype(&fclose)> file(fopen(fn, "wb"), &fclose);
+	if (!file)
+		FAILURE_1(Runtime, "Can't open state file %s for writing", fn);
+	FILE* f = file.get();
+	const auto write = [f](const void* data, size_t size)
 	{
-		temp_32 = 0xa1fae540; // MAGIC NUMBER (ALFAES40 ==> A1FAE540 )
-		fwrite(&temp_32, sizeof(u32), 1, f);
-		temp_32 = 0x00020001; // File Format Version 2.1
-		fwrite(&temp_32, sizeof(u32), 1, f);
+		if (fwrite(data, size, 1, f) != 1)
+			FAILURE(Runtime, "Unable to write system state");
+	};
+	const u64 memory_size = U64(1) << iNumMemoryBits;
+	const u32 system_size = (u32)sizeof(state);
+	const u32 component_count = (u32)iNumComponents;
+	write(&system_state_magic, sizeof(system_state_magic));
+	write(&system_state_version, sizeof(system_state_version));
+	write(&memory_size, sizeof(memory_size));
+	write(&system_size, sizeof(system_size));
+	write(&component_count, sizeof(component_count));
 
-		// memory
-		for (m = 0; m < memints; m++)
+	const int* mem = (const int*)memory;
+	const u64 memints = memory_size / sizeof(int);
+	for (u64 m = 0; m < memints;)
+	{
+		const int value = mem[m++];
+		write(&value, sizeof(value));
+		if (!value)
 		{
-			if (mem[m])
+			// A zero word is followed by the number of additional zero words.
+			u32 extra = 0;
+			while (m < memints && !mem[m] && extra != UINT32_MAX)
 			{
-				fwrite(&(mem[m]), 1, sizeof(int), f);
+				++m;
+				++extra;
 			}
-			else
-			{
-				j = 0;
-				m++;
-				while ((m < memints) && !mem[m])
-				{
-					m++;
-					j++;
-					if ((int)j == -1)
-						break;
-				}
-
-				if ((m < memints) && mem[m])
-					m--;
-				fwrite(&int0, 1, sizeof(int), f);
-				fwrite(&j, 1, sizeof(int), f);
-			}
+			write(&extra, sizeof(extra));
 		}
-
-		fwrite(&state, sizeof(state), 1, f);
-
-		// components
-		//
-		//  Components should also save any non-initial memory-registrations and re-register upon restore!
-		//
-		for (i = 0; i < iNumComponents; i++)
-		{
-			std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
-			acComponents[i]->SaveState(f);
-		}
-		fclose(f);
 	}
+
+	write(&state, sizeof(state));
+	for (int i = 0; i < iNumComponents; i++)
+	{
+		std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
+		if (acComponents[i]->SaveState(f) || ferror(f))
+			FAILURE(Runtime, "Unable to save component state");
+	}
+	// Buffered write failures may only become visible when the file closes.
+	if (fclose(file.release()) != 0)
+		FAILURE(Runtime, "Unable to finish writing system state");
 }
 
 /**
@@ -3071,64 +3068,78 @@ void CSystem::SaveState(const char* fn)
  **/
 void CSystem::RestoreState(const char* fn)
 {
-	FILE* f;
-	int           i;
-	u64           m;
-	unsigned int  j;
-	int* mem = (int*)memory;
-	u64           memints = (U64(1) << iNumMemoryBits) / sizeof(int);
-	u32           temp_32;
-
-	f = fopen(fn, "rb");
-	if (!f)
+	std::unique_ptr<FILE, decltype(&fclose)> file(fopen(fn, "rb"), &fclose);
+	if (!file)
 	{
 		printf("%%SYS-F-NOFILE: Can't open restore file %s\n", fn);
 		return;
 	}
+	FILE* f = file.get();
+	u32 magic = 0, version = 0, system_size = 0, component_count = 0;
+	u64 memory_size = 0;
 
-	fread(&temp_32, sizeof(u32), 1, f);
-	if (temp_32 != 0xa1fae540) // MAGIC NUMBER (ALFAES40 ==> A1FAE540 )
+	if (fread(&magic, sizeof(magic), 1, f) != 1 ||
+		magic != system_state_magic ||
+		fread(&version, sizeof(version), 1, f) != 1)
 	{
 		printf("%%SYS-F-FORMAT: %s does not appear to be a state file.\n", fn);
 		return;
 	}
-
-	fread(&temp_32, sizeof(u32), 1, f);
-
-	if (temp_32 != 0x00020001) // File Format Version 2.1
+	if (version != system_state_version)
 	{
-		printf("%%SYS-I-VERSION: State file %s is a different version.\n", fn);
+		printf("%%SYS-I-VERSION: State file %s is incompatible; "
+			"version 2.2 is required.\n", fn);
+		return;
+	}
+	if (fread(&memory_size, sizeof(memory_size), 1, f) != 1 ||
+		fread(&system_size, sizeof(system_size), 1, f) != 1 ||
+		fread(&component_count, sizeof(component_count), 1, f) != 1 ||
+		memory_size != (U64(1) << iNumMemoryBits) ||
+		system_size != sizeof(state) || component_count != (u32)iNumComponents)
+	{
+		printf("%%SYS-F-CONFIG: State file %s has an incomplete or "
+			"incompatible system header.\n", fn);
 		return;
 	}
 
-	// memory
-	for (m = 0; m < memints; m++)
+	// After mutation begins a failure must stop emulation, rather than resume.
+	const auto read = [f](void* data, size_t size)
 	{
-		fread(&(mem[m]), 1, sizeof(int), f);
-		if (!mem[m])
+		if (fread(data, size, 1, f) != 1)
+			FAILURE(Runtime, "Incomplete system state");
+	};
+	int* mem = (int*)memory;
+	const u64 memints = memory_size / sizeof(int);
+	for (u64 m = 0; m < memints;)
+	{
+		int value;
+		read(&value, sizeof(value));
+		if (value)
+			mem[m++] = value;
+		else
 		{
-			fread(&j, 1, sizeof(int), f);
-			while (j--)
-			{
-				mem[++m] = 0;
-			}
+			u32 extra;
+			read(&extra, sizeof(extra));
+			if ((u64)extra >= memints - m)
+				FAILURE(Runtime, "Invalid zero run in system state");
+			const u64 end = m + (u64)extra + 1;
+			while (m < end)
+				mem[m++] = 0;
 		}
 	}
 
-	fread(&state, sizeof(state), 1, f);
+	read(&state, sizeof(state));
 
 	// components
 	//
 	//  Components should also save any non-initial memory-registrations and re-register upon restore!
 	//
-	for (i = 0; i < iNumComponents; i++)
+	for (int i = 0; i < iNumComponents; i++)
 	{
 		std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
-		if (acComponents[i]->RestoreState(f))
+		if (acComponents[i]->RestoreState(f) || ferror(f) || feof(f))
 			FAILURE(Runtime, "Unable to restore system state");
 	}
-
-	fclose(f);
 }
 
 /**

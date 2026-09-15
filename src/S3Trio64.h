@@ -413,6 +413,7 @@ private:
 
   CThread* myThread;
   bool  StopThread;
+  bool m_gui_initialized = false;
 
   /// The state structure contains all elements that need to be saved to the statefile.
   struct SS3_state

@@ -101,6 +101,8 @@
 #include "AliM1543C.h"
 #include <algorithm>
 #include <chrono>
+#include <type_traits>
+#include <vector>
 #include "gui/gui.h"
 #include "xtal.h"
 #include "emu.h"
@@ -2199,8 +2201,14 @@ void CS3Trio64::run()
 {
 	try
 	{
-		// initialize the GUI (and let it know our tilesize)
-		bx_gui->init(state.x_tilesize, state.y_tilesize);
+		// The GUI outlives this worker. Serial-menu save/restore stops and joins the worker. 
+		// Next run must retain the existing window.
+		if (!m_gui_initialized)
+		{
+			// initialize the GUI (and let it know our tilesize)
+			bx_gui->init(state.x_tilesize, state.y_tilesize);
+			m_gui_initialized = true;
+		}
 		bool was_paused = false;
 		PauseAck.store(false, std::memory_order_release);
 		for (;;)
@@ -2931,6 +2939,9 @@ void CS3Trio64::recompute_params_clock(int divisor, int xtal)
  **/
 void CS3Trio64::start_threads()
 {
+	// Repaint and resize through the normal GUI path after any resume.
+	state.vga_mem_updated = true;
+	state.last_bpp = 0;
 	// Resume after reset if the thread already exists
 	PauseThread.store(false, std::memory_order_release);
 
@@ -3785,23 +3796,64 @@ void CS3Trio64::check_state()
 
 static u32  s3_magic1 = 0x53338811;
 static u32  s3_magic2 = 0x88115333;
+static const u32 s3_video_magic = 0x53335632; // S3V2, complete graphics state
+
+// The surrounding system format identifies compatible snapshots. 
+// Per-record sizes additionally reject a different structure layout.
+template <typename T>
+static bool s3_write_record(FILE* f, const T& value)
+{
+	static_assert(std::is_trivially_copyable<T>::value,
+		"Saved graphics records must be trivially copyable");
+	const u32 size = (u32)sizeof(T);
+	return fwrite(&size, sizeof(size), 1, f) == 1 &&
+		fwrite(&value, sizeof(value), 1, f) == 1;
+}
+
+template <typename T>
+static bool s3_read_record(FILE* f, T& value)
+{
+	static_assert(std::is_trivially_copyable<T>::value,
+		"Saved graphics records must be trivially copyable");
+	u32 size = 0;
+	return fread(&size, sizeof(size), 1, f) == 1 && size == sizeof(T) &&
+		fread(&value, sizeof(value), 1, f) == 1;
+}
 
 /**
  * Save state to a Virtual Machine State file.
  **/
 int CS3Trio64::SaveState(FILE* f)
 {
-	long  ss = sizeof(state);
-	int   res;
-
-	if ((res = CPCIDevice::SaveState(f)))
+	if (!f || !vga.memory || !vga.svga_intf.vram_size)
+		return -1;
+	const int res = CPCIDevice::SaveState(f);
+	if (res)
 		return res;
 
-	fwrite(&s3_magic1, sizeof(u32), 1, f);
-	fwrite(&ss, sizeof(long), 1, f);
-	fwrite(&state, sizeof(state), 1, f);
-	fwrite(&s3_magic2, sizeof(u32), 1, f);
-	printf("%s: %d bytes saved.\n", devid_string, (int)ss);
+	// Only serialize guest state. The VRAM allocation belongs to this process.
+	auto saved_state = state;
+	auto saved_vga = vga;
+	saved_state.memory = nullptr;
+	saved_vga.memory = nullptr;
+	const u8 io_state[] = { (u8)m_ioas, (u8)m_vga_subsys_enable,
+		m_video_subsys_enable_46e8, m_setup_option_select_0102 };
+	const u32 vram_size = (u32)vga.svga_intf.vram_size;
+
+	if (fwrite(&s3_magic1, sizeof(s3_magic1), 1, f) != 1 ||
+		fwrite(&s3_video_magic, sizeof(s3_video_magic), 1, f) != 1 ||
+		!s3_write_record(f, saved_state) || !s3_write_record(f, saved_vga) ||
+		!s3_write_record(f, s3) || !s3_write_record(f, svga) ||
+		!s3_write_record(f, m_8514.ibm8514) || !s3_write_record(f, io_state) ||
+		fwrite(&vram_size, sizeof(vram_size), 1, f) != 1 ||
+		fwrite(vga.memory, vram_size, 1, f) != 1 ||
+		fwrite(&s3_magic2, sizeof(s3_magic2), 1, f) != 1)
+	{
+		printf("%s: Could not save graphics state.\n", devid_string);
+		return -1;
+	}
+	printf("%s: Graphics registers and %u bytes of VRAM saved.\n",
+		devid_string, vram_size);
 	return 0;
 }
 
@@ -3810,62 +3862,68 @@ int CS3Trio64::SaveState(FILE* f)
  **/
 int CS3Trio64::RestoreState(FILE* f)
 {
-	long    ss;
-	u32     m1;
-	u32     m2;
-	int     res;
-	size_t  r;
-
-	if ((res = CPCIDevice::RestoreState(f)))
+	if (!f || !vga.memory || !vga.svga_intf.vram_size)
+		return -1;
+	const int res = CPCIDevice::RestoreState(f);
+	if (res)
 		return res;
 
-	r = fread(&m1, sizeof(u32), 1, f);
-	if (r != 1)
+	// Stage the complete graphics section so a short read or layout mismatch can't corrupt state.
+	decltype(state) saved_state{};
+	decltype(vga) saved_vga{};
+	decltype(s3) saved_s3{};
+	decltype(svga) saved_svga{};
+	decltype(m_8514.ibm8514) saved_accel{};
+	u8 io_state[4]{};
+	u32 magic = 0, video_magic = 0, vram_size = 0;
+	if (fread(&magic, sizeof(magic), 1, f) != 1 || magic != s3_magic1 ||
+		fread(&video_magic, sizeof(video_magic), 1, f) != 1 ||
+		video_magic != s3_video_magic ||
+		!s3_read_record(f, saved_state) || !s3_read_record(f, saved_vga) ||
+		!s3_read_record(f, saved_s3) || !s3_read_record(f, saved_svga) ||
+		!s3_read_record(f, saved_accel) || !s3_read_record(f, io_state) ||
+		fread(&vram_size, sizeof(vram_size), 1, f) != 1 ||
+		vram_size != vga.svga_intf.vram_size ||
+		saved_vga.svga_intf.vram_size != vga.svga_intf.vram_size ||
+		saved_state.memsize != state.memsize || io_state[0] > 1 || io_state[1] > 1)
 	{
-		printf("%s: unexpected end of file!\n", devid_string);
+		printf("%s: Invalid or incompatible graphics state.\n", devid_string);
 		return -1;
 	}
 
-	if (m1 != s3_magic1)
+	std::vector<u8> saved_vram(vram_size);
+	if (fread(saved_vram.data(), vram_size, 1, f) != 1 ||
+		fread(&magic, sizeof(magic), 1, f) != 1 || magic != s3_magic2)
 	{
-		printf("%s: MAGIC 1 does not match!\n", devid_string);
+		printf("%s: Incomplete graphics state.\n", devid_string);
 		return -1;
 	}
 
-	fread(&ss, sizeof(long), 1, f);
-	if (r != 1)
-	{
-		printf("%s: unexpected end of file!\n", devid_string);
-		return -1;
-	}
+	saved_state.memory = state.memory;
+	saved_vga.memory = vga.memory;
+	state = saved_state;
+	vga = saved_vga;
+	s3 = saved_s3;
+	svga = saved_svga;
+	m_8514.ibm8514 = saved_accel;
+	m_ioas = io_state[0] != 0;
+	m_vga_subsys_enable = io_state[1] != 0;
+	m_video_subsys_enable_46e8 = io_state[2];
+	m_setup_option_select_0102 = io_state[3];
+	memcpy(vga.memory, saved_vram.data(), vram_size);
 
-	if (ss != sizeof(state))
-	{
-		printf("%s: STRUCT SIZE does not match!\n", devid_string);
-		return -1;
-	}
-
-	fread(&state, sizeof(state), 1, f);
-	if (r != 1)
-	{
-		printf("%s: unexpected end of file!\n", devid_string);
-		return -1;
-	}
-
-	r = fread(&m2, sizeof(u32), 1, f);
-	if (r != 1)
-	{
-		printf("%s: unexpected end of file!\n", devid_string);
-		return -1;
-	}
-
-	if (m2 != s3_magic2)
-	{
-		printf("%s: MAGIC 1 does not match!\n", devid_string);
-		return -1;
-	}
-
-	printf("%s: %d bytes restored.\n", devid_string, (int)ss);
+	// Rebuild host rendering caches from the restored registers. 
+	s3_define_video_mode();
+	recompute_params();
+	vga.dac.dirty = 1;
+	palette_update();
+	on_crtc_linear_regs_changed();
+	state.last_bpp = 0;
+	state.vga_mem_updated = true;
+	m_frames_since_render = 0;
+	m_last_refresh_time = std::chrono::steady_clock::time_point{};
+	printf("%s: Graphics registers and %u bytes of VRAM restored.\n",
+		devid_string, vram_size);
 	return 0;
 }
 

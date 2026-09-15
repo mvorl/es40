@@ -162,6 +162,9 @@
 #include "System.h"
 #include <string.h>
 
+// Shared by allocation, DMA bounds checks, and saved-state validation.
+static const int nic_tx_capacity = 2048;
+
 #if defined(DEBUG_NIC)
 #define DEBUG_NIC_FILTER
 #define DEBUG_NIC_SROM
@@ -532,7 +535,7 @@ void CDEC21143::init()
 
 	state.rx.cur_buf = NULL;
 	/* Use a 2KB TX scratch buffer like QEMU's tulip (tx_frame[2048]) to avoid overflows. */
-	state.tx.cur_buf = (unsigned char*)malloc(2048);
+	state.tx.cur_buf = (unsigned char*)malloc(nic_tx_capacity);
 	state.irq_was_asserted = false;
 
 	ResetPCI();
@@ -1824,7 +1827,7 @@ int CDEC21143::dec21143_tx()
 		/* Safely DMA data from guest memory, without exceeding TX scratch capacity. */
 		{
 			/* 2KB scratch (matches allocation in init()), large enough for legal ethernet frames */
-			const int tx_cap = 2048; /* aligned with QEMU tulip's 2KB frame buffers */
+			const int tx_cap = nic_tx_capacity;
 			/* If guest tried to exceed scratch capacity, we will mark error at LS. */
 
 			/* Buffer 1 */
@@ -2260,14 +2263,38 @@ int CDEC21143::SaveState(FILE* f)
 	long  ss = sizeof(state);
 	int   res;
 
+	// Keep a partially assembled TX frame: the next descriptor may be its
+	// middle or last segment, so discarding this prefix corrupts the packet.
+	if (state.tx.cur_buf_len < 0 || state.tx.cur_buf_len > nic_tx_capacity ||
+		(state.tx.cur_buf_len != 0 && !state.tx.cur_buf) ||
+		state.rx.current.len < 0 || state.rx.current.len > ETH_MAX_PACKET_CRC ||
+		state.rx.current.used < 0 || state.rx.current.used > state.rx.current.len)
+	{
+		printf("%s: invalid NIC packet state!\n", devid_string);
+		return -1;
+	}
+
+	SNIC_state saved = state;
+	saved.tx.cur_buf = nullptr;
+	saved.rx.cur_buf = nullptr;
+	saved.rx.cur_buf_len = 0;
+	saved.rx.cur_offset = 0;
+
 	if ((res = CPCIDevice::SaveState(f)))
 		return res;
 
-	fwrite(&nic_magic1, sizeof(u32), 1, f);
-	fwrite(&ss, sizeof(long), 1, f);
-	fwrite(&state, sizeof(state), 1, f);
-	fwrite(&nic_magic2, sizeof(u32), 1, f);
-	printf("%s: %li bytes saved.\n", devid_string, ss);
+	if (fwrite(&nic_magic1, sizeof(u32), 1, f) != 1 ||
+		fwrite(&ss, sizeof(long), 1, f) != 1 ||
+		fwrite(&saved, sizeof(saved), 1, f) != 1 ||
+		(saved.tx.cur_buf_len != 0 &&
+			fwrite(state.tx.cur_buf, 1, saved.tx.cur_buf_len, f) !=
+				(size_t)saved.tx.cur_buf_len) ||
+		fwrite(&nic_magic2, sizeof(u32), 1, f) != 1)
+	{
+		printf("%s: failed to write NIC state!\n", devid_string);
+		return -1;
+	}
+	printf("%s: %li bytes saved.\n", devid_string, ss + saved.tx.cur_buf_len);
 	return 0;
 }
 
@@ -2280,13 +2307,13 @@ int CDEC21143::RestoreState(FILE* f)
 	u32     m1;
 	u32     m2;
 	int     res;
-	size_t  r;
+	SNIC_state restored;
+	u8      tx_data[nic_tx_capacity];
 
 	if ((res = CPCIDevice::RestoreState(f)))
 		return res;
 
-	r = fread(&m1, sizeof(u32), 1, f);
-	if (r != 1)
+	if (fread(&m1, sizeof(u32), 1, f) != 1)
 	{
 		printf("%s: unexpected end of file!\n", devid_string);
 		return -1;
@@ -2298,8 +2325,7 @@ int CDEC21143::RestoreState(FILE* f)
 		return -1;
 	}
 
-	fread(&ss, sizeof(long), 1, f);
-	if (r != 1)
+	if (fread(&ss, sizeof(long), 1, f) != 1)
 	{
 		printf("%s: unexpected end of file!\n", devid_string);
 		return -1;
@@ -2311,15 +2337,31 @@ int CDEC21143::RestoreState(FILE* f)
 		return -1;
 	}
 
-	fread(&state, sizeof(state), 1, f);
-	if (r != 1)
+	if (fread(&restored, sizeof(restored), 1, f) != 1)
 	{
 		printf("%s: unexpected end of file!\n", devid_string);
 		return -1;
 	}
 
-	r = fread(&m2, sizeof(u32), 1, f);
-	if (r != 1)
+	// Never install addresses from a file, even if the pointer slots were
+	// damaged. Validate lengths before reading or copying packet payloads.
+	restored.tx.cur_buf = nullptr;
+	restored.rx.cur_buf = nullptr;
+	restored.rx.cur_buf_len = 0;
+	restored.rx.cur_offset = 0;
+	if (restored.tx.cur_buf_len < 0 || restored.tx.cur_buf_len > nic_tx_capacity ||
+		restored.rx.current.len < 0 || restored.rx.current.len > ETH_MAX_PACKET_CRC ||
+		restored.rx.current.used < 0 ||
+		restored.rx.current.used > restored.rx.current.len)
+	{
+		printf("%s: invalid NIC packet state!\n", devid_string);
+		return -1;
+	}
+
+	if ((restored.tx.cur_buf_len != 0 &&
+		fread(tx_data, 1, restored.tx.cur_buf_len, f) !=
+			(size_t)restored.tx.cur_buf_len) ||
+		fread(&m2, sizeof(u32), 1, f) != 1)
 	{
 		printf("%s: unexpected end of file!\n", devid_string);
 		return -1;
@@ -2327,11 +2369,33 @@ int CDEC21143::RestoreState(FILE* f)
 
 	if (m2 != nic_magic2)
 	{
-		printf("%s: MAGIC 1 does not match!\n", devid_string);
+		printf("%s: MAGIC 2 does not match!\n", devid_string);
 		return -1;
 	}
 
-	printf("%s: %li bytes restored.\n", devid_string, ss);
+	// Commit only after the entire NIC section has been checked.
+	restored.tx.cur_buf = state.tx.cur_buf;
+	if (!restored.tx.cur_buf)
+	{
+		restored.tx.cur_buf = (unsigned char*)malloc(nic_tx_capacity);
+		if (!restored.tx.cur_buf)
+		{
+			printf("%s: unable to allocate NIC TX buffer!\n", devid_string);
+			return -1;
+		}
+	}
+	if (restored.tx.cur_buf_len != 0)
+		memcpy(restored.tx.cur_buf, tx_data, restored.tx.cur_buf_len);
+	free(state.rx.cur_buf);
+	state = restored;
+
+	// These are host-side resources, not guest DMA state. Discard packets.
+	if (rx_queue)
+		rx_queue->flush();
+	if (net_backend)
+		SetupFilter();
+
+	printf("%s: %li bytes restored.\n", devid_string, ss + state.tx.cur_buf_len);
 	return 0;
 }
 

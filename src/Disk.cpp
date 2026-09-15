@@ -125,6 +125,8 @@
 #include "Disk.h"
 #include "DiskFile.h"
 
+#include <memory>
+
 #define SCSI_MEDIA_STATE_STABLE             0
 #define SCSI_MEDIA_STATE_REMOVED            1
 #define SCSI_MEDIA_STATE_CHANGED           -1
@@ -310,7 +312,9 @@ int CDisk::RestoreState(FILE* f)
 		return -1;
 	}
 
-	r = fread(&state, sizeof(state), 1, f);
+	// Do not replace the live protocol state unless the entire record is valid.
+	std::unique_ptr<SDisk_state> restored_state(new SDisk_state);
+	r = fread(restored_state.get(), sizeof(state), 1, f);
 	if (r != 1)
 	{
 		printf("%s: unexpected end of file!\n", devid_string);
@@ -326,10 +330,11 @@ int CDisk::RestoreState(FILE* f)
 
 	if (m2 != disk_magic2)
 	{
-		printf("%s: MAGIC 1 does not match!\n", devid_string);
+		printf("%s: MAGIC 2 does not match!\n", devid_string);
 		return -1;
 	}
 
+	memcpy(&state, restored_state.get(), sizeof(state));
 	//calc_cylinders(); // state.block_size may have changed.
 	determine_layout();
 	media_lock_changed(state.scsi.locked);
@@ -2849,6 +2854,13 @@ static int  pri16[16][6] = { {4,0,0,0, 0, 0}, //16
 static off_t_large get_primes(off_t_large value, int pri[54])
 {
 	int i;
+	// Zero is divisible by every prime and would never leave the loop below.
+	if (value == 0)
+	{
+		memset(pri, 0, 54 * sizeof(int));
+		return 0;
+	}
+
 	for (i = 0; i < 54; i++)
 	{
 		pri[i] = 0;
@@ -2877,6 +2889,14 @@ void CDisk::determine_layout()
 	long  c_heads = 0;
 	bool  b;
 	int   prime;
+
+	// Empty removable media (including a restored empty drive) has no CHS
+	// geometry. Avoid both division by zero and trying to factor zero sectors.
+	if (state.block_size == 0 || get_lba_size() == 0)
+	{
+		cylinders = heads = sectors = 0;
+		return;
+	}
 
 	get_primes(get_lba_size(), disk_primes);
 
