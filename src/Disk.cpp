@@ -268,10 +268,11 @@ int CDisk::SaveState(FILE* f)
 {
 	long  ss = sizeof(state);
 
-	fwrite(&disk_magic1, sizeof(u32), 1, f);
-	fwrite(&ss, sizeof(long), 1, f);
-	fwrite(&state, sizeof(state), 1, f);
-	fwrite(&disk_magic2, sizeof(u32), 1, f);
+	if (fwrite(&disk_magic1, sizeof(u32), 1, f) != 1 ||
+		fwrite(&ss, sizeof(long), 1, f) != 1 ||
+		fwrite(&state, sizeof(state), 1, f) != 1 ||
+		fwrite(&disk_magic2, sizeof(u32), 1, f) != 1)
+		return -1;
 	printf("%s: %d bytes saved.\n", devid_string, (int)ss);
 	return 0;
 }
@@ -334,6 +335,24 @@ int CDisk::RestoreState(FILE* f)
 		return -1;
 	}
 
+	const auto& s = *restored_state;
+	if (s.byte_pos < 0 || s.byte_pos > byte_size ||
+		(byte_size > 0 && (!s.block_size || s.block_size > (u64)byte_size)) ||
+		s.scsi.msgi.available > sizeof(s.scsi.msgi.data) ||
+		s.scsi.msgi.read > s.scsi.msgi.available ||
+		s.scsi.msgo.written > sizeof(s.scsi.msgo.data) ||
+		s.scsi.cmd.written > sizeof(s.scsi.cmd.data) ||
+		s.scsi.dati.available > sizeof(s.scsi.dati.data) ||
+		s.scsi.dati.read > s.scsi.dati.available ||
+		s.scsi.dato.expected > sizeof(s.scsi.dato.data) ||
+		s.scsi.dato.written > s.scsi.dato.expected ||
+		s.scsi.stat.available > sizeof(s.scsi.stat.data) ||
+		s.scsi.stat.read > s.scsi.stat.available ||
+		s.scsi.sense.available > sizeof(s.scsi.sense.data))
+	{
+		printf("%s: Invalid disk position or protocol buffer bounds.\n", devid_string);
+		return -1;
+	}
 	memcpy(&state, restored_state.get(), sizeof(state));
 	//calc_cylinders(); // state.block_size may have changed.
 	determine_layout();
