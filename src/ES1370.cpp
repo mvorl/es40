@@ -605,92 +605,59 @@ void CES1370::es1370_transfer_audio(ES1370State* s, struct chan* d, int loop_sel
     int maxb, bool* irq)
 {
     uint8_t tmpbuf[4096];
-    size_t to_transfer;
-    uint32_t addr = d->frame_addr;
-    int sc = d->scount & 0xffff;
-    int csc = d->scount >> 16;
-    int csc_bytes = (csc + 1) << d->shift;
-    int cnt = d->frame_cnt >> 16;
-    int size = d->frame_cnt & 0xffff;
-    if (size < cnt) {
-        return;
-    }
-    int left = ((size - cnt + 1) << 2) + d->leftover;
-    int transferred = 0;
-    int index = d - &s->chan[0];
+    const int index = d - s->chan;
+    const int sc = d->scount & 0xffff;
+    int csc_bytes = ((d->scount >> 16) + 1) << d->shift;
+    const bool nonloop = (s->sctl & loop_sel) != 0;
+    int remaining = maxb;
 
-    to_transfer = MIN(maxb, MIN(left, csc_bytes));
-    addr += (cnt << 2) + d->leftover;
+    // SDL asks once for this refill. 
+    // A sample period or DMA updates the device counters, but doesn't finish..... 
+    while (remaining > 0) {
+        int cnt = d->frame_cnt >> 16;
+        const int size = d->frame_cnt & 0xffff;
+        if (size < cnt) break;
 
-    if (index == ADC_CHANNEL) {
-        while (to_transfer > 0) {
-            int acquired, to_copy;
-
-            to_copy = MIN(to_transfer, sizeof(tmpbuf));
-            //acquired = audio_be_read(s->audio_be, s->adc_voice, tmpbuf, to_copy);
-			acquired = SDL_GetAudioStreamData(s->adc_voice, tmpbuf, to_copy);
-            if (!acquired || acquired == -1) {
-                break;
+        // leftover bytes in the current dword have already been consumed.
+        const int left = ((size - cnt + 1) << 2) - (int)d->leftover;
+        if (left <= 0) break;
+        const int target = MIN(remaining, MIN(left, csc_bytes));
+        uint32_t addr = d->frame_addr + (cnt << 2) + d->leftover;
+        int transferred = 0;
+        while (transferred < target) {
+            const int to_copy = MIN(target - transferred, (int)sizeof(tmpbuf));
+            int copied;
+            if (index == ADC_CHANNEL) {
+                copied = SDL_GetAudioStreamData(s->adc_voice, tmpbuf, to_copy);
+                if (copied <= 0) break;
+                do_pci_write(addr, tmpbuf, 1, copied);
+            } else {
+                do_pci_read(addr, tmpbuf, 1, to_copy);
+                copied = SDL_PutAudioStreamData(s->dac_voice[index], tmpbuf, to_copy) ? to_copy : 0;
+                if (!copied) break;
             }
-			do_pci_write(addr, tmpbuf, 1, acquired);
-
-            to_transfer -= acquired;
-            addr += acquired;
-            transferred += acquired;
-        }
-    }
-    else {
-        SDL_AudioStream* voice = s->dac_voice[index];
-
-        while (to_transfer > 0) {
-            int copied, to_copy;
-
-            to_copy = MIN(to_transfer, sizeof(tmpbuf));
-            //pci_dma_read(&s->dev, addr, tmpbuf, to_copy);
-			do_pci_read(addr, tmpbuf, 1, to_copy);
-            copied = SDL_PutAudioStreamData(voice, tmpbuf, to_copy) ? to_copy : 0;
-            if (!copied) {
-                break;
-            }
-            to_transfer -= copied;
             addr += copied;
             transferred += copied;
         }
-    }
-
-    if (csc_bytes == transferred) {
-        if (*irq) {
-            //trace_es1370_lost_interrupt(index);
+        remaining -= transferred;
+        csc_bytes -= transferred;
+        if (!csc_bytes) {
+            // Keep a completed period latched even if the next segment ends or fails to reach SDL
+            *irq = true;
+            csc_bytes = (sc + 1) << d->shift;
         }
-        *irq = true;
-        d->scount = sc | (sc << 16);
-    }
-    else {
-        *irq = false;
-        d->scount = sc | (((csc_bytes - transferred - 1) >> d->shift) << 16);
-    }
+        d->scount = sc | (((csc_bytes - 1) >> d->shift) << 16);
 
-    cnt += (transferred + d->leftover) >> 2;
-
-    if (s->sctl & loop_sel) {
-        /*
-         * loop_sel tells us which bit in the SCTL register to look at
-         * (either P1_LOOP_SEL, P2_LOOP_SEL or R1_LOOP_SEL). The sense
-         * of these bits is 0 for loop mode (set interrupt and keep recording
-         * when the sample count reaches zero) or 1 for stop mode (set
-         * interrupt and stop recording).
-         */
-        //warn_report("es1370: non looping mode");
-    }
-    else {
-        d->frame_cnt = size;
-
-        if ((uint32_t)cnt <= d->frame_cnt) {
-            d->frame_cnt |= cnt << 16;
+        cnt += (transferred + d->leftover) >> 2;
+        if (!nonloop) {
+            d->frame_cnt = size;
+            if (cnt <= size) d->frame_cnt |= cnt << 16;
         }
-    }
+        d->leftover = (transferred + d->leftover) & 3;
 
-    d->leftover = (transferred + d->leftover) & 3;
+        // Stop on an SDL failure/empty capture queue.
+        if (transferred < target || nonloop) break;
+    }
 }
 
 void CES1370::es1370_run_channel(ES1370State* s, size_t chan, int free_or_avail)
@@ -707,7 +674,7 @@ void CES1370::es1370_run_channel(ES1370State* s, size_t chan, int free_or_avail)
 
     max_bytes = free_or_avail;
     max_bytes &= ~((1 << d->shift) - 1);
-    if (!max_bytes) {
+    if (max_bytes <= 0) {
         return;
     }
 
