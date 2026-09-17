@@ -724,7 +724,7 @@ void CSystem::Run()
 	//  return 1;
 }
 
-// --- Firmware-triggered system reset support ------------------------------
+// --- System reset support (firmware and host UI) ---------------------------
 
 void CSystem::RequestSystemReset()
 {
@@ -748,7 +748,7 @@ bool CSystem::ProcessPendingReset()
 		~ResetInProgressGuard() { sys->SetResetInProgress(false); }
 	};
 
-	printf("\n%%SYS-I-RESET: System reset requested by firmware.\n");
+	printf("\n%%SYS-I-RESET: System reset requested.\n");
 	if (theSROM)
 		theSROM->FlushIfDirty();
 

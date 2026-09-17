@@ -38,6 +38,7 @@
 
 #include "sdl_media.h"
 #include "../DiskFile.h"
+#include "../System.h"
 
 #include <SDL3/SDL.h>
 #include <algorithm>
@@ -100,6 +101,7 @@ struct SMediaPopupState
     bool pending_eject = false;
     std::string message;
     std::vector<SDL_FRect> rows;
+    SDL_FRect reset_button = {};
     int selected = 0;
     int device_selection = 0;
     int locked_return_selection = 0;
@@ -184,6 +186,12 @@ static int item_count()
     return 0;
 }
 
+static int selection_count()
+{
+    // The reset button does not take up a row or scroll with the removable drives.
+    return item_count() + (media_popup.mode == MEDIA_POPUP_DEVICES ? 1 : 0);
+}
+
 static void destroy_popup_window()
 {
     if (media_popup.renderer)
@@ -199,6 +207,7 @@ static void destroy_popup_window()
     }
     media_popup.window_id = 0;
     media_popup.rows.clear();
+    media_popup.reset_button = {};
 }
 
 static void close_popup()
@@ -257,11 +266,14 @@ static void render_popup()
         (int)(((float)media_popup.height - header_height - footer_height) /
               row_height));
 
-    if (media_popup.selected < media_popup.first_visible)
-        media_popup.first_visible = media_popup.selected;
-    if (media_popup.selected >= media_popup.first_visible + visible_count)
-        media_popup.first_visible =
-            media_popup.selected - visible_count + 1;
+    if (media_popup.selected < count)
+    {
+        if (media_popup.selected < media_popup.first_visible)
+            media_popup.first_visible = media_popup.selected;
+        if (media_popup.selected >= media_popup.first_visible + visible_count)
+            media_popup.first_visible =
+                media_popup.selected - visible_count + 1;
+    }
     media_popup.first_visible = std::max(0, std::min(
         media_popup.first_visible, std::max(0, count - visible_count)));
 
@@ -276,7 +288,9 @@ static void render_popup()
     if (media_popup.mode == MEDIA_POPUP_DEVICES)
     {
         title = "Change removable media";
-        subtitle = "Choose a configured drive";
+        subtitle = media_popup.devices.empty() ?
+            "No removable media devices are configured." :
+            "Choose a configured drive";
     }
     else if (media_popup.mode == MEDIA_POPUP_FLOPPY)
     {
@@ -380,7 +394,7 @@ static void render_popup()
                     media_popup.device->displayed_read_only() ?
                     "Make writable" : "Make read-only";
             else
-                label = media_popup.devices.size() > 1 ? "Back" : "Cancel";
+                label = "Back";
         }
         else if (media_popup.mode == MEDIA_POPUP_FLOPPY_SIZE)
         {
@@ -396,7 +410,7 @@ static void render_popup()
             else if (index == 1)
                 label = "Eject";
             else
-                label = media_popup.devices.size() > 1 ? "Back" : "Cancel";
+                label = "Back";
         }
         else if (media_popup.mode == MEDIA_POPUP_CD_LOCKED)
             label = index == 0 ?
@@ -434,18 +448,43 @@ static void render_popup()
     }
 
     const bool back_available =
-        ((media_popup.mode == MEDIA_POPUP_FLOPPY ||
-          media_popup.mode == MEDIA_POPUP_CDROM) &&
-         media_popup.devices.size() > 1) ||
+        media_popup.mode == MEDIA_POPUP_FLOPPY ||
+        media_popup.mode == MEDIA_POPUP_CDROM ||
         media_popup.mode == MEDIA_POPUP_FLOPPY_SIZE ||
         media_popup.mode == MEDIA_POPUP_CD_LOCKED;
     const char* footer = back_available ?
         "Arrows select   Enter open   Esc back" :
         "Arrows select   Enter open   Esc cancel";
-    draw_text(20.0f, (float)media_popup.height - footer_height + 11.0f,
-              footer, 1.0f,
-              std::max(1, (media_popup.width - 40) / 8),
-              133, 146, 166);
+    const float footer_text_y =
+        (float)media_popup.height - footer_height + 11.0f;
+    int footer_chars = std::max(1, (media_popup.width - 40) / 8);
+    media_popup.reset_button = {};
+    if (media_popup.mode == MEDIA_POPUP_DEVICES)
+    {
+        const SDL_FRect button = {
+            (float)media_popup.width - 100.0f,
+            footer_text_y - 6.0f, 80.0f, 20.0f
+        };
+        media_popup.reset_button = button;
+        const bool selected = media_popup.selected == count;
+        SDL_SetRenderDrawColor(media_popup.renderer,
+            selected ? 51 : 35, selected ? 103 : 42,
+            selected ? 190 : 55, 255);
+        SDL_RenderFillRect(media_popup.renderer, &button);
+        SDL_SetRenderDrawColor(media_popup.renderer,
+            selected ? 107 : 64, selected ? 163 : 77,
+            selected ? 255 : 96, 255);
+        SDL_RenderRect(media_popup.renderer, &button);
+        draw_text(button.x + 8.0f, footer_text_y, "Reset VM", 1.0f, 8,
+            selected ? 255 : 157, selected ? 255 : 169,
+            selected ? 255 : 189);
+        footer_chars = std::max(1, (int)(button.x - 32.0f) / 8);
+        if (footer_chars < (int)strlen(footer))
+            footer = footer_chars >= 21 ? "Arrows/Tab  Enter  Esc" :
+                "Tab Enter Esc";
+    }
+    draw_text(20.0f, footer_text_y, footer, 1.0f, footer_chars,
+        133, 146, 166);
     SDL_RenderPresent(media_popup.renderer);
 }
 
@@ -759,11 +798,6 @@ void sdl_select_media(SDL_Window* window) noexcept
         swallow_parent_pointer_until_release = false;
         media_popup.parent = window;
         media_popup.devices = snapshot_removable_disks();
-        if (media_popup.devices.empty())
-        {
-            show_message("No removable media devices are configured.");
-            return;
-        }
         media_popup.mode = MEDIA_POPUP_DEVICES;
         media_popup.selected = 0;
         media_popup.device_selection = 0;
@@ -779,7 +813,7 @@ void sdl_select_media(SDL_Window* window) noexcept
 
 static void move_selection(int delta)
 {
-    const int count = item_count();
+    const int count = selection_count();
     if (count <= 0)
         return;
     media_popup.selected = (media_popup.selected + delta + count) % count;
@@ -795,6 +829,12 @@ static void activate_selection()
         if (media_popup.selected >= 0 &&
             media_popup.selected < (int)media_popup.devices.size())
             open_device(media_popup.devices[(size_t)media_popup.selected]);
+        else if (media_popup.selected == item_count())
+        {
+            close_popup();
+            if (theSystem)
+                theSystem->RequestSystemReset();
+        }
         else
             close_popup();
         return;
@@ -948,9 +988,8 @@ static void cancel_or_go_back()
         update_popup_content();
         return;
     }
-    if ((media_popup.mode == MEDIA_POPUP_FLOPPY ||
-         media_popup.mode == MEDIA_POPUP_CDROM) &&
-        media_popup.devices.size() > 1)
+    if (media_popup.mode == MEDIA_POPUP_FLOPPY ||
+        media_popup.mode == MEDIA_POPUP_CDROM)
     {
         media_popup.mode = MEDIA_POPUP_DEVICES;
         media_popup.device.reset();
@@ -1098,7 +1137,7 @@ bool sdl_media_handle_event(const SDL_Event* source_event) noexcept
                     -1 : 1);
                 break;
             case SDLK_HOME:     media_popup.selected = 0; render_popup(); break;
-            case SDLK_END:      media_popup.selected = item_count() - 1; render_popup(); break;
+            case SDLK_END:      media_popup.selected = selection_count() - 1; render_popup(); break;
             case SDLK_RETURN:
             case SDLK_KP_ENTER:
             case SDLK_SPACE:    activate_selection(); break;
@@ -1139,8 +1178,11 @@ bool sdl_media_handle_event(const SDL_Event* source_event) noexcept
                     hovered = media_popup.first_visible + (int)i;
                     break;
                 }
+            if (media_popup.mode == MEDIA_POPUP_DEVICES &&
+                point_in_rect(x, y, media_popup.reset_button))
+                hovered = item_count();
 
-            if (hovered >= 0 && hovered < item_count() &&
+            if (hovered >= 0 && hovered < selection_count() &&
                 hovered != media_popup.selected)
             {
                 media_popup.selected = hovered;
