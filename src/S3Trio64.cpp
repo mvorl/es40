@@ -168,8 +168,6 @@ enum
 #define TGA_COLUMNS (EGA_COLUMNS)
 #define TGA_LINE_LENGTH (vga.crtc.offset<<3)
 
-static unsigned old_iHeight = 0, old_iWidth = 0, old_MSL = 0;
-
 static int s3_diag_update_counter = 0;
 static int s3_diag_frame_counter = 0;
 
@@ -2255,12 +2253,6 @@ void CS3Trio64::run()
 	}
 }
 
-/** Size of ROM image */
-static unsigned int rom_max;
-
-/** ROM image */
-static u8           option_rom[65536];
-
 /** PCI Configuration Space data block */
 static u32                 s3_cfg_data[64] = {
 	/*00*/ 0x88115333,            // CFID: vendor + device
@@ -2516,7 +2508,7 @@ void CS3Trio64::init()
 			myCfg->get_text_value("rom", "vgabios.bin"));
 	}
 
-	rom_max = (unsigned)fread(option_rom, 1, 65536, rom);
+	rom_max = (unsigned)fread(option_rom, 1, sizeof(option_rom), rom);
 	fclose(rom);
 
 	// Option ROM address space: C0000

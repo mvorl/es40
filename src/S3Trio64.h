@@ -329,6 +329,9 @@ private:
 
   // screen refresh stuff
   std::chrono::steady_clock::time_point m_last_refresh_time;
+  // Host dimension cache for this card's single scanout; not snapshot data.
+  unsigned old_iHeight = 0;
+  unsigned old_iWidth = 0;
   // Dirty-gate state: skip the per-refresh rasterize + GPU upload when nothing visible changed.
   uint64_t m_last_cursor_sig = 0;     // HW-cursor (mode/pos/data-addr) folded in -- not tracked by vga_mem_updated
   int      m_frames_since_render = 0;  // forced-refresh counter so cursor/text blink still animate when static
@@ -364,6 +367,10 @@ private:
   void  legacy_write(u32 address, int dsize, u32 data);
 
   u32   rom_read(u32 address, int dsize);
+
+  // Each card loads its own ROM image from configuration.
+  unsigned int rom_max = 0;
+  u8 option_rom[65536] = {};
 
   void  determine_screen_dimensions(unsigned* piHeight, unsigned* piWidth);
 
