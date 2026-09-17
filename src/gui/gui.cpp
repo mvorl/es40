@@ -205,17 +205,17 @@ void bx_gui_c::init_signal_handlers()
 
 void bx_gui_c::set_text_charmap(u8* fbuffer)
 {
-	memcpy(&bx_gui->vga_charmap, fbuffer, 0x2000);
+	memcpy(vga_charmap, fbuffer, sizeof(vga_charmap));
 	for (unsigned i = 0; i < 256; i++)
-		bx_gui->char_changed[i] = 1;
-	bx_gui->charmap_updated = 1;
+		char_changed[i] = 1;
+	charmap_updated = 1;
 }
 
 void bx_gui_c::set_text_charbyte(u16 address, u8 data)
 {
-	bx_gui->vga_charmap[address] = data;
-	bx_gui->char_changed[address >> 5] = 1;
-	bx_gui->charmap_updated = 1;
+	vga_charmap[address] = data;
+	char_changed[address >> 5] = 1;
+	charmap_updated = 1;
 }
 
 void bx_gui_c::beep_on(float frequency)

@@ -156,8 +156,8 @@ public:
     u16* bpp);
 
   static void                   key_event(u32 key);
-  static void                   set_text_charmap(u8* fbuffer);
-  static void                   set_text_charbyte(u16 address, u8 data);
+  void                          set_text_charmap(u8* fbuffer);
+  void                          set_text_charbyte(u16 address, u8 data);
 
   void                          init(unsigned x_tilesize, unsigned y_tilesize);
   void                          cleanup(void);
