@@ -3003,7 +3003,23 @@ bool CS3Trio64::decodes_memory_access(int index, u64 address, int dsize,
 	// Trio32/Trio64 DB014-B, sections 6.1.2 and 19 (COMMAND, bits 0/1):
 	// PCI I/O and memory responses require their respective command enable.
 	const u32 enable = dev_range_is_io[index] ? 1U : 2U;
-	return (pci_state.config_data[0][1] & endian_32(enable)) != 0;
+	if ((pci_state.config_data[0][1] & endian_32(enable)) == 0)
+		return false;
+
+	// DB014-B section 14.1, MISC bit 0 (IOA SEL): only the selected
+	// 3Bx/3Dx CRTC and status/feature-control ports respond. 
+	const bool color_io = (vga.miscellaneous_output & 0x01) != 0;
+	switch (index)
+	{
+	case 1: // 3B4/3B5
+	case 3: // 3BA
+		return !color_io;
+	case 8: // 3D4/3D5
+	case 9: // 3DA
+		return color_io;
+	default:
+		return true;
+	}
 }
 
 /**
