@@ -149,9 +149,12 @@
 #include <atomic>
 #include <chrono>
 #include <mutex>
+#include <vector>
 
 #if !defined(INCLUDED_SYSTEM_H)
 #define INCLUDED_SYSTEM_H
+
+class CDisplayOutput;
 
 #define MAX_COMPONENTS  100
 
@@ -264,6 +267,14 @@ public:
   int           RegisterComponent(CSystemComponent* component);
   void          UnregisterComponent(CSystemComponent* component);
   int           RegisterCPU(class CAlphaCPU* cpu);
+
+  struct SDisplayOutput
+  {
+    const CSystemComponent* component;
+    const CDisplayOutput* output;
+  };
+  // Query completed devices for outputs
+  std::vector<SDisplayOutput> get_display_outputs() const;
 
   CSystem(CConfigurator* cfg);
   void          ResetMem(unsigned int membits);

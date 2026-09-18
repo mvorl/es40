@@ -200,7 +200,7 @@ private:
   bx_gui_c& m_display;
 };
 
-// Enumeration of outputs.
+// Enumeration of outputs. IDs are unique within a provider.
 class CDisplayOutputProvider
 {
 public:

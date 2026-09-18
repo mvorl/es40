@@ -319,11 +319,13 @@
 #include "DPR.h"
 #include "Flash.h"
 #include "SnapshotFile.h"
+#include "gui/gui.h"
 
 #include <ctype.h>
 #include <stdlib.h>
 #include <signal.h>
 #include <memory>
+#include <unordered_set>
 
 #define CLOCK_RATIO 10000
 
@@ -470,6 +472,33 @@ void CSystem::UnregisterComponent(CSystemComponent* component)
 			break;
 		}
 	}
+}
+
+std::vector<CSystem::SDisplayOutput> CSystem::get_display_outputs() const
+{
+	std::vector<SDisplayOutput> outputs;
+	for (int i = 0; i < iNumComponents; ++i)
+	{
+		const CSystemComponent* component = acComponents[i];
+		const auto* provider = dynamic_cast<const CDisplayOutputProvider*>(component);
+		if (!provider)
+			continue;
+
+		std::unordered_set<unsigned> output_ids;
+		const std::size_t count = provider->output_count();
+		for (std::size_t ordinal = 0; ordinal < count; ++ordinal)
+		{
+			const CDisplayOutput* output = provider->output_at(ordinal);
+			if (!output)
+				FAILURE_2(Runtime, "Missing display output %zu for %s", ordinal,
+					component->devid_string);
+			if (!output_ids.insert(output->id()).second)
+				FAILURE_2(Runtime, "Duplicate display output %u for %s", output->id(),
+					component->devid_string);
+			outputs.push_back({ component, output });
+		}
+	}
+	return outputs;
 }
 
 /**
