@@ -3018,10 +3018,20 @@ bool CS3Trio64::decodes_memory_access(int index, u64 address, int dsize,
 	case 9: // 3DA
 		return color_io;
 	case 4: // A0000-BFFFF, address is relative to A0000
-		// Limit this rule to ordinary VGA for now until further decoding rules are implemented.
-		if ((s3.memory_config & 0x08) || (s3.ext_misc_ctrl_2 & 0xf0) ||
-			(s3.cr53 & 0x18) || (s3.cr58 & 0x10) ||
-			(m_8514.ibm8514.advfunction_ctrl & 0x31))
+		// Limit this rule to ordinary VGA and enhanced memory
+		// for now until further decoding rules are implemented.
+		if ((s3.cr53 & 0x18) || (s3.cr58 & 0x10) ||
+			(m_8514.ibm8514.advfunction_ctrl & 0x30))
+			return true;
+
+		// DB014-B 15-3: CR31 bit 3 overrides GR6 with a 64 KiB map at
+		// A0000. MISC bit 1 still enables CPU display-memory access (14-1).
+		if (s3.memory_config & 0x08)
+			return (vga.miscellaneous_output & 0x02) && address < 0x10000;
+
+		// Packed/enhanced formats without CR31's forced map remain pending.
+		if ((s3.ext_misc_ctrl_2 & 0xf0) ||
+			(m_8514.ibm8514.advfunction_ctrl & 0x01))
 			return true;
 
 		// DB014-B 14-1: MISC bit 1 enables CPU display-memory access.
