@@ -108,6 +108,23 @@ static void diag_printf(const char* fmt, ...)
 #define PCI_MEM_TYPE_MASK 0x00000006U
 #define PCI_MEM_TYPE_64   0x00000004U
 
+static bool pci_bar_is_upper_64bit(const u32* config, int bar)
+{
+	// Walk BAR boundaries: an upper address dword has no type attributes.
+	for (int low = 0; low < bar; ++low)
+	{
+		const u32 attributes = endian_32(config[4 + low]);
+		if ((attributes & 1U) == 0 &&
+			(attributes & PCI_MEM_TYPE_MASK) == PCI_MEM_TYPE_64)
+		{
+			if (low + 1 == bar)
+				return true;
+			++low;
+		}
+	}
+	return false;
+}
+
 static size_t pci_dma_chunk_limit(u64 phys_addr, size_t remaining)
 {
 	const size_t dma_page = 8192;
@@ -243,10 +260,7 @@ void CPCIDevice::config_write(int func, u32 address, int dsize, u32 data)
 	if (dsize == 32 && address >= 0x14 && address <= 0x24)
 	{
 		const int bar = (address - 0x10) / 4;
-		const u32 attributes =
-			endian_32(std_config_data[func][4 + bar - 1]);
-		upper_64bit_bar = (attributes & 1U) == 0 &&
-			(attributes & PCI_MEM_TYPE_MASK) == PCI_MEM_TYPE_64;
+		upper_64bit_bar = pci_bar_is_upper_64bit(std_config_data[func], bar);
 	}
 	const u32 access_bytes = (u32)dsize / 8U;
 	const bool rom_bar_write = address < 0x34U &&
@@ -254,7 +268,7 @@ void CPCIDevice::config_write(int func, u32 address, int dsize, u32 data)
 	const u32 write_ones = dsize == 8 ? 0xFFU :
 		(dsize == 16 ? 0xFFFFU : 0xFFFFFFFFU);
 
-	/* Only an all-ones size probe leaves the active mapping unchanged. */
+	/* Preserve the existing ROM sizing-probe handling. */
 	if (rom_bar_write && data != write_ones)
 	{
 		const u32 rom_data = endian_32(pci_state.config_data[func][0x30 / 4]);
@@ -262,12 +276,37 @@ void CPCIDevice::config_write(int func, u32 address, int dsize, u32 data)
 		if (rom_mask != 0)
 			register_bar(func, 6, rom_data, rom_mask);
 	}
+	else if ((dsize == 8 || (dsize == 16 && (address & 1U) == 0)) &&
+		address >= 0x10U && address + access_bytes <= 0x28U && mask != 0)
+	{
+		// Byte enables change the complete 32-bit BAR's decoded address.
+		// Skip both halves of 64-bit BARs; their partial-write handling is separate.
+		for (int bar = 0; bar < 6; ++bar)
+		{
+			const u32 attributes = endian_32(std_config_data[func][4 + bar]);
+			if ((attributes & 1U) == 0 &&
+				(attributes & PCI_MEM_TYPE_MASK) == PCI_MEM_TYPE_64)
+			{
+				++bar;
+				continue;
+			}
+			if ((address - 0x10U) / 4U == (u32)bar)
+			{
+				// An all-ones byte/word is still an address write, not a dword probe.
+				register_bar(func, bar, endian_32(pci_state.config_data[func][4 + bar]),
+					endian_32(pci_state.config_mask[func][4 + bar]));
+				break;
+			}
+		}
+	}
 	else if (dsize == 32 && upper_64bit_bar && ((data & mask) != mask))
 	{
 		register_bar(func, (address - 0x10) / 4,
 			endian_32(new_data), endian_32(mask));
 	}
-	else if (dsize == 32 && ((data & mask) != mask))
+	// A masked maximum address is a valid assignment (including on restore).
+	// Only the unmasked all-ones dword retains the existing size-probe policy.
+	else if (dsize == 32 && mask != 0 && data != write_ones)
 	{
 		switch (address)
 		{
@@ -289,19 +328,13 @@ void CPCIDevice::config_write(int func, u32 address, int dsize, u32 data)
 void CPCIDevice::register_bar(int func, int bar, u32 data, u32 mask)
 {
 	/* A 64-bit BAR's upper dword belongs to the preceding BAR. */
-	if (bar > 0 && bar < 6)
+	if (bar > 0 && bar < 6 && pci_bar_is_upper_64bit(std_config_data[func], bar))
 	{
-		const u32 attributes =
-			endian_32(std_config_data[func][4 + bar - 1]);
-		if ((attributes & 1U) == 0 &&
-			(attributes & PCI_MEM_TYPE_MASK) == PCI_MEM_TYPE_64)
-		{
-			const u32 low =
-				endian_32(pci_state.config_data[func][4 + bar - 1]);
-			register_bar(func, bar - 1, low,
-				endian_32(pci_state.config_mask[func][4 + bar - 1]));
-			return;
-		}
+		const u32 low =
+			endian_32(pci_state.config_data[func][4 + bar - 1]);
+		register_bar(func, bar - 1, low,
+			endian_32(pci_state.config_mask[func][4 + bar - 1]));
+		return;
 	}
 
 	int id = PCI_RANGE_BASE + (func * 8) + bar;
