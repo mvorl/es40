@@ -1096,7 +1096,9 @@ void CSystem::WriteMem(u64 address, int dsize, u64 data, CSystemComponent* sourc
 		for (i = 0; i < iNumMemories; i++)
 		{
 			if ((a >= asMemories[i]->base)
-				&& (a < asMemories[i]->base + asMemories[i]->length))
+				&& (a < asMemories[i]->base + asMemories[i]->length)
+				&& asMemories[i]->component->decodes_memory_access(asMemories[i]->index,
+					a - asMemories[i]->base, dsize, true))
 			{
 				asMemories[i]->component->WriteMem(asMemories[i]->index,
 					a - asMemories[i]->base, dsize, data);
@@ -1357,7 +1359,9 @@ u64 CSystem::ReadMem(u64 address, int dsize, CSystemComponent* source)
 		for (i = 0; i < iNumMemories; i++)
 		{
 			if ((a >= asMemories[i]->base)
-				&& (a < asMemories[i]->base + asMemories[i]->length))
+				&& (a < asMemories[i]->base + asMemories[i]->length)
+				&& asMemories[i]->component->decodes_memory_access(asMemories[i]->index,
+					a - asMemories[i]->base, dsize, false))
 				return asMemories[i]->component->ReadMem(asMemories[i]->index,
 					a - asMemories[i]->base, dsize);
 		}

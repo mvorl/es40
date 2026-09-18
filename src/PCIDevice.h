@@ -75,6 +75,8 @@ public:
   virtual int   SaveState(FILE* f);
   virtual int   RestoreState(FILE* f);
   virtual void  ResetPCI();
+  bool decodes_memory_access(int index, u64 address, int dsize,
+    bool write) const noexcept override;
   virtual u64   ReadMem(int index, u64 address, int dsize);
   virtual void  WriteMem(int index, u64 address, int dsize, u64 data);
 

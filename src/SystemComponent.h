@@ -107,6 +107,14 @@ public:
   CSystemComponent(class CConfigurator* cfg, class CSystem* system);
   virtual       ~CSystemComponent();
 
+  // No side effect decode query, called under the system device-bus lock.
+  // Address is a byte offset; dsize is in bits; write selects writes.
+  // Returning false skips this range. Implemented per device/class. 
+  // Default true here for existing devices that don't implement or aren't
+  // converted yet
+  virtual bool  decodes_memory_access(int index, u64 address, int dsize,
+    bool write) const noexcept { return true; }
+
   //=== abstract ===
   virtual u64   ReadMem(int index, u64 address, int dsize) { return 0; };
   virtual void  WriteMem(int index, u64 address, int dsize, u64 data) {};

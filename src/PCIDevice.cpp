@@ -420,6 +420,34 @@ void CPCIDevice::ResetPCI()
 	}
 }
 
+bool CPCIDevice::decodes_memory_access(int index, u64, int, bool) const noexcept
+{
+	if (index < 0)
+		return false;
+	// Legacy registrations can include special cycles so their decode rules can belong to the device.
+	if (index < PCI_RANGE_BASE)
+		return true;
+
+	const int range = index - PCI_RANGE_BASE;
+	if (range >= 8 * 8)
+		return false;
+	const int func = range / 8;
+	const int bar = range & 7;
+	if (!device_at[func])
+		return false;
+	// PCI configuration cycles remain available when I/O and memory are disabled.
+	if (bar == 7)
+		return true;
+
+	const u32 command = endian_32(pci_state.config_data[func][1]);
+	const u32 enable = bar != 6 && pci_range_is_io[func][bar] ? 1U : 2U;
+	if (!(command & enable))
+		return false;
+	// Expansion ROM decoding requires both Memory Space Enable and ROM Enable.
+	return bar != 6 ||
+		(pci_state.config_data[func][0x30 / 4] & endian_32(PCI_ROM_ADDRESS_ENABLE));
+}
+
 u64 CPCIDevice::ReadMem(int index, u64 address, int dsize)
 {
 	int func;

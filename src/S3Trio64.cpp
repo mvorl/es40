@@ -2992,6 +2992,20 @@ CS3Trio64::~CS3Trio64()
 	stop_threads();
 }
 
+bool CS3Trio64::decodes_memory_access(int index, u64 address, int dsize,
+	bool write) const noexcept
+{
+	if (index >= PCI_RANGE_BASE)
+		return CPCIDevice::decodes_memory_access(index, address, dsize, write);
+	if (index < 0 || index >= MAX_DEV_RANGES || !device_at[0])
+		return false;
+
+	// Trio32/Trio64 DB014-B, sections 6.1.2 and 19 (COMMAND, bits 0/1):
+	// PCI I/O and memory responses require their respective command enable.
+	const u32 enable = dev_range_is_io[index] ? 1U : 2U;
+	return (pci_state.config_data[0][1] & endian_32(enable)) != 0;
+}
+
 /**
  * Read from one of the Legacy (fixed-address) memory ranges.
  **/

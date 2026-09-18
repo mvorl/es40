@@ -100,6 +100,8 @@ public:
   virtual void  check_state() override;
   virtual void  WriteMem_Legacy(int index, u32 address, int dsize, u32 data) override;
   virtual u32   ReadMem_Legacy(int index, u32 address, int dsize) override;
+  bool decodes_memory_access(int index, u64 address, int dsize,
+    bool write) const noexcept override;
 
   virtual void  WriteMem_Bar(int func, int bar, u32 address, int dsize,
     u32 data) override;
