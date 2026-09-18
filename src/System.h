@@ -568,7 +568,7 @@ private:
 
   //    void * memmap;
   int                   iNumComponents;
-  CSystemComponent* acComponents[MAX_COMPONENTS];
+  std::vector<CSystemComponent*> acComponents;
   int                   iNumMemories;
   struct SMemoryUser* asMemories[MAX_COMPONENTS];
 

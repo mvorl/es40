@@ -325,6 +325,9 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <memory>
+#include <climits>
+#include <new>
+#include <stdexcept>
 #include <unordered_set>
 
 #define CLOCK_RATIO 10000
@@ -454,7 +457,20 @@ void CSystem::ResetMem(unsigned int membits)
  **/
 int CSystem::RegisterComponent(CSystemComponent* component)
 {
-	acComponents[iNumComponents] = component;
+	if (iNumComponents == INT_MAX)
+		FAILURE(Configuration, "Too many system components");
+	try
+	{
+		acComponents.push_back(component);
+	}
+	catch (const std::bad_alloc&)
+	{
+		FAILURE(OutOfMemory, "Unable to grow the system component registry");
+	}
+	catch (const std::length_error&)
+	{
+		FAILURE(OutOfMemory, "System component registry capacity exhausted");
+	}
 	iNumComponents++;
 	return 0;
 }
