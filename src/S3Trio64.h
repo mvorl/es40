@@ -362,7 +362,7 @@ private:
   void recompute_params_clock(int divisor, int xtal);
 
   void  update_linear_mapping();
-  void  on_crtc_linear_regs_changed();
+  void  on_crtc_linear_regs_changed(const char* reason = "CR58/59/5A");
 
 
   u32   io_read(u32 address, int dsize);
@@ -414,7 +414,7 @@ private:
   u32   lfb_base = 0;            // guest-visible base (32-bit)
   u32   lfb_size = 0;            // 64K/1M/2M/4M
   u64   lfb_phys = 0;            // full physical mapping base we registered
-  bool  lfb_active = false;      // effective enable (PCI + CR58)
+  bool  lfb_active = false;      // CR58.ENB LA | ADVFUNC.LA; PCI MSE is gated separately
 
   bool  pci_mem_enable = false;  // PCI Command.MSE cached
   u32   pci_bar0 = 0;            // cached BAR0 (optional; we treat CR58..5A as truth)

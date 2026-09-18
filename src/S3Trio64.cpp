@@ -2307,6 +2307,8 @@ static u32                 s3_cfg_mask[64] = {
 CS3Trio64::CS3Trio64(CConfigurator* cfg, CSystem* c, int pcibus, int pcidev,
 	bx_gui_c& display) : CVGA(cfg, c, pcibus, pcidev), m_output(0, display)
 {
+	// PCI setup consults linear-enable state before the accelerator starts.
+	m_8514.ibm8514.advfunction_ctrl = 0;
 }
 
 // --- S3 CR36 -----------------------------------------------------------------
@@ -2371,15 +2373,16 @@ static inline uint32_t s3_lfb_size_from_cr58(uint8_t cr58) {
 	}
 }
 
-static inline bool s3_lfb_enabled(uint8_t cr58) {
-	return (cr58 & 0x10) != 0; // ENB LA (Enable Linear Addressing)
+static inline bool s3_lfb_enabled(uint8_t cr58, uint16_t advfunc) {
+	// Trio32/Trio64 DB014-B 18-3: ADVFUNC.LA is ORed with CR58.ENB LA.
+	return ((cr58 | advfunc) & 0x10) != 0;
 }
 
 void CS3Trio64::update_linear_mapping()
 {
 	// BAR-only mode: no per-device mapping. PCI core decodes BAR0 and gates
-	// access via COMMAND.MSE. We keep these fields for debug only.
-	lfb_active = s3_lfb_enabled(m_crtc_map.read_byte(0x58));
+	// access via COMMAND.MSE. lfb_active gates the framebuffer handlers.
+	lfb_active = s3_lfb_enabled(m_crtc_map.read_byte(0x58), m_8514.ibm8514.advfunction_ctrl);
 	lfb_size = s3_lfb_size_from_cr58(m_crtc_map.read_byte(0x58));
 	lfb_base = s3_lfb_base_from_regs();
 #ifdef S3_LFB_TRACE
@@ -2388,14 +2391,14 @@ void CS3Trio64::update_linear_mapping()
 #endif
 }
 
-void CS3Trio64::on_crtc_linear_regs_changed()
+void CS3Trio64::on_crtc_linear_regs_changed(const char* reason)
 {
 	const u8 cr58 = m_crtc_map.read_byte(0x58);
 	const u8 cr59 = m_crtc_map.read_byte(0x59);
 	const u8 cr5a = m_crtc_map.read_byte(0x5A);
 
-	// Enable via CR58.ENB_LA (bit 4)
-	lfb_active = s3_lfb_enabled(cr58);
+	// Either CR58.ENB LA or ADVFUNC.LA enables linear addressing.
+	lfb_active = s3_lfb_enabled(cr58, m_8514.ibm8514.advfunction_ctrl);
 
 	// Trio64 size: CR58[1:0] 00=64K, 01=1M, 10=2M, 11=4M
 	lfb_size = s3_lfb_size_from_cr58(cr58);
@@ -2406,7 +2409,7 @@ void CS3Trio64::on_crtc_linear_regs_changed()
 
 	// Apply/unapply the mapping now that CR regs changed
 	lfb_recalc_and_map();
-	trace_lfb_if_changed("CR58/59/5A");
+	trace_lfb_if_changed(reason);
 }
 
 /**
@@ -2491,7 +2494,7 @@ void CS3Trio64::init()
 	// Legacy video address space: A0000 -> bffff
 	add_legacy_mem(4, 0xa0000, 128 * 1024);
 
-	// Default: no linear window until guest enables CR58 bit 0.
+	// Default: no linear window until guest enables CR58 or ADVFUNC bit 4.
 	// Seed base/size from PCI config defaults; CR58/59 will override when written.
 	lfb_active = false;
 	lfb_base = s3_cfg_data[0x10 >> 2] & 0xFC000000;  // BAR0 default (aligned)
@@ -3026,8 +3029,7 @@ bool CS3Trio64::decodes_memory_access(int index, u64 address, int dsize,
 		// DB014-B 17-6 and 18-3: either linear-enable bit suppresses the
 		// enhanced legacy window unless banking, 64 KiB size, and A0000
 		// base are all selected.
-		if ((s3.cr58 & 0x10) ||
-			(m_8514.ibm8514.advfunction_ctrl & 0x10))
+		if (s3_lfb_enabled(s3.cr58, m_8514.ibm8514.advfunction_ctrl))
 		{
 			if ((s3.memory_config & 0x08) &&
 				(!(s3.memory_config & 0x01) || (s3.cr58 & 0x03)))
@@ -3251,6 +3253,7 @@ static inline u32 clamp_vram_addr(u32 a, u32 vram_size) {
 void CS3Trio64::accel_reset() {
 	m_8514.start();
 	m_8514.ibm8514.enabled = (s3.cr40 & 0x01);
+	on_crtc_linear_regs_changed("accelerator reset");
 }
 
 
@@ -3323,11 +3326,11 @@ void CS3Trio64::AccelIOWrite(u32 port, u8 data)
 
 		// ADVFUNC_CNTL (4AE8h)
 	case 0x4AE8:
-		if ((port & 1) == 0)
-			s3.mmio_4ae8 = (s3.mmio_4ae8 & 0xff00) | data;
-		else
-			s3.mmio_4ae8 = (s3.mmio_4ae8 & 0x00ff) | (data << 8);
+		// The assembly mirror can be stale after accelerator reset or restore.
+		s3.mmio_4ae8 = dev->ibm8514.advfunction_ctrl;
+		write16_low_high(s3.mmio_4ae8, port, data);
 		dev->ibm8514_advfunc_w(s3.mmio_4ae8);
+		on_crtc_linear_regs_changed("ADVFUNC");
 		break;
 
 		// CUR_Y (82E8h) — MAME sets prev_y too
@@ -3805,10 +3808,10 @@ void CS3Trio64::config_write_custom(int func, u32 address, int dsize,
 }
 
 void CS3Trio64::trace_lfb_if_changed(const char* reason) {
-	const bool cr58_on = s3_lfb_enabled(m_crtc_map.read_byte(0x58));
+	const bool linear_on = s3_lfb_enabled(m_crtc_map.read_byte(0x58), m_8514.ibm8514.advfunction_ctrl);
 	const uint32_t sz = s3_lfb_size_from_cr58(m_crtc_map.read_byte(0x58));
 	const uint32_t base = pci_bar0;  // BAR-only base of truth
-	const bool eff = pci_mem_enable && cr58_on && (base != 0);
+	const bool eff = pci_mem_enable && linear_on && (base != 0);
 
 	if (!lfb_trace_initialized ||
 		eff != lfb_trace_enabled_prev ||
@@ -3816,9 +3819,9 @@ void CS3Trio64::trace_lfb_if_changed(const char* reason) {
 		sz != lfb_trace_size_prev) {
 
 #ifdef S3_LFB_TRACE
-		printf("%s: LFB %s - MSE=%d CR58=%02x base=%08x size=%x (reason=%s)\n",
+		printf("%s: LFB %s - MSE=%d CR58=%02x ADVFUNC=%04x base=%08x size=%x (reason=%s)\n",
 			devid_string, eff ? "ACTIVE(BAR)" : "INACTIVE(BAR)",
-			(int)pci_mem_enable, m_crtc_map.read_byte(0x58),
+			(int)pci_mem_enable, m_crtc_map.read_byte(0x58), m_8514.ibm8514.advfunction_ctrl,
 			base, sz, reason ? reason : "n/a");
 #endif
 
@@ -3842,11 +3845,11 @@ void CS3Trio64::lfb_recalc_and_cache()
 
 	pci_bar0 = bar0;
 
-	// Honor CR58 enable/size while keeping BAR0 as the effective mapping base.
+	// Honor both linear enables and CR58 size; BAR0 remains the mapping base.
 	const u8 cr58 = m_crtc_map.read_byte(0x58);
 	lfb_base_ = bar0;                        // effective CPU-visible base = BAR0
 	lfb_size_ = s3_lfb_size_from_cr58(cr58); // 64K/1M/2M/4M per Trio64
-	lfb_enabled_ = pci_mem_enable && s3_lfb_enabled(cr58) && (bar0 != 0);
+	lfb_enabled_ = pci_mem_enable && s3_lfb_enabled(cr58, m_8514.ibm8514.advfunction_ctrl) && (bar0 != 0);
 }
 
 
