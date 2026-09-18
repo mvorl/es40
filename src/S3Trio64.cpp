@@ -3017,6 +3017,28 @@ bool CS3Trio64::decodes_memory_access(int index, u64 address, int dsize,
 	case 8: // 3D4/3D5
 	case 9: // 3DA
 		return color_io;
+	case 4: // A0000-BFFFF, address is relative to A0000
+		// Limit this rule to ordinary VGA for now until further decoding rules are implemented.
+		if ((s3.memory_config & 0x08) || (s3.ext_misc_ctrl_2 & 0xf0) ||
+			(s3.cr53 & 0x18) || (s3.cr58 & 0x10) ||
+			(m_8514.ibm8514.advfunction_ctrl & 0x31))
+			return true;
+
+		// DB014-B 14-1: MISC bit 1 enables CPU display-memory access.
+		if (!(vga.miscellaneous_output & 0x02))
+			return false;
+
+		// DB014-B 14-40: GR6 bits 3:2 select the CPU memory window.
+		// Decline excluded addresses before reads load VGA latches or
+		// writes consume an access intended for another responding device.
+		switch (vga.gc.memory_map_sel & 0x03)
+		{
+		case 0: return address < 0x20000;
+		case 1: return address < 0x10000;
+		case 2: return address >= 0x10000 && address < 0x18000;
+		case 3: return address >= 0x18000 && address < 0x20000;
+		}
+		return false;
 	default:
 		return true;
 	}
