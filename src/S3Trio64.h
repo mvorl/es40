@@ -70,7 +70,7 @@
 #define INCLUDED_S3Trio64_H_
 
 #include "VGA.h"
-#include "gui/vga.h"
+#include "gui/gui.h"
 #include <atomic>
 #include "coretmpl.h"
 #include "attotime.h"
@@ -125,7 +125,8 @@ public:
 
   // end MAME header stuff
 
-  CS3Trio64(CConfigurator* cfg, class CSystem* c, int pcibus, int pcidev);
+  CS3Trio64(CConfigurator* cfg, class CSystem* c, int pcibus, int pcidev,
+    bx_gui_c& display);
   virtual       ~CS3Trio64();
 
   void          update(void);
@@ -305,6 +306,9 @@ protected:
 
 
 private:
+  // Trio64 has one modeled output.
+  CDisplayOutput m_output;
+
   // MAME CODE HERE
   ibm8514a_device m_8514;
   void refresh_pitch_offset();

@@ -1494,9 +1494,9 @@ void CS3Trio64::sequencer_map(address_map& map)
 				vga.sequencer.char_sel.B = 0;
 				vga.sequencer.char_sel.base[0] = 0x20000;
 				vga.sequencer.char_sel.base[1] = 0x20000;
-				bx_gui->lock();
-				bx_gui->set_text_charmap(&vga.memory[0x20000]);
-				bx_gui->unlock();
+				m_output.display().lock();
+				m_output.display().set_text_charmap(&vga.memory[0x20000]);
+				m_output.display().unlock();
 				state.vga_mem_updated = 1;
 			}
 			vga.sequencer.data[0] = data;
@@ -2204,7 +2204,7 @@ void CS3Trio64::run()
 		if (!m_gui_initialized)
 		{
 			// initialize the GUI (and let it know our tilesize)
-			bx_gui->init(state.x_tilesize, state.y_tilesize);
+			m_output.display().init(state.x_tilesize, state.y_tilesize);
 			m_gui_initialized = true;
 		}
 		bool was_paused = false;
@@ -2215,9 +2215,9 @@ void CS3Trio64::run()
 			if (StopThread)
 				return;
 			// Handle GUI events (50 times per second)
-			bx_gui->lock();
-			bx_gui->handle_events();
-			bx_gui->unlock();
+			m_output.display().lock();
+			m_output.display().handle_events();
+			m_output.display().unlock();
 			CThread::sleep(10);
 
 			// During firmware reset: keep pumping events (window stays alive),
@@ -2226,9 +2226,9 @@ void CS3Trio64::run()
 			{
 				if (!was_paused)
 				{
-					bx_gui->lock();
-					bx_gui->clear_screen();   // optional; comment out if you want last frame to remain
-					bx_gui->unlock();
+					m_output.display().lock();
+					m_output.display().clear_screen();   // optional; comment out if you want last frame to remain
+					m_output.display().unlock();
 					was_paused = true;
 				}
 				PauseAck.store(true, std::memory_order_release);
@@ -2238,10 +2238,10 @@ void CS3Trio64::run()
 			was_paused = false;
 
 			//Update the screen (50 times per second)
-			bx_gui->lock();
+			m_output.display().lock();
 			update();
-			bx_gui->flush();
-			bx_gui->unlock();
+			m_output.display().flush();
+			m_output.display().unlock();
 		}
 	}
 
@@ -2302,9 +2302,10 @@ static u32                 s3_cfg_mask[64] = {
 /**
  * Constructor.
  *
- * Don't do anything, the real initialization is done by init()
+ * Bind the card's sole display output; device initialization is done by init().
  **/
-CS3Trio64::CS3Trio64(CConfigurator* cfg, CSystem* c, int pcibus, int pcidev) : CVGA(cfg, c, pcibus, pcidev)
+CS3Trio64::CS3Trio64(CConfigurator* cfg, CSystem* c, int pcibus, int pcidev,
+	bx_gui_c& display) : CVGA(cfg, c, pcibus, pcidev), m_output(0, display)
 {
 }
 
@@ -2701,10 +2702,10 @@ void CS3Trio64::attribute_map(address_map& map)
 
 			// ES40 side-effects: detect bit changes from previous value
 			if (BIT(data, 2) != BIT(prev, 2)) {  // enable_line_graphics
-				bx_gui->lock();
-				bx_gui->set_text_charmap(
+				m_output.display().lock();
+				m_output.display().set_text_charmap(
 					&vga.memory[0x20000 + vga.sequencer.char_sel.A]);
-				bx_gui->unlock();
+				m_output.display().unlock();
 				state.vga_mem_updated = 1;
 			}
 			if (BIT(data, 7) != BIT(prev, 7)) {  // internal_palette_size
@@ -4351,9 +4352,9 @@ void CS3Trio64::io_write_b(u32 address, u8 data)
 			// Detect video enable/disable transitions from MAME canonical source
 			bool new_ve = atc_video_enabled();
 			if (!new_ve && prev_ve) {
-				bx_gui->lock();
-				bx_gui->clear_screen();
-				bx_gui->unlock();
+				m_output.display().lock();
+				m_output.display().clear_screen();
+				m_output.display().unlock();
 			}
 			else if (new_ve && !prev_ve) {
 				redraw_area(0, 0, old_iWidth, old_iHeight);
@@ -4654,13 +4655,13 @@ void CS3Trio64::update(void)
 	// MAME always produces ARGB32 — tell SDL we're in 32bpp mode.
 	if (state.last_bpp != 32 || iWidth != old_iWidth || iHeight != old_iHeight)
 	{
-		bx_gui->dimension_update(iWidth, iHeight, 0, 0, 32);
+		m_output.display().dimension_update(iWidth, iHeight, 0, 0, 32);
 		old_iWidth = iWidth;
 		old_iHeight = iHeight;
 		state.last_bpp = 32;
 	}
 
-	bx_gui->graphics_frame_update(m_render_bitmap.raw(), iWidth, iHeight);
+	m_output.display().graphics_frame_update(m_render_bitmap.raw(), iWidth, iHeight);
 
 	state.vga_mem_updated = 0;
 }
@@ -4745,7 +4746,7 @@ void CS3Trio64::palette_update()
 		r = (r << 2) | (r >> 4);
 		g = (g << 2) | (g >> 4);
 		b = (b << 2) | (b >> 4);
-		bx_gui->palette_change((unsigned)i, (unsigned)r, (unsigned)g, (unsigned)b);
+		m_output.display().palette_change((unsigned)i, (unsigned)r, (unsigned)g, (unsigned)b);
 	}
 }
 

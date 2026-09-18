@@ -1012,7 +1012,7 @@ void CConfigurator::initialize()
 
 	case c_s3:
 		myDevice = new CS3Trio64(this, (CSystem*)pParent->get_device(), pcibus,
-			pcidev);
+			pcidev, *bx_gui);
 		break;
 
 		// i broke this, my bad. To be restored in the future. 

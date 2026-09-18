@@ -183,6 +183,21 @@ protected:
   u8* framebuffer;
 };
 
+// Host presentation binding for one modeled output.
+class CDisplayOutput
+{
+public:
+  CDisplayOutput(unsigned id, bx_gui_c& display)
+    : m_id(id), m_display(display) {}
+
+  unsigned id() const { return m_id; }
+  bx_gui_c& display() const { return m_display; }
+
+private:
+  const unsigned m_id;
+  bx_gui_c& m_display;
+};
+
 #define BX_KEY_PRESSED        0x00000000
 #define BX_KEY_RELEASED       0x80000000
 
