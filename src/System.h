@@ -148,6 +148,7 @@
 #include "i2c_spd.h"
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include <mutex>
 #include <vector>
 
@@ -155,8 +156,6 @@
 #define INCLUDED_SYSTEM_H
 
 class CDisplayOutput;
-
-#define MAX_COMPONENTS  100
 
 #if defined(PROFILE)
 #define PROFILE_FROM      U64(0x8000)
@@ -570,7 +569,7 @@ private:
   int                   iNumComponents;
   std::vector<CSystemComponent*> acComponents;
   int                   iNumMemories;
-  struct SMemoryUser* asMemories[MAX_COMPONENTS];
+  std::vector<std::unique_ptr<SMemoryUser>> asMemories;
 
   class CAlphaCPU* acCPUs[4];
 

@@ -431,8 +431,7 @@ CSystem::~CSystem()
 		if (acComponents[i])
 			delete acComponents[i];
 
-	for (i = 0; i < iNumMemories; i++)
-		free(asMemories[i]);
+	asMemories.clear();
 
 	free(memory);
 }
@@ -556,7 +555,6 @@ int CSystem::RegisterMemory(CSystemComponent* component, int index, u64 base,
 	u64 length)
 {
 	std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
-	struct SMemoryUser* m;
 	int                   i;
 
 #if defined(CHECK_MEM_RANGES)
@@ -600,13 +598,21 @@ int CSystem::RegisterMemory(CSystemComponent* component, int index, u64 base,
 	if (length == 0)
 		return 0;
 
-	CHECK_ALLOCATION(m = (struct SMemoryUser*)malloc(sizeof(struct SMemoryUser)));
-	m->component = component;
-	m->base = base;
-	m->length = length;
-	m->index = index;
-
-	asMemories[iNumMemories] = m;
+	if (iNumMemories == INT_MAX)
+		FAILURE(Configuration, "Too many system memory ranges");
+	try
+	{
+		asMemories.push_back(std::make_unique<SMemoryUser>(
+			SMemoryUser{ component, index, base, length }));
+	}
+	catch (const std::bad_alloc&)
+	{
+		FAILURE(OutOfMemory, "Unable to grow the system memory-range registry");
+	}
+	catch (const std::length_error&)
+	{
+		FAILURE(OutOfMemory, "System memory-range registry capacity exhausted");
+	}
 	iNumMemories++;
 	return 0;
 }
