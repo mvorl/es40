@@ -1363,10 +1363,12 @@ void add_disks(const char *title, const char *disk_name, CConfigurator *parent)
 
         if (c != nullptr)
         {
-            if (!strcmp(entry[i].label, "File / Device name") &&
-                (!strcmp(disk_type, "file") || !strcmp(disk_type, "device")))
+            if (!strcmp(entry[i].label, "File / Device name"))
             {
-                preset[i] = c->get_text_value(disk_type, "?");
+                if (!strcmp(disk_type, "file") || !strcmp(disk_type, "device"))
+                    preset[i] = c->get_text_value(disk_type, "?");
+                else
+                    preset[i] = (char *)entry[i].preset;
                 continue;
             }
             if (!strcmp(entry[i].label, "Autocreate size"))
