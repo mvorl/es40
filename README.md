@@ -112,6 +112,13 @@ cmake --build build
 ```
 See `CMakeLists.txt` for options to define. To point `cmake` to the SDL3 installation, use `-DSDL3_DIR=path-to-sdl3`.
 
+On Linux, ES40 prefers SDL's Zenity file picker for opening media images and
+saving blank floppy images when `zenity --version` succeeds. Otherwise it keeps
+SDL's normal picker selection; Zenity is optional. An explicit
+`SDL_FILE_DIALOG_DRIVER` setting takes precedence. If the normal desktop portal
+rejects a process with pcap file capabilities, that error can still occur when
+Zenity is unavailable.
+
 ------------------------------------------------------------------------  
   
 ## Status  

@@ -663,6 +663,48 @@ struct SMediaFileDialogContext
     size_t blank_floppy_size = 0;
 };
 
+#if defined(__linux__)
+static bool zenity_available()
+{
+    // Match SDL's availability check without selecting a backend yet.
+    const char* args[] = { "zenity", "--version", nullptr };
+    SDL_PropertiesID props = SDL_CreateProperties();
+    if (!props)
+        return false;
+
+    const bool configured =
+        SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ARGS_POINTER,
+                               args) &&
+        SDL_SetNumberProperty(props, SDL_PROP_PROCESS_CREATE_STDIN_NUMBER,
+                              SDL_PROCESS_STDIO_NULL) &&
+        SDL_SetNumberProperty(props, SDL_PROP_PROCESS_CREATE_STDOUT_NUMBER,
+                              SDL_PROCESS_STDIO_NULL) &&
+        SDL_SetNumberProperty(props, SDL_PROP_PROCESS_CREATE_STDERR_NUMBER,
+                              SDL_PROCESS_STDIO_NULL);
+    SDL_Process* process = configured ?
+        SDL_CreateProcessWithProperties(props) : nullptr;
+    SDL_DestroyProperties(props);
+    if (!process)
+        return false;
+
+    int status = -1;
+    const bool finished = SDL_WaitProcess(process, true, &status);
+    SDL_DestroyProcess(process);
+    return finished && status == 0;
+}
+#endif
+
+static void prepare_file_dialog()
+{
+#if defined(__linux__)
+    // Prefer Zenity when available, otherwise keep SDL's normal selection.
+	// Overridable via SDL_FILE_DIALOG_DRIVER= environment variable.
+    if (!SDL_GetHint(SDL_HINT_FILE_DIALOG_DRIVER) && zenity_available())
+        SDL_SetHintWithPriority(SDL_HINT_FILE_DIALOG_DRIVER, "zenity",
+                                SDL_HINT_DEFAULT);
+#endif
+}
+
 static void SDLCALL media_file_callback(void* userdata,
                                          const char* const* filelist,
                                          int filter)
@@ -732,6 +774,7 @@ static void show_file_dialog(
     const int filter_count = mailbox->is_floppy() ?
         (int)SDL_arraysize(floppy_filters) :
         (int)SDL_arraysize(cdrom_filters);
+    prepare_file_dialog();
     SDL_ShowOpenFileDialog(media_file_callback, context.release(),
                            media_popup.parent, filters, filter_count,
                            nullptr, false);
@@ -757,6 +800,7 @@ static void show_blank_floppy_dialog(
     context->mailbox = mailbox;
     context->blank_floppy_size = image_size;
 
+    prepare_file_dialog();
     SDL_ShowSaveFileDialog(media_file_callback, context.release(),
                            media_popup.parent, floppy_filters,
                            (int)SDL_arraysize(floppy_filters),
