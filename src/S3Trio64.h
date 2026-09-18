@@ -91,7 +91,8 @@
  *   (http://home.worldonline.dk/~finth/)
  *  .
  **/
-class CS3Trio64 : public CVGA, public CRunnable, public mame_machine_provider
+class CS3Trio64 : public CVGA, public CRunnable, public mame_machine_provider,
+  public CDisplayOutputProvider
 {
 public:
   virtual int   SaveState(FILE* f) override;
@@ -128,6 +129,12 @@ public:
   CS3Trio64(CConfigurator* cfg, class CSystem* c, int pcibus, int pcidev,
     bx_gui_c& display);
   virtual       ~CS3Trio64();
+
+  std::size_t output_count() const override { return 1; }
+  const CDisplayOutput* output_at(std::size_t ordinal) const override
+  {
+    return ordinal == 0 ? &m_output : nullptr;
+  }
 
   void          update(void);
   virtual void  run(void) override;

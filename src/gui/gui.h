@@ -65,6 +65,8 @@
 #ifndef __GUI_H__
 #define __GUI_H__
 
+#include <cstddef>
+
 #define BX_DEBUG(a)  \
   {                  \
     printf  a;       \
@@ -196,6 +198,16 @@ public:
 private:
   const unsigned m_id;
   bx_gui_c& m_display;
+};
+
+// Enumeration of outputs.
+class CDisplayOutputProvider
+{
+public:
+  virtual ~CDisplayOutputProvider() = default;
+  virtual std::size_t output_count() const = 0;
+  // Returns a borrowed binding, or nullptr when out of range.
+  virtual const CDisplayOutput* output_at(std::size_t ordinal) const = 0;
 };
 
 #define BX_KEY_PRESSED        0x00000000
