@@ -3018,11 +3018,22 @@ bool CS3Trio64::decodes_memory_access(int index, u64 address, int dsize,
 	case 9: // 3DA
 		return color_io;
 	case 4: // A0000-BFFFF, address is relative to A0000
-		// Limit this rule to ordinary VGA and enhanced memory
-		// for now until further decoding rules are implemented.
-		if ((s3.cr53 & 0x18) || (s3.cr58 & 0x10) ||
-			(m_8514.ibm8514.advfunction_ctrl & 0x30))
+		// MMIO decoding remains separate
+		if ((s3.cr53 & 0x18) ||
+			(m_8514.ibm8514.advfunction_ctrl & 0x20))
 			return true;
+
+		// DB014-B 17-6 and 18-3: either linear-enable bit suppresses the
+		// enhanced legacy window unless banking, 64 KiB size, and A0000
+		// base are all selected.
+		if ((s3.cr58 & 0x10) ||
+			(m_8514.ibm8514.advfunction_ctrl & 0x10))
+		{
+			if ((s3.memory_config & 0x08) &&
+				(!(s3.memory_config & 0x01) || (s3.cr58 & 0x03)))
+				return false;
+			return true;
+		}
 
 		// DB014-B 15-3: CR31 bit 3 overrides GR6 with a 64 KiB map at
 		// A0000. MISC bit 1 still enables CPU display-memory access (14-1).
