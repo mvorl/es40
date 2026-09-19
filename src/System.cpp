@@ -314,6 +314,7 @@
 #define __STDC_FORMAT_MACROS 1
 #include "StdAfx.h"
 #include "System.h"
+#include "PCIDevice.h"
 #include "AlphaCPU.h"
 #include "network/lockstep.h"
 #include "DPR.h"
@@ -2060,8 +2061,13 @@ void CSystem::pchip_csr_write(int num, u32 a, u64 data)
 		return;
 
 	case 0x800: // PCI reset
+		// Tsunami HRM 8.7: each Pchip resets only its own PCI bus.
 		for (int i = 0; i < iNumComponents; i++)
-			acComponents[i]->ResetPCI();
+		{
+			auto* device = dynamic_cast<CPCIDevice*>(acComponents[i]);
+			if (device && device->pci_bus() == num)
+				device->ResetPCI();
+		}
 		return;
 
 	default:
