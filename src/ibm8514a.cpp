@@ -413,16 +413,14 @@ uint16_t ibm8514a_device::ibm8514_gpstatus_r()
 {
 	uint16_t ret = 0x0000;
 
-	if (ibm8514.gpbusy || ibm8514.force_busy)
+	// A WAIT command stays busy until its full COUNT of PIX_TRANS data (fifo_idx bytes) arrives.
+	if (ibm8514.gpbusy || ibm8514.fifo_idx > 0)
 		ret |= 0x0200;  // bit 9: HDW BSY
 	else
 		ret |= 0x0400;  // bit 10: AE (All FIFO Slots Empty)
 
 	if (ibm8514.data_avail)
 		ret |= 0x0100;  // bit 8: DTA AVA (data available)
-
-	// Auto-clear force_busy after read
-	ibm8514.force_busy = false;
 
 	return ret;
 }
@@ -476,6 +474,19 @@ void ibm8514a_device::ibm8514_draw_vector(uint16_t len, uint8_t dir, bool draw)
 		x++;
 	}
 }
+
+// es40 specific
+// PIX_TRANS bytes a WAIT command consumes (S3 DB014-B 13.3.3.2/.4/.5 COUNT)
+// Every line starts with a fresh bus-width write.
+// Through the plane each write carries whole pixels across the plane (CMD bit 1) one mask bit per pixel.
+static int wait_xfer_bytes(uint16_t cmd, uint8_t color_bpp, int width, int height)
+{
+	const int bus_bits = ((cmd >> 9) & 3) == 0 ? 8 : ((cmd >> 9) & 3) == 1 ? 16 : 32;
+	const int pixel_bits = (cmd & 0x0002) ? 1 : (color_bpp == 0 ? 8 : color_bpp == 1 ? 16 : 32);
+	return (width * pixel_bits + bus_bits - 1) / bus_bits * height * (bus_bits / 8);
+}
+
+// end es40 specific
 
 /*
 9AE8h W(W):  Drawing Command Register (CMD)
@@ -572,7 +583,7 @@ void ibm8514a_device::ibm8514_cmd_w(uint16_t data)
 	ibm8514.src_y = 0;
 	ibm8514.bus_size = (data & 0x0600) >> 9;
 
-	ibm8514.force_busy = true;
+	ibm8514.fifo_idx = 0;  // a new command abandons any unfinished CPU transfer
 
 	switch (data & 0xe000)
 	{
@@ -584,6 +595,10 @@ void ibm8514a_device::ibm8514_cmd_w(uint16_t data)
 	case 0x2000:  // Line
 		ibm8514.state = IBM8514_IDLE;
 		ibm8514.gpbusy = false;
+		if (data & 0x0100)  // textured line: MAJ_AXIS_PCNT + 1 pixels, or the 2-point line's span
+			ibm8514.fifo_idx = wait_xfer_bytes(data, ibm8514.color_bpp, (data & 0x0800)
+				? std::max(std::abs(ibm8514.dest_x - ibm8514.curr_x), std::abs(ibm8514.dest_y - ibm8514.curr_y)) + 1
+				: (ibm8514.rect_width & 0x0fff) + 1, 1);
 		if (data & 0x0008)
 		{
 			if (data & 0x0100)
@@ -739,6 +754,8 @@ void ibm8514a_device::ibm8514_cmd_w(uint16_t data)
 		{
 			ibm8514.state = IBM8514_DRAWING_RECT;
 			//ibm8514.gpbusy = true;  // DirectX 5 keeps waiting for the busy bit to be clear...
+			ibm8514.fifo_idx = wait_xfer_bytes(data, ibm8514.color_bpp,
+				(ibm8514.rect_width & 0x0fff) + 1, (ibm8514.rect_height & 0x0fff) + 1);
 			ibm8514.bus_size = (data & 0x0600) >> 9;
 			ibm8514.data_avail = true;
 			LOG("8514/A: Command (%04x) - Rectangle Fill (WAIT) %i,%i Width: %i Height: %i Colour: %08x\n",
@@ -1717,6 +1734,7 @@ uint16_t ibm8514a_device::ibm8514_pixel_xfer_r(offs_t offset)
 
 void ibm8514a_device::ibm8514_pixel_xfer_w(offs_t offset, uint16_t data)
 {
+	ibm8514.fifo_idx = std::max(ibm8514.fifo_idx - 2, 0);
 	if (offset == 1)
 		ibm8514.pixel_xfer = (ibm8514.pixel_xfer & 0x0000ffff) | (data << 16);
 	else

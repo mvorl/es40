@@ -1651,6 +1651,11 @@ void CS3Trio64::sequencer_map(address_map& map)
 
 uint8_t CS3Trio64::mem_r(uint32_t offset)
 {
+	// Standard MMIO (DB014-B 13.3.1): enhanced registers read at A8000h + their I/O address.
+	// The packed 81xxh aliases are write-only and read back through AccelIORead's default.
+	if ((s3.cr53 & 0x10) && offset >= 0x8000 && offset < 0x10000)
+		return AccelIORead(offset);
+
 	if (svga.rgb8_en || svga.rgb15_en || svga.rgb16_en || svga.rgb32_en)
 	{
 		int data;
@@ -3289,7 +3294,9 @@ u8 CS3Trio64::AccelIORead(u32 port)
 
 	switch (port & 0xFFFE) {
 	case 0x9AE8: {
-		uint16_t ret = dev->ibm8514_gpstatus_r();
+		// Trio32/64 GP_STAT (DB014-B 18-10): bit 8 is reserved, and AE only tracks the command
+		// FIFO, which is always drained here -- it stays set while HDW BSY waits on PIX_TRANS.
+		const uint16_t ret = (dev->ibm8514_gpstatus_r() | 0x0400) & ~0x0100;
 		return (port & 1) ? (uint8_t)(ret >> 8) : (uint8_t)(ret & 0xff);
 	}
 
@@ -3344,6 +3351,8 @@ void CS3Trio64::AccelIOWrite(u32 port, u8 data)
 		else
 			s3.mmio_42e8 = (s3.mmio_42e8 & 0x00ff) | (data << 8);
 		dev->ibm8514_subcontrol_w(s3.mmio_42e8);
+		if ((s3.mmio_42e8 & 0xc000) == 0x8000)   // GE-RST = 10b: Graphics Engine reset (DB014-B 18-2)
+			dev->ibm8514.fifo_idx = 0;
 		break;
 
 		// ADVFUNC_CNTL (4AE8h)
@@ -3524,6 +3533,8 @@ void CS3Trio64::AccelIOWrite(u32 port, u8 data)
 		// Uses the ibm8514a's bus_size-aware accumulation + wait_draw()
 	case 0xE2E8: case 0xE2EA: case 0xE2EC: case 0xE2EE:
 	{
+		if (dev->ibm8514.fifo_idx > 0)   // byte-wise feed: drain the WAIT command's COUNT here
+			dev->ibm8514.fifo_idx--;
 		if (dev->ibm8514.bus_size == 0) {
 			dev->ibm8514.pixel_xfer = (dev->ibm8514.pixel_xfer & 0xffffff00) | data;
 			dev->ibm8514_pixel_xfer_complete();
