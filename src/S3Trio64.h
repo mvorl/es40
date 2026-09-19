@@ -418,6 +418,7 @@ private:
 
   bool  pci_mem_enable = false;  // PCI Command.MSE cached
   u32   pci_bar0 = 0;            // cached BAR0 (optional; we treat CR58..5A as truth)
+  bool m_replaying_pci_state = false; // host-only guard; saved S3 aliases restore separately
 
   void  lfb_recalc_and_map();    // (un)map according to CR58..5A & PCI
   inline u32 lfb_offset_from(u64 phys_addr) const {

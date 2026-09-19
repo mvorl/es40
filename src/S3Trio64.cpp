@@ -2309,6 +2309,9 @@ CS3Trio64::CS3Trio64(CConfigurator* cfg, CSystem* c, int pcibus, int pcidev,
 {
 	// PCI setup consults linear-enable state before the accelerator starts.
 	m_8514.ibm8514.advfunction_ctrl = 0;
+	// The first PCI reset precedes init()'s full graphics-state initialization.
+	s3.cr59 = 0;
+	s3.cr5a = 0;
 }
 
 // --- S3 CR36 -----------------------------------------------------------------
@@ -3799,6 +3802,28 @@ void CS3Trio64::config_write_custom(int func, u32 address, int dsize,
 	const bool is_command = (address == 0x04 || address == 0x05);
 	const bool is_bar0 = (address >= 0x10 && address <= 0x13);
 
+	if (func == 0 && is_bar0 && !m_replaying_pci_state)
+	{
+		u32 lanes = 0;
+		if (dsize == 8)
+			lanes = 0xffU << ((address - 0x10) * 8);
+		else if (dsize == 16 && (address & 1U) == 0)
+			lanes = 0xffffU << ((address - 0x10) * 8);
+		else if (dsize == 32 && address == 0x10)
+			lanes = 0xffffffffU;
+
+		// DB014-B 17-7/19-4: BAR0[31:23] is shared with CR59/CR5A[7].
+		// Keep unwritten bits and bits absent from the current BAR mask intact.
+		const u32 shared = lanes & endian_32(pci_state.config_mask[0][4]) & 0xff800000U;
+		if (shared)
+		{
+			const u32 bar0 = endian_32(pci_state.config_data[0][4]);
+			s3.cr59 = u8((s3.cr59 & ~(shared >> 24)) | ((bar0 & shared) >> 24));
+			s3.cr5a = u8((s3.cr5a & ~(shared >> 16)) | ((bar0 & shared) >> 16));
+			lfb_base = (u32(s3.cr59) << 24) | (u32(s3.cr5a) << 16);
+		}
+	}
+
 	if (is_command || is_bar0) {
 		lfb_recalc_and_cache();
 		// Apply/unapply DEV_LFB mapping when MSE or BAR0 changes
@@ -3933,7 +3958,18 @@ int CS3Trio64::RestoreState(FILE* f)
 {
 	if (!f || !vga.memory || !vga.svga_intf.vram_size)
 		return -1;
-	const int res = CPCIDevice::RestoreState(f);
+	int res;
+	{
+		// Saved S3 aliases are loaded below. PCI replay must not normalize old
+		// copies or mutate live graphics registers if the S3 section is rejected.
+		struct ReplayGuard {
+			bool& flag;
+			bool previous;
+			~ReplayGuard() { flag = previous; }
+		} guard{m_replaying_pci_state, m_replaying_pci_state};
+		m_replaying_pci_state = true;
+		res = CPCIDevice::RestoreState(f);
+	}
 	if (res)
 		return res;
 
