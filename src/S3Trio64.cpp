@@ -3058,10 +3058,11 @@ bool CS3Trio64::decodes_memory_access(int index, u64 address, int dsize,
 		// base are all selected.
 		if (s3_lfb_enabled(s3.cr58, m_8514.ibm8514.advfunction_ctrl))
 		{
-			if ((s3.memory_config & 0x08) &&
-				(!(s3.memory_config & 0x01) || (s3.cr58 & 0x03)))
+			if (!(s3.memory_config & 0x08))
+				return true;
+			if (!(s3.memory_config & 0x01) || (s3.cr58 & 0x03) ||
+				s3.cr59 != 0 || s3.cr5a != 0x0a)
 				return false;
-			return true;
 		}
 
 		// DB014-B 15-3: CR31 bit 3 overrides GR6 with a 64 KiB map at
