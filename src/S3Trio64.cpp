@@ -2392,9 +2392,11 @@ static inline bool s3_lfb_enabled(uint8_t cr58, uint16_t advfunc) {
 bool CS3Trio64::uses_sized_linear_bar_window() const noexcept
 {
 	// DB014-B 13-1: enhanced mapping/functions precede linear addressing.
+	// With CR31.CPUA BASE clear, 64 KiB access ignores bank offsets (15-2).
 	const u16 advfunc = m_8514.ibm8514.advfunction_ctrl;
 	return device_at[0] && (s3.memory_config & 0x08) && (advfunc & 0x01) &&
-		(s3.cr58 & 0x03) && !(s3.cr53 & 0x18) && !(advfunc & 0x20);
+		((s3.cr58 & 0x03) || !(s3.memory_config & 0x01)) &&
+		!(s3.cr53 & 0x18) && !(advfunc & 0x20);
 }
 
 bool CS3Trio64::linear_bar_offset(u64 address, u32& offset) const noexcept
