@@ -309,25 +309,32 @@ void bx_sdl_gui_c::main_thread_stop()
 }
 
 SDL_Event           sdl_event;
-int                 sdl_grab = 0;
 static const int    runtime_scale_min = 1;
 static const int    runtime_scale_max = 8;
 u8                  old_mousebuttons = 0, new_mousebuttons = 0;
 int                 old_mousex = 0, new_mousex = 0;
 int                 old_mousey = 0, new_mousey = 0;
-static int          sdl_mouse_button_state = 0;
-// Fractional motion left over after scaling by mouse.speed; carried across
-// events so multipliers < 1.0 don't drop slow movement.
-static double       sdl_mouse_accum_x = 0.0;
-static double       sdl_mouse_accum_y = 0.0;
+
+// All displays feed one guest mouse. Capture selects the host input source,
+// not the guest display containing its cursor. Buttons and fractional motion
+// belong to this shared input session; window-coordinate baselines stay local.
+struct sdl_mouse_input_state
+{
+	bool captured = false;
+	int buttons = 0;
+	// Retain motion left over after scaling so slow movement is not dropped.
+	double remainder_x = 0.0;
+	double remainder_y = 0.0;
+};
+static sdl_mouse_input_state sdl_mouse_input;
 
 void bx_sdl_gui_c::reset_absolute_mouse_position()
 {
 	if (!mouse_absolute)
 		return;
 	mouse_position_valid = false;
-	sdl_mouse_accum_x = 0.0;
-	sdl_mouse_accum_y = 0.0;
+	sdl_mouse_input.remainder_x = 0.0;
+	sdl_mouse_input.remainder_y = 0.0;
 }
 
 static std::string trim_hotkey_text(const std::string& value)
@@ -936,7 +943,7 @@ void bx_sdl_gui_c::handle_events_impl(void)
 			if (!sdl_event.key.repeat)
 			{
 				suppress_hotkey_releases(sdl_event.key, hotkey_media, true);
-				if (sdl_grab)
+				if (sdl_mouse_input.captured)
 					bx_gui->mouse_enabled_changed(false);
 				sdl_select_media(sdl_window);
 			}
@@ -999,7 +1006,7 @@ void bx_sdl_gui_c::handle_events_impl(void)
 			break;
 
 		case SDL_EVENT_MOUSE_MOTION:
-			if (sdl_grab)
+			if (sdl_mouse_input.captured)
 			{
 				double rel_x = (double)sdl_event.motion.xrel;
 				double rel_y = (double)sdl_event.motion.yrel;
@@ -1024,17 +1031,17 @@ void bx_sdl_gui_c::handle_events_impl(void)
 				// baseline Y negation. invert_x/y flip on top of that.
 				double mx = rel_x * mouse_speed;
 				double my = -rel_y * mouse_speed;
-				sdl_mouse_accum_x += mouse_invert_x ? -mx : mx;
-				sdl_mouse_accum_y += mouse_invert_y ? -my : my;
+				sdl_mouse_input.remainder_x += mouse_invert_x ? -mx : mx;
+				sdl_mouse_input.remainder_y += mouse_invert_y ? -my : my;
 
-				int dx = (int)sdl_mouse_accum_x;
-				int dy = (int)sdl_mouse_accum_y;
+				int dx = (int)sdl_mouse_input.remainder_x;
+				int dy = (int)sdl_mouse_input.remainder_y;
 
 				if (dx != 0 || dy != 0)
 				{
-					sdl_mouse_accum_x -= dx;
-					sdl_mouse_accum_y -= dy;
-					theKeyboard->mouse_motion(dx, dy, 0, sdl_mouse_button_state);
+					sdl_mouse_input.remainder_x -= dx;
+					sdl_mouse_input.remainder_y -= dy;
+					theKeyboard->mouse_motion(dx, dy, 0, sdl_mouse_input.buttons);
 				}
 			}
 			break;
@@ -1042,7 +1049,7 @@ void bx_sdl_gui_c::handle_events_impl(void)
 		case SDL_EVENT_MOUSE_BUTTON_DOWN:
 		case SDL_EVENT_MOUSE_BUTTON_UP:
 		{
-			if (!sdl_grab)
+			if (!sdl_mouse_input.captured)
 			{
 				if (sdl_event.type == SDL_EVENT_MOUSE_BUTTON_DOWN
 					&& sdl_event.button.button == SDL_BUTTON_LEFT)
@@ -1062,23 +1069,23 @@ void bx_sdl_gui_c::handle_events_impl(void)
 			}
 
 			if (sdl_event.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
-				sdl_mouse_button_state |= bitmask;
+				sdl_mouse_input.buttons |= bitmask;
 			else
-				sdl_mouse_button_state &= ~bitmask;
+				sdl_mouse_input.buttons &= ~bitmask;
 
-			theKeyboard->mouse_motion(0, 0, 0, sdl_mouse_button_state);
+			theKeyboard->mouse_motion(0, 0, 0, sdl_mouse_input.buttons);
 			break;
 		}
 
 		case SDL_EVENT_MOUSE_WHEEL:
-			if (sdl_grab)
+			if (sdl_mouse_input.captured)
 			{
 				float wy = sdl_event.wheel.y;  // SDL3: float; +y = away from user (scroll up)
 				if (sdl_event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED)
 					wy = -wy;
 				int dz = (int)wy;
 				if (dz != 0)
-					theKeyboard->mouse_motion(0, 0, dz, sdl_mouse_button_state);
+					theKeyboard->mouse_motion(0, 0, dz, sdl_mouse_input.buttons);
 			}
 			break;
 		case SDL_EVENT_WINDOW_FOCUS_LOST:
@@ -1086,7 +1093,7 @@ void bx_sdl_gui_c::handle_events_impl(void)
 			release_all_guest_keys();
 			clear_hotkey_release_state();
 			reset_absolute_mouse_position();
-			if (sdl_grab)
+			if (sdl_mouse_input.captured)
 				bx_gui->mouse_enabled_changed(false);
 			break;
 		}
@@ -1137,7 +1144,7 @@ void bx_sdl_gui_c::handle_events_impl(void)
 				{
 					suppress_hotkey_releases(sdl_event.key,
 						hotkey_mouse_capture, true);
-					bx_gui->mouse_enabled_changed(!sdl_grab);
+					bx_gui->mouse_enabled_changed(!sdl_mouse_input.captured);
 				}
 				break;
 			}
@@ -1220,7 +1227,7 @@ void bx_sdl_gui_c::handle_events_impl(void)
 			break;
 
 		case SDL_EVENT_QUIT:
-			if (!sdl_grab)
+			if (!sdl_mouse_input.captured)
 				FAILURE(Graceful, "User requested shutdown");
 		}
 	}
@@ -1426,7 +1433,7 @@ void bx_sdl_gui_c::mouse_enabled_changed_specific_impl(bool val)
 		}
 	}
 
-	sdl_grab = val;
+	sdl_mouse_input.captured = val;
 }
 
 void bx_sdl_gui_c::exit(void)
