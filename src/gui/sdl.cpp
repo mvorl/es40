@@ -157,6 +157,14 @@ public:
 	virtual void    main_thread_stop() override;
 private:
 	CConfigurator* myCfg;
+	// Host presentation resources and geometry belong to this display.
+	SDL_Window*    sdl_window = NULL;
+	SDL_Renderer*  sdl_renderer = NULL;
+	SDL_Texture*   sdl_texture = NULL;
+	unsigned       res_x = 0, res_y = 0;
+	unsigned       half_res_x = 0, half_res_y = 0;
+	int            last_driven_w = 0, last_driven_h = 0;
+	int            runtime_scale_override = 0;  // 0 = use the configured/display scale
 	unsigned int   vid_scale = 0;
 	bool           vid_linear = true;
 	bool           vid_scale_change_enable = false;
@@ -209,10 +217,6 @@ IMPLEMENT_GUI_PLUGIN_CODE(sdl)
 static unsigned     prev_cursor_x = 0;
 static unsigned     prev_cursor_y = 0;
 static u32          convertStringToSDLKey(const char* string);
-
-static SDL_Window*   sdl_window = NULL;
-static SDL_Renderer* sdl_renderer = NULL;
-static SDL_Texture*  sdl_texture = NULL;
 
 /// Set once main() has taken ownership of SDL and is driving main_thread_pump()
 /// on our behalf, so on_main_thread() must bounce SDL calls across to it.
@@ -306,10 +310,6 @@ void bx_sdl_gui_c::main_thread_stop()
 
 SDL_Event           sdl_event;
 int                 sdl_grab = 0;
-unsigned            res_x = 0, res_y = 0;
-unsigned            half_res_x, half_res_y;
-static int          last_driven_w = 0, last_driven_h = 0;
-static int          runtime_scale_override = 0;  // 0 = inactive; >0 = use this integer scale
 static const int    runtime_scale_min = 1;
 static const int    runtime_scale_max = 8;
 u8                  old_mousebuttons = 0, new_mousebuttons = 0;
