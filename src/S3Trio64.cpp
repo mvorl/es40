@@ -1065,7 +1065,7 @@ void CS3Trio64::crtc_map(address_map& map)
 	map(0x51, 0x51).lrw8(
 		NAME([this](offs_t offset) {
 			u8 res = (vga.crtc.start_addr_latch & 0x0c0000) >> 18;
-			res |= ((svga.bank_w & 0x30) >> 2);
+			res |= s3.cr51 & 0x0c;
 			//          res   |= ((vga.crtc.offset & 0x0300) >> 4);
 			res |= (s3.cr51 & 0x30);
 			return res;
@@ -1664,8 +1664,11 @@ uint8_t CS3Trio64::mem_r(uint32_t offset)
 		data = 0;
 		if (vga.sequencer.data[4] & 0x8)
 		{
-			if ((offset + (svga.bank_r * 0x10000)) < vga.svga_intf.vram_size)
-				data = vga.memory[(offset + (svga.bank_r * 0x10000))];
+			// DB014-B 15-2/17-13: enhanced CPU access shares the bank controls.
+			const u8 bank = uses_sized_linear_bar_window() ?
+				((s3.memory_config & 0x01) ? cpu_bank() : 0) : svga.bank_r;
+			if ((offset + (bank * 0x10000)) < vga.svga_intf.vram_size)
+				data = vga.memory[(offset + (bank * 0x10000))];
 		}
 		else
 		{
@@ -1944,8 +1947,10 @@ void CS3Trio64::mem_w(offs_t offset, uint8_t data)
 			return;
 		if (vga.sequencer.data[4] & 0x8)
 		{
-			if ((offset + (svga.bank_w * 0x10000)) < vga.svga_intf.vram_size)
-				vga.memory[(offset + (svga.bank_w * 0x10000))] = data;
+			const u8 bank = uses_sized_linear_bar_window() ?
+				((s3.memory_config & 0x01) ? cpu_bank() : 0) : svga.bank_w;
+			if ((offset + (bank * 0x10000)) < vga.svga_intf.vram_size)
+				vga.memory[(offset + (bank * 0x10000))] = data;
 		}
 		else
 		{
@@ -2397,7 +2402,7 @@ bool CS3Trio64::uses_sized_linear_bar_window() const noexcept
 		!(s3.cr53 & 0x18) && !(advfunc & 0x20);
 }
 
-u8 CS3Trio64::linear_bar_bank() const noexcept
+u8 CS3Trio64::cpu_bank() const noexcept
 {
 	// DB014-B 17-13: nonzero CR6A overrides the older CR35/CR51 bank.
 	const u8 extended = vga.crtc.data[0x6a] & 0x3f;
@@ -2421,7 +2426,7 @@ bool CS3Trio64::linear_bar_offset(u64 address, u32& offset) const noexcept
 	offset = u32(address - start);
 	// DB014-B 15-2/17-13: CR31.CPUA BASE enables the 64 KiB page offset.
 	if (!(s3.cr58 & 0x03) && (s3.memory_config & 0x01))
-		offset += u32(linear_bar_bank()) << 16;
+		offset += u32(cpu_bank()) << 16;
 	return true;
 }
 
