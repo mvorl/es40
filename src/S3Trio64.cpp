@@ -2278,13 +2278,14 @@ static u32                 s3_cfg_data[64] = {
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 };
 
-/** PCI Configuration Space mask block */
+/** PCI Configuration Space mask block. Restore retains the saved mask;
+ *  initialization and PCI reset use these hardware defaults. */
 static u32                 s3_cfg_mask[64] = {
 	/*00*/ 0x00000000,            // CFID: vendor + device
 	/*04*/ 0x0000ffff,            // CFCS: command + status
 	/*08*/ 0x00000000,            // CFRV: class + revision
 	/*0c*/ 0x0000ffff,            // CFLT: latency timer + cache line size
-	/*10*/ 0xfc000000,            // BAR0: FB
+	/*10*/ 0xff800000,            // BAR0: bits 31:23, 8 MiB allocation (DB014-B 19-4)
 	/*14*/ 0x00000000,            // BAR1:
 	/*18*/ 0x00000000,            // BAR2:
 	/*1c*/ 0x00000000,            // BAR3:
@@ -2518,7 +2519,7 @@ void CS3Trio64::init()
 	// Default: no linear window until guest enables CR58 or ADVFUNC bit 4.
 	// Seed base/size from PCI config defaults; CR58/59 will override when written.
 	lfb_active = false;
-	lfb_base = s3_cfg_data[0x10 >> 2] & 0xFC000000;  // BAR0 default (aligned)
+	lfb_base = s3_cfg_data[0x10 >> 2] & s3_cfg_mask[0x10 >> 2];
 	lfb_size = vga.svga_intf.vram_size;                        // clamp to VRAM for now
 
 	// Reset the base PCI device
@@ -3808,8 +3809,8 @@ void CS3Trio64::lfb_recalc_and_map()
 
 u32 CS3Trio64::config_read_custom(int func, u32 address, int dsize, u32 cur)
 {
-	// For Trio64 we can just return the base value for now.
-	// (TODO: synthesize bits in BAR0 reads from CR58..5A)
+	// Return stored bits, including literal values restored from older saves.
+	// Shared address bits are reconciled when their PCI or CRTC register is written.
 	return cur;
 }
 
