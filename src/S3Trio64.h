@@ -394,6 +394,8 @@ private:
   inline uint32_t s3_vram_mask() const;
 
   void lfb_recalc_and_cache();  // recompute enable/base/size from COMMAND+BAR0 (and CR regs if you wish)
+  bool uses_sized_linear_bar_window() const noexcept;
+  bool linear_bar_offset(u64 address, u32& offset) const noexcept;
   void trace_lfb_if_changed(const char* reason);
 
   inline bool seq_chain_four()   const { return (vga.sequencer.data[4] & 0x08) != 0; }

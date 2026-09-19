@@ -2389,6 +2389,31 @@ static inline bool s3_lfb_enabled(uint8_t cr58, uint16_t advfunc) {
 	return ((cr58 | advfunc) & 0x10) != 0;
 }
 
+bool CS3Trio64::uses_sized_linear_bar_window() const noexcept
+{
+	// DB014-B 13-1: enhanced mapping/functions precede linear addressing.
+	const u16 advfunc = m_8514.ibm8514.advfunction_ctrl;
+	return device_at[0] && (s3.memory_config & 0x08) && (advfunc & 0x01) &&
+		(s3.cr58 & 0x03) && !(s3.cr53 & 0x18) && !(advfunc & 0x20);
+}
+
+bool CS3Trio64::linear_bar_offset(u64 address, u32& offset) const noexcept
+{
+	if (!(vga.miscellaneous_output & 0x02) ||
+		!s3_lfb_enabled(s3.cr58, m_8514.ibm8514.advfunction_ctrl))
+		return false;
+
+	// DB014-B 17-7/19-4: CR59:5A selects a size-aligned window inside BAR0.
+	const u32 size = s3_lfb_size_from_cr58(s3.cr58);
+	const u32 mask = endian_32(pci_state.config_mask[0][4]) & 0xfffffff0U;
+	const u32 position = (u32(s3.cr59) << 24) | (u32(s3.cr5a) << 16);
+	const u32 start = (position & ~mask) & ~(size - 1U);
+	if (address < start || address - start >= size)
+		return false;
+	offset = u32(address - start);
+	return true;
+}
+
 void CS3Trio64::update_linear_mapping()
 {
 	// BAR-only mode: no per-device mapping. PCI core decodes BAR0 and gates
@@ -3026,7 +3051,16 @@ bool CS3Trio64::decodes_memory_access(int index, u64 address, int dsize,
 	bool write) const noexcept
 {
 	if (index >= PCI_RANGE_BASE)
-		return CPCIDevice::decodes_memory_access(index, address, dsize, write);
+	{
+		if (!CPCIDevice::decodes_memory_access(index, address, dsize, write))
+			return false;
+		if (index == PCI_RANGE_BASE && uses_sized_linear_bar_window())
+		{
+			u32 offset;
+			return linear_bar_offset(address, offset);
+		}
+		return true;
+	}
 	if (index < 0 || index >= MAX_DEV_RANGES || !device_at[0])
 		return false;
 
@@ -3635,10 +3669,20 @@ u32 CS3Trio64::ReadMem_Bar(int func, int bar, u32 address, int dsize)
 	{
 		// PCI memory range
 	case 0:
+		if (func == 0 && uses_sized_linear_bar_window())
+		{
+			u32 offset;
+			if (!linear_bar_offset(address, offset))
+				return dsize == 8 ? 0xffU : dsize == 16 ? 0xffffU : 0xffffffffU;
+			return mem_read(offset, dsize);
+		}
 		if (!lfb_active) {
 			// No decode when LFB disabled  mimic bus-float/read-as-FFs
 			return (dsize == 1) ? 0xFFu : (dsize == 2) ? 0xFFFFu : 0xFFFFFFFFu;
 		}
+		// Preserve the preceding data path for modes outside the scoped decoder.
+		if (address >= 0xa0000 && address <= 0xbffff)
+			return mem_r(address - 0xa0000);
 		return mem_read(address, dsize);
 	}
 
@@ -3666,6 +3710,13 @@ void CS3Trio64::WriteMem_Bar(int func, int bar, u32 address, int dsize, u32 data
 	{
 		// PCI Memory range
 	case 0:
+		if (func == 0 && uses_sized_linear_bar_window())
+		{
+			u32 offset;
+			if (linear_bar_offset(address, offset))
+				mem_write(offset, dsize, data);
+			return;
+		}
 		if (!lfb_active) {
 			// Ignore writes when LFB disabled
 			return;
@@ -4067,20 +4118,12 @@ int CS3Trio64::RestoreState(FILE* f)
 }
 
 /**
- * Read from Framebuffer.
- *
- * Not functional.
+ * Read from linear VRAM using a framebuffer-relative byte offset.
  **/
 u32 CS3Trio64::mem_read(u32 address, int dsize)
 {
 	const u32 mv = s3_vram_mask();          // (memsize - 1)
 	const u32 off = address & mv;
-
-	if (address >= 0xA0000 && address <= 0xBFFFF) {
-		uint32_t offset = address - 0xA0000;
-		// For SVGA modes, use MAME banking path
-		return mem_r(offset);
-	}
 
 	switch (dsize) {
 	case 8:
@@ -4095,9 +4138,7 @@ u32 CS3Trio64::mem_read(u32 address, int dsize)
 }
 
 /**
- * Write to Framebuffer.
- *
- * Not functional.
+ * Write to linear VRAM using a framebuffer-relative byte offset.
  **/
 void CS3Trio64::mem_write(u32 address, int dsize, u32 data)
 {
