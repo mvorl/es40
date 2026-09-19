@@ -362,6 +362,7 @@ private:
   void recompute_params_clock(int divisor, int xtal);
 
   void  update_linear_mapping();
+  void  update_pci_bar0_from_crtc(u32 value, u32 register_bits);
   void  on_crtc_linear_regs_changed(const char* reason = "CR58/59/5A");
 
 

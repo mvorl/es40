@@ -1171,6 +1171,7 @@ void CS3Trio64::crtc_map(address_map& map)
 			}),
 		NAME([this](offs_t offset, u8 data) {
 			s3.cr59 = data;
+			update_pci_bar0_from_crtc(u32(data) << 24, 0xff000000U);
 			on_crtc_linear_regs_changed();
 			})
 	);
@@ -1181,6 +1182,7 @@ void CS3Trio64::crtc_map(address_map& map)
 			}),
 		NAME([this](offs_t offset, u8 data) {
 			s3.cr5a = data;
+			update_pci_bar0_from_crtc(u32(data) << 16, 0x00800000U);
 			on_crtc_linear_regs_changed();
 			})
 	);
@@ -2392,6 +2394,22 @@ void CS3Trio64::update_linear_mapping()
 	printf("LFB (BAR-only): CR58=%02x base=%08x size=%x active=%d\n",
 		m_crtc_map.read_byte(0x58), lfb_base, lfb_size, lfb_active);
 #endif
+}
+
+void CS3Trio64::update_pci_bar0_from_crtc(u32 value, u32 register_bits)
+{
+	if (!device_at[0])
+		return;
+	// DB014-B 17-7/19-4: reflect only this register's implemented shared bits.
+	const u32 mask = endian_32(pci_state.config_mask[0][4]);
+	const u32 shared = register_bits & mask & 0xff800000U;
+	if (!shared)
+		return;
+	const u32 bar0 = (endian_32(pci_state.config_data[0][4]) & ~shared) | (value & shared);
+	pci_state.config_data[0][4] = endian_32(bar0);
+	// This is an address assignment, including a same-value write after a PCI
+	// sizing probe. Avoid PCI callbacks that would rewrite the other CR alias.
+	register_bar(0, 0, bar0, mask);
 }
 
 void CS3Trio64::on_crtc_linear_regs_changed(const char* reason)
