@@ -395,6 +395,7 @@ private:
 
   void lfb_recalc_and_cache();  // recompute enable/base/size from COMMAND+BAR0 (and CR regs if you wish)
   bool uses_sized_linear_bar_window() const noexcept;
+  u8 linear_bar_bank() const noexcept;
   bool linear_bar_offset(u64 address, u32& offset) const noexcept;
   void trace_lfb_if_changed(const char* reason);
 

@@ -1405,12 +1405,12 @@ void CS3Trio64::crtc_map(address_map& map)
 			s3_define_video_mode();
 			})
 	);
-	// TODO: doesn't match number of bits
 	map(0x6a, 0x6a).lrw8(
 		NAME([this](offs_t offset) {
-			return svga.bank_r & 0x7f;
+			return vga.crtc.data[0x6a] & 0x3f;
 			}),
 		NAME([this](offs_t offset, u8 data) {
+			vga.crtc.data[0x6a] = data;
 			svga.bank_w = data & 0x3f;
 			svga.bank_r = svga.bank_w;
 			})
@@ -2392,11 +2392,17 @@ static inline bool s3_lfb_enabled(uint8_t cr58, uint16_t advfunc) {
 bool CS3Trio64::uses_sized_linear_bar_window() const noexcept
 {
 	// DB014-B 13-1: enhanced mapping/functions precede linear addressing.
-	// With CR31.CPUA BASE clear, 64 KiB access ignores bank offsets (15-2).
 	const u16 advfunc = m_8514.ibm8514.advfunction_ctrl;
 	return device_at[0] && (s3.memory_config & 0x08) && (advfunc & 0x01) &&
-		((s3.cr58 & 0x03) || !(s3.memory_config & 0x01)) &&
 		!(s3.cr53 & 0x18) && !(advfunc & 0x20);
+}
+
+u8 CS3Trio64::linear_bar_bank() const noexcept
+{
+	// DB014-B 17-13: nonzero CR6A overrides the older CR35/CR51 bank.
+	const u8 extended = vga.crtc.data[0x6a] & 0x3f;
+	return extended ? extended :
+		(s3.crt_reg_lock & 0x0f) | ((s3.cr51 & 0x0c) << 2);
 }
 
 bool CS3Trio64::linear_bar_offset(u64 address, u32& offset) const noexcept
@@ -2413,6 +2419,9 @@ bool CS3Trio64::linear_bar_offset(u64 address, u32& offset) const noexcept
 	if (address < start || address - start >= size)
 		return false;
 	offset = u32(address - start);
+	// DB014-B 15-2/17-13: CR31.CPUA BASE enables the 64 KiB page offset.
+	if (!(s3.cr58 & 0x03) && (s3.memory_config & 0x01))
+		offset += u32(linear_bar_bank()) << 16;
 	return true;
 }
 
