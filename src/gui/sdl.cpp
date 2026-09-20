@@ -222,6 +222,7 @@ private:
 	void           clear_hotkey_release_state();
 	void           reconcile_hotkey_release_state();
 	void           reset_absolute_mouse_position();
+	void           reset_absolute_mouse_motion();
 };
 
 // Stop direct callers and retire a live display through synchronous exit() on
@@ -350,7 +351,17 @@ void bx_sdl_gui_c::reset_absolute_mouse_position()
 {
 	if (!mouse_absolute)
 		return;
+	// Window geometry can invalidate local coordinates without ending mouse
+	// stream or discarding other display motion
 	mouse_position_valid = false;
+}
+
+void bx_sdl_gui_c::reset_absolute_mouse_motion()
+{
+	if (!mouse_absolute)
+		return;
+	// Preserve the existing absolute-mode reset at focus/capture boundaries.
+	reset_absolute_mouse_position();
 	sdl_mouse_input.remainder_x = 0.0;
 	sdl_mouse_input.remainder_y = 0.0;
 }
@@ -1168,7 +1179,7 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 	{
 		release_all_guest_keys();
 		clear_hotkey_release_state();
-		reset_absolute_mouse_position();
+		reset_absolute_mouse_motion();
 		if (sdl_mouse_input.captured)
 			bx_gui->mouse_enabled_changed(false);
 		break;
@@ -1508,7 +1519,7 @@ void bx_sdl_gui_c::mouse_enabled_changed_specific(bool val)
 
 void bx_sdl_gui_c::mouse_enabled_changed_specific_impl(bool val)
 {
-	reset_absolute_mouse_position();
+	reset_absolute_mouse_motion();
 	if (val)
 	{
 		SDL_HideCursor();
