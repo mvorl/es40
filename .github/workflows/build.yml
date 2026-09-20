@@ -108,6 +108,8 @@ jobs:
             wayland-protocols
             libegl1-mesa-dev
             libgl1-mesa-dev
+            # es40_cfg_tui: ncurses plus its form, menu and panel libraries.
+            libncurses-dev
           )
 
           if [[ "$is_no_network" -eq 0 ]]; then
@@ -171,7 +173,8 @@ jobs:
             CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }-g -O2 -fpermissive"
             CPPFLAGS="-I$PWD/src/emu"
           )
-          configure_args=()
+          # The configuration editor ships with every build, not as a separate download.
+          configure_args=(--enable-tui)
 
           if [[ "$configuration" == *"- SSE2"* ]]; then
             echo "Configuring SSE2 (older-host compat) baseline for: $configuration"
@@ -224,7 +227,7 @@ jobs:
 
           make clean
 
-          make -C src es40 es40_cfg -j"$(nproc)"
+          make -C src es40 es40_cfg es40_cfg_tui -j"$(nproc)"
 
       - name: Collect Linux artifacts
         shell: bash
@@ -235,7 +238,7 @@ jobs:
           rm -rf "$artifact_dir"
           mkdir -p "$artifact_dir"
 
-          for binary in es40 es40_cfg; do
+          for binary in es40 es40_cfg es40_cfg_tui; do
             if [[ -f "src/$binary" ]]; then
               cp "src/$binary" "$artifact_dir/"
             fi
@@ -452,16 +455,9 @@ jobs:
       - name: Build solution
         shell: pwsh
         run: |
-          $configuration = "${{ matrix.configuration }}"
-          $isNoNetwork = $configuration -match '(^| )NN( |$)'
-          $isNoScreen = $configuration -match '(^| )NS( |$)'
-          
-          if ($isNoNetwork -or $isNoScreen) {
-            Write-Host "Building es40.vcxproj only for constrained configuration: $configuration"
-            msbuild "src/Visual Studio/es40.vcxproj" /m /p:Configuration="$configuration" /p:Platform="x64" /p:WindowsTargetPlatformVersion="10.0" /p:ES40GitCommit="$env:GITHUB_SHA"
-          } else {
-            msbuild "src/Visual Studio/es40.sln" /m /p:Configuration="$configuration" /p:Platform="x64" /p:WindowsTargetPlatformVersion="10.0" /p:ES40GitCommit="$env:GITHUB_SHA"
-          }
+          # Every project defines every configuration, so NN/NS drop pcap/SDL rather than
+          # needing an SDK the runner skipped provisioning.
+          msbuild "src/Visual Studio/es40.sln" /m /p:Configuration="${{ matrix.configuration }}" /p:Platform="x64" /p:WindowsTargetPlatformVersion="10.0" /p:ES40GitCommit="$env:GITHUB_SHA"
 
       - name: Include SDL3 runtime with built binaries
         if: ${{ !contains(matrix.configuration, 'NS') }}
@@ -648,7 +644,9 @@ jobs:
             CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }-g -O2 -fpermissive -std=c++17"
             CPPFLAGS="-I$PWD/src/emu"
           )
-          configure_args=()
+          # The configuration editor ships with every build, not as a separate download;
+          # ncurses with form, menu and panel comes from the macOS SDK.
+          configure_args=(--enable-tui)
 
           if [[ "$configuration" == *"JIT"* ]]; then
             echo "Configuring with AsmJit JIT (arm64 scaffolding) for: $configuration"
@@ -699,7 +697,7 @@ jobs:
 
           make clean
 
-          make -C src es40 es40_cfg -j"$(sysctl -n hw.ncpu)"
+          make -C src es40 es40_cfg es40_cfg_tui -j"$(sysctl -n hw.ncpu)"
 
       - name: Collect macOS artifacts
         shell: bash
@@ -710,7 +708,7 @@ jobs:
           rm -rf "$artifact_dir"
           mkdir -p "$artifact_dir"
 
-          for binary in es40 es40_cfg es40_vmnet_helper; do
+          for binary in es40 es40_cfg es40_cfg_tui es40_vmnet_helper; do
             if [[ -f "src/$binary" ]]; then
               cp "src/$binary" "$artifact_dir/"
             fi
@@ -826,7 +824,7 @@ jobs:
             CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }-g -O2 -fpermissive -std=c++17" \
             CPPFLAGS="-I$PWD/src/emu" \
             PKG_CONFIG_PATH="$PWD/.github/pkgconfig:/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" \
-            ./configure --enable-asmjit --enable-pcap
+            ./configure --enable-asmjit --enable-pcap --enable-tui
 
           if ! grep -q -- '-DHAVE_PCAP' src/Makefile; then
             echo "The macOS x86-64 JIT build was configured without pcap support."
@@ -851,7 +849,7 @@ jobs:
 
           make clean
 
-          make -C src es40 es40_cfg -j"$(sysctl -n hw.ncpu)"
+          make -C src es40 es40_cfg es40_cfg_tui -j"$(sysctl -n hw.ncpu)"
 
       - name: Collect macOS x86-64 JIT artifacts
         shell: bash
@@ -862,7 +860,7 @@ jobs:
           rm -rf "$artifact_dir"
           mkdir -p "$artifact_dir"
 
-          for binary in es40 es40_cfg es40_vmnet_helper; do
+          for binary in es40 es40_cfg es40_cfg_tui es40_vmnet_helper; do
             if [[ -f "src/$binary" ]]; then
               cp "src/$binary" "$artifact_dir/"
             fi
@@ -885,236 +883,10 @@ jobs:
           path: ${{ runner.temp }}/macos-x86_64-Release JIT/
           if-no-files-found: error
 
-  tui-package:
-    # Standalone es40_cfg_tui (ncurses configuration editor) package per OS; release.yml
-    # publishes the tarball as-is. Windows is a separate (VS-native) effort.
-    name: es40-cfg-tui package (${{ matrix.os }}-${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: linux
-            arch: x86_64
-            runner: ubuntu-latest
-          - os: linux
-            arch: arm64
-            runner: ubuntu-24.04-arm
-          - os: macos
-            arch: arm64
-            runner: macos-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          submodules: true
-
-      - name: Install build dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-
-          sudo apt-get update
-          sudo apt-get install -y \
-            autoconf autoconf-archive automake libtool pkg-config cmake ninja-build build-essential \
-            libx11-dev libxt-dev libxext-dev libxrandr-dev libxrender-dev libxfixes-dev libxi-dev \
-            libxcursor-dev libxinerama-dev libxkbcommon-dev libxss-dev libxtst-dev \
-            libwayland-dev wayland-protocols libegl1-mesa-dev libgl1-mesa-dev \
-            libpcap-dev libncurses-dev
-
-      - name: Install build dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          set -euo pipefail
-
-          # The runner image preinstalls aws/tap, which Homebrew's tap-trust
-          # check now warns about; nothing here uses it.
-          brew untap aws/tap || true
-
-          # ncurses (with form/menu/panel) comes from the macOS SDK.
-          brew update
-          brew install autoconf autoconf-archive automake libtool pkg-config cmake ninja libpcap
-
-      - name: Build and install latest SDL3
-        # The TUI doesn't link SDL, but configure needs it to offer the SDL GUI settings.
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          SDL_RELEASES_JSON="$(curl -fsSL -H 'User-Agent: github-actions' -H "Authorization: Bearer ${GH_TOKEN}" https://api.github.com/repos/libsdl-org/SDL/releases?per_page=10 || echo '[]')"
-          SDL3_URL="$(printf '%s' "$SDL_RELEASES_JSON" | python3 -c 'import sys,json,re; data=json.load(sys.stdin); data=[data] if isinstance(data,dict) else data; print(next((a.get("browser_download_url","") for rel in data for a in rel.get("assets",[]) if re.match(r"^SDL3-[0-9.]+\\.tar\\.gz$", a.get("name",""))), ""))')"
-
-          if [ -z "$SDL3_URL" ]; then
-            echo "Falling back to releases/latest redirect parsing for SDL3 tarball URL"
-            latest_loc="$(curl -fsSLI https://github.com/libsdl-org/SDL/releases/latest | tr -d '\r' | awk -F': ' 'tolower($1)=="location"{print $2}' | tail -n1)"
-            latest_tag="${latest_loc##*/}"
-            latest_ver="${latest_tag#release-}"
-            SDL3_URL="https://github.com/libsdl-org/SDL/releases/download/${latest_tag}/SDL3-${latest_ver}.tar.gz"
-          fi
-
-          SDL3_TARBALL="${SDL3_URL##*/}"
-          SDL3_SRC_DIR="${SDL3_TARBALL%.tar.gz}"
-
-          curl -fsSL "$SDL3_URL" -o "$SDL3_TARBALL"
-          tar -xzf "$SDL3_TARBALL"
-
-          if [[ "$RUNNER_OS" == "macOS" ]]; then
-            sdl_os_args=(-DSDL_X11=OFF)
-          else
-            sdl_os_args=(-DSDL_X11_XSCRNSAVER=OFF)
-          fi
-
-          cmake -S "$SDL3_SRC_DIR" -B sdl3-build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=/usr/local \
-            "${sdl_os_args[@]}"
-          cmake --build sdl3-build
-          sudo cmake --install sdl3-build
-
-      - name: Generate autotools files
-        run: sh autogen.sh
-
-      - name: Configure
-        run: |
-          set -euo pipefail
-
-          configure_args=(--enable-tui --enable-asmjit)
-          if [[ "${{ matrix.arch }}" == "x86_64" && "$RUNNER_OS" == "Linux" ]]; then
-            # A configuration editor must not require AVX2 hosts.
-            configure_args+=(--with-arch=sse2)
-          fi
-
-          env \
-            CXXFLAGS="-O2 -fpermissive -std=c++17" \
-            CPPFLAGS="-I$PWD/src/emu" \
-            PKG_CONFIG_PATH="/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" \
-            ./configure "${configure_args[@]}"
-
-      - name: Build es40_cfg_tui
-        run: |
-          set -euo pipefail
-
-          if [[ "$RUNNER_OS" == "macOS" ]]; then
-            jobs="$(sysctl -n hw.ncpu)"
-          else
-            jobs="$(nproc)"
-          fi
-          make -C src es40_cfg_tui -j"$jobs"
-
-      - name: Smoke test
-        run: |
-          set -euo pipefail
-
-          # -h exits before curses initializes, so no terminal is needed.
-          ./src/es40_cfg_tui -h
-          if [[ "$RUNNER_OS" == "macOS" ]]; then
-            otool -L src/es40_cfg_tui
-          else
-            ldd src/es40_cfg_tui
-          fi
-
-      - name: Package
-        id: package
-        run: |
-          set -euo pipefail
-
-          pkg="es40-cfg-tui-${{ matrix.os }}-${{ matrix.arch }}"
-          stage="$RUNNER_TEMP/stage/$pkg"
-          out="$RUNNER_TEMP/out"
-          mkdir -p "$stage" "$out"
-
-          cp src/es40_cfg_tui "$stage/"
-          strip "$stage/es40_cfg_tui"
-          chmod 0755 "$stage/es40_cfg_tui"
-          cp COPYING "$stage/"
-
-          tar -C "$RUNNER_TEMP/stage" -czf "$out/$pkg.tar.gz" "$pkg"
-          tar -tzvf "$out/$pkg.tar.gz"
-          echo "name=$pkg" >> "$GITHUB_OUTPUT"
-
-      - name: Upload package
-        uses: actions/upload-artifact@v6
-        with:
-          name: ${{ steps.package.outputs.name }}
-          path: ${{ runner.temp }}/out/${{ steps.package.outputs.name }}.tar.gz
-          if-no-files-found: error
-
-  tui-package-windows:
-    # VS-native es40-cfg-tui: PDCursesMod + NetBSD libform/libmenu (submodules) via curses-win32.vcxproj.
-    name: es40-cfg-tui package (windows-x64)
-    runs-on: windows-2025-vs2026
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          submodules: true
-
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v3
-
-      - name: Provision Npcap SDK
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $npcapSdkVersion = "1.16"
-          $npcapZip = Join-Path $env:RUNNER_TEMP "npcap-sdk.zip"
-          $npcapExtract = Join-Path $env:RUNNER_TEMP "npcap-sdk"
-          & curl.exe --fail --location --silent --show-error --http1.1 `
-            --retry 5 --retry-all-errors --retry-delay 5 `
-            --connect-timeout 20 --max-time 180 `
-            --output $npcapZip "https://npcap.com/dist/npcap-sdk-$npcapSdkVersion.zip"
-          if ($LASTEXITCODE -ne 0) { throw "Failed to download Npcap SDK $npcapSdkVersion." }
-          Expand-Archive -Path $npcapZip -DestinationPath $npcapExtract -Force
-
-          $includeSrc = Get-ChildItem -Path $npcapExtract -Recurse -Filter "pcap.h" |
-            Where-Object { $_.DirectoryName -match "Include$" } | Select-Object -First 1
-          $libSrc = Get-ChildItem -Path $npcapExtract -Recurse -Filter "wpcap.lib" |
-            Where-Object { $_.FullName -match "Lib\\x64\\wpcap\.lib$" } | Select-Object -First 1
-          if (-not $includeSrc -or -not $libSrc) { throw "Unexpected Npcap SDK layout." }
-
-          New-Item -ItemType Directory -Force -Path "C:\dev\npcap-sdk\include", "C:\dev\npcap-sdk\lib\x64" | Out-Null
-          Copy-Item -Recurse -Force (Join-Path $includeSrc.DirectoryName "*") "C:\dev\npcap-sdk\include"
-          Copy-Item -Force $libSrc.FullName "C:\dev\npcap-sdk\lib\x64\wpcap.lib"
-
-      - name: Build es40-cfg-tui
-        shell: pwsh
-        run: |
-          msbuild "src/Visual Studio/es40-cfg-tui.vcxproj" /m /p:Configuration=Release /p:Platform=x64 /p:WindowsTargetPlatformVersion="10.0"
-          if ($LASTEXITCODE -ne 0) { throw "msbuild failed ($LASTEXITCODE)" }
-
-      - name: Smoke test
-        shell: pwsh
-        run: |
-          # -h exits before curses initializes; wpcap.dll is delay-loaded, so Npcap needn't be installed.
-          & "src/Visual Studio/x64/Release/es40-cfg-tui.exe" -h
-          if ($LASTEXITCODE -ne 0) { throw "es40-cfg-tui -h failed ($LASTEXITCODE)" }
-
-      - name: Package
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $pkg = Join-Path $env:RUNNER_TEMP "es40-cfg-tui-windows-x64"
-          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
-          Copy-Item "src/Visual Studio/x64/Release/es40-cfg-tui.exe" $pkg
-          Copy-Item "src/Visual Studio/x64/Release/es40-cfg-tui-NOTICES.txt" $pkg
-          Copy-Item COPYING $pkg
-          Get-ChildItem $pkg
-
-      - name: Upload package
-        uses: actions/upload-artifact@v6
-        with:
-          name: es40-cfg-tui-windows-x64
-          path: ${{ runner.temp }}/es40-cfg-tui-windows-x64/
-          if-no-files-found: error
-
   cleanup-runs:
     name: Delete runs older than the previous 4
     runs-on: ubuntu-latest
-    needs: [linux-build, windows-build, macos-build, macos-x86_64-jit-build, tui-package, tui-package-windows]
+    needs: [linux-build, windows-build, macos-build, macos-x86_64-jit-build]
     # Run even when builds fail, but only once per push (skip pull_request duplicates).
     if: ${{ always() && github.event_name == 'push' }}
     # Housekeeping only: a pruning hiccup must not mark the build run as failed.

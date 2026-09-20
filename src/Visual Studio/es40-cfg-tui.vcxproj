@@ -5,8 +5,108 @@
       <Configuration>Debug</Configuration>
       <Platform>x64</Platform>
     </ProjectConfiguration>
+    <ProjectConfiguration Include="Profile|x64">
+      <Configuration>Profile</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release IDB|x64">
+      <Configuration>Release IDB</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release LSM|x64">
+      <Configuration>Release LSM</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release LSS|x64">
+      <Configuration>Release LSS</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release NN IDB|x64">
+      <Configuration>Release NN IDB</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release NN LSM|x64">
+      <Configuration>Release NN LSM</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release NN LSS|x64">
+      <Configuration>Release NN LSS</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release NN NS IDB|x64">
+      <Configuration>Release NN NS IDB</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release NN NS LSM|x64">
+      <Configuration>Release NN NS LSM</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release NN NS LSS|x64">
+      <Configuration>Release NN NS LSS</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release NN NS|x64">
+      <Configuration>Release NN NS</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release NN|x64">
+      <Configuration>Release NN</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release NS IDB|x64">
+      <Configuration>Release NS IDB</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release NS LSM|x64">
+      <Configuration>Release NS LSM</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release NS LSS|x64">
+      <Configuration>Release NS LSS</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release NS|x64">
+      <Configuration>Release NS</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
     <ProjectConfiguration Include="Release|x64">
       <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release JIT|x64">
+      <Configuration>Release JIT</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Profile JIT|x64">
+      <Configuration>Profile JIT</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug JIT|x64">
+      <Configuration>Debug JIT</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release - SSE2|x64">
+      <Configuration>Release - SSE2</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release NS - SSE2|x64">
+      <Configuration>Release NS - SSE2</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release IDB - SSE2|x64">
+      <Configuration>Release IDB - SSE2</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release NN - SSE2|x64">
+      <Configuration>Release NN - SSE2</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release NN NS - SSE2|x64">
+      <Configuration>Release NN NS - SSE2</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release JIT - SSE2|x64">
+      <Configuration>Release JIT - SSE2</Configuration>
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
@@ -18,13 +118,27 @@
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+  <!-- The editor ships in every solution configuration, so its feature set is derived
+       from the configuration name instead of duplicating 27 property groups. -->
+  <PropertyGroup Label="ES40Configuration">
+    <Es40IsDebug>false</Es40IsDebug>
+    <Es40IsDebug Condition="$(Configuration.StartsWith('Debug'))">true</Es40IsDebug>
+    <Es40Sse2>false</Es40Sse2>
+    <Es40Sse2 Condition="$(Configuration.Contains('- SSE2'))">true</Es40Sse2>
+    <Es40NoNetwork>false</Es40NoNetwork>
+    <Es40NoNetwork Condition="$(Configuration.Contains(' NN'))">true</Es40NoNetwork>
+    <Es40NoScreen>false</Es40NoScreen>
+    <Es40NoScreen Condition="$(Configuration.Contains(' NS'))">true</Es40NoScreen>
+    <Es40Jit>false</Es40Jit>
+    <Es40Jit Condition="$(Configuration.Contains('JIT'))">true</Es40Jit>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Es40IsDebug)'=='true'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
     <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>NotSet</CharacterSet>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+  <PropertyGroup Condition="'$(Es40IsDebug)'!='true'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v145</PlatformToolset>
@@ -35,20 +149,14 @@
   <PropertyGroup>
     <OutDir>$(SolutionDir)$(Platform)\$(Configuration)\</OutDir>
     <IntDir>$(Platform)\$(Configuration)\$(ProjectName)\</IntDir>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LinkIncremental>true</LinkIncremental>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <LinkIncremental>false</LinkIncremental>
+    <LinkIncremental>$(Es40IsDebug)</LinkIncremental>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <!-- Feature defines match the Linux/macOS packages (configured with asmjit, pcap and SDL). -->
       <!-- _HAS_STD_BYTE=0: the TUI's "using namespace std" makes std::byte clash with the SDK's byte. -->
-      <PreprocessorDefinitions>WIN32;_CONSOLE;CONFIGURATION_ONLY;HAVE_PCAP;HAVE_SDL;ES40_JIT;_HAS_STD_BYTE=0;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;..;..\..\third_party\PDCursesMod;..\..\third_party\netbsd-curses\libform;..\..\third_party\netbsd-curses\libmenu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32;_CONSOLE;CONFIGURATION_ONLY;_HAS_STD_BYTE=0;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..;..\..\third_party\PDCursesMod;..\..\third_party\netbsd-curses\libform;..\..\third_party\netbsd-curses\libmenu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
@@ -56,20 +164,51 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>wpcap.lib;winmm.lib;delayimp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>winmm.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <!-- Feature defines track the emulator configuration the editor ships beside. -->
+  <ItemDefinitionGroup Condition="'$(Es40NoNetwork)'!='true'">
+    <ClCompile>
+      <PreprocessorDefinitions>HAVE_PCAP;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>wpcap.lib;delayimp.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>c:\dev\npcap-sdk\lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <!-- Delay-loaded so the editor starts without Npcap; only adapter listing needs wpcap.dll. -->
       <DelayLoadDLLs>wpcap.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
     </Link>
   </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+  <ItemDefinitionGroup Condition="'$(Es40NoScreen)'!='true'">
+    <ClCompile>
+      <PreprocessorDefinitions>HAVE_SDL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Es40Jit)'=='true'">
+    <ClCompile>
+      <PreprocessorDefinitions>ES40_JIT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <!-- ISA follows the configuration, like es40.vcxproj: AVX2 by default, SSE2 in "- SSE2". -->
+  <ItemDefinitionGroup Condition="'$(Es40Sse2)'!='true'">
+    <ClCompile>
+      <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Es40Sse2)'=='true'">
+    <ClCompile>
+      <EnableEnhancedInstructionSet>StreamingSIMDExtensions2</EnableEnhancedInstructionSet>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Es40IsDebug)'=='true'">
     <ClCompile>
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
     </ClCompile>
   </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+  <ItemDefinitionGroup Condition="'$(Es40IsDebug)'!='true'">
     <ClCompile>
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
