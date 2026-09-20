@@ -98,6 +98,7 @@
 #include <atomic>
 #include <cctype>
 #include <exception>
+#include <memory>
 #include <string>
 #include <SDL3/SDL.h>
 
@@ -1317,25 +1318,33 @@ void bx_sdl_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheigh
 	scaled_x = x * content_scale;
 	scaled_y = y * content_scale;
 
+	// Keep first-time resources local until the complete display is ready.
+	// Failure unwinds on this main thread and leaves creation retryable.
+	std::unique_ptr<SDL_Window, decltype(&SDL_DestroyWindow)> new_window(
+		NULL, SDL_DestroyWindow);
+	std::unique_ptr<SDL_Renderer, decltype(&SDL_DestroyRenderer)> new_renderer(
+		NULL, SDL_DestroyRenderer);
+	SDL_Renderer* renderer = sdl_renderer;
 	if (!sdl_window)
 	{
-		sdl_window = SDL_CreateWindow(window_title.c_str(),
-			(int)scaled_x, (int)scaled_y, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
-		if (!sdl_window)
+		new_window.reset(SDL_CreateWindow(window_title.c_str(),
+			(int)scaled_x, (int)scaled_y, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY));
+		if (!new_window)
 		{
 			FAILURE_3(SDL, "Unable to create SDL3 window: %ix%i: %s\n",
 				x, y, SDL_GetError());
 		}
 
-		sdl_renderer = SDL_CreateRenderer(sdl_window, NULL);
-		if (!sdl_renderer)
+		new_renderer.reset(SDL_CreateRenderer(new_window.get(), NULL));
+		if (!new_renderer)
 		{
 			FAILURE_3(SDL, "Unable to create SDL3 renderer: %ix%i: %s\n",
 				x, y, SDL_GetError());
 		}
+		renderer = new_renderer.get();
 
-		SDL_RaiseWindow(sdl_window);
-		SDL_SetRenderLogicalPresentation(sdl_renderer,
+		SDL_RaiseWindow(new_window.get());
+		SDL_SetRenderLogicalPresentation(renderer,
 			(int)x, (int)y,
 			SDL_LOGICAL_PRESENTATION_LETTERBOX);
 	}
@@ -1347,17 +1356,24 @@ void bx_sdl_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheigh
 			SDL_LOGICAL_PRESENTATION_LETTERBOX);
 	}
 
-	sdl_texture = SDL_CreateTexture(sdl_renderer,
+	std::unique_ptr<SDL_Texture, decltype(&SDL_DestroyTexture)> new_texture(
+		SDL_CreateTexture(renderer,
 		SDL_PIXELFORMAT_ARGB8888,
 		SDL_TEXTUREACCESS_STREAMING,
-		(int)x, (int)y);
-	if (!sdl_texture)
+		(int)x, (int)y), SDL_DestroyTexture);
+	if (!new_texture)
 	{
 		FAILURE_3(SDL, "Unable to create SDL3 texture: %ix%i: %s\n",
 			x, y, SDL_GetError());
 	}
 
-	SDL_SetTextureScaleMode(sdl_texture, vid_linear ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
+	SDL_SetTextureScaleMode(new_texture.get(), vid_linear ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
+	if (new_window)
+	{
+		sdl_window = new_window.release();
+		sdl_renderer = new_renderer.release();
+	}
+	sdl_texture = new_texture.release();
 
 	res_x = x;
 	res_y = y;
