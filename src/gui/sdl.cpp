@@ -98,7 +98,9 @@
 #include <atomic>
 #include <cctype>
 #include <exception>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <SDL3/SDL.h>
 
@@ -138,6 +140,9 @@ class bx_sdl_gui_c : public bx_gui_c
 {
 public:
 	bx_sdl_gui_c(CConfigurator* cfg);
+	~bx_sdl_gui_c() override;
+	bx_sdl_gui_c(const bx_sdl_gui_c&) = delete;
+	bx_sdl_gui_c& operator=(const bx_sdl_gui_c&) = delete;
 	virtual void    specific_init(unsigned x_tilesize, unsigned y_tilesize) override;
 	virtual void    text_update(u8* old_text, u8* new_text, unsigned long cursor_x, unsigned long cursor_y, bx_vga_tminfo_t tm_info, unsigned rows) override {}
 	virtual void    graphics_tile_update(u8* snapshot, unsigned x, unsigned y) override;
@@ -162,6 +167,7 @@ private:
 	SDL_Window*    sdl_window = NULL;
 	SDL_Renderer*  sdl_renderer = NULL;
 	SDL_Texture*   sdl_texture = NULL;
+	SDL_WindowID   registered_window_id = 0;
 	unsigned       res_x = 0, res_y = 0;
 	unsigned       half_res_x = 0, half_res_y = 0;
 	int            last_driven_w = 0, last_driven_h = 0;
@@ -199,6 +205,10 @@ private:
 	void           graphics_frame_update_impl(const u32* pixels, unsigned w, unsigned h);
 	void           mouse_enabled_changed_specific_impl(bool val);
 	void           exit_impl();
+	void           register_window(SDL_Window* window);
+	void           unregister_window() noexcept;
+	// Main-thread lookup; the result borrows the display's existing lifetime.
+	static bx_sdl_gui_c* find_window_owner(SDL_WindowID window_id);
 	void           reset_window_size();
 	void           adjust_window_scale(int delta);
 	void           load_hotkeys();
@@ -212,6 +222,12 @@ private:
 	void           reconcile_hotkey_release_state();
 	void           reset_absolute_mouse_position();
 };
+
+// Host bookkeeping only. A display must have no outstanding calls when it is
+// destroyed. The mutex permits its destructor to detach without SDL dispatch
+// while other displays use the registry; it does not pin a lookup result.
+static std::mutex sdl_window_owners_mutex;
+static std::map<SDL_WindowID, bx_sdl_gui_c*> sdl_window_owners;
 
 // declare one instance of the gui object and call macro to insert the
 // plugin code
@@ -512,6 +528,51 @@ bx_sdl_gui_c::bx_sdl_gui_c(CConfigurator* cfg)
 {
 	myCfg = cfg;
 	bx_keymap = new bx_keymap_c(cfg);
+}
+
+bx_sdl_gui_c::~bx_sdl_gui_c()
+{
+	// Native cleanup belongs to explicit main-thread exit, never a destructor.
+	unregister_window();
+}
+
+void bx_sdl_gui_c::register_window(SDL_Window* window)
+{
+	if (registered_window_id)
+		FAILURE(SDL, "Display already has a registered SDL window");
+	const SDL_WindowID id = SDL_GetWindowID(window);
+	if (!id)
+		FAILURE_1(SDL, "Unable to identify SDL window: %s", SDL_GetError());
+
+	try
+	{
+		std::lock_guard<std::mutex> lock(sdl_window_owners_mutex);
+		if (!sdl_window_owners.emplace(id, this).second)
+			FAILURE(SDL, "SDL window already has a registered display");
+		registered_window_id = id;
+	}
+	catch (const std::bad_alloc&)
+	{
+		FAILURE(SDL, "Unable to allocate SDL window registration");
+	}
+}
+
+void bx_sdl_gui_c::unregister_window() noexcept
+{
+	if (!registered_window_id)
+		return;
+	std::lock_guard<std::mutex> lock(sdl_window_owners_mutex);
+	const auto entry = sdl_window_owners.find(registered_window_id);
+	if (entry != sdl_window_owners.end() && entry->second == this)
+		sdl_window_owners.erase(entry);
+	registered_window_id = 0;
+}
+
+bx_sdl_gui_c* bx_sdl_gui_c::find_window_owner(SDL_WindowID window_id)
+{
+	std::lock_guard<std::mutex> lock(sdl_window_owners_mutex);
+	const auto entry = sdl_window_owners.find(window_id);
+	return entry == sdl_window_owners.end() ? NULL : entry->second;
 }
 
 void bx_sdl_gui_c::load_hotkeys()
@@ -986,7 +1047,7 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 		else
 			has_window = false;
 		if (has_window && (!sdl_window || event_window == 0 ||
-			event_window != SDL_GetWindowID(sdl_window)))
+			find_window_owner(event_window) != this))
 			return;
 	}
 
@@ -1370,6 +1431,8 @@ void bx_sdl_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheigh
 	SDL_SetTextureScaleMode(new_texture.get(), vid_linear ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
 	if (new_window)
 	{
+		// Insertion can fail; keep native resources local until it succeeds.
+		register_window(new_window.get());
 		sdl_window = new_window.release();
 		sdl_renderer = new_renderer.release();
 	}
@@ -1467,6 +1530,7 @@ void bx_sdl_gui_c::exit(void)
 
 void bx_sdl_gui_c::exit_impl(void)
 {
+	unregister_window();
 	sdl_media_shutdown();
 	// Native dialogs can still refer to this parent after their callback. Keep
 	// its resources until process exit; closing the custom popup above is safe.
