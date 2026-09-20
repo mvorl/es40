@@ -964,13 +964,16 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 		sdl_media_handle_event(&event))
 		return;
 
-	// Absolute positions belong to one window.
-	if (mouse_absolute)
+	// Window events affect only their owning display, regardless of mouse mode.
+	// Absolute pointer positions also belong to one host window; relative motion
+	// still feeds the single guest mouse without selecting a guest display.
+	const bool window_event = event.type >= SDL_EVENT_WINDOW_FIRST &&
+		event.type <= SDL_EVENT_WINDOW_LAST;
+	if (window_event || mouse_absolute)
 	{
 		SDL_WindowID event_window = 0;
 		bool has_window = true;
-		if (event.type >= SDL_EVENT_WINDOW_FIRST &&
-			event.type <= SDL_EVENT_WINDOW_LAST)
+		if (window_event)
 			event_window = event.window.windowID;
 		else if (event.type == SDL_EVENT_MOUSE_MOTION)
 			event_window = event.motion.windowID;
@@ -981,7 +984,7 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 			event_window = event.wheel.windowID;
 		else
 			has_window = false;
-		if (has_window && (!sdl_window ||
+		if (has_window && (!sdl_window || event_window == 0 ||
 			event_window != SDL_GetWindowID(sdl_window)))
 			return;
 	}
