@@ -56,10 +56,15 @@ static pcap_t *(*f_pcap_open)(const char *source, int snaplen, int flags,
                               char *errbuf);
 static int (*f_pcap_next_ex)(pcap_t *, struct pcap_pkthdr **,
                              const unsigned char **);
+static int (*f_pcap_datalink)(pcap_t *);
+static const char *(*f_pcap_datalink_val_to_name)(int);
+static void (*f_pcap_freecode)(void *);
 static bool wpcap_loaded = false;
 #endif
 
-CNetworkPcap::CNetworkPcap() : fp(nullptr), opened(false) {
+CNetworkPcap::CNetworkPcap() : fp(nullptr), opened(false), linktype(-1),
+                               filter_active(false),
+                               nonether_filter_warned(false) {
 	memset(&fcode, 0, sizeof(fcode));
 
 #ifdef _WIN32
@@ -92,6 +97,9 @@ CNetworkPcap::CNetworkPcap() : fp(nullptr), opened(false) {
 		f_pcap_create      = (void *(*)(const char *, char *))GetProcAddress(libhandle, "pcap_create");
 		f_pcap_geterr      = (char *(*)(void *))GetProcAddress(libhandle, "pcap_geterr");
 		f_pcap_next_ex     = (int (*)(pcap *, pcap_pkthdr **, const unsigned char **))GetProcAddress(libhandle, "pcap_next_ex");
+		f_pcap_datalink    = (int (*)(pcap *))GetProcAddress(libhandle, "pcap_datalink");
+		f_pcap_datalink_val_to_name = (const char *(*)(int))GetProcAddress(libhandle, "pcap_datalink_val_to_name");
+		f_pcap_freecode    = (void (*)(void *))GetProcAddress(libhandle, "pcap_freecode");
 
 #define pcap_findalldevs f_pcap_findalldevs
 #define pcap_open f_pcap_open
@@ -102,10 +110,15 @@ CNetworkPcap::CNetworkPcap() : fp(nullptr), opened(false) {
 #define pcap_compile f_pcap_compile
 #define pcap_geterr f_pcap_geterr
 #define pcap_next_ex f_pcap_next_ex
+#define pcap_datalink f_pcap_datalink
+#define pcap_datalink_val_to_name f_pcap_datalink_val_to_name
+#define pcap_freecode f_pcap_freecode
 
 #define PCAP_ERROR -1
 #define PCAP_OPENFLAG_PROMISCUOUS 0x00000001
 #define PCAP_OPENFLAG_NOCAPTURE_LOCAL 0x00000008
+#define DLT_EN10MB 1
+#define PCAP_IF_LOOPBACK 0x00000001
 
 		wpcap_loaded = true;
 	}
@@ -126,6 +139,7 @@ bool CNetworkPcap::init(const char *devid_string, CConfigurator *cfg)
 	char errbuf[PCAP_ERRBUF_SIZE];
 
 	char *adapter = cfg->get_text_value("adapter");
+	bool  from_menu = (adapter == NULL);
 	if (!adapter) {
 		printf("\n%s: Choose a network adapter to connect to:\n", devid_string);
 		if (pcap_findalldevs(&alldevs, errbuf) == -1) {
@@ -136,9 +150,13 @@ bool CNetworkPcap::init(const char *devid_string, CConfigurator *cfg)
 		for (d = alldevs; d; d = d->next) {
 			printf("%d. %s\n    ", ++i, d->name);
 			if (d->description)
-				printf(" (%s)\n", d->description);
+				printf(" (%s)", d->description);
 			else
-				printf(" (No description available)\n");
+				printf(" (No description available)");
+			/* Loopback and other IP-only sources carry no ethernet header. */
+			if (d->flags & PCAP_IF_LOOPBACK)
+				printf(" [loopback - no ethernet frames]");
+			printf("\n");
 		}
 
 		if (i == 0) {
@@ -221,6 +239,44 @@ bool CNetworkPcap::init(const char *devid_string, CConfigurator *cfg)
 		return false;
 	}
 
+	/* Loopback, VPN and other IP-only capture sources carry no ethernet
+	   header, so no ether filter can be compiled. */
+	linktype = pcap_datalink(fp);
+	if (linktype != DLT_EN10MB) {
+		const char *lt = pcap_datalink_val_to_name(linktype);
+		printf("%s: WARNING: adapter %s is not an ethernet capture source "
+		       "(link type %s [%d], not EN10MB).\n", devid_string,
+		       adapter, lt ? lt : "unknown", linktype);
+		printf("%s: WARNING: captured packets have no ethernet header and "
+		       "receive filtering is disabled. Testing use only; pick a "
+		       "physical or bridged ethernet adapter for real networking."
+		       "\n", devid_string);
+
+		/* Warn on non-ethernet adapter */
+		if (from_menu) {
+			for (;;) {
+				char answer[16];
+				printf("%%NIC-Q-NONETH: Use this adapter anyway? (y/n): ");
+				fflush(stdout);
+				if (fgets(answer, sizeof(answer), stdin) == NULL) {
+					printf("%s: Unexpected end of input; not using %s\n",
+						devid_string, adapter);
+					pcap_close(fp);
+					fp = nullptr;
+					return false;
+				}
+				if (answer[0] == 'y' || answer[0] == 'Y')
+					break;
+				if (answer[0] == 'n' || answer[0] == 'N') {
+					printf("%s: Not using %s\n", devid_string, adapter);
+					pcap_close(fp);
+					fp = nullptr;
+					return false;
+				}
+			}
+		}
+	}
+
 	opened = true;
 	printf("%s: Using pcap adapter %s\n", devid_string, adapter);
 	return true;
@@ -260,6 +316,16 @@ void CNetworkPcap::set_filter(u8 mac_list[][6], int num_macs,
 {
 	if (!fp)
 		return;
+
+	/* Packet filtering only works on ethernet... */
+	if (linktype != DLT_EN10MB) {
+		if (!nonether_filter_warned) {
+			printf("Packet filtering disabled: link type %d is not ethernet.\n",
+				linktype);
+			nonether_filter_warned = true;
+		}
+		return;
+	}
 
 	char mac_txt[16][20];
 	char filter[1000];
@@ -330,19 +396,31 @@ void CNetworkPcap::set_filter(u8 mac_list[][6], int num_macs,
 		filter[0] = '\0';
 	}
 
+	if (filter_active) {
+		pcap_freecode(&fcode);
+		filter_active = false;
+	}
+
 	if (pcap_compile(fp, &fcode, filter, 1, 0xffffffff) < 0) {
-		printf("Unable to compile the packet filter (%s)\n", filter);
+		printf("Unable to compile the packet filter (%s): %s\n", filter,
+		       pcap_geterr(fp));
 		return;
 	}
 
+	filter_active = true;
+
 	if (pcap_setfilter(fp, &fcode) < 0)
-		printf("Error setting the filter.\n");
+		printf("Error setting the filter: %s\n", pcap_geterr(fp));
 
 	return;
 }
 
 void CNetworkPcap::close()
 {
+	if (fp && filter_active) {
+		pcap_freecode(&fcode);
+		filter_active = false;
+	}
 	if (fp) {
 		pcap_close(fp);
 		fp = nullptr;

@@ -114,6 +114,9 @@ private:
 	pcap_t*             fp;
 	struct bpf_program  fcode;
 	bool                opened;
+	int                 linktype;      /* pcap DLT_* of the open adapter */
+	bool                filter_active; /* fcode holds a compiled program */
+	bool                nonether_filter_warned; /* said filtering is off */
 };
 
 #endif /* INCLUDED_NETWORK_PCAP_H_  */
