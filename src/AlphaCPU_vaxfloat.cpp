@@ -409,8 +409,9 @@ u64 CAlphaCPU::vax_sqrt(u64 op, u32 ins, u32 dp)
 		return 0;
 	}
 
+	const s32 in_exp = b.exp;                     /* fsqrt64 keys on INPUT exp parity */
 	b.exp = ((b.exp + 1 - G_BIAS) >> 1) + G_BIAS; /* result exponent */
-	b.frac = fsqrt64(b.frac, b.exp);  /* result fraction */
+	b.frac = fsqrt64(b.frac, in_exp); /* result fraction */
 	return vax_rpack(&b, ins, dp);    /* round and pack */
 }
 

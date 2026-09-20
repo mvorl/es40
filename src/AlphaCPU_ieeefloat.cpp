@@ -756,8 +756,9 @@ u64 CAlphaCPU::ieee_sqrt(u64 op, u32 ins, u32 dp)
 		return CQNAN;
 	}
 
+	const s32 in_exp = b.exp;                 /* fsqrt64 keys on INPUT exp parity */
 	b.exp = ((b.exp - T_BIAS) >> 1) + T_BIAS; /* result exponent */
-	b.frac = fsqrt64(b.frac, b.exp);          /* result fraction */
+	b.frac = fsqrt64(b.frac, in_exp);         /* result fraction */
 	return ieee_rpack(&b, ins, dp);           /* round and pack */
 }
 
