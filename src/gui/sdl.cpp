@@ -190,9 +190,6 @@ private:
 	sdl_hotkey_binding hotkey_scale_down;
 	std::string    window_title;
 	std::string    window_title_grabbed;
-	u32            guest_key_by_scancode[SDL_SCANCODE_COUNT] = {};
-	bool           guest_key_pressed[SDL_SCANCODE_COUNT] = {};
-	bool           swallowed_hotkey_releases[SDL_SCANCODE_COUNT] = {};
 	// Bodies of the public entry points above; always executed on the thread
 	// that owns the SDL window (see on_main_thread).
 	void           specific_init_impl(unsigned x_tilesize, unsigned y_tilesize);
@@ -347,6 +344,17 @@ struct sdl_mouse_input_state
 	double remainder_y = 0.0;
 };
 static sdl_mouse_input_state sdl_mouse_input;
+
+// All displays feed one guest keyboard.
+// Initializing a display must not reset them.
+// Bookkeeping for everything/display.
+struct sdl_keyboard_input_state
+{
+	u32 guest_key_by_scancode[SDL_SCANCODE_COUNT] = {};
+	bool guest_key_pressed[SDL_SCANCODE_COUNT] = {};
+	bool swallowed_hotkey_releases[SDL_SCANCODE_COUNT] = {};
+};
+static sdl_keyboard_input_state sdl_keyboard_input;
 
 void bx_sdl_gui_c::reset_absolute_mouse_position()
 {
@@ -715,7 +723,6 @@ void bx_sdl_gui_c::specific_init_impl(unsigned x_tilesize, unsigned y_tilesize)
 	reset_absolute_mouse_position();
 	load_hotkeys();
 	build_window_titles();
-	clear_hotkey_release_state();
 
 	// Create the initial window + renderer + texture at 640x480.
 	// dimension_update() will recreate the texture if the resolution changes.
@@ -900,11 +907,11 @@ static u32 sdl_scan_to_bx_key(SDL_Scancode sym)
 void bx_sdl_gui_c::release_guest_key(SDL_Scancode scancode)
 {
 	if (scancode > SDL_SCANCODE_UNKNOWN &&
-		scancode < SDL_SCANCODE_COUNT && guest_key_pressed[scancode])
+		scancode < SDL_SCANCODE_COUNT && sdl_keyboard_input.guest_key_pressed[scancode])
 	{
 		theKeyboard->gen_scancode(
-			guest_key_by_scancode[scancode] | BX_KEY_RELEASED);
-		guest_key_pressed[scancode] = false;
+			sdl_keyboard_input.guest_key_by_scancode[scancode] | BX_KEY_RELEASED);
+		sdl_keyboard_input.guest_key_pressed[scancode] = false;
 	}
 }
 
@@ -916,8 +923,8 @@ void bx_sdl_gui_c::release_all_guest_keys()
 
 void bx_sdl_gui_c::clear_hotkey_release_state()
 {
-	memset(swallowed_hotkey_releases, 0,
-		sizeof(swallowed_hotkey_releases));
+	memset(sdl_keyboard_input.swallowed_hotkey_releases, 0,
+		sizeof(sdl_keyboard_input.swallowed_hotkey_releases));
 }
 
 void bx_sdl_gui_c::reconcile_hotkey_release_state()
@@ -928,8 +935,8 @@ void bx_sdl_gui_c::reconcile_hotkey_release_state()
 
 	for (int i = 0; i < SDL_SCANCODE_COUNT; i++)
 	{
-		if (swallowed_hotkey_releases[i] && !keys[i])
-			swallowed_hotkey_releases[i] = false;
+		if (sdl_keyboard_input.swallowed_hotkey_releases[i] && !keys[i])
+			sdl_keyboard_input.swallowed_hotkey_releases[i] = false;
 	}
 }
 
@@ -939,7 +946,7 @@ void bx_sdl_gui_c::suppress_hotkey_releases(
 {
 	if (event.scancode > SDL_SCANCODE_UNKNOWN &&
 		event.scancode < SDL_SCANCODE_COUNT)
-		swallowed_hotkey_releases[event.scancode] = true;
+		sdl_keyboard_input.swallowed_hotkey_releases[event.scancode] = true;
 
 	if (!release_guest_modifiers)
 		return;
@@ -952,9 +959,9 @@ void bx_sdl_gui_c::suppress_hotkey_releases(
 		for (int i = 0; i < 2; i++)
 		{
 			SDL_Scancode scancode = scancodes[i];
-			if ((keys && keys[scancode]) || guest_key_pressed[scancode])
+			if ((keys && keys[scancode]) || sdl_keyboard_input.guest_key_pressed[scancode])
 			{
-				swallowed_hotkey_releases[scancode] = true;
+				sdl_keyboard_input.swallowed_hotkey_releases[scancode] = true;
 				release_guest_key(scancode);
 			}
 		}
@@ -1012,9 +1019,9 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 		bool media_release_handled = sdl_media_handle_event(&event);
 		if (event.key.scancode > SDL_SCANCODE_UNKNOWN &&
 			event.key.scancode < SDL_SCANCODE_COUNT &&
-			swallowed_hotkey_releases[event.key.scancode])
+			sdl_keyboard_input.swallowed_hotkey_releases[event.key.scancode])
 		{
-			swallowed_hotkey_releases[event.key.scancode] = false;
+			sdl_keyboard_input.swallowed_hotkey_releases[event.key.scancode] = false;
 			return;
 		}
 		if (media_release_handled)
@@ -1255,10 +1262,10 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 
 		if (event.key.scancode > SDL_SCANCODE_UNKNOWN &&
 			event.key.scancode < SDL_SCANCODE_COUNT &&
-			!guest_key_pressed[event.key.scancode])
+			!sdl_keyboard_input.guest_key_pressed[event.key.scancode])
 		{
-			guest_key_by_scancode[event.key.scancode] = key_event;
-			guest_key_pressed[event.key.scancode] = true;
+			sdl_keyboard_input.guest_key_by_scancode[event.key.scancode] = key_event;
+			sdl_keyboard_input.guest_key_pressed[event.key.scancode] = true;
 		}
 		theKeyboard->gen_scancode(key_event);
 
@@ -1268,16 +1275,16 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 			theKeyboard->gen_scancode(key_event | BX_KEY_RELEASED);
 			if (event.key.scancode > SDL_SCANCODE_UNKNOWN &&
 				event.key.scancode < SDL_SCANCODE_COUNT)
-				guest_key_pressed[event.key.scancode] = false;
+				sdl_keyboard_input.guest_key_pressed[event.key.scancode] = false;
 		}
 		break;
 
 	case SDL_EVENT_KEY_UP:
 		if (event.key.scancode > SDL_SCANCODE_UNKNOWN &&
 			event.key.scancode < SDL_SCANCODE_COUNT &&
-			guest_key_pressed[event.key.scancode])
+			sdl_keyboard_input.guest_key_pressed[event.key.scancode])
 		{
-			key_event = guest_key_by_scancode[event.key.scancode];
+			key_event = sdl_keyboard_input.guest_key_by_scancode[event.key.scancode];
 		}
 		else if (!myCfg->get_bool_value("keyboard.use_mapping", false))
 		{
@@ -1306,7 +1313,7 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 		theKeyboard->gen_scancode(key_event | BX_KEY_RELEASED);
 		if (event.key.scancode > SDL_SCANCODE_UNKNOWN &&
 			event.key.scancode < SDL_SCANCODE_COUNT)
-			guest_key_pressed[event.key.scancode] = false;
+			sdl_keyboard_input.guest_key_pressed[event.key.scancode] = false;
 		break;
 
 	case SDL_EVENT_QUIT:
