@@ -202,6 +202,7 @@ private:
 	void           dimension_update_impl(unsigned x, unsigned y, unsigned fheight,
 		unsigned fwidth, unsigned bpp);
 	void           graphics_frame_update_impl(const u32* pixels, unsigned w, unsigned h);
+	void           set_mouse_capture_impl(bool val);
 	void           mouse_enabled_changed_specific_impl(bool val);
 	void           exit_impl();
 	void           register_window(SDL_Window* window);
@@ -1035,7 +1036,7 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 		{
 			suppress_hotkey_releases(event.key, hotkey_media, true);
 			if (sdl_mouse_input.captured)
-				bx_gui->mouse_enabled_changed(false);
+				set_mouse_capture_impl(false);
 			sdl_select_media(sdl_window);
 		}
 		return;
@@ -1144,7 +1145,7 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 			if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN
 				&& event.button.button == SDL_BUTTON_LEFT)
 			{
-				bx_gui->mouse_enabled_changed(true);
+				set_mouse_capture_impl(true);
 			}
 			break;
 		}
@@ -1184,7 +1185,7 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 		clear_hotkey_release_state();
 		reset_absolute_mouse_motion();
 		if (sdl_mouse_input.captured)
-			bx_gui->mouse_enabled_changed(false);
+			set_mouse_capture_impl(false);
 		break;
 	}
 	case SDL_EVENT_KEY_DOWN:
@@ -1234,7 +1235,7 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 			{
 				suppress_hotkey_releases(event.key,
 					hotkey_mouse_capture, true);
-				bx_gui->mouse_enabled_changed(!sdl_mouse_input.captured);
+				set_mouse_capture_impl(!sdl_mouse_input.captured);
 			}
 			break;
 		}
@@ -1544,6 +1545,13 @@ void bx_sdl_gui_c::adjust_window_scale(int delta)
 void bx_sdl_gui_c::mouse_enabled_changed_specific(bool val)
 {
 	on_main_thread([&] { mouse_enabled_changed_specific_impl(val); });
+}
+
+void bx_sdl_gui_c::set_mouse_capture_impl(bool val)
+{
+	if (theKeyboard)
+		theKeyboard->set_mouse_capture(val);
+	mouse_enabled_changed_specific_impl(val);
 }
 
 void bx_sdl_gui_c::mouse_enabled_changed_specific_impl(bool val)
