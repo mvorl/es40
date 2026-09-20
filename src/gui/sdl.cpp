@@ -199,6 +199,7 @@ private:
 	void           handle_events_impl();
 	// Process one event on the SDL main thread without draining the queue.
 	void           handle_event_impl(const SDL_Event& event);
+	void           redraw_impl();
 	void           clear_screen_impl();
 	void           dimension_update_impl(unsigned x, unsigned y, unsigned fheight,
 		unsigned fwidth, unsigned bpp);
@@ -223,9 +224,8 @@ private:
 	void           reset_absolute_mouse_position();
 };
 
-// Host bookkeeping only. A display must have no outstanding calls when it is
-// destroyed. The mutex permits its destructor to detach without SDL dispatch
-// while other displays use the registry; it does not pin a lookup result.
+// Stop direct callers and retire a live display through synchronous exit() on
+// the SDL main thread before deleting it. 
 static std::mutex sdl_window_owners_mutex;
 static std::map<SDL_WindowID, bx_sdl_gui_c*> sdl_window_owners;
 
@@ -1026,6 +1026,17 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 		sdl_media_handle_event(&event))
 		return;
 
+	// Repaint the requested window, regardless of which display drained the
+	// queue. Media sees the event once, before lookup; retired IDs have no owner.
+	// Delivery and explicit retirement are serialized on this SDL main thread.
+	if (event.type == SDL_EVENT_WINDOW_EXPOSED)
+	{
+		bx_sdl_gui_c* owner = find_window_owner(event.window.windowID);
+		if (owner)
+			owner->redraw_impl();
+		return;
+	}
+
 	// Window events affect only their owning display, regardless of mouse mode.
 	// Absolute pointer positions also belong to one host window; relative motion
 	// still feeds the single guest mouse without selecting a guest display.
@@ -1053,16 +1064,6 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 
 	switch (event.type)
 	{
-	case SDL_EVENT_WINDOW_EXPOSED:
-		// Window needs redraw — re-present the current texture
-		if (sdl_renderer && sdl_texture)
-		{
-			SDL_RenderClear(sdl_renderer);
-			SDL_RenderTexture(sdl_renderer, sdl_texture, NULL, NULL);
-			SDL_RenderPresent(sdl_renderer);
-		}
-		break;
-
 	case SDL_EVENT_WINDOW_RESTORED:
 	case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
 		// System DPI changed — re-scale SDL GUI window
@@ -1313,6 +1314,15 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 void bx_sdl_gui_c::flush(void)
 {
 	//
+}
+
+void bx_sdl_gui_c::redraw_impl()
+{
+	if (!sdl_window || !sdl_renderer || !sdl_texture)
+		return;
+	SDL_RenderClear(sdl_renderer);
+	SDL_RenderTexture(sdl_renderer, sdl_texture, NULL, NULL);
+	SDL_RenderPresent(sdl_renderer);
 }
 
 /**
