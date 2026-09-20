@@ -2944,8 +2944,9 @@ void edit_pci(const char *title)
         {"Add LSI SCSI", "Add a LSI 53C1020 Fusion-MPT Ultra320 SCSI controller (NOT SRM BOOT CAPABLE!)", edit_pci_lsi53c1020}
 #ifdef HAVE_SDL
         ,
-        {"Add ES1370 Audio", "Add an Ensoniq AudioPCI ES1370 sound card (works only with Windows NT 4.0 guest)", edit_pci_es1370}};
+        {"Add ES1370 Audio", "Add an Ensoniq AudioPCI ES1370 sound card (works only with Windows NT 4.0 guest)", edit_pci_es1370}
 #endif
+    };
     int num_entries = ARRAY_SIZE(entry);
 
     show_menu(title, entry, num_entries, MENU_2ND_LEVEL);
