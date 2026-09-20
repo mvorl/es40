@@ -199,6 +199,7 @@ private:
 	void           handle_events_impl();
 	// Process one event on the SDL main thread without draining the queue.
 	void           handle_event_impl(const SDL_Event& event);
+	void           handle_display_event_impl(const SDL_Event& event);
 	void           redraw_impl();
 	void           clear_screen_impl();
 	void           dimension_update_impl(unsigned x, unsigned y, unsigned fheight,
@@ -1037,15 +1038,27 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 		sdl_media_handle_event(&event))
 		return;
 
-	// Repaint the requested window, regardless of which display drained the
+	// Update the requested window, regardless of which display drained the
 	// queue. Media sees the event once, before lookup; retired IDs have no owner.
 	// Delivery and explicit retirement are serialized on this SDL main thread.
-	if (event.type == SDL_EVENT_WINDOW_EXPOSED)
+	switch (event.type)
+	{
+	case SDL_EVENT_WINDOW_EXPOSED:
+	case SDL_EVENT_WINDOW_RESTORED:
+	case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+	case SDL_EVENT_WINDOW_MOUSE_ENTER:
+	case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+	case SDL_EVENT_WINDOW_MOVED:
+	case SDL_EVENT_WINDOW_RESIZED:
+	case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
 	{
 		bx_sdl_gui_c* owner = find_window_owner(event.window.windowID);
 		if (owner)
-			owner->redraw_impl();
+			owner->handle_display_event_impl(event);
 		return;
+	}
+	default:
+		break;
 	}
 
 	// Window events affect only their owning display, regardless of mouse mode.
@@ -1075,23 +1088,6 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 
 	switch (event.type)
 	{
-	case SDL_EVENT_WINDOW_RESTORED:
-	case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
-		// System DPI changed — re-scale SDL GUI window
-		if (res_x > 0 && res_y > 0)
-		{
-			dimension_update(res_x, res_y);
-		}
-		break;
-
-	case SDL_EVENT_WINDOW_MOUSE_ENTER:
-	case SDL_EVENT_WINDOW_MOUSE_LEAVE:
-	case SDL_EVENT_WINDOW_MOVED:
-	case SDL_EVENT_WINDOW_RESIZED:
-	case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
-		reset_absolute_mouse_position();
-		break;
-
 	case SDL_EVENT_MOUSE_MOTION:
 		if (sdl_mouse_input.captured)
 		{
@@ -1325,6 +1321,32 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 void bx_sdl_gui_c::flush(void)
 {
 	//
+}
+
+void bx_sdl_gui_c::handle_display_event_impl(const SDL_Event& event)
+{
+	if (!sdl_window)
+		return;
+	switch (event.type)
+	{
+	case SDL_EVENT_WINDOW_EXPOSED:
+		redraw_impl();
+		break;
+	case SDL_EVENT_WINDOW_RESTORED:
+	case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+		if (res_x > 0 && res_y > 0)
+			dimension_update(res_x, res_y);
+		break;
+	case SDL_EVENT_WINDOW_MOUSE_ENTER:
+	case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+	case SDL_EVENT_WINDOW_MOVED:
+	case SDL_EVENT_WINDOW_RESIZED:
+	case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+		// Host window changes invalidate local coordinates, not the guest mode
+		// or the one shared mouse stream's accumulated movement.
+		reset_absolute_mouse_position();
+		break;
+	}
 }
 
 void bx_sdl_gui_c::redraw_impl()
