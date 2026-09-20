@@ -190,6 +190,8 @@ private:
 	// that owns the SDL window (see on_main_thread).
 	void           specific_init_impl(unsigned x_tilesize, unsigned y_tilesize);
 	void           handle_events_impl();
+	// Process one event on the SDL main thread without draining the queue.
+	void           handle_event_impl(const SDL_Event& event);
 	void           clear_screen_impl();
 	void           dimension_update_impl(unsigned x, unsigned y, unsigned fheight,
 		unsigned fwidth, unsigned bpp);
@@ -308,7 +310,6 @@ void bx_sdl_gui_c::main_thread_stop()
 	sdl_main_thread_owns_sdl.store(false, std::memory_order_release);
 }
 
-SDL_Event           sdl_event;
 static const int    runtime_scale_min = 1;
 static const int    runtime_scale_max = 8;
 u8                  old_mousebuttons = 0, new_mousebuttons = 0;
@@ -912,329 +913,333 @@ void bx_sdl_gui_c::handle_events(void)
 
 void bx_sdl_gui_c::handle_events_impl(void)
 {
-	u32 key_event;
-
 	sdl_media_pump();
-	while (SDL_PollEvent(&sdl_event))
-	{
-		// GUI hotkeys consume their trigger key and, for actions that release
-		// guest modifiers, the corresponding physical modifier releases. Keep
-		// this ahead of the media popup so a remapped media hotkey also closes it.
-		if (sdl_event.type == SDL_EVENT_KEY_UP)
-		{
-			// The media popup has its own release tracker for dialog keys. Let it
-			// clear that state before the global tracker consumes a release shared
-			// with the media-toggle chord.
-			bool media_release_handled = sdl_media_handle_event(&sdl_event);
-			if (sdl_event.key.scancode > SDL_SCANCODE_UNKNOWN &&
-				sdl_event.key.scancode < SDL_SCANCODE_COUNT &&
-				swallowed_hotkey_releases[sdl_event.key.scancode])
-			{
-				swallowed_hotkey_releases[sdl_event.key.scancode] = false;
-				continue;
-			}
-			if (media_release_handled)
-				continue;
-		}
-
-		if (sdl_event.type == SDL_EVENT_KEY_DOWN &&
-			hotkey_media.matches(sdl_event.key))
-		{
-			if (!sdl_event.key.repeat)
-			{
-				suppress_hotkey_releases(sdl_event.key, hotkey_media, true);
-				if (sdl_mouse_input.captured)
-					bx_gui->mouse_enabled_changed(false);
-				sdl_select_media(sdl_window);
-			}
-			continue;
-		}
-
-		if (sdl_event.type != SDL_EVENT_KEY_UP &&
-			sdl_media_handle_event(&sdl_event))
-			continue;
-
-		// Absolute positions belong to one window.
-		if (mouse_absolute)
-		{
-			SDL_WindowID event_window = 0;
-			bool has_window = true;
-			if (sdl_event.type >= SDL_EVENT_WINDOW_FIRST &&
-				sdl_event.type <= SDL_EVENT_WINDOW_LAST)
-				event_window = sdl_event.window.windowID;
-			else if (sdl_event.type == SDL_EVENT_MOUSE_MOTION)
-				event_window = sdl_event.motion.windowID;
-			else if (sdl_event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
-				sdl_event.type == SDL_EVENT_MOUSE_BUTTON_UP)
-				event_window = sdl_event.button.windowID;
-			else if (sdl_event.type == SDL_EVENT_MOUSE_WHEEL)
-				event_window = sdl_event.wheel.windowID;
-			else
-				has_window = false;
-			if (has_window && (!sdl_window ||
-				event_window != SDL_GetWindowID(sdl_window)))
-				continue;
-		}
-
-		switch (sdl_event.type)
-		{
-		case SDL_EVENT_WINDOW_EXPOSED:
-			// Window needs redraw — re-present the current texture
-			if (sdl_renderer && sdl_texture)
-			{
-				SDL_RenderClear(sdl_renderer);
-				SDL_RenderTexture(sdl_renderer, sdl_texture, NULL, NULL);
-				SDL_RenderPresent(sdl_renderer);
-			}
-			break;
-
-		case SDL_EVENT_WINDOW_RESTORED:
-		case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
-			// System DPI changed — re-scale SDL GUI window
-			if (res_x > 0 && res_y > 0)
-			{
-				dimension_update(res_x, res_y);
-			}
-			break;
-
-		case SDL_EVENT_WINDOW_MOUSE_ENTER:
-		case SDL_EVENT_WINDOW_MOUSE_LEAVE:
-		case SDL_EVENT_WINDOW_MOVED:
-		case SDL_EVENT_WINDOW_RESIZED:
-		case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
-			reset_absolute_mouse_position();
-			break;
-
-		case SDL_EVENT_MOUSE_MOTION:
-			if (sdl_mouse_input.captured)
-			{
-				double rel_x = (double)sdl_event.motion.xrel;
-				double rel_y = (double)sdl_event.motion.yrel;
-				if (mouse_absolute)
-				{
-					const double x = (double)sdl_event.motion.x;
-					const double y = (double)sdl_event.motion.y;
-					if (!mouse_position_valid)
-					{
-						mouse_last_x = x;
-						mouse_last_y = y;
-						mouse_position_valid = true;
-						break;
-					}
-					rel_x = x - mouse_last_x;
-					rel_y = y - mouse_last_y;
-					mouse_last_x = x;
-					mouse_last_y = y;
-				}
-
-				// PS/2 mouse Y is positive-up, SDL is positive-down; hence the
-				// baseline Y negation. invert_x/y flip on top of that.
-				double mx = rel_x * mouse_speed;
-				double my = -rel_y * mouse_speed;
-				sdl_mouse_input.remainder_x += mouse_invert_x ? -mx : mx;
-				sdl_mouse_input.remainder_y += mouse_invert_y ? -my : my;
-
-				int dx = (int)sdl_mouse_input.remainder_x;
-				int dy = (int)sdl_mouse_input.remainder_y;
-
-				if (dx != 0 || dy != 0)
-				{
-					sdl_mouse_input.remainder_x -= dx;
-					sdl_mouse_input.remainder_y -= dy;
-					theKeyboard->mouse_motion(dx, dy, 0, sdl_mouse_input.buttons);
-				}
-			}
-			break;
-
-		case SDL_EVENT_MOUSE_BUTTON_DOWN:
-		case SDL_EVENT_MOUSE_BUTTON_UP:
-		{
-			if (!sdl_mouse_input.captured)
-			{
-				if (sdl_event.type == SDL_EVENT_MOUSE_BUTTON_DOWN
-					&& sdl_event.button.button == SDL_BUTTON_LEFT)
-				{
-					bx_gui->mouse_enabled_changed(true);
-				}
-				break;
-			}
-
-			int bitmask = 0;
-			switch (sdl_event.button.button)
-			{
-			case SDL_BUTTON_LEFT:   bitmask = 0x01; break;
-			case SDL_BUTTON_RIGHT:  bitmask = 0x02; break;
-			case SDL_BUTTON_MIDDLE: bitmask = 0x04; break;
-			default: break;
-			}
-
-			if (sdl_event.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
-				sdl_mouse_input.buttons |= bitmask;
-			else
-				sdl_mouse_input.buttons &= ~bitmask;
-
-			theKeyboard->mouse_motion(0, 0, 0, sdl_mouse_input.buttons);
-			break;
-		}
-
-		case SDL_EVENT_MOUSE_WHEEL:
-			if (sdl_mouse_input.captured)
-			{
-				float wy = sdl_event.wheel.y;  // SDL3: float; +y = away from user (scroll up)
-				if (sdl_event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED)
-					wy = -wy;
-				int dz = (int)wy;
-				if (dz != 0)
-					theKeyboard->mouse_motion(0, 0, dz, sdl_mouse_input.buttons);
-			}
-			break;
-		case SDL_EVENT_WINDOW_FOCUS_LOST:
-		{
-			release_all_guest_keys();
-			clear_hotkey_release_state();
-			reset_absolute_mouse_position();
-			if (sdl_mouse_input.captured)
-				bx_gui->mouse_enabled_changed(false);
-			break;
-		}
-		case SDL_EVENT_KEY_DOWN:
-			if (hotkey_ctrl_alt_delete.matches(sdl_event.key))
-			{
-				if (!sdl_event.key.repeat)
-				{
-					suppress_hotkey_releases(sdl_event.key,
-						hotkey_ctrl_alt_delete, true);
-					send_guest_ctrl_alt_delete();
-				}
-				break;
-			}
-
-			if (hotkey_reset_window.matches(sdl_event.key))
-			{
-				if (!sdl_event.key.repeat)
-				{
-					suppress_hotkey_releases(sdl_event.key,
-						hotkey_reset_window, false);
-					reset_window_size();
-				}
-				break;
-			}
-
-			// Runtime scale adjustment remains gated by video.scale_change_enable.
-			if (vid_scale_change_enable && hotkey_scale_up.matches(sdl_event.key))
-			{
-				if (!sdl_event.key.repeat)
-					suppress_hotkey_releases(sdl_event.key,
-						hotkey_scale_up, false);
-				adjust_window_scale(+1);
-				break;
-			}
-			if (vid_scale_change_enable && hotkey_scale_down.matches(sdl_event.key))
-			{
-				if (!sdl_event.key.repeat)
-					suppress_hotkey_releases(sdl_event.key,
-						hotkey_scale_down, false);
-				adjust_window_scale(-1);
-				break;
-			}
-
-			if (hotkey_mouse_capture.matches(sdl_event.key))
-			{
-				if (!sdl_event.key.repeat)
-				{
-					suppress_hotkey_releases(sdl_event.key,
-						hotkey_mouse_capture, true);
-					bx_gui->mouse_enabled_changed(!sdl_mouse_input.captured);
-				}
-				break;
-			}
-
-			// convert sym -> bochs code
-			if (!myCfg->get_bool_value("keyboard.use_mapping", false))
-			{
-				key_event = sdl_scan_to_bx_key(sdl_event.key.scancode);
-			}
-			else
-			{
-				/* use mapping */
-				BXKeyEntry* entry = bx_keymap->findHostKey(sdl_event.key.key);
-				if (!entry)
-				{
-					BX_ERROR(("host key 0x%x not mapped!",
-						(unsigned)sdl_event.key.key));
-					break;
-				}
-				key_event = entry->baseKey;
-			}
-
-			if (key_event == BX_KEY_UNHANDLED)
-				break;
-
-			if (sdl_event.key.scancode > SDL_SCANCODE_UNKNOWN &&
-				sdl_event.key.scancode < SDL_SCANCODE_COUNT &&
-				!guest_key_pressed[sdl_event.key.scancode])
-			{
-				guest_key_by_scancode[sdl_event.key.scancode] = key_event;
-				guest_key_pressed[sdl_event.key.scancode] = true;
-			}
-			theKeyboard->gen_scancode(key_event);
-
-			// Locks: generate immediate press+release pair
-			if ((key_event == BX_KEY_NUM_LOCK) || (key_event == BX_KEY_CAPS_LOCK))
-			{
-				theKeyboard->gen_scancode(key_event | BX_KEY_RELEASED);
-				if (sdl_event.key.scancode > SDL_SCANCODE_UNKNOWN &&
-					sdl_event.key.scancode < SDL_SCANCODE_COUNT)
-					guest_key_pressed[sdl_event.key.scancode] = false;
-			}
-			break;
-
-		case SDL_EVENT_KEY_UP:
-			if (sdl_event.key.scancode > SDL_SCANCODE_UNKNOWN &&
-				sdl_event.key.scancode < SDL_SCANCODE_COUNT &&
-				guest_key_pressed[sdl_event.key.scancode])
-			{
-				key_event = guest_key_by_scancode[sdl_event.key.scancode];
-			}
-			else if (!myCfg->get_bool_value("keyboard.use_mapping", false))
-			{
-				key_event = sdl_scan_to_bx_key(sdl_event.key.scancode);
-			}
-			else
-			{
-				BXKeyEntry* entry = bx_keymap->findHostKey(sdl_event.key.key);
-				if (!entry)
-				{
-					BX_ERROR(("host key 0x%x not mapped!",
-						(unsigned)sdl_event.key.key));
-					break;
-				}
-				key_event = entry->baseKey;
-			}
-
-			if (key_event == BX_KEY_UNHANDLED)
-				break;
-
-			if ((key_event == BX_KEY_NUM_LOCK) || (key_event == BX_KEY_CAPS_LOCK))
-			{
-				theKeyboard->gen_scancode(key_event);
-			}
-
-			theKeyboard->gen_scancode(key_event | BX_KEY_RELEASED);
-			if (sdl_event.key.scancode > SDL_SCANCODE_UNKNOWN &&
-				sdl_event.key.scancode < SDL_SCANCODE_COUNT)
-				guest_key_pressed[sdl_event.key.scancode] = false;
-			break;
-
-		case SDL_EVENT_QUIT:
-			if (!sdl_mouse_input.captured)
-				FAILURE(Graceful, "User requested shutdown");
-		}
-	}
+	SDL_Event event;
+	while (SDL_PollEvent(&event))
+		handle_event_impl(event);
 
 	// Native popups can intercept releases. Reconcile against SDL's current
 	// physical keyboard state so a later normal press is never swallowed.
 	reconcile_hotkey_release_state();
+}
+
+void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
+{
+	u32 key_event;
+
+	// GUI hotkeys consume their trigger key and, for actions that release
+	// guest modifiers, the corresponding physical modifier releases. Keep
+	// this ahead of the media popup so a remapped media hotkey also closes it.
+	if (event.type == SDL_EVENT_KEY_UP)
+	{
+		// The media popup has its own release tracker for dialog keys. Let it
+		// clear that state before the global tracker consumes a release shared
+		// with the media-toggle chord.
+		bool media_release_handled = sdl_media_handle_event(&event);
+		if (event.key.scancode > SDL_SCANCODE_UNKNOWN &&
+			event.key.scancode < SDL_SCANCODE_COUNT &&
+			swallowed_hotkey_releases[event.key.scancode])
+		{
+			swallowed_hotkey_releases[event.key.scancode] = false;
+			return;
+		}
+		if (media_release_handled)
+			return;
+	}
+
+	if (event.type == SDL_EVENT_KEY_DOWN &&
+		hotkey_media.matches(event.key))
+	{
+		if (!event.key.repeat)
+		{
+			suppress_hotkey_releases(event.key, hotkey_media, true);
+			if (sdl_mouse_input.captured)
+				bx_gui->mouse_enabled_changed(false);
+			sdl_select_media(sdl_window);
+		}
+		return;
+	}
+
+	if (event.type != SDL_EVENT_KEY_UP &&
+		sdl_media_handle_event(&event))
+		return;
+
+	// Absolute positions belong to one window.
+	if (mouse_absolute)
+	{
+		SDL_WindowID event_window = 0;
+		bool has_window = true;
+		if (event.type >= SDL_EVENT_WINDOW_FIRST &&
+			event.type <= SDL_EVENT_WINDOW_LAST)
+			event_window = event.window.windowID;
+		else if (event.type == SDL_EVENT_MOUSE_MOTION)
+			event_window = event.motion.windowID;
+		else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+			event.type == SDL_EVENT_MOUSE_BUTTON_UP)
+			event_window = event.button.windowID;
+		else if (event.type == SDL_EVENT_MOUSE_WHEEL)
+			event_window = event.wheel.windowID;
+		else
+			has_window = false;
+		if (has_window && (!sdl_window ||
+			event_window != SDL_GetWindowID(sdl_window)))
+			return;
+	}
+
+	switch (event.type)
+	{
+	case SDL_EVENT_WINDOW_EXPOSED:
+		// Window needs redraw — re-present the current texture
+		if (sdl_renderer && sdl_texture)
+		{
+			SDL_RenderClear(sdl_renderer);
+			SDL_RenderTexture(sdl_renderer, sdl_texture, NULL, NULL);
+			SDL_RenderPresent(sdl_renderer);
+		}
+		break;
+
+	case SDL_EVENT_WINDOW_RESTORED:
+	case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+		// System DPI changed — re-scale SDL GUI window
+		if (res_x > 0 && res_y > 0)
+		{
+			dimension_update(res_x, res_y);
+		}
+		break;
+
+	case SDL_EVENT_WINDOW_MOUSE_ENTER:
+	case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+	case SDL_EVENT_WINDOW_MOVED:
+	case SDL_EVENT_WINDOW_RESIZED:
+	case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+		reset_absolute_mouse_position();
+		break;
+
+	case SDL_EVENT_MOUSE_MOTION:
+		if (sdl_mouse_input.captured)
+		{
+			double rel_x = (double)event.motion.xrel;
+			double rel_y = (double)event.motion.yrel;
+			if (mouse_absolute)
+			{
+				const double x = (double)event.motion.x;
+				const double y = (double)event.motion.y;
+				if (!mouse_position_valid)
+				{
+					mouse_last_x = x;
+					mouse_last_y = y;
+					mouse_position_valid = true;
+					break;
+				}
+				rel_x = x - mouse_last_x;
+				rel_y = y - mouse_last_y;
+				mouse_last_x = x;
+				mouse_last_y = y;
+			}
+
+			// PS/2 mouse Y is positive-up, SDL is positive-down; hence the
+			// baseline Y negation. invert_x/y flip on top of that.
+			double mx = rel_x * mouse_speed;
+			double my = -rel_y * mouse_speed;
+			sdl_mouse_input.remainder_x += mouse_invert_x ? -mx : mx;
+			sdl_mouse_input.remainder_y += mouse_invert_y ? -my : my;
+
+			int dx = (int)sdl_mouse_input.remainder_x;
+			int dy = (int)sdl_mouse_input.remainder_y;
+
+			if (dx != 0 || dy != 0)
+			{
+				sdl_mouse_input.remainder_x -= dx;
+				sdl_mouse_input.remainder_y -= dy;
+				theKeyboard->mouse_motion(dx, dy, 0, sdl_mouse_input.buttons);
+			}
+		}
+		break;
+
+	case SDL_EVENT_MOUSE_BUTTON_DOWN:
+	case SDL_EVENT_MOUSE_BUTTON_UP:
+	{
+		if (!sdl_mouse_input.captured)
+		{
+			if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN
+				&& event.button.button == SDL_BUTTON_LEFT)
+			{
+				bx_gui->mouse_enabled_changed(true);
+			}
+			break;
+		}
+
+		int bitmask = 0;
+		switch (event.button.button)
+		{
+		case SDL_BUTTON_LEFT:   bitmask = 0x01; break;
+		case SDL_BUTTON_RIGHT:  bitmask = 0x02; break;
+		case SDL_BUTTON_MIDDLE: bitmask = 0x04; break;
+		default: break;
+		}
+
+		if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+			sdl_mouse_input.buttons |= bitmask;
+		else
+			sdl_mouse_input.buttons &= ~bitmask;
+
+		theKeyboard->mouse_motion(0, 0, 0, sdl_mouse_input.buttons);
+		break;
+	}
+
+	case SDL_EVENT_MOUSE_WHEEL:
+		if (sdl_mouse_input.captured)
+		{
+			float wy = event.wheel.y;  // SDL3: float; +y = away from user (scroll up)
+			if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED)
+				wy = -wy;
+			int dz = (int)wy;
+			if (dz != 0)
+				theKeyboard->mouse_motion(0, 0, dz, sdl_mouse_input.buttons);
+		}
+		break;
+	case SDL_EVENT_WINDOW_FOCUS_LOST:
+	{
+		release_all_guest_keys();
+		clear_hotkey_release_state();
+		reset_absolute_mouse_position();
+		if (sdl_mouse_input.captured)
+			bx_gui->mouse_enabled_changed(false);
+		break;
+	}
+	case SDL_EVENT_KEY_DOWN:
+		if (hotkey_ctrl_alt_delete.matches(event.key))
+		{
+			if (!event.key.repeat)
+			{
+				suppress_hotkey_releases(event.key,
+					hotkey_ctrl_alt_delete, true);
+				send_guest_ctrl_alt_delete();
+			}
+			break;
+		}
+
+		if (hotkey_reset_window.matches(event.key))
+		{
+			if (!event.key.repeat)
+			{
+				suppress_hotkey_releases(event.key,
+					hotkey_reset_window, false);
+				reset_window_size();
+			}
+			break;
+		}
+
+		// Runtime scale adjustment remains gated by video.scale_change_enable.
+		if (vid_scale_change_enable && hotkey_scale_up.matches(event.key))
+		{
+			if (!event.key.repeat)
+				suppress_hotkey_releases(event.key,
+					hotkey_scale_up, false);
+			adjust_window_scale(+1);
+			break;
+		}
+		if (vid_scale_change_enable && hotkey_scale_down.matches(event.key))
+		{
+			if (!event.key.repeat)
+				suppress_hotkey_releases(event.key,
+					hotkey_scale_down, false);
+			adjust_window_scale(-1);
+			break;
+		}
+
+		if (hotkey_mouse_capture.matches(event.key))
+		{
+			if (!event.key.repeat)
+			{
+				suppress_hotkey_releases(event.key,
+					hotkey_mouse_capture, true);
+				bx_gui->mouse_enabled_changed(!sdl_mouse_input.captured);
+			}
+			break;
+		}
+
+		// convert sym -> bochs code
+		if (!myCfg->get_bool_value("keyboard.use_mapping", false))
+		{
+			key_event = sdl_scan_to_bx_key(event.key.scancode);
+		}
+		else
+		{
+			/* use mapping */
+			BXKeyEntry* entry = bx_keymap->findHostKey(event.key.key);
+			if (!entry)
+			{
+				BX_ERROR(("host key 0x%x not mapped!",
+					(unsigned)event.key.key));
+				break;
+			}
+			key_event = entry->baseKey;
+		}
+
+		if (key_event == BX_KEY_UNHANDLED)
+			break;
+
+		if (event.key.scancode > SDL_SCANCODE_UNKNOWN &&
+			event.key.scancode < SDL_SCANCODE_COUNT &&
+			!guest_key_pressed[event.key.scancode])
+		{
+			guest_key_by_scancode[event.key.scancode] = key_event;
+			guest_key_pressed[event.key.scancode] = true;
+		}
+		theKeyboard->gen_scancode(key_event);
+
+		// Locks: generate immediate press+release pair
+		if ((key_event == BX_KEY_NUM_LOCK) || (key_event == BX_KEY_CAPS_LOCK))
+		{
+			theKeyboard->gen_scancode(key_event | BX_KEY_RELEASED);
+			if (event.key.scancode > SDL_SCANCODE_UNKNOWN &&
+				event.key.scancode < SDL_SCANCODE_COUNT)
+				guest_key_pressed[event.key.scancode] = false;
+		}
+		break;
+
+	case SDL_EVENT_KEY_UP:
+		if (event.key.scancode > SDL_SCANCODE_UNKNOWN &&
+			event.key.scancode < SDL_SCANCODE_COUNT &&
+			guest_key_pressed[event.key.scancode])
+		{
+			key_event = guest_key_by_scancode[event.key.scancode];
+		}
+		else if (!myCfg->get_bool_value("keyboard.use_mapping", false))
+		{
+			key_event = sdl_scan_to_bx_key(event.key.scancode);
+		}
+		else
+		{
+			BXKeyEntry* entry = bx_keymap->findHostKey(event.key.key);
+			if (!entry)
+			{
+				BX_ERROR(("host key 0x%x not mapped!",
+					(unsigned)event.key.key));
+				break;
+			}
+			key_event = entry->baseKey;
+		}
+
+		if (key_event == BX_KEY_UNHANDLED)
+			break;
+
+		if ((key_event == BX_KEY_NUM_LOCK) || (key_event == BX_KEY_CAPS_LOCK))
+		{
+			theKeyboard->gen_scancode(key_event);
+		}
+
+		theKeyboard->gen_scancode(key_event | BX_KEY_RELEASED);
+		if (event.key.scancode > SDL_SCANCODE_UNKNOWN &&
+			event.key.scancode < SDL_SCANCODE_COUNT)
+			guest_key_pressed[event.key.scancode] = false;
+		break;
+
+	case SDL_EVENT_QUIT:
+		if (!sdl_mouse_input.captured)
+			FAILURE(Graceful, "User requested shutdown");
+	}
 }
 
 /**
