@@ -1452,6 +1452,10 @@ void bx_sdl_gui_c::exit(void)
 void bx_sdl_gui_c::exit_impl(void)
 {
 	sdl_media_shutdown();
+	// Native dialogs can still refer to this parent after their callback. Keep
+	// its resources until process exit; closing the custom popup above is safe.
+	if (sdl_media_parent_was_used(sdl_window))
+		return;
 	if (sdl_texture) {
 		SDL_DestroyTexture(sdl_texture);
 		sdl_texture = NULL;

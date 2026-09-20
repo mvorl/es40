@@ -43,5 +43,8 @@ void sdl_select_media(SDL_Window* window) noexcept;
 void sdl_media_pump() noexcept;
 bool sdl_media_handle_event(const SDL_Event* event) noexcept;
 void sdl_media_shutdown() noexcept;
+// Main-thread query. Native dialogs can retain their parent beyond our callback.
+// Such parents must remain alive until process exit.
+bool sdl_media_parent_was_used(SDL_Window* window) noexcept;
 
 #endif // !defined(INCLUDED_SDL_MEDIA_H)

@@ -142,8 +142,9 @@ public:
   // main() (the SDL backend does so on every platform). A backend that
   // returns true here gets main_thread_init()/main_thread_pump() called from
   // there, and the emulator itself runs on a worker thread; main_thread_stop()
-  // ends the pump once that worker is completely done. Legacy backends that
-  // return false keep the old model: the emulator owns main() and the GUI is
+  // ends the pump once that worker is completely done. After joining it,
+  // main() calls exit() on that same backend. Legacy backends that return false
+  // keep the old model: the emulator owns main() and the GUI is
   // driven entirely from the VGA card's thread.
   virtual bool                  requires_main_thread() { return false; }
   virtual void                  main_thread_init() {}

@@ -489,9 +489,21 @@ int main(int argc, char* argv[])
 	int result = 0;
 	if (bx_gui && bx_gui->requires_main_thread())
 	{
+		bx_gui_c* const main_thread_gui = bx_gui;
 		std::thread emulator([&] { result = run_emulator(argc, argv); });
-		bx_gui->main_thread_pump();
+		main_thread_gui->main_thread_pump();
 		emulator.join();
+		// Workers and their synchronous GUI calls have finished. Release host
+		// display resources here, on the same main thread that initialized SDL.
+		try
+		{
+			main_thread_gui->exit();
+		}
+		catch (const CException& cleanup_error)
+		{
+			printf("GUI shutdown failure: %s\n", cleanup_error.displayText().c_str());
+			result = 1;
+		}
 	}
 	else
 		result = run_emulator(argc, argv);

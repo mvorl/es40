@@ -74,6 +74,8 @@ static const SBlankFloppyFormat blank_floppy_formats[] = {
 };
 
 static std::atomic<bool> file_dialog_open(false);
+static const char* const native_dialog_parent_property =
+    "es40.media.native_dialog_parent";
 static std::mutex removable_disks_mutex;
 static std::vector<std::shared_ptr<CDiskFileMediaMailbox> > removable_disks;
 
@@ -694,8 +696,24 @@ static bool zenity_available()
 }
 #endif
 
-static void prepare_file_dialog()
+bool sdl_media_parent_was_used(SDL_Window* window) noexcept
 {
+    if (!window)
+        return false;
+    const SDL_PropertiesID properties = SDL_GetWindowProperties(window);
+    // Retain the parent if its status cannot be read safely.
+    return !properties ||
+        SDL_GetBooleanProperty(properties, native_dialog_parent_property, false);
+}
+
+static bool prepare_file_dialog(SDL_Window* parent)
+{
+    // SDL may use the parent after invoking our callback, including on a
+    // native fallback path. Keep this per-window marker for the process lifetime.
+    const SDL_PropertiesID properties = SDL_GetWindowProperties(parent);
+    if (!properties ||
+        !SDL_SetBooleanProperty(properties, native_dialog_parent_property, true))
+        return false;
 #if defined(__linux__)
     // Prefer Zenity when available, otherwise keep SDL's normal selection.
 	// Overridable via SDL_FILE_DIALOG_DRIVER= environment variable.
@@ -703,6 +721,7 @@ static void prepare_file_dialog()
         SDL_SetHintWithPriority(SDL_HINT_FILE_DIALOG_DRIVER, "zenity",
                                 SDL_HINT_DEFAULT);
 #endif
+    return true;
 }
 
 static void SDLCALL media_file_callback(void* userdata,
@@ -774,7 +793,12 @@ static void show_file_dialog(
     const int filter_count = mailbox->is_floppy() ?
         (int)SDL_arraysize(floppy_filters) :
         (int)SDL_arraysize(cdrom_filters);
-    prepare_file_dialog();
+    if (!prepare_file_dialog(media_popup.parent))
+    {
+        file_dialog_open.store(false, std::memory_order_release);
+        show_message("Could not prepare the file-dialog parent window.");
+        return;
+    }
     SDL_ShowOpenFileDialog(media_file_callback, context.release(),
                            media_popup.parent, filters, filter_count,
                            nullptr, false);
@@ -800,7 +824,12 @@ static void show_blank_floppy_dialog(
     context->mailbox = mailbox;
     context->blank_floppy_size = image_size;
 
-    prepare_file_dialog();
+    if (!prepare_file_dialog(media_popup.parent))
+    {
+        file_dialog_open.store(false, std::memory_order_release);
+        show_message("Could not prepare the file-dialog parent window.");
+        return;
+    }
     SDL_ShowSaveFileDialog(media_file_callback, context.release(),
                            media_popup.parent, floppy_filters,
                            (int)SDL_arraysize(floppy_filters),
