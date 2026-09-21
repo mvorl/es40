@@ -431,7 +431,7 @@ void CAliM1543C::init()
 
 	state.toy_stored_data[0x17] = myCfg->get_bool_value("vga_console") ? 1 : 0;
 
-	if (state.toy_stored_data[0x17] && !theVGA)
+	if (state.toy_stored_data[0x17] && !cSystem->has_vga_device())
 	{
 		printf("! CONFIGURATION WARNING ! vga_console set to true, but no VGA card installed.\n");
 		state.toy_stored_data[0x17] = 0;
@@ -2569,7 +2569,8 @@ void CAliM1543C::check_state()
 	// as well
 	static bool ctb_fixed = false;
 
-	if (!ctb_fixed && theVGA)
+	const CVGA* console = !ctb_fixed ? cSystem->get_vga_console() : nullptr;
+	if (console)
 	{
 		const u64 HWRPB_BASE = U64(0x2000);
 		const u64 HWRPB_MAGIC = U64(0x0000004250525748); // "HWRPB\0\0\0" LE
@@ -2622,13 +2623,12 @@ void CAliM1543C::check_state()
 
 		// Step 5: Check if it needs fixing
 		// SRM leaves this as all-FF for non-TGA adapters
-		// Also fix if it's zero (uninitialized)
 		bool needs_fix = ((turboslot & U64(0xFFFF)) == U64(0xFFFF));
 
 		if (needs_fix)
 		{
-			int vga_bus = theVGA->pci_bus() & 0xFF;
-			int vga_dev = theVGA->pci_dev() & 0xFF;
+			int vga_bus = console->pci_bus() & 0xFF;
+			int vga_dev = console->pci_dev() & 0xFF;
 			u64 ts = (U64(0x0003) << 16) | (((u64)vga_bus) << 8) | ((u64)vga_dev);
 			cSystem->WriteMem(ctb_phys + CTB_TS_OFF, 64, ts, this);
 			static bool printed = false;
@@ -2642,7 +2642,7 @@ void CAliM1543C::check_state()
 			}
 #endif
 		}
-		else if (turboslot == ((U64(0x0003) << 16) | (((u64)(theVGA->pci_bus() & 0xFF)) << 8) | ((u64)(theVGA->pci_dev() & 0xFF))))
+		else if (turboslot == ((U64(0x0003) << 16) | (((u64)(console->pci_bus() & 0xFF)) << 8) | ((u64)(console->pci_dev() & 0xFF))))
 		{
 			// Our value is there and SRM didn't overwrite it — we're done
 			ctb_fixed = true;

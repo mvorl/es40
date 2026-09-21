@@ -156,6 +156,7 @@
 #define INCLUDED_SYSTEM_H
 
 class CDisplayOutput;
+class CVGA;
 
 #if defined(PROFILE)
 #define PROFILE_FROM      U64(0x8000)
@@ -266,6 +267,10 @@ public:
   int           RegisterComponent(CSystemComponent* component);
   void          UnregisterComponent(CSystemComponent* component);
   int           RegisterCPU(class CAlphaCPU* cpu);
+
+  bool has_vga_device(const CVGA* exclude = nullptr) const noexcept;
+  // Sole-card console until explicit multi-card console selection is added.
+  const CVGA* get_vga_console() const;
 
   struct SDisplayOutput
   {

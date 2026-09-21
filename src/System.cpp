@@ -315,6 +315,7 @@
 #include "StdAfx.h"
 #include "System.h"
 #include "PCIDevice.h"
+#include "VGA.h"
 #include "AlphaCPU.h"
 #include "network/lockstep.h"
 #include "DPR.h"
@@ -488,6 +489,32 @@ void CSystem::UnregisterComponent(CSystemComponent* component)
 			break;
 		}
 	}
+}
+
+bool CSystem::has_vga_device(const CVGA* exclude) const noexcept
+{
+	for (const CSystemComponent* component : acComponents)
+	{
+		const auto* card = dynamic_cast<const CVGA*>(component);
+		if (card && card != exclude)
+			return true;
+	}
+	return false;
+}
+
+const CVGA* CSystem::get_vga_console() const
+{
+	const CVGA* console = nullptr;
+	for (const CSystemComponent* component : acComponents)
+	{
+		const auto* card = dynamic_cast<const CVGA*>(component);
+		if (!card)
+			continue;
+		if (console)
+			FAILURE(Configuration, "VGA console selection requires a single card");
+		console = card;
+	}
+	return console;
 }
 
 std::vector<CSystem::SDisplayOutput> CSystem::get_display_outputs() const

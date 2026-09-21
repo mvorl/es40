@@ -50,6 +50,7 @@
   **/
 #include "StdAfx.h"
 #include "VGA.h"
+#include "System.h"
 
 #include "emu.h"
 
@@ -62,7 +63,7 @@
    **/
 CVGA::CVGA(class CConfigurator* cfg, class CSystem* c, int pcibus, int pcidev) : CPCIDevice(cfg, c, pcibus, pcidev)
 {
-	if (theVGA != 0)
+	if (c->has_vga_device(this))
 		FAILURE(Configuration, "More than one VGA");
 	theVGA = this;
 }
@@ -72,6 +73,8 @@ CVGA::CVGA(class CConfigurator* cfg, class CSystem* c, int pcibus, int pcidev) :
  **/
 CVGA::~CVGA(void)
 {
+	if (theVGA == this)
+		theVGA = nullptr;
 }
 
 /**************************************
