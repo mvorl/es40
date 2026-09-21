@@ -143,6 +143,23 @@ bx_gui_c::~bx_gui_c()
 	delete guiMutex;
 }
 
+bx_gui_c& bx_gui_c::display_for_output(const std::string& device_path,
+	unsigned output_id)
+{
+	if (device_path.empty())
+		FAILURE(Configuration, "Display output requires a device identity");
+	if (output_bound)
+	{
+		if (output_device_path != device_path || bound_output_id != output_id)
+			FAILURE(Configuration, "GUI backend supports only one display output");
+		return *this;
+	}
+	output_device_path = device_path;
+	bound_output_id = output_id;
+	output_bound = true;
+	return *this;
+}
+
 void bx_gui_c::init(unsigned tilewidth, unsigned tileheight)
 {
 	new_gfx_api = 0;

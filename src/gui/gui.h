@@ -66,6 +66,7 @@
 #define __GUI_H__
 
 #include <cstddef>
+#include <string>
 
 #define BX_DEBUG(a)  \
   {                  \
@@ -139,6 +140,9 @@ public:
   virtual void                  exit(void) = 0;
   // Retire all application displays after their producers have stopped.
   virtual void                  exit_application() { exit(); }
+  // Configuration-time lookup. The backend owns the returned display.
+  virtual bx_gui_c&              display_for_output(const std::string& device_path,
+    unsigned output_id);
 
   // Some GUI backends drive the windowing system from the thread that called
   // main() (the SDL backend does so on every platform). A backend that
@@ -191,6 +195,11 @@ protected:
   u16           host_pitch;
   u8            host_bpp;
   u8* framebuffer;
+private:
+  // Single-output fallback for backends without an application collection.
+  std::string   output_device_path;
+  unsigned      bound_output_id = 0;
+  bool          output_bound = false;
 };
 
 // Host presentation binding for one modeled output.

@@ -102,6 +102,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 #include <SDL3/SDL.h>
 
@@ -187,6 +188,8 @@ public:
 	virtual void    mouse_enabled_changed_specific(bool val) override;
 	virtual void    exit(void) override;
 	void           exit_application() override;
+	bx_gui_c&      display_for_output(const std::string& device_path,
+		unsigned output_id) override;
 	virtual			bx_svga_tileinfo_t* graphics_tile_info(bx_svga_tileinfo_t* info) override;
 	virtual			u8* graphics_tile_get(unsigned x, unsigned y, unsigned* w, unsigned* h) override;
 	virtual void    graphics_tile_update_in_place(unsigned x, unsigned y, unsigned w, unsigned h) override;
@@ -263,6 +266,7 @@ public:
 	explicit sdl_application(CConfigurator* cfg);
 	~sdl_application();
 	bx_sdl_gui_c& create_display();
+	bx_sdl_gui_c& display_for_output(const std::string& device_path, unsigned output_id);
 	void initialize_keymap();
 	void exit_displays();
 	CConfigurator* configuration() const { return cfg; }
@@ -272,6 +276,7 @@ private:
 	std::unique_ptr<bx_keymap_c> shared_keymap;
 	// Destroy display objects before their shared keymap.
 	std::vector<std::unique_ptr<bx_sdl_gui_c>> displays;
+	std::map<std::pair<std::string, unsigned>, bx_sdl_gui_c*> display_outputs;
 	bool keymap_initialized = false;
 	bool shutdown_started = false;
 };
@@ -647,6 +652,41 @@ bx_sdl_gui_c& sdl_application::create_display()
 	auto display = std::make_unique<bx_sdl_gui_c>(*this);
 	displays.push_back(std::move(display));
 	return *displays.back();
+}
+
+bx_sdl_gui_c& sdl_application::display_for_output(const std::string& device_path,
+	unsigned output_id)
+{
+	if (shutdown_started)
+		FAILURE(SDL, "Cannot bind a display after application shutdown");
+	if (device_path.empty())
+		FAILURE(Configuration, "Display output requires a device identity");
+	const auto key = std::make_pair(device_path, output_id);
+	const auto existing = display_outputs.find(key);
+	if (existing != display_outputs.end())
+		return *existing->second;
+
+	// Reserve the identity first; a failed display allocation must not consume it.
+	const auto entry = display_outputs.emplace(key, nullptr).first;
+	try
+	{
+		if (display_outputs.size() == 1 && !displays.empty())
+			entry->second = displays.front().get();
+		else
+			entry->second = &create_display();
+	}
+	catch (...)
+	{
+		display_outputs.erase(entry);
+		throw;
+	}
+	return *entry->second;
+}
+
+bx_gui_c& bx_sdl_gui_c::display_for_output(const std::string& device_path,
+	unsigned output_id)
+{
+	return application.display_for_output(device_path, output_id);
 }
 
 void sdl_application::initialize_keymap()
