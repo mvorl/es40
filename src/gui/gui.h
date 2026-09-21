@@ -150,6 +150,9 @@ public:
   virtual void                  main_thread_init() {}
   virtual void                  main_thread_pump() {}
   virtual void                  main_thread_stop() {}
+  // Synchronous input barriers; neither operation changes guest state.
+  virtual void                  pause_guest_input() {}
+  virtual void                  resume_guest_input() {}
   // Disconnect host input after workers stop, before guest devices are deleted.
   virtual void                  detach_guest_input() {}
 

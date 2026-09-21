@@ -144,6 +144,7 @@ public:
 	static void dispatch(const SDL_Event& event);
 private:
 	friend class bx_sdl_gui_c;
+	static void defer_event(const SDL_Event& event);
 	static void reconcile_input_focus();
 	static void reconcile_input_releases();
 	static void release_input_session();
@@ -191,6 +192,8 @@ public:
 	virtual void    main_thread_init() override;
 	virtual void    main_thread_pump() override;
 	virtual void    main_thread_stop() override;
+	void           pause_guest_input() override;
+	void           resume_guest_input() override;
 	void           detach_guest_input() override;
 private:
 	friend class sdl_event_dispatcher;
@@ -268,6 +271,12 @@ static std::atomic<bool> sdl_main_thread_owns_sdl(false);
 
 // Main-thread-only attachment, outside guest state.
 static CKeyboard* sdl_guest_keyboard = NULL;
+static bool sdl_guest_input_paused = false;
+static bool sdl_poll_in_progress = false;
+// At most one event can have been removed when SDL_PollEvent runs a pause
+// callback. Keep it ahead of the remaining queue until polling resumes.
+static SDL_Event sdl_deferred_event = {};
+static bool sdl_has_deferred_event = false;
 
 /// How long main_thread_pump() blocks waiting for work before looping. Only
 /// caps how quickly it notices main_thread_stop(); callbacks wake it at once.
@@ -329,6 +338,16 @@ void bx_sdl_gui_c::main_thread_init()
 
 	sdl_guest_keyboard = theKeyboard;
 	sdl_main_thread_owns_sdl.store(true, std::memory_order_release);
+}
+
+void bx_sdl_gui_c::pause_guest_input()
+{
+	on_main_thread([] { sdl_guest_input_paused = true; });
+}
+
+void bx_sdl_gui_c::resume_guest_input()
+{
+	on_main_thread([] { sdl_guest_input_paused = false; });
 }
 
 void bx_sdl_gui_c::detach_guest_input()
@@ -950,19 +969,19 @@ static u32 sdl_scan_to_bx_key(SDL_Scancode sym)
 
 void sdl_event_dispatcher::send_guest_key(u32 key)
 {
-	if (sdl_guest_keyboard)
+	if (sdl_guest_keyboard && !sdl_guest_input_paused)
 		sdl_guest_keyboard->gen_scancode(key);
 }
 
 void sdl_event_dispatcher::send_guest_mouse(int dx, int dy, int dz, unsigned buttons)
 {
-	if (sdl_guest_keyboard)
+	if (sdl_guest_keyboard && !sdl_guest_input_paused)
 		sdl_guest_keyboard->mouse_motion(dx, dy, dz, buttons);
 }
 
 void sdl_event_dispatcher::notify_guest_capture(bool captured)
 {
-	if (sdl_guest_keyboard)
+	if (sdl_guest_keyboard && !sdl_guest_input_paused)
 		sdl_guest_keyboard->set_mouse_capture(captured);
 }
 
@@ -1056,12 +1075,45 @@ void bx_sdl_gui_c::handle_events(void)
 
 void sdl_event_dispatcher::poll()
 {
+	if (sdl_guest_input_paused || sdl_poll_in_progress)
+		return;
+	// PollEvent also runs other workers' callbacks. One drain owns the queue,
+	// including the single deferred event, until this call returns.
+	struct PollGuard
+	{
+		PollGuard() { sdl_poll_in_progress = true; }
+		~PollGuard() { sdl_poll_in_progress = false; }
+	} guard;
 	sdl_media_pump();
+	if (sdl_guest_input_paused)
+		return;
 	if (sdl_media_input_active())
 		reconcile_input_focus();
-	SDL_Event event;
-	while (SDL_PollEvent(&event))
-		sdl_event_dispatcher::dispatch(event);
+	while (!sdl_guest_input_paused)
+	{
+		SDL_Event event;
+		if (sdl_has_deferred_event)
+		{
+			event = sdl_deferred_event;
+			sdl_has_deferred_event = false;
+		}
+		else
+		{
+			const bool available = SDL_PollEvent(&event);
+			// PollEvent can run a nested main-thread pause callback.
+			if (sdl_guest_input_paused)
+			{
+				if (available)
+					defer_event(event);
+				return;
+			}
+			if (!available)
+				break;
+		}
+		dispatch(event);
+	}
+	if (sdl_guest_input_paused)
+		return;
 
 	// Focus queries describe SDL's latest state, not each queued event's state.
 	reconcile_input_focus();
@@ -1072,8 +1124,41 @@ void sdl_event_dispatcher::poll()
 	reconcile_hotkey_release_state();
 }
 
+void sdl_event_dispatcher::defer_event(const SDL_Event& event)
+{
+	// SDL owns pointer payloads until a later pump. Retain only the scalar
+	// event families consumed by this dispatcher and the media UI; other
+	// event types are ignored by both and need only their common fields.
+	sdl_deferred_event = {};
+	sdl_deferred_event.common = event.common;
+	if (event.type >= SDL_EVENT_WINDOW_FIRST && event.type <= SDL_EVENT_WINDOW_LAST)
+		sdl_deferred_event.window = event.window;
+	else switch (event.type)
+	{
+	case SDL_EVENT_KEY_DOWN:
+	case SDL_EVENT_KEY_UP:
+		sdl_deferred_event.key = event.key;
+		break;
+	case SDL_EVENT_MOUSE_MOTION:
+		sdl_deferred_event.motion = event.motion;
+		break;
+	case SDL_EVENT_MOUSE_BUTTON_DOWN:
+	case SDL_EVENT_MOUSE_BUTTON_UP:
+		sdl_deferred_event.button = event.button;
+		break;
+	case SDL_EVENT_MOUSE_WHEEL:
+		sdl_deferred_event.wheel = event.wheel;
+		break;
+	default:
+		break;
+	}
+	sdl_has_deferred_event = true;
+}
+
 void sdl_event_dispatcher::dispatch(const SDL_Event& event)
 {
+	if (sdl_guest_input_paused)
+		return;
 	// GUI hotkeys consume their trigger key and, for actions that release
 	// guest modifiers, the corresponding physical modifier releases. Keep
 	// this ahead of the media popup so a remapped media hotkey also closes it.
@@ -1738,6 +1823,8 @@ void bx_sdl_gui_c::mouse_enabled_changed_specific(bool val)
 void sdl_event_dispatcher::mouse_enabled_changed(bx_sdl_gui_c* target, bool val)
 {
 	on_main_thread([target, val] {
+		if (sdl_guest_input_paused)
+			return;
 		try
 		{
 			mouse_enabled_changed_impl(target, val);
@@ -1767,6 +1854,8 @@ void bx_sdl_gui_c::set_mouse_capture_impl(bool val)
 
 void sdl_event_dispatcher::set_mouse_capture(bx_sdl_gui_c* target, bool val)
 {
+	if (sdl_guest_input_paused)
+		return;
 	if (val && (!target || !target->sdl_window || !target->registered_window_id))
 		FAILURE(SDL, "Cannot capture an unregistered display");
 	if (!val && sdl_mouse_input.buttons)
