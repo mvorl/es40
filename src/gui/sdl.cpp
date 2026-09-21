@@ -1078,6 +1078,15 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 	// Delivery and explicit retirement are serialized on this SDL main thread.
 	switch (event.type)
 	{
+	case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+		if (event.window.windowID && find_window_owner(event.window.windowID) &&
+			theSystem)
+			theSystem->RequestShutdown();
+		return;
+	case SDL_EVENT_QUIT:
+		if (theSystem)
+			theSystem->RequestShutdown();
+		return;
 	case SDL_EVENT_KEY_DOWN:
 	case SDL_EVENT_KEY_UP:
 	{
@@ -1137,19 +1146,6 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 		break;
 	}
 
-	// Remaining window events still require the owning display as receiver.
-	const bool window_event = event.type >= SDL_EVENT_WINDOW_FIRST &&
-		event.type <= SDL_EVENT_WINDOW_LAST;
-	if (window_event && (!sdl_window || !event.window.windowID ||
-		find_window_owner(event.window.windowID) != this))
-		return;
-
-	switch (event.type)
-	{
-	case SDL_EVENT_QUIT:
-		if (!sdl_mouse_input.captured)
-			FAILURE(Graceful, "User requested shutdown");
-	}
 }
 
 void bx_sdl_gui_c::handle_focus_event_impl(const SDL_Event& event)

@@ -747,6 +747,7 @@ void CSystem::Run()
 	signal(SIGINT, &sigint_handler);
 	signal(SIGTERM, &sigint_handler);
 
+	CheckForShutdown();
 	start_threads();
 
 	for (k = 0;; k++)
@@ -754,11 +755,13 @@ void CSystem::Run()
 		if (got_sigint)
 			FAILURE(Graceful, "CTRL-C or SIGTERM detected");
 
+		CheckForShutdown();
 		if (ProcessPendingReset())
 			continue;
 
 
 		CThread::sleep(100); // 100ms sleep
+		CheckForShutdown();
 		UpdateX86BIOSClock();
 		for (i = 0; i < iNumComponents; i++)
 			acComponents[i]->check_state();
@@ -776,6 +779,22 @@ void CSystem::Run()
 	//  return 1;
 }
 
+void CSystem::RequestShutdown() noexcept
+{
+	m_shutdown_requested.store(true, std::memory_order_release);
+}
+
+bool CSystem::IsShutdownRequested() const noexcept
+{
+	return m_shutdown_requested.load(std::memory_order_acquire);
+}
+
+void CSystem::CheckForShutdown() const
+{
+	if (IsShutdownRequested())
+		FAILURE(Graceful, "User requested shutdown");
+}
+
 // --- System reset support (firmware and host UI) ---------------------------
 
 void CSystem::RequestSystemReset()
@@ -790,6 +809,7 @@ bool CSystem::IsSystemResetRequested() const
 
 bool CSystem::ProcessPendingReset()
 {
+	CheckForShutdown();
 	if (!m_reset_requested.exchange(false, std::memory_order_acq_rel))
 		return false;
 
@@ -862,6 +882,7 @@ void CSystem::ResetChipsetState()
  **/
 int CSystem::SingleStep()
 {
+	CheckForShutdown();
 	int i;
 	int result;
 

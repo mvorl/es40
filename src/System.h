@@ -327,11 +327,16 @@ public:
   void          RequestSystemReset();
   bool          IsSystemResetRequested() const;
   bool          ProcessPendingReset();   // Returns true if a reset was performed.
+  void          RequestShutdown() noexcept;
+  bool          IsShutdownRequested() const noexcept;
 
 private:
+  void          CheckForShutdown() const;
   void          ResetChipsetState();
   void          UpdateX86BIOSClock();
   std::atomic<bool> m_reset_requested{ false };
+  // Host control request, deliberately outside serialized guest state.
+  std::atomic<bool> m_shutdown_requested{ false };
   std::atomic<bool> m_reset_in_progress{ false };
   std::atomic<bool> m_reported_3c509_probe{ false };
   std::atomic<bool> m_x86_bios_clock_active{ false };
