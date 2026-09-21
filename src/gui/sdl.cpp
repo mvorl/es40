@@ -199,6 +199,7 @@ private:
 	void           handle_keyboard_event_impl(const SDL_Event& event);
 	void           handle_focus_event_impl(const SDL_Event& event);
 	void           reconcile_input_focus();
+	void           reconcile_input_releases();
 	void           release_input_session();
 	void           handle_mouse_event_impl(const SDL_Event& event);
 	void           handle_display_event_impl(const SDL_Event& event);
@@ -361,6 +362,7 @@ struct sdl_keyboard_input_state
 	u32 guest_key_by_scancode[SDL_SCANCODE_COUNT] = {};
 	bool guest_key_pressed[SDL_SCANCODE_COUNT] = {};
 	bool swallowed_hotkey_releases[SDL_SCANCODE_COUNT] = {};
+	bool reconciled_key_releases[SDL_SCANCODE_COUNT] = {};
 };
 static sdl_keyboard_input_state sdl_keyboard_input;
 
@@ -1017,6 +1019,7 @@ void bx_sdl_gui_c::handle_events_impl(void)
 
 	// Focus queries describe SDL's latest state, not each queued event's state.
 	reconcile_input_focus();
+	reconcile_input_releases();
 
 	// Native popups can intercept releases. Reconcile against SDL's current
 	// physical keyboard state so a later normal press is never swallowed.
@@ -1036,9 +1039,11 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 		bool media_release_handled = sdl_media_handle_event(&event);
 		if (event.key.scancode > SDL_SCANCODE_UNKNOWN &&
 			event.key.scancode < SDL_SCANCODE_COUNT &&
-			sdl_keyboard_input.swallowed_hotkey_releases[event.key.scancode])
+			(sdl_keyboard_input.swallowed_hotkey_releases[event.key.scancode] ||
+			 sdl_keyboard_input.reconciled_key_releases[event.key.scancode]))
 		{
 			sdl_keyboard_input.swallowed_hotkey_releases[event.key.scancode] = false;
+			sdl_keyboard_input.reconciled_key_releases[event.key.scancode] = false;
 			return;
 		}
 		if (media_release_handled)
@@ -1190,6 +1195,38 @@ void bx_sdl_gui_c::release_input_session()
 		sdl_mouse_input.buttons = 0;
 }
 
+void bx_sdl_gui_c::reconcile_input_releases()
+{
+	// Repair releases, never new presses.
+	const bool* keys = SDL_GetKeyboardState(NULL);
+	if (keys)
+	{
+		for (int i = 1; i < SDL_SCANCODE_COUNT; i++)
+		{
+			if (sdl_keyboard_input.guest_key_pressed[i] && !keys[i])
+			{
+				release_guest_key((SDL_Scancode)i);
+				// A later queued key-up must not use another display's mapping.
+				sdl_keyboard_input.reconciled_key_releases[i] = true;
+			}
+		}
+	}
+
+	if (!sdl_mouse_input.captured || !sdl_mouse_input.buttons)
+		return;
+	const SDL_MouseButtonFlags state = SDL_GetMouseState(NULL, NULL);
+	int buttons = 0;
+	if (state & SDL_BUTTON_LMASK) buttons |= 0x01;
+	if (state & SDL_BUTTON_RMASK) buttons |= 0x02;
+	if (state & SDL_BUTTON_MMASK) buttons |= 0x04;
+	buttons &= sdl_mouse_input.buttons;
+	if (buttons != sdl_mouse_input.buttons)
+	{
+		sdl_mouse_input.buttons = buttons;
+		theKeyboard->mouse_motion(0, 0, 0, buttons);
+	}
+}
+
 /**
  * Flush any changes to sdl_screen to the actual window.
  **/
@@ -1204,6 +1241,11 @@ void bx_sdl_gui_c::handle_keyboard_event_impl(const SDL_Event& event)
 	switch (event.type)
 	{
 	case SDL_EVENT_KEY_DOWN:
+		// A queued repeat cannot restart a press already released from SDL state.
+		if (event.key.repeat && event.key.scancode > SDL_SCANCODE_UNKNOWN &&
+			event.key.scancode < SDL_SCANCODE_COUNT &&
+			sdl_keyboard_input.reconciled_key_releases[event.key.scancode])
+			break;
 		if (hotkey_ctrl_alt_delete.matches(event.key))
 		{
 			if (!event.key.repeat)
@@ -1289,6 +1331,7 @@ void bx_sdl_gui_c::handle_keyboard_event_impl(const SDL_Event& event)
 		{
 			sdl_keyboard_input.guest_key_by_scancode[event.key.scancode] = key_event;
 			sdl_keyboard_input.guest_key_pressed[event.key.scancode] = true;
+			sdl_keyboard_input.reconciled_key_releases[event.key.scancode] = false;
 		}
 		theKeyboard->gen_scancode(key_event);
 
