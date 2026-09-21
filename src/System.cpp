@@ -330,6 +330,7 @@
 #include <climits>
 #include <new>
 #include <stdexcept>
+#include <sstream>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -349,6 +350,7 @@ CSystem::CSystem(CConfigurator* cfg)
 
 	if (theSystem != 0)
 		FAILURE(Configuration, "More than one system");
+	stop_on_decode_conflict = cfg->get_bool_value("debug.stop_on_decode_conflict", false);
 	theSystem = this;
 	myCfg = cfg;
 
@@ -1055,6 +1057,49 @@ void CSystem::cpu_clear_lock(int cpuid)
 	state.cpu_lock_flags &= ~(1 << cpuid);  // atomic fetch_and
 }
 
+void CSystem::check_decode_conflict(u64 address, int dsize, bool write,
+	int first_range, const CSystemComponent* source) const
+{
+	const SMemoryUser* first = asMemories[first_range].get();
+	std::vector<const SMemoryUser*> eligible = { first };
+	bool ambiguous = false;
+	for (int i = first_range + 1; i < iNumMemories; ++i)
+	{
+		const SMemoryUser* range = asMemories[i].get();
+		if (address >= range->base && address < range->base + range->length &&
+			range->component->decodes_memory_access(range->index,
+				address - range->base, dsize, write))
+		{
+			eligible.push_back(range);
+			ambiguous |= range->component != first->component;
+		}
+	}
+	if (!ambiguous)
+		return;
+
+	std::ostringstream message;
+	message << "debug.stop_on_decode_conflict: multiple eligible mapped components for "
+		<< (write ? "write " : "read ") << dsize << "-bit at 0x"
+		<< std::hex << address << ", source "
+		<< (source ? source->devid_string : "<none>");
+	for (const SMemoryUser* range : eligible)
+	{
+		message << "\n  " << range->component->devid_string;
+		if (const auto* pci = dynamic_cast<const CPCIDevice*>(range->component))
+		{
+			message << " PCI " << std::dec << pci->pci_bus() << ':' << pci->pci_dev();
+			if (range->index >= PCI_RANGE_BASE && range->index < PCI_RANGE_BASE + 64)
+				message << '.' << (range->index - PCI_RANGE_BASE) / 8;
+		}
+		message << " range " << std::dec << range->index
+			<< " base 0x" << std::hex << range->base
+			<< " length 0x" << range->length
+			<< " offset 0x" << address - range->base;
+	}
+	// This is a model diagnostic, not a PCI error or target arbitration rule.
+	FAILURE(Runtime, message.str());
+}
+
 /**
  * \brief Write 8, 4, 2 or 1 byte(s) to a 64-bit system address. This could be memory,
  * internal chipset registers, nothing or some device.
@@ -1160,6 +1205,8 @@ void CSystem::WriteMem(u64 address, int dsize, u64 data, CSystemComponent* sourc
 				&& asMemories[i]->component->decodes_memory_access(asMemories[i]->index,
 					a - asMemories[i]->base, dsize, true))
 			{
+				if (stop_on_decode_conflict)
+					check_decode_conflict(a, dsize, true, i, source);
 				asMemories[i]->component->WriteMem(asMemories[i]->index,
 					a - asMemories[i]->base, dsize, data);
 				return;
@@ -1422,8 +1469,12 @@ u64 CSystem::ReadMem(u64 address, int dsize, CSystemComponent* source)
 				&& (a < asMemories[i]->base + asMemories[i]->length)
 				&& asMemories[i]->component->decodes_memory_access(asMemories[i]->index,
 					a - asMemories[i]->base, dsize, false))
+			{
+				if (stop_on_decode_conflict)
+					check_decode_conflict(a, dsize, false, i, source);
 				return asMemories[i]->component->ReadMem(asMemories[i]->index,
 					a - asMemories[i]->base, dsize);
+			}
 		}
 
 		// Read back the latched CF8 value 

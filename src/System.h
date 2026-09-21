@@ -336,6 +336,9 @@ public:
   bool          IsShutdownRequested() const noexcept;
 
 private:
+  // Diagnostic for ambiguous registered mappings, under device_bus_mutex.
+  void check_decode_conflict(u64 address, int dsize, bool write,
+    int first_range, const CSystemComponent* source) const;
   void          CheckForShutdown() const;
   void          ResetChipsetState();
   void          UpdateX86BIOSClock();
@@ -580,6 +583,8 @@ private:
   std::vector<CSystemComponent*> acComponents;
   int                   iNumMemories;
   std::vector<std::unique_ptr<SMemoryUser>> asMemories;
+  // Decode diagnostic policy
+  bool stop_on_decode_conflict = false;
 
   class CAlphaCPU* acCPUs[4];
 
