@@ -330,6 +330,7 @@
 #include <climits>
 #include <new>
 #include <stdexcept>
+#include <unordered_map>
 #include <unordered_set>
 
 #define CLOCK_RATIO 10000
@@ -520,6 +521,7 @@ const CVGA* CSystem::get_vga_console() const
 std::vector<CSystem::SDisplayOutput> CSystem::get_display_outputs() const
 {
 	std::vector<SDisplayOutput> outputs;
+	std::unordered_map<const bx_gui_c*, SDisplayOutput> displays;
 	for (int i = 0; i < iNumComponents; ++i)
 	{
 		const CSystemComponent* component = acComponents[i];
@@ -538,7 +540,16 @@ std::vector<CSystem::SDisplayOutput> CSystem::get_display_outputs() const
 			if (!output_ids.insert(output->id()).second)
 				FAILURE_2(Runtime, "Duplicate display output %u for %s", output->id(),
 					component->devid_string);
-			outputs.push_back({ component, output });
+			const SDisplayOutput binding = { component, output };
+			const auto inserted = displays.emplace(&output->display(), binding);
+			if (!inserted.second)
+			{
+				const auto& previous = inserted.first->second;
+				FAILURE_4(Runtime, "Display outputs %s/%u and %s/%u share a GUI",
+					previous.component->devid_string, previous.output->id(),
+					component->devid_string, output->id());
+			}
+			outputs.push_back(binding);
 		}
 	}
 	return outputs;
@@ -3081,6 +3092,8 @@ void CSystem::init()
 	for (int i = 0; i < iNumComponents; i++)
 		if (acComponents[i])
 			acComponents[i]->init();
+	// Validate completed output bindings before any display workers start.
+	(void)get_display_outputs();
 }
 
 void CSystem::start_threads()
