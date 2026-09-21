@@ -514,7 +514,7 @@ int main(int argc, char* argv[])
 		// display resources here, on the same main thread that initialized SDL.
 		try
 		{
-			main_thread_gui->exit();
+			main_thread_gui->exit_application();
 		}
 		catch (const CException& cleanup_error)
 		{

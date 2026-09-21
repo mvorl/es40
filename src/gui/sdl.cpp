@@ -102,6 +102,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 #include <SDL3/SDL.h>
 
 #include "sdl_fonts.h"
@@ -134,6 +135,7 @@ static sdl_hotkey_binding parse_sdl_hotkey(CConfigurator* cfg,
 	const char* config_name, const char* default_value);
 
 class bx_sdl_gui_c;
+class sdl_application;
 
 // Application event handling has no display receiver.
 // Targets are borrowed for each main-thread call only.
@@ -170,7 +172,7 @@ private:
 class bx_sdl_gui_c : public bx_gui_c
 {
 public:
-	bx_sdl_gui_c(CConfigurator* cfg);
+	explicit bx_sdl_gui_c(sdl_application& application);
 	~bx_sdl_gui_c() override;
 	bx_sdl_gui_c(const bx_sdl_gui_c&) = delete;
 	bx_sdl_gui_c& operator=(const bx_sdl_gui_c&) = delete;
@@ -184,6 +186,7 @@ public:
 	virtual void    dimension_update(unsigned x, unsigned y, unsigned fheight = 0, unsigned fwidth = 0, unsigned bpp = 8) override;
 	virtual void    mouse_enabled_changed_specific(bool val) override;
 	virtual void    exit(void) override;
+	void           exit_application() override;
 	virtual			bx_svga_tileinfo_t* graphics_tile_info(bx_svga_tileinfo_t* info) override;
 	virtual			u8* graphics_tile_get(unsigned x, unsigned y, unsigned* w, unsigned* h) override;
 	virtual void    graphics_tile_update_in_place(unsigned x, unsigned y, unsigned w, unsigned h) override;
@@ -197,6 +200,7 @@ public:
 	void           detach_guest_input() override;
 private:
 	friend class sdl_event_dispatcher;
+	sdl_application& application;
 	CConfigurator* myCfg;
 	// Host presentation resources and geometry belong to this display.
 	SDL_Window*    sdl_window = NULL;
@@ -252,15 +256,31 @@ private:
 	void           reset_absolute_mouse_motion();
 };
 
+// Owns host displays only. Native resources are ended explicitly on main().
+class sdl_application
+{
+public:
+	explicit sdl_application(CConfigurator* cfg);
+	~sdl_application();
+	bx_sdl_gui_c& create_display();
+	void initialize_keymap();
+	void exit_displays();
+	CConfigurator* configuration() const { return cfg; }
+	bx_keymap_c* keymap() const { return shared_keymap.get(); }
+private:
+	CConfigurator* cfg;
+	std::unique_ptr<bx_keymap_c> shared_keymap;
+	// Destroy display objects before their shared keymap.
+	std::vector<std::unique_ptr<bx_sdl_gui_c>> displays;
+	bool keymap_initialized = false;
+	bool shutdown_started = false;
+};
+
 // Stop direct callers and retire a live display through synchronous exit() on
 // the SDL main thread before deleting it. 
 static std::mutex sdl_window_owners_mutex;
 static std::map<SDL_WindowID, bx_sdl_gui_c*> sdl_window_owners;
 
-// declare one instance of the gui object and call macro to insert the
-// plugin code
-static bx_sdl_gui_c* theGui = NULL;
-IMPLEMENT_GUI_PLUGIN_CODE(sdl)
 static unsigned     prev_cursor_x = 0;
 static unsigned     prev_cursor_y = 0;
 static u32          convertStringToSDLKey(const char* string);
@@ -336,6 +356,7 @@ void bx_sdl_gui_c::main_thread_init()
 	if (!SDL_Init(SDL_INIT_VIDEO))
 		FAILURE_1(SDL, "Unable to initialize SDL3 video subsystem: %s", SDL_GetError());
 
+	application.initialize_keymap();
 	sdl_guest_keyboard = theKeyboard;
 	sdl_main_thread_owns_sdl.store(true, std::memory_order_release);
 }
@@ -412,6 +433,10 @@ struct sdl_keyboard_input_state
 	bool reconciled_key_releases[SDL_SCANCODE_COUNT] = {};
 };
 static sdl_keyboard_input_state sdl_keyboard_input;
+
+// Defined *after* the borrowed window registry and shared input state so owned
+// displays are destroyed first.
+static std::unique_ptr<sdl_application> sdl_app;
 
 void bx_sdl_gui_c::reset_absolute_mouse_position()
 {
@@ -601,10 +626,88 @@ static sdl_hotkey_binding parse_sdl_hotkey(CConfigurator* cfg,
 	return binding;
 }
 
-bx_sdl_gui_c::bx_sdl_gui_c(CConfigurator* cfg)
+sdl_application::sdl_application(CConfigurator* cfg)
+	: cfg(cfg), shared_keymap(new bx_keymap_c(cfg))
 {
-	myCfg = cfg;
-	bx_keymap = new bx_keymap_c(cfg);
+}
+
+sdl_application::~sdl_application()
+{
+	for (const auto& display : displays)
+		if (bx_gui == display.get())
+			bx_gui = NULL;
+	if (bx_keymap == shared_keymap.get())
+		bx_keymap = NULL;
+}
+
+bx_sdl_gui_c& sdl_application::create_display()
+{
+	if (shutdown_started)
+		FAILURE(SDL, "Cannot create a display after application shutdown");
+	auto display = std::make_unique<bx_sdl_gui_c>(*this);
+	displays.push_back(std::move(display));
+	return *displays.back();
+}
+
+void sdl_application::initialize_keymap()
+{
+	if (keymap_initialized)
+		return;
+	if (cfg->get_bool_value("keyboard.use_mapping", false))
+	{
+		// Loading appends entries and may throw partway through.
+		// Publish only a complete map, then failed load can retry without a partial prefix.
+		auto loaded = std::make_unique<bx_keymap_c>(cfg);
+		loaded->loadKeymap(convertStringToSDLKey);
+		const bool published = bx_keymap == shared_keymap.get();
+		shared_keymap.swap(loaded);
+		if (published)
+			bx_keymap = shared_keymap.get();
+	}
+	keymap_initialized = true;
+}
+
+void sdl_application::exit_displays()
+{
+	shutdown_started = true;
+	std::exception_ptr first_error;
+	for (const auto& display : displays)
+	{
+		try { display->exit(); }
+		catch (...)
+		{
+			if (!first_error)
+				first_error = std::current_exception();
+		}
+	}
+	// Keep the receivers and any failed native resources alive until process exit. 
+	// AlphaSim borrows the initial display during this call.
+	if (first_error)
+		std::rethrow_exception(first_error);
+}
+
+int libsdl_LTX_plugin_init(CConfigurator* cfg)
+{
+	if (bx_gui || sdl_app)
+		FAILURE(Configuration, "A GUI application is already installed");
+	auto app = std::make_unique<sdl_application>(cfg);
+	bx_sdl_gui_c& initial_display = app->create_display();
+	// Publish borrowed aliases only after ownership is established.
+	sdl_app = std::move(app);
+	bx_gui = &initial_display;
+	bx_keymap = sdl_app->keymap();
+	printf("%%GUI-I-INS: Installing sdl module as the ES40 GUI\n");
+	return 0;
+}
+
+void libsdl_LTX_plugin_fini()
+{
+	// Native teardown is explicit, after the workers join on the main thread.
+}
+
+bx_sdl_gui_c::bx_sdl_gui_c(sdl_application& application)
+	: application(application), myCfg(application.configuration())
+{
 }
 
 bx_sdl_gui_c::~bx_sdl_gui_c()
@@ -762,11 +865,8 @@ void bx_sdl_gui_c::specific_init_impl(unsigned x_tilesize, unsigned y_tilesize)
 
 	// SDL3: key repeat is handled by the OS; no SDL_EnableKeyRepeat().
 
-	// load keymap for sdl
-	if (myCfg->get_bool_value("keyboard.use_mapping", false))
-	{
-		bx_keymap->loadKeymap(convertStringToSDLKey);
-	}
+	// Normally prepared before workers start; retain the initialization fallback.
+	application.initialize_keymap();
 
 	this->vid_linear = myCfg->get_bool_value("video.linear", true);
 	this->vid_scale = (int)myCfg->get_num_value("video.scale_ratio", true, 0);
@@ -1936,6 +2036,11 @@ void bx_sdl_gui_c::set_window_mouse_capture_impl(bool val)
 void bx_sdl_gui_c::exit(void)
 {
 	on_main_thread([&] { exit_impl(); });
+}
+
+void bx_sdl_gui_c::exit_application()
+{
+	on_main_thread([this] { application.exit_displays(); });
 }
 
 void bx_sdl_gui_c::exit_impl(void)

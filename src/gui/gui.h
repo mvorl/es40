@@ -137,14 +137,16 @@ public:
     unsigned bpp = 8) = 0;
   virtual void                  mouse_enabled_changed_specific(bool val) = 0;
   virtual void                  exit(void) = 0;
+  // Retire all application displays after their producers have stopped.
+  virtual void                  exit_application() { exit(); }
 
   // Some GUI backends drive the windowing system from the thread that called
   // main() (the SDL backend does so on every platform). A backend that
   // returns true here gets main_thread_init()/main_thread_pump() called from
   // there, and the emulator itself runs on a worker thread; main_thread_stop()
   // ends the pump once that worker is completely done. After joining it,
-  // main() calls exit() on that same backend. Legacy backends that return false
-  // keep the old model: the emulator owns main() and the GUI is
+  // main() calls exit_application() on that backend. Legacy backends that
+  // return false keep the old model: the emulator owns main() and the GUI is
   // driven entirely from the VGA card's thread.
   virtual bool                  requires_main_thread() { return false; }
   virtual void                  main_thread_init() {}
@@ -374,10 +376,10 @@ public:
 // in each one.
 //
 // Each gui should declare a class pointer called "theGui" which is derived
-// from bx_gui_c, before calling this macro.  For example, the SDL port
+// from bx_gui_c, before calling this macro.  For example, the X11 port
 // says:
 
-//   static bx_sdl_gui_c *theGui;
+//   static bx_x11_gui_c *theGui;
 #define IMPLEMENT_GUI_PLUGIN_CODE(gui_name)                                   \
   int lib##gui_name##_LTX_plugin_init(CConfigurator*  cfg)                    \
   {                                                                           \
