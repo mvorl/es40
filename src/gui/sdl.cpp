@@ -133,12 +133,31 @@ static unsigned sdl_hotkey_modifiers(SDL_Keymod modifiers);
 static sdl_hotkey_binding parse_sdl_hotkey(CConfigurator* cfg,
 	const char* config_name, const char* default_value);
 
-// Application event routing has no display. 
-// Targets are borrowed for this main-thread call only.
+class bx_sdl_gui_c;
+
+// Application event handling has no display receiver.
+// Targets are borrowed for each main-thread call only.
 class sdl_event_dispatcher
 {
 public:
+	static void poll();
 	static void dispatch(const SDL_Event& event);
+private:
+	friend class bx_sdl_gui_c;
+	static void reconcile_input_focus();
+	static void reconcile_input_releases();
+	static void release_input_session();
+	static void suppress_hotkey_releases(const SDL_KeyboardEvent& event,
+		const sdl_hotkey_binding& binding, bool release_guest_modifiers);
+	static void release_guest_key(SDL_Scancode scancode);
+	static void release_all_guest_keys();
+	static void send_guest_ctrl_alt_delete();
+	static void clear_hotkey_release_state();
+	static void reconcile_hotkey_release_state();
+	// Enabling requires a live target; release uses the recorded capture owner.
+	static void set_mouse_capture(bx_sdl_gui_c* target, bool val);
+	static void mouse_enabled_changed(bx_sdl_gui_c* target, bool val);
+	static void mouse_enabled_changed_impl(bx_sdl_gui_c* target, bool val);
 };
 
 /**
@@ -202,12 +221,8 @@ private:
 	// Bodies of the public entry points above; always executed on the thread
 	// that owns the SDL window (see on_main_thread).
 	void           specific_init_impl(unsigned x_tilesize, unsigned y_tilesize);
-	void           handle_events_impl();
 	void           handle_keyboard_event_impl(const SDL_Event& event);
 	void           handle_focus_event_impl(const SDL_Event& event);
-	void           reconcile_input_focus();
-	void           reconcile_input_releases();
-	void           release_input_session();
 	void           handle_mouse_event_impl(const SDL_Event& event);
 	void           handle_display_event_impl(const SDL_Event& event);
 	void           redraw_impl();
@@ -216,7 +231,6 @@ private:
 		unsigned fwidth, unsigned bpp);
 	void           graphics_frame_update_impl(const u32* pixels, unsigned w, unsigned h);
 	void           set_mouse_capture_impl(bool val);
-	void           mouse_enabled_changed_specific_impl(bool val);
 	void           set_window_mouse_capture_impl(bool val);
 	void           exit_impl();
 	void           register_window(SDL_Window* window);
@@ -227,13 +241,6 @@ private:
 	void           adjust_window_scale(int delta);
 	void           load_hotkeys();
 	void           build_window_titles();
-	void           suppress_hotkey_releases(const SDL_KeyboardEvent& event,
-		const sdl_hotkey_binding& binding, bool release_guest_modifiers);
-	void           release_guest_key(SDL_Scancode scancode);
-	void           release_all_guest_keys();
-	void           send_guest_ctrl_alt_delete();
-	void           clear_hotkey_release_state();
-	void           reconcile_hotkey_release_state();
 	void           reset_absolute_mouse_position();
 	void           reset_absolute_mouse_motion();
 };
@@ -927,7 +934,7 @@ static u32 sdl_scan_to_bx_key(SDL_Scancode sym)
 	}
 }
 
-void bx_sdl_gui_c::release_guest_key(SDL_Scancode scancode)
+void sdl_event_dispatcher::release_guest_key(SDL_Scancode scancode)
 {
 	if (scancode > SDL_SCANCODE_UNKNOWN &&
 		scancode < SDL_SCANCODE_COUNT && sdl_keyboard_input.guest_key_pressed[scancode])
@@ -938,19 +945,19 @@ void bx_sdl_gui_c::release_guest_key(SDL_Scancode scancode)
 	}
 }
 
-void bx_sdl_gui_c::release_all_guest_keys()
+void sdl_event_dispatcher::release_all_guest_keys()
 {
 	for (int i = 0; i < SDL_SCANCODE_COUNT; i++)
 		release_guest_key((SDL_Scancode)i);
 }
 
-void bx_sdl_gui_c::clear_hotkey_release_state()
+void sdl_event_dispatcher::clear_hotkey_release_state()
 {
 	memset(sdl_keyboard_input.swallowed_hotkey_releases, 0,
 		sizeof(sdl_keyboard_input.swallowed_hotkey_releases));
 }
 
-void bx_sdl_gui_c::reconcile_hotkey_release_state()
+void sdl_event_dispatcher::reconcile_hotkey_release_state()
 {
 	const bool* keys = SDL_GetKeyboardState(NULL);
 	if (!keys)
@@ -963,7 +970,7 @@ void bx_sdl_gui_c::reconcile_hotkey_release_state()
 	}
 }
 
-void bx_sdl_gui_c::suppress_hotkey_releases(
+void sdl_event_dispatcher::suppress_hotkey_releases(
 	const SDL_KeyboardEvent& event, const sdl_hotkey_binding& binding,
 	bool release_guest_modifiers)
 {
@@ -975,7 +982,7 @@ void bx_sdl_gui_c::suppress_hotkey_releases(
 		return;
 
 	const bool* keys = SDL_GetKeyboardState(NULL);
-	auto suppress_modifier = [this, keys](SDL_Scancode left,
+	auto suppress_modifier = [keys](SDL_Scancode left,
 		SDL_Scancode right)
 	{
 		SDL_Scancode scancodes[2] = { left, right };
@@ -1000,7 +1007,7 @@ void bx_sdl_gui_c::suppress_hotkey_releases(
 		suppress_modifier(SDL_SCANCODE_LGUI, SDL_SCANCODE_RGUI);
 }
 
-void bx_sdl_gui_c::send_guest_ctrl_alt_delete()
+void sdl_event_dispatcher::send_guest_ctrl_alt_delete()
 {
 	theKeyboard->gen_scancode(BX_KEY_CTRL_L);
 	theKeyboard->gen_scancode(BX_KEY_ALT_L);
@@ -1012,10 +1019,10 @@ void bx_sdl_gui_c::send_guest_ctrl_alt_delete()
 
 void bx_sdl_gui_c::handle_events(void)
 {
-	on_main_thread([&] { handle_events_impl(); });
+	on_main_thread([] { sdl_event_dispatcher::poll(); });
 }
 
-void bx_sdl_gui_c::handle_events_impl(void)
+void sdl_event_dispatcher::poll()
 {
 	sdl_media_pump();
 	if (sdl_media_input_active())
@@ -1068,8 +1075,8 @@ void sdl_event_dispatcher::dispatch(const SDL_Event& event)
 		{
 			if (!event.key.repeat)
 			{
-				owner->suppress_hotkey_releases(event.key, owner->hotkey_media, true);
-				owner->release_input_session();
+				suppress_hotkey_releases(event.key, owner->hotkey_media, true);
+				release_input_session();
 				sdl_select_media(owner->sdl_window);
 			}
 			return;
@@ -1167,11 +1174,11 @@ void bx_sdl_gui_c::handle_focus_event_impl(const SDL_Event& event)
 		set_mouse_capture_impl(true);
 }
 
-void bx_sdl_gui_c::reconcile_input_focus()
+void sdl_event_dispatcher::reconcile_input_focus()
 {
 	SDL_Window* focus = SDL_GetKeyboardFocus();
 	bx_sdl_gui_c* owner = focus && !sdl_media_input_active() ?
-		find_window_owner(SDL_GetWindowID(focus)) : NULL;
+		bx_sdl_gui_c::find_window_owner(SDL_GetWindowID(focus)) : NULL;
 	if (owner)
 	{
 		if (sdl_mouse_input.captured &&
@@ -1182,7 +1189,7 @@ void bx_sdl_gui_c::reconcile_input_focus()
 	release_input_session();
 }
 
-void bx_sdl_gui_c::release_input_session()
+void sdl_event_dispatcher::release_input_session()
 {
 	// The guest input session ends outside the displays, including media UI.
 	release_all_guest_keys();
@@ -1194,12 +1201,12 @@ void bx_sdl_gui_c::release_input_session()
 			entry.second->reset_absolute_mouse_position();
 	}
 	if (sdl_mouse_input.captured)
-		set_mouse_capture_impl(false);
+		set_mouse_capture(NULL, false);
 	else
 		sdl_mouse_input.buttons = 0;
 }
 
-void bx_sdl_gui_c::reconcile_input_releases()
+void sdl_event_dispatcher::reconcile_input_releases()
 {
 	// Repair releases, never new presses.
 	const bool* keys = SDL_GetKeyboardState(NULL);
@@ -1254,9 +1261,9 @@ void bx_sdl_gui_c::handle_keyboard_event_impl(const SDL_Event& event)
 		{
 			if (!event.key.repeat)
 			{
-				suppress_hotkey_releases(event.key,
+				sdl_event_dispatcher::suppress_hotkey_releases(event.key,
 					hotkey_ctrl_alt_delete, true);
-				send_guest_ctrl_alt_delete();
+				sdl_event_dispatcher::send_guest_ctrl_alt_delete();
 			}
 			break;
 		}
@@ -1265,7 +1272,7 @@ void bx_sdl_gui_c::handle_keyboard_event_impl(const SDL_Event& event)
 		{
 			if (!event.key.repeat)
 			{
-				suppress_hotkey_releases(event.key,
+				sdl_event_dispatcher::suppress_hotkey_releases(event.key,
 					hotkey_reset_window, false);
 				reset_window_size();
 			}
@@ -1276,7 +1283,7 @@ void bx_sdl_gui_c::handle_keyboard_event_impl(const SDL_Event& event)
 		if (vid_scale_change_enable && hotkey_scale_up.matches(event.key))
 		{
 			if (!event.key.repeat)
-				suppress_hotkey_releases(event.key,
+				sdl_event_dispatcher::suppress_hotkey_releases(event.key,
 					hotkey_scale_up, false);
 			adjust_window_scale(+1);
 			break;
@@ -1284,7 +1291,7 @@ void bx_sdl_gui_c::handle_keyboard_event_impl(const SDL_Event& event)
 		if (vid_scale_change_enable && hotkey_scale_down.matches(event.key))
 		{
 			if (!event.key.repeat)
-				suppress_hotkey_releases(event.key,
+				sdl_event_dispatcher::suppress_hotkey_releases(event.key,
 					hotkey_scale_down, false);
 			adjust_window_scale(-1);
 			break;
@@ -1294,7 +1301,7 @@ void bx_sdl_gui_c::handle_keyboard_event_impl(const SDL_Event& event)
 		{
 			if (!event.key.repeat)
 			{
-				suppress_hotkey_releases(event.key,
+				sdl_event_dispatcher::suppress_hotkey_releases(event.key,
 					hotkey_mouse_capture, true);
 				set_mouse_capture_impl(!sdl_mouse_input.captured);
 			}
@@ -1693,10 +1700,15 @@ void bx_sdl_gui_c::adjust_window_scale(int delta)
 
 void bx_sdl_gui_c::mouse_enabled_changed_specific(bool val)
 {
-	on_main_thread([&] {
+	sdl_event_dispatcher::mouse_enabled_changed(this, val);
+}
+
+void sdl_event_dispatcher::mouse_enabled_changed(bx_sdl_gui_c* target, bool val)
+{
+	on_main_thread([target, val] {
 		try
 		{
-			mouse_enabled_changed_specific_impl(val);
+			mouse_enabled_changed_impl(target, val);
 		}
 		catch (...)
 		{
@@ -1719,7 +1731,12 @@ void bx_sdl_gui_c::mouse_enabled_changed_specific(bool val)
 
 void bx_sdl_gui_c::set_mouse_capture_impl(bool val)
 {
-	if (val && (!sdl_window || !registered_window_id))
+	sdl_event_dispatcher::set_mouse_capture(this, val);
+}
+
+void sdl_event_dispatcher::set_mouse_capture(bx_sdl_gui_c* target, bool val)
+{
+	if (val && (!target || !target->sdl_window || !target->registered_window_id))
 		FAILURE(SDL, "Cannot capture an unregistered display");
 	if (!val && sdl_mouse_input.buttons)
 	{
@@ -1730,17 +1747,21 @@ void bx_sdl_gui_c::set_mouse_capture_impl(bool val)
 	}
 	if (theKeyboard)
 		theKeyboard->set_mouse_capture(val);
-	mouse_enabled_changed_specific(val);
+	if (target)
+		target->mouse_enabled_changed_specific(val);
+	else
+		mouse_enabled_changed(NULL, val);
 }
 
-void bx_sdl_gui_c::mouse_enabled_changed_specific_impl(bool val)
+void sdl_event_dispatcher::mouse_enabled_changed_impl(bx_sdl_gui_c* target, bool val)
 {
-	bx_sdl_gui_c* owner = find_window_owner(sdl_mouse_input.capture_window_id);
+	bx_sdl_gui_c* owner = bx_sdl_gui_c::find_window_owner(
+		sdl_mouse_input.capture_window_id);
 	if (val)
 	{
-		if (!sdl_window || !registered_window_id)
+		if (!target || !target->sdl_window || !target->registered_window_id)
 			FAILURE(SDL, "Cannot capture an unregistered display");
-		if (owner == this && sdl_mouse_input.captured)
+		if (owner == target && sdl_mouse_input.captured)
 			return;
 		const bool transferring = owner && sdl_mouse_input.captured;
 		if (transferring)
@@ -1752,7 +1773,7 @@ void bx_sdl_gui_c::mouse_enabled_changed_specific_impl(bool val)
 		sdl_mouse_input.captured = false;
 		try
 		{
-			set_window_mouse_capture_impl(true);
+			target->set_window_mouse_capture_impl(true);
 		}
 		catch (...)
 		{
@@ -1763,11 +1784,11 @@ void bx_sdl_gui_c::mouse_enabled_changed_specific_impl(bool val)
 			throw;
 		}
 		if (transferring)
-			reset_absolute_mouse_position();
+			target->reset_absolute_mouse_position();
 		else
-			reset_absolute_mouse_motion();
+			target->reset_absolute_mouse_motion();
 		SDL_HideCursor();
-		sdl_mouse_input.capture_window_id = registered_window_id;
+		sdl_mouse_input.capture_window_id = target->registered_window_id;
 		sdl_mouse_input.captured = true;
 	}
 	else
@@ -1803,7 +1824,7 @@ void bx_sdl_gui_c::exit_impl(void)
 {
 	if (registered_window_id &&
 		sdl_mouse_input.capture_window_id == registered_window_id)
-		mouse_enabled_changed_specific_impl(false);
+		sdl_event_dispatcher::mouse_enabled_changed_impl(NULL, false);
 	unregister_window();
 	sdl_media_shutdown();
 	// Native dialogs can still refer to this parent after their callback. Keep
