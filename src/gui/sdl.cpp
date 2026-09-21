@@ -133,6 +133,14 @@ static unsigned sdl_hotkey_modifiers(SDL_Keymod modifiers);
 static sdl_hotkey_binding parse_sdl_hotkey(CConfigurator* cfg,
 	const char* config_name, const char* default_value);
 
+// Application event routing has no display. 
+// Targets are borrowed for this main-thread call only.
+class sdl_event_dispatcher
+{
+public:
+	static void dispatch(const SDL_Event& event);
+};
+
 /**
  * \brief GUI implementation using SDL3.
  **/
@@ -162,6 +170,7 @@ public:
 	virtual void    main_thread_pump() override;
 	virtual void    main_thread_stop() override;
 private:
+	friend class sdl_event_dispatcher;
 	CConfigurator* myCfg;
 	// Host presentation resources and geometry belong to this display.
 	SDL_Window*    sdl_window = NULL;
@@ -194,8 +203,6 @@ private:
 	// that owns the SDL window (see on_main_thread).
 	void           specific_init_impl(unsigned x_tilesize, unsigned y_tilesize);
 	void           handle_events_impl();
-	// Process one event on the SDL main thread without draining the queue.
-	void           handle_event_impl(const SDL_Event& event);
 	void           handle_keyboard_event_impl(const SDL_Event& event);
 	void           handle_focus_event_impl(const SDL_Event& event);
 	void           reconcile_input_focus();
@@ -1015,7 +1022,7 @@ void bx_sdl_gui_c::handle_events_impl(void)
 		reconcile_input_focus();
 	SDL_Event event;
 	while (SDL_PollEvent(&event))
-		handle_event_impl(event);
+		sdl_event_dispatcher::dispatch(event);
 
 	// Focus queries describe SDL's latest state, not each queued event's state.
 	reconcile_input_focus();
@@ -1026,7 +1033,7 @@ void bx_sdl_gui_c::handle_events_impl(void)
 	reconcile_hotkey_release_state();
 }
 
-void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
+void sdl_event_dispatcher::dispatch(const SDL_Event& event)
 {
 	// GUI hotkeys consume their trigger key and, for actions that release
 	// guest modifiers, the corresponding physical modifier releases. Keep
@@ -1052,10 +1059,10 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 
 	if (event.type == SDL_EVENT_KEY_DOWN)
 	{
-		bx_sdl_gui_c* owner = find_window_owner(event.key.windowID);
+		bx_sdl_gui_c* owner = bx_sdl_gui_c::find_window_owner(event.key.windowID);
 		// The popup's toggle binding belongs to the display that opened it.
 		if (!owner)
-			owner = find_window_owner(
+			owner = bx_sdl_gui_c::find_window_owner(
 				sdl_media_parent_window_id(event.key.windowID));
 		if (owner && owner->hotkey_media.matches(event.key))
 		{
@@ -1079,7 +1086,8 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 	switch (event.type)
 	{
 	case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
-		if (event.window.windowID && find_window_owner(event.window.windowID) &&
+		if (event.window.windowID &&
+			bx_sdl_gui_c::find_window_owner(event.window.windowID) &&
 			theSystem)
 			theSystem->RequestShutdown();
 		return;
@@ -1092,7 +1100,7 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 	{
 		if (sdl_media_input_active())
 			return;
-		bx_sdl_gui_c* owner = find_window_owner(event.key.windowID);
+		bx_sdl_gui_c* owner = bx_sdl_gui_c::find_window_owner(event.key.windowID);
 		if (owner)
 			owner->handle_keyboard_event_impl(event);
 		return;
@@ -1100,7 +1108,7 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 	case SDL_EVENT_WINDOW_FOCUS_GAINED:
 	case SDL_EVENT_WINDOW_FOCUS_LOST:
 	{
-		bx_sdl_gui_c* owner = find_window_owner(event.window.windowID);
+		bx_sdl_gui_c* owner = bx_sdl_gui_c::find_window_owner(event.window.windowID);
 		if (owner)
 			owner->handle_focus_event_impl(event);
 		return;
@@ -1114,7 +1122,7 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 	case SDL_EVENT_WINDOW_RESIZED:
 	case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
 	{
-		bx_sdl_gui_c* owner = find_window_owner(event.window.windowID);
+		bx_sdl_gui_c* owner = bx_sdl_gui_c::find_window_owner(event.window.windowID);
 		if (owner)
 			owner->handle_display_event_impl(event);
 		return;
@@ -1137,7 +1145,7 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 		if (!event_window || (sdl_mouse_input.captured &&
 			event_window != sdl_mouse_input.capture_window_id))
 			return;
-		bx_sdl_gui_c* owner = find_window_owner(event_window);
+		bx_sdl_gui_c* owner = bx_sdl_gui_c::find_window_owner(event_window);
 		if (owner)
 			owner->handle_mouse_event_impl(event);
 		return;
