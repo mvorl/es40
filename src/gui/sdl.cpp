@@ -154,6 +154,9 @@ private:
 	static void send_guest_ctrl_alt_delete();
 	static void clear_hotkey_release_state();
 	static void reconcile_hotkey_release_state();
+	static void send_guest_key(u32 key);
+	static void send_guest_mouse(int dx, int dy, int dz, unsigned buttons);
+	static void notify_guest_capture(bool captured);
 	// Enabling requires a live target; release uses the recorded capture owner.
 	static void set_mouse_capture(bx_sdl_gui_c* target, bool val);
 	static void mouse_enabled_changed(bx_sdl_gui_c* target, bool val);
@@ -188,6 +191,7 @@ public:
 	virtual void    main_thread_init() override;
 	virtual void    main_thread_pump() override;
 	virtual void    main_thread_stop() override;
+	void           detach_guest_input() override;
 private:
 	friend class sdl_event_dispatcher;
 	CConfigurator* myCfg;
@@ -262,6 +266,9 @@ static u32          convertStringToSDLKey(const char* string);
 /// on our behalf, so on_main_thread() must bounce SDL calls across to it.
 static std::atomic<bool> sdl_main_thread_owns_sdl(false);
 
+// Main-thread-only attachment, outside guest state.
+static CKeyboard* sdl_guest_keyboard = NULL;
+
 /// How long main_thread_pump() blocks waiting for work before looping. Only
 /// caps how quickly it notices main_thread_stop(); callbacks wake it at once.
 static const int sdl_pump_idle_ms = 10;
@@ -320,7 +327,14 @@ void bx_sdl_gui_c::main_thread_init()
 	if (!SDL_Init(SDL_INIT_VIDEO))
 		FAILURE_1(SDL, "Unable to initialize SDL3 video subsystem: %s", SDL_GetError());
 
+	sdl_guest_keyboard = theKeyboard;
 	sdl_main_thread_owns_sdl.store(true, std::memory_order_release);
+}
+
+void bx_sdl_gui_c::detach_guest_input()
+{
+	// Do not send releases or alter guest capture during teardown.
+	on_main_thread([] { sdl_guest_keyboard = NULL; });
 }
 
 void bx_sdl_gui_c::main_thread_pump()
@@ -934,12 +948,30 @@ static u32 sdl_scan_to_bx_key(SDL_Scancode sym)
 	}
 }
 
+void sdl_event_dispatcher::send_guest_key(u32 key)
+{
+	if (sdl_guest_keyboard)
+		sdl_guest_keyboard->gen_scancode(key);
+}
+
+void sdl_event_dispatcher::send_guest_mouse(int dx, int dy, int dz, unsigned buttons)
+{
+	if (sdl_guest_keyboard)
+		sdl_guest_keyboard->mouse_motion(dx, dy, dz, buttons);
+}
+
+void sdl_event_dispatcher::notify_guest_capture(bool captured)
+{
+	if (sdl_guest_keyboard)
+		sdl_guest_keyboard->set_mouse_capture(captured);
+}
+
 void sdl_event_dispatcher::release_guest_key(SDL_Scancode scancode)
 {
 	if (scancode > SDL_SCANCODE_UNKNOWN &&
 		scancode < SDL_SCANCODE_COUNT && sdl_keyboard_input.guest_key_pressed[scancode])
 	{
-		theKeyboard->gen_scancode(
+		sdl_event_dispatcher::send_guest_key(
 			sdl_keyboard_input.guest_key_by_scancode[scancode] | BX_KEY_RELEASED);
 		sdl_keyboard_input.guest_key_pressed[scancode] = false;
 	}
@@ -1009,12 +1041,12 @@ void sdl_event_dispatcher::suppress_hotkey_releases(
 
 void sdl_event_dispatcher::send_guest_ctrl_alt_delete()
 {
-	theKeyboard->gen_scancode(BX_KEY_CTRL_L);
-	theKeyboard->gen_scancode(BX_KEY_ALT_L);
-	theKeyboard->gen_scancode(BX_KEY_DELETE);
-	theKeyboard->gen_scancode(BX_KEY_DELETE | BX_KEY_RELEASED);
-	theKeyboard->gen_scancode(BX_KEY_ALT_L | BX_KEY_RELEASED);
-	theKeyboard->gen_scancode(BX_KEY_CTRL_L | BX_KEY_RELEASED);
+	sdl_event_dispatcher::send_guest_key(BX_KEY_CTRL_L);
+	sdl_event_dispatcher::send_guest_key(BX_KEY_ALT_L);
+	sdl_event_dispatcher::send_guest_key(BX_KEY_DELETE);
+	sdl_event_dispatcher::send_guest_key(BX_KEY_DELETE | BX_KEY_RELEASED);
+	sdl_event_dispatcher::send_guest_key(BX_KEY_ALT_L | BX_KEY_RELEASED);
+	sdl_event_dispatcher::send_guest_key(BX_KEY_CTRL_L | BX_KEY_RELEASED);
 }
 
 void bx_sdl_gui_c::handle_events(void)
@@ -1234,7 +1266,7 @@ void sdl_event_dispatcher::reconcile_input_releases()
 	if (buttons != sdl_mouse_input.buttons)
 	{
 		sdl_mouse_input.buttons = buttons;
-		theKeyboard->mouse_motion(0, 0, 0, buttons);
+		sdl_event_dispatcher::send_guest_mouse(0, 0, 0, buttons);
 	}
 }
 
@@ -1344,12 +1376,12 @@ void bx_sdl_gui_c::handle_keyboard_event_impl(const SDL_Event& event)
 			sdl_keyboard_input.guest_key_pressed[event.key.scancode] = true;
 			sdl_keyboard_input.reconciled_key_releases[event.key.scancode] = false;
 		}
-		theKeyboard->gen_scancode(key_event);
+		sdl_event_dispatcher::send_guest_key(key_event);
 
 		// Locks: generate immediate press+release pair
 		if ((key_event == BX_KEY_NUM_LOCK) || (key_event == BX_KEY_CAPS_LOCK))
 		{
-			theKeyboard->gen_scancode(key_event | BX_KEY_RELEASED);
+			sdl_event_dispatcher::send_guest_key(key_event | BX_KEY_RELEASED);
 			if (event.key.scancode > SDL_SCANCODE_UNKNOWN &&
 				event.key.scancode < SDL_SCANCODE_COUNT)
 				sdl_keyboard_input.guest_key_pressed[event.key.scancode] = false;
@@ -1384,10 +1416,10 @@ void bx_sdl_gui_c::handle_keyboard_event_impl(const SDL_Event& event)
 
 		if ((key_event == BX_KEY_NUM_LOCK) || (key_event == BX_KEY_CAPS_LOCK))
 		{
-			theKeyboard->gen_scancode(key_event);
+			sdl_event_dispatcher::send_guest_key(key_event);
 		}
 
-		theKeyboard->gen_scancode(key_event | BX_KEY_RELEASED);
+		sdl_event_dispatcher::send_guest_key(key_event | BX_KEY_RELEASED);
 		if (event.key.scancode > SDL_SCANCODE_UNKNOWN &&
 			event.key.scancode < SDL_SCANCODE_COUNT)
 			sdl_keyboard_input.guest_key_pressed[event.key.scancode] = false;
@@ -1437,7 +1469,7 @@ void bx_sdl_gui_c::handle_mouse_event_impl(const SDL_Event& event)
 			{
 				sdl_mouse_input.remainder_x -= dx;
 				sdl_mouse_input.remainder_y -= dy;
-				theKeyboard->mouse_motion(dx, dy, 0, sdl_mouse_input.buttons);
+				sdl_event_dispatcher::send_guest_mouse(dx, dy, 0, sdl_mouse_input.buttons);
 			}
 		}
 		break;
@@ -1469,7 +1501,7 @@ void bx_sdl_gui_c::handle_mouse_event_impl(const SDL_Event& event)
 		else
 			sdl_mouse_input.buttons &= ~bitmask;
 
-		theKeyboard->mouse_motion(0, 0, 0, sdl_mouse_input.buttons);
+		sdl_event_dispatcher::send_guest_mouse(0, 0, 0, sdl_mouse_input.buttons);
 		break;
 	}
 
@@ -1481,7 +1513,7 @@ void bx_sdl_gui_c::handle_mouse_event_impl(const SDL_Event& event)
 				wy = -wy;
 			int dz = (int)wy;
 			if (dz != 0)
-				theKeyboard->mouse_motion(0, 0, dz, sdl_mouse_input.buttons);
+				sdl_event_dispatcher::send_guest_mouse(0, 0, dz, sdl_mouse_input.buttons);
 		}
 		break;
 	}
@@ -1715,15 +1747,14 @@ void sdl_event_dispatcher::mouse_enabled_changed(bx_sdl_gui_c* target, bool val)
 			if (!sdl_mouse_input.captured)
 			{
 				// A failed handoff can end capture after releasing the old window.
-				if (theKeyboard && sdl_mouse_input.buttons)
-					theKeyboard->mouse_motion(0, 0, 0, 0);
+				if (sdl_mouse_input.buttons)
+					sdl_event_dispatcher::send_guest_mouse(0, 0, 0, 0);
 				sdl_mouse_input.buttons = 0;
 				sdl_mouse_input.remainder_x = 0.0;
 				sdl_mouse_input.remainder_y = 0.0;
 			}
 			// The caller may already have notified the guest.
-			if (theKeyboard)
-				theKeyboard->set_mouse_capture(sdl_mouse_input.captured);
+			sdl_event_dispatcher::notify_guest_capture(sdl_mouse_input.captured);
 			throw;
 		}
 	});
@@ -1741,12 +1772,10 @@ void sdl_event_dispatcher::set_mouse_capture(bx_sdl_gui_c* target, bool val)
 	if (!val && sdl_mouse_input.buttons)
 	{
 		// The guest ignores mouse packets after its capture flag is cleared.
-		if (theKeyboard)
-			theKeyboard->mouse_motion(0, 0, 0, 0);
+		sdl_event_dispatcher::send_guest_mouse(0, 0, 0, 0);
 		sdl_mouse_input.buttons = 0;
 	}
-	if (theKeyboard)
-		theKeyboard->set_mouse_capture(val);
+	sdl_event_dispatcher::notify_guest_capture(val);
 	if (target)
 		target->mouse_enabled_changed_specific(val);
 	else

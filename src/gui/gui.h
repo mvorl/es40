@@ -150,6 +150,8 @@ public:
   virtual void                  main_thread_init() {}
   virtual void                  main_thread_pump() {}
   virtual void                  main_thread_stop() {}
+  // Disconnect host input after workers stop, before guest devices are deleted.
+  virtual void                  detach_guest_input() {}
 
   virtual u32                   get_sighandler_mask() { return 0; }
   virtual void                  sighandler(int sig) {}

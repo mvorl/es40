@@ -272,6 +272,22 @@ void segv_handler(int signum)
 
 static int run_emulator(int argc, char* argv[]);
 
+static bool detach_gui_guest_input()
+{
+	try
+	{
+		if (bx_gui)
+			bx_gui->detach_guest_input();
+		return true;
+	}
+	catch (const CException& error)
+	{
+		printf("GUI input detach failure: %s\n", error.displayText().c_str());
+		// Keep stopped devices alive if the backend may still hold its target.
+		return false;
+	}
+}
+
 /**
  * Entry point for the application.
  *
@@ -477,7 +493,8 @@ int main(int argc, char* argv[])
 		if (theSystem)
 		{
 			theSystem->stop_threads();
-			delete theSystem;
+			if (detach_gui_guest_input())
+				delete theSystem;
 		}
 		return 1;
 	}
@@ -595,7 +612,10 @@ static int run_emulator(int argc, char* argv[])
 	if (theSystem)
 	{
 		theSystem->stop_threads();
-		delete theSystem;
+		if (detach_gui_guest_input())
+			delete theSystem;
+		else
+			result = 1;
 	}
 	if (bx_gui)
 		bx_gui->main_thread_stop();
