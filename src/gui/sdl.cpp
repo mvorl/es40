@@ -197,6 +197,9 @@ private:
 	// Process one event on the SDL main thread without draining the queue.
 	void           handle_event_impl(const SDL_Event& event);
 	void           handle_keyboard_event_impl(const SDL_Event& event);
+	void           handle_focus_event_impl(const SDL_Event& event);
+	void           reconcile_input_focus();
+	void           release_input_session();
 	void           handle_mouse_event_impl(const SDL_Event& event);
 	void           handle_display_event_impl(const SDL_Event& event);
 	void           redraw_impl();
@@ -1006,9 +1009,14 @@ void bx_sdl_gui_c::handle_events(void)
 void bx_sdl_gui_c::handle_events_impl(void)
 {
 	sdl_media_pump();
+	if (sdl_media_input_active())
+		reconcile_input_focus();
 	SDL_Event event;
 	while (SDL_PollEvent(&event))
 		handle_event_impl(event);
+
+	// Focus queries describe SDL's latest state, not each queued event's state.
+	reconcile_input_focus();
 
 	// Native popups can intercept releases. Reconcile against SDL's current
 	// physical keyboard state so a later normal press is never swallowed.
@@ -1049,8 +1057,7 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 			if (!event.key.repeat)
 			{
 				owner->suppress_hotkey_releases(event.key, owner->hotkey_media, true);
-				if (sdl_mouse_input.captured)
-					owner->set_mouse_capture_impl(false);
+				owner->release_input_session();
 				sdl_select_media(owner->sdl_window);
 			}
 			return;
@@ -1069,9 +1076,19 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 	case SDL_EVENT_KEY_DOWN:
 	case SDL_EVENT_KEY_UP:
 	{
+		if (sdl_media_input_active())
+			return;
 		bx_sdl_gui_c* owner = find_window_owner(event.key.windowID);
 		if (owner)
 			owner->handle_keyboard_event_impl(event);
+		return;
+	}
+	case SDL_EVENT_WINDOW_FOCUS_GAINED:
+	case SDL_EVENT_WINDOW_FOCUS_LOST:
+	{
+		bx_sdl_gui_c* owner = find_window_owner(event.window.windowID);
+		if (owner)
+			owner->handle_focus_event_impl(event);
 		return;
 	}
 	case SDL_EVENT_WINDOW_EXPOSED:
@@ -1093,6 +1110,8 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 	case SDL_EVENT_MOUSE_BUTTON_UP:
 	case SDL_EVENT_MOUSE_WHEEL:
 	{
+		if (sdl_media_input_active())
+			return;
 		SDL_WindowID event_window;
 		if (event.type == SDL_EVENT_MOUSE_MOTION)
 			event_window = event.motion.windowID;
@@ -1122,23 +1141,53 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 
 	switch (event.type)
 	{
-	case SDL_EVENT_WINDOW_FOCUS_LOST:
-	{
-		// A delayed focus loss from a former source must not end the new one.
-		if (sdl_mouse_input.captured &&
-			sdl_mouse_input.capture_window_id != registered_window_id)
-			break;
-		release_all_guest_keys();
-		clear_hotkey_release_state();
-		reset_absolute_mouse_motion();
-		if (sdl_mouse_input.captured)
-			set_mouse_capture_impl(false);
-		break;
-	}
 	case SDL_EVENT_QUIT:
 		if (!sdl_mouse_input.captured)
 			FAILURE(Graceful, "User requested shutdown");
 	}
+}
+
+void bx_sdl_gui_c::handle_focus_event_impl(const SDL_Event& event)
+{
+	reset_absolute_mouse_position();
+	// Transfer before subsequent pointer events from the newly focused window.
+	if (event.type == SDL_EVENT_WINDOW_FOCUS_GAINED &&
+		!sdl_media_input_active() && SDL_GetKeyboardFocus() == sdl_window &&
+		sdl_mouse_input.captured &&
+		sdl_mouse_input.capture_window_id != registered_window_id)
+		set_mouse_capture_impl(true);
+}
+
+void bx_sdl_gui_c::reconcile_input_focus()
+{
+	SDL_Window* focus = SDL_GetKeyboardFocus();
+	bx_sdl_gui_c* owner = focus && !sdl_media_input_active() ?
+		find_window_owner(SDL_GetWindowID(focus)) : NULL;
+	if (owner)
+	{
+		if (sdl_mouse_input.captured &&
+			sdl_mouse_input.capture_window_id != owner->registered_window_id)
+			owner->set_mouse_capture_impl(true);
+		return;
+	}
+	release_input_session();
+}
+
+void bx_sdl_gui_c::release_input_session()
+{
+	// The guest input session ends outside the displays, including media UI.
+	release_all_guest_keys();
+	sdl_mouse_input.remainder_x = 0.0;
+	sdl_mouse_input.remainder_y = 0.0;
+	{
+		std::lock_guard<std::mutex> lock(sdl_window_owners_mutex);
+		for (const auto& entry : sdl_window_owners)
+			entry.second->reset_absolute_mouse_position();
+	}
+	if (sdl_mouse_input.captured)
+		set_mouse_capture_impl(false);
+	else
+		sdl_mouse_input.buttons = 0;
 }
 
 /**
@@ -1207,7 +1256,14 @@ void bx_sdl_gui_c::handle_keyboard_event_impl(const SDL_Event& event)
 		}
 
 		// convert sym -> bochs code
-		if (!myCfg->get_bool_value("keyboard.use_mapping", false))
+		if (event.key.scancode > SDL_SCANCODE_UNKNOWN &&
+			event.key.scancode < SDL_SCANCODE_COUNT &&
+			sdl_keyboard_input.guest_key_pressed[event.key.scancode])
+		{
+			// A held key keeps its mapping across host focus changes and repeats.
+			key_event = sdl_keyboard_input.guest_key_by_scancode[event.key.scancode];
+		}
+		else if (!myCfg->get_bool_value("keyboard.use_mapping", false))
 		{
 			key_event = sdl_scan_to_bx_key(event.key.scancode);
 		}
@@ -1597,6 +1653,15 @@ void bx_sdl_gui_c::mouse_enabled_changed_specific(bool val)
 		}
 		catch (...)
 		{
+			if (!sdl_mouse_input.captured)
+			{
+				// A failed handoff can end capture after releasing the old window.
+				if (theKeyboard && sdl_mouse_input.buttons)
+					theKeyboard->mouse_motion(0, 0, 0, 0);
+				sdl_mouse_input.buttons = 0;
+				sdl_mouse_input.remainder_x = 0.0;
+				sdl_mouse_input.remainder_y = 0.0;
+			}
 			// The caller may already have notified the guest.
 			if (theKeyboard)
 				theKeyboard->set_mouse_capture(sdl_mouse_input.captured);
@@ -1609,6 +1674,13 @@ void bx_sdl_gui_c::set_mouse_capture_impl(bool val)
 {
 	if (val && (!sdl_window || !registered_window_id))
 		FAILURE(SDL, "Cannot capture an unregistered display");
+	if (!val && sdl_mouse_input.buttons)
+	{
+		// The guest ignores mouse packets after its capture flag is cleared.
+		if (theKeyboard)
+			theKeyboard->mouse_motion(0, 0, 0, 0);
+		sdl_mouse_input.buttons = 0;
+	}
 	if (theKeyboard)
 		theKeyboard->set_mouse_capture(val);
 	mouse_enabled_changed_specific(val);

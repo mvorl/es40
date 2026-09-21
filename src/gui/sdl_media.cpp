@@ -179,6 +179,11 @@ SDL_WindowID sdl_media_parent_window_id(SDL_WindowID popup_window_id) noexcept
     return SDL_GetWindowID(media_popup.parent);
 }
 
+bool sdl_media_input_active() noexcept
+{
+    return popup_visible() || file_dialog_open.load(std::memory_order_acquire);
+}
+
 static int item_count()
 {
     if (media_popup.mode == MEDIA_POPUP_DEVICES)
