@@ -42,6 +42,8 @@ void sdl_unregister_removable_disk(
 void sdl_select_media(SDL_Window* window) noexcept;
 void sdl_media_pump() noexcept;
 bool sdl_media_handle_event(const SDL_Event* event) noexcept;
+// Main-thread query; only a live popup inherits its parent's toggle binding.
+SDL_WindowID sdl_media_parent_window_id(SDL_WindowID popup_window_id) noexcept;
 void sdl_media_shutdown() noexcept;
 // Main-thread query. Native dialogs can retain their parent beyond our callback.
 // Such parents must remain alive until process exit.

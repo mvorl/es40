@@ -196,6 +196,7 @@ private:
 	void           handle_events_impl();
 	// Process one event on the SDL main thread without draining the queue.
 	void           handle_event_impl(const SDL_Event& event);
+	void           handle_keyboard_event_impl(const SDL_Event& event);
 	void           handle_mouse_event_impl(const SDL_Event& event);
 	void           handle_display_event_impl(const SDL_Event& event);
 	void           redraw_impl();
@@ -1016,8 +1017,6 @@ void bx_sdl_gui_c::handle_events_impl(void)
 
 void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 {
-	u32 key_event;
-
 	// GUI hotkeys consume their trigger key and, for actions that release
 	// guest modifiers, the corresponding physical modifier releases. Keep
 	// this ahead of the media popup so a remapped media hotkey also closes it.
@@ -1038,17 +1037,24 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 			return;
 	}
 
-	if (event.type == SDL_EVENT_KEY_DOWN &&
-		hotkey_media.matches(event.key))
+	if (event.type == SDL_EVENT_KEY_DOWN)
 	{
-		if (!event.key.repeat)
+		bx_sdl_gui_c* owner = find_window_owner(event.key.windowID);
+		// The popup's toggle binding belongs to the display that opened it.
+		if (!owner)
+			owner = find_window_owner(
+				sdl_media_parent_window_id(event.key.windowID));
+		if (owner && owner->hotkey_media.matches(event.key))
 		{
-			suppress_hotkey_releases(event.key, hotkey_media, true);
-			if (sdl_mouse_input.captured)
-				set_mouse_capture_impl(false);
-			sdl_select_media(sdl_window);
+			if (!event.key.repeat)
+			{
+				owner->suppress_hotkey_releases(event.key, owner->hotkey_media, true);
+				if (sdl_mouse_input.captured)
+					owner->set_mouse_capture_impl(false);
+				sdl_select_media(owner->sdl_window);
+			}
+			return;
 		}
-		return;
 	}
 
 	if (event.type != SDL_EVENT_KEY_UP &&
@@ -1060,6 +1066,14 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 	// Delivery and explicit retirement are serialized on this SDL main thread.
 	switch (event.type)
 	{
+	case SDL_EVENT_KEY_DOWN:
+	case SDL_EVENT_KEY_UP:
+	{
+		bx_sdl_gui_c* owner = find_window_owner(event.key.windowID);
+		if (owner)
+			owner->handle_keyboard_event_impl(event);
+		return;
+	}
 	case SDL_EVENT_WINDOW_EXPOSED:
 	case SDL_EVENT_WINDOW_RESTORED:
 	case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
@@ -1121,6 +1135,25 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 			set_mouse_capture_impl(false);
 		break;
 	}
+	case SDL_EVENT_QUIT:
+		if (!sdl_mouse_input.captured)
+			FAILURE(Graceful, "User requested shutdown");
+	}
+}
+
+/**
+ * Flush any changes to sdl_screen to the actual window.
+ **/
+void bx_sdl_gui_c::flush(void)
+{
+	//
+}
+
+void bx_sdl_gui_c::handle_keyboard_event_impl(const SDL_Event& event)
+{
+	u32 key_event;
+	switch (event.type)
+	{
 	case SDL_EVENT_KEY_DOWN:
 		if (hotkey_ctrl_alt_delete.matches(event.key))
 		{
@@ -1249,19 +1282,7 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 			event.key.scancode < SDL_SCANCODE_COUNT)
 			sdl_keyboard_input.guest_key_pressed[event.key.scancode] = false;
 		break;
-
-	case SDL_EVENT_QUIT:
-		if (!sdl_mouse_input.captured)
-			FAILURE(Graceful, "User requested shutdown");
 	}
-}
-
-/**
- * Flush any changes to sdl_screen to the actual window.
- **/
-void bx_sdl_gui_c::flush(void)
-{
-	//
 }
 
 void bx_sdl_gui_c::handle_mouse_event_impl(const SDL_Event& event)

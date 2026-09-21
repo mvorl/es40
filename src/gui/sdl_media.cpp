@@ -171,6 +171,14 @@ static bool popup_visible()
            media_popup.window != nullptr;
 }
 
+SDL_WindowID sdl_media_parent_window_id(SDL_WindowID popup_window_id) noexcept
+{
+    if (!popup_window_id || !popup_visible() ||
+        popup_window_id != media_popup.window_id || !media_popup.parent)
+        return 0;
+    return SDL_GetWindowID(media_popup.parent);
+}
+
 static int item_count()
 {
     if (media_popup.mode == MEDIA_POPUP_DEVICES)
