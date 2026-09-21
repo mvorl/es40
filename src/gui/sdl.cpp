@@ -204,6 +204,7 @@ private:
 	void           graphics_frame_update_impl(const u32* pixels, unsigned w, unsigned h);
 	void           set_mouse_capture_impl(bool val);
 	void           mouse_enabled_changed_specific_impl(bool val);
+	void           set_window_mouse_capture_impl(bool val);
 	void           exit_impl();
 	void           register_window(SDL_Window* window);
 	void           unregister_window() noexcept;
@@ -339,6 +340,7 @@ int                 old_mousey = 0, new_mousey = 0;
 struct sdl_mouse_input_state
 {
 	bool captured = false;
+	SDL_WindowID capture_window_id = 0;
 	int buttons = 0;
 	// Retain motion left over after scaling so slow movement is not dropped.
 	double remainder_x = 0.0;
@@ -586,6 +588,12 @@ void bx_sdl_gui_c::unregister_window() noexcept
 	const auto entry = sdl_window_owners.find(registered_window_id);
 	if (entry != sdl_window_owners.end() && entry->second == this)
 		sdl_window_owners.erase(entry);
+	// Explicit exit releases native capture first. 
+	if (sdl_mouse_input.capture_window_id == registered_window_id)
+	{
+		sdl_mouse_input.capture_window_id = 0;
+		sdl_mouse_input.captured = false;
+	}
 	registered_window_id = 0;
 }
 
@@ -1181,6 +1189,10 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 		break;
 	case SDL_EVENT_WINDOW_FOCUS_LOST:
 	{
+		// A delayed focus loss from a former source must not end the new one.
+		if (sdl_mouse_input.captured &&
+			sdl_mouse_input.capture_window_id != registered_window_id)
+			break;
 		release_all_guest_keys();
 		clear_hotkey_release_state();
 		reset_absolute_mouse_motion();
@@ -1544,41 +1556,89 @@ void bx_sdl_gui_c::adjust_window_scale(int delta)
 
 void bx_sdl_gui_c::mouse_enabled_changed_specific(bool val)
 {
-	on_main_thread([&] { mouse_enabled_changed_specific_impl(val); });
+	on_main_thread([&] {
+		try
+		{
+			mouse_enabled_changed_specific_impl(val);
+		}
+		catch (...)
+		{
+			// The caller may already have notified the guest.
+			if (theKeyboard)
+				theKeyboard->set_mouse_capture(sdl_mouse_input.captured);
+			throw;
+		}
+	});
 }
 
 void bx_sdl_gui_c::set_mouse_capture_impl(bool val)
 {
+	if (val && (!sdl_window || !registered_window_id))
+		FAILURE(SDL, "Cannot capture an unregistered display");
 	if (theKeyboard)
 		theKeyboard->set_mouse_capture(val);
-	mouse_enabled_changed_specific_impl(val);
+	mouse_enabled_changed_specific(val);
 }
 
 void bx_sdl_gui_c::mouse_enabled_changed_specific_impl(bool val)
 {
-	reset_absolute_mouse_motion();
+	bx_sdl_gui_c* owner = find_window_owner(sdl_mouse_input.capture_window_id);
 	if (val)
 	{
-		SDL_HideCursor();
-		if (sdl_window)
+		if (!sdl_window || !registered_window_id)
+			FAILURE(SDL, "Cannot capture an unregistered display");
+		if (owner == this && sdl_mouse_input.captured)
+			return;
+		const bool transferring = owner && sdl_mouse_input.captured;
+		if (transferring)
 		{
-			SDL_SetWindowKeyboardGrab(sdl_window, true);
-			SDL_SetWindowRelativeMouseMode(sdl_window, !mouse_absolute);
-			SDL_SetWindowTitle(sdl_window, window_title_grabbed.c_str());
+			owner->set_window_mouse_capture_impl(false);
+			owner->reset_absolute_mouse_position();
 		}
+		sdl_mouse_input.capture_window_id = 0;
+		sdl_mouse_input.captured = false;
+		try
+		{
+			set_window_mouse_capture_impl(true);
+		}
+		catch (...)
+		{
+			// The old source was released; a failed acquisition ends capture.
+			if (transferring)
+				owner->reset_absolute_mouse_motion();
+			SDL_ShowCursor();
+			throw;
+		}
+		if (transferring)
+			reset_absolute_mouse_position();
+		else
+			reset_absolute_mouse_motion();
+		SDL_HideCursor();
+		sdl_mouse_input.capture_window_id = registered_window_id;
+		sdl_mouse_input.captured = true;
 	}
 	else
 	{
-		SDL_ShowCursor();
-		if (sdl_window)
+		if (owner)
 		{
-			SDL_SetWindowKeyboardGrab(sdl_window, false);
-			SDL_SetWindowRelativeMouseMode(sdl_window, false);
-			SDL_SetWindowTitle(sdl_window, window_title.c_str());
+			owner->set_window_mouse_capture_impl(false);
+			owner->reset_absolute_mouse_motion();
 		}
+		SDL_ShowCursor();
+		sdl_mouse_input.capture_window_id = 0;
+		sdl_mouse_input.captured = false;
 	}
+}
 
-	sdl_mouse_input.captured = val;
+void bx_sdl_gui_c::set_window_mouse_capture_impl(bool val)
+{
+	// SDL restores the old relative-mode flag on failure. Do not lose track.
+	if (!SDL_SetWindowRelativeMouseMode(sdl_window, val && !mouse_absolute))
+		FAILURE_1(SDL, "Unable to change SDL mouse capture: %s", SDL_GetError());
+	// Shortcut grabbing and the title remain best-effort presentation choices.
+	SDL_SetWindowKeyboardGrab(sdl_window, val);
+	SDL_SetWindowTitle(sdl_window,
+		(val ? window_title_grabbed : window_title).c_str());
 }
 
 void bx_sdl_gui_c::exit(void)
@@ -1588,6 +1648,9 @@ void bx_sdl_gui_c::exit(void)
 
 void bx_sdl_gui_c::exit_impl(void)
 {
+	if (registered_window_id &&
+		sdl_mouse_input.capture_window_id == registered_window_id)
+		mouse_enabled_changed_specific_impl(false);
 	unregister_window();
 	sdl_media_shutdown();
 	// Native dialogs can still refer to this parent after their callback. Keep
