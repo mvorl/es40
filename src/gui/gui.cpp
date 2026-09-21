@@ -160,6 +160,13 @@ bx_gui_c& bx_gui_c::display_for_output(const std::string& device_path,
 	return *this;
 }
 
+const bx_gui_c* bx_gui_c::find_display_for_output(const std::string& device_path,
+	unsigned output_id) const
+{
+	return output_bound && output_device_path == device_path &&
+		bound_output_id == output_id ? this : nullptr;
+}
+
 void bx_gui_c::init(unsigned tilewidth, unsigned tileheight)
 {
 	new_gfx_api = 0;

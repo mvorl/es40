@@ -3093,7 +3093,14 @@ void CSystem::init()
 		if (acComponents[i])
 			acComponents[i]->init();
 	// Validate completed output bindings before any display workers start.
-	(void)get_display_outputs();
+	for (const auto& binding : get_display_outputs())
+	{
+		if (!bx_gui || bx_gui->find_display_for_output(
+			binding.component->get_device_path(), binding.output->id()) !=
+			&binding.output->display())
+			FAILURE_2(Configuration, "Display output %s/%u does not match its GUI binding",
+				binding.component->devid_string, binding.output->id());
+	}
 }
 
 void CSystem::start_threads()

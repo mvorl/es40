@@ -190,6 +190,8 @@ public:
 	void           exit_application() override;
 	bx_gui_c&      display_for_output(const std::string& device_path,
 		unsigned output_id) override;
+	const bx_gui_c* find_display_for_output(const std::string& device_path,
+		unsigned output_id) const override;
 	virtual			bx_svga_tileinfo_t* graphics_tile_info(bx_svga_tileinfo_t* info) override;
 	virtual			u8* graphics_tile_get(unsigned x, unsigned y, unsigned* w, unsigned* h) override;
 	virtual void    graphics_tile_update_in_place(unsigned x, unsigned y, unsigned w, unsigned h) override;
@@ -267,6 +269,8 @@ public:
 	~sdl_application();
 	bx_sdl_gui_c& create_display();
 	bx_sdl_gui_c& display_for_output(const std::string& device_path, unsigned output_id);
+	const bx_sdl_gui_c* find_display_for_output(const std::string& device_path,
+		unsigned output_id) const;
 	void initialize_keymap();
 	void exit_displays();
 	CConfigurator* configuration() const { return cfg; }
@@ -687,6 +691,21 @@ bx_gui_c& bx_sdl_gui_c::display_for_output(const std::string& device_path,
 	unsigned output_id)
 {
 	return application.display_for_output(device_path, output_id);
+}
+
+const bx_sdl_gui_c* sdl_application::find_display_for_output(
+	const std::string& device_path, unsigned output_id) const
+{
+	if (shutdown_started || device_path.empty())
+		return nullptr;
+	const auto existing = display_outputs.find(std::make_pair(device_path, output_id));
+	return existing != display_outputs.end() ? existing->second : nullptr;
+}
+
+const bx_gui_c* bx_sdl_gui_c::find_display_for_output(const std::string& device_path,
+	unsigned output_id) const
+{
+	return application.find_display_for_output(device_path, output_id);
 }
 
 void sdl_application::initialize_keymap()

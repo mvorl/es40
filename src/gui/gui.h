@@ -143,6 +143,9 @@ public:
   // Configuration-time lookup. The backend owns the returned display.
   virtual bx_gui_c&              display_for_output(const std::string& device_path,
     unsigned output_id);
+  // Configuration-time lookup of an existing binding; never creates a display.
+  virtual const bx_gui_c*        find_display_for_output(const std::string& device_path,
+    unsigned output_id) const;
 
   // Some GUI backends drive the windowing system from the thread that called
   // main() (the SDL backend does so on every platform). A backend that

@@ -103,6 +103,10 @@ public:
     return std::string(typeid(*this).name()) + ":" +
       (myCfg ? myCfg->get_device_path() : std::string());
   }
+  std::string get_device_path() const
+  {
+    return myCfg ? myCfg->get_device_path() : std::string();
+  }
 
   CSystemComponent(class CConfigurator* cfg, class CSystem* system);
   virtual       ~CSystemComponent();
