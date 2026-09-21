@@ -196,6 +196,7 @@ private:
 	void           handle_events_impl();
 	// Process one event on the SDL main thread without draining the queue.
 	void           handle_event_impl(const SDL_Event& event);
+	void           handle_mouse_event_impl(const SDL_Event& event);
 	void           handle_display_event_impl(const SDL_Event& event);
 	void           redraw_impl();
 	void           clear_screen_impl();
@@ -1073,120 +1074,40 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 			owner->handle_display_event_impl(event);
 		return;
 	}
+	case SDL_EVENT_MOUSE_MOTION:
+	case SDL_EVENT_MOUSE_BUTTON_DOWN:
+	case SDL_EVENT_MOUSE_BUTTON_UP:
+	case SDL_EVENT_MOUSE_WHEEL:
+	{
+		SDL_WindowID event_window;
+		if (event.type == SDL_EVENT_MOUSE_MOTION)
+			event_window = event.motion.windowID;
+		else if (event.type == SDL_EVENT_MOUSE_WHEEL)
+			event_window = event.wheel.windowID;
+		else
+			event_window = event.button.windowID;
+		// The host capture source supplies one guest mouse across all outputs.
+		if (!event_window || (sdl_mouse_input.captured &&
+			event_window != sdl_mouse_input.capture_window_id))
+			return;
+		bx_sdl_gui_c* owner = find_window_owner(event_window);
+		if (owner)
+			owner->handle_mouse_event_impl(event);
+		return;
+	}
 	default:
 		break;
 	}
 
-	// Window events affect only their owning display, regardless of mouse mode.
-	// Absolute pointer positions also belong to one host window; relative motion
-	// still feeds the single guest mouse without selecting a guest display.
+	// Remaining window events still require the owning display as receiver.
 	const bool window_event = event.type >= SDL_EVENT_WINDOW_FIRST &&
 		event.type <= SDL_EVENT_WINDOW_LAST;
-	if (window_event || mouse_absolute)
-	{
-		SDL_WindowID event_window = 0;
-		bool has_window = true;
-		if (window_event)
-			event_window = event.window.windowID;
-		else if (event.type == SDL_EVENT_MOUSE_MOTION)
-			event_window = event.motion.windowID;
-		else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
-			event.type == SDL_EVENT_MOUSE_BUTTON_UP)
-			event_window = event.button.windowID;
-		else if (event.type == SDL_EVENT_MOUSE_WHEEL)
-			event_window = event.wheel.windowID;
-		else
-			has_window = false;
-		if (has_window && (!sdl_window || event_window == 0 ||
-			find_window_owner(event_window) != this))
-			return;
-	}
+	if (window_event && (!sdl_window || !event.window.windowID ||
+		find_window_owner(event.window.windowID) != this))
+		return;
 
 	switch (event.type)
 	{
-	case SDL_EVENT_MOUSE_MOTION:
-		if (sdl_mouse_input.captured)
-		{
-			double rel_x = (double)event.motion.xrel;
-			double rel_y = (double)event.motion.yrel;
-			if (mouse_absolute)
-			{
-				const double x = (double)event.motion.x;
-				const double y = (double)event.motion.y;
-				if (!mouse_position_valid)
-				{
-					mouse_last_x = x;
-					mouse_last_y = y;
-					mouse_position_valid = true;
-					break;
-				}
-				rel_x = x - mouse_last_x;
-				rel_y = y - mouse_last_y;
-				mouse_last_x = x;
-				mouse_last_y = y;
-			}
-
-			// PS/2 mouse Y is positive-up, SDL is positive-down; hence the
-			// baseline Y negation. invert_x/y flip on top of that.
-			double mx = rel_x * mouse_speed;
-			double my = -rel_y * mouse_speed;
-			sdl_mouse_input.remainder_x += mouse_invert_x ? -mx : mx;
-			sdl_mouse_input.remainder_y += mouse_invert_y ? -my : my;
-
-			int dx = (int)sdl_mouse_input.remainder_x;
-			int dy = (int)sdl_mouse_input.remainder_y;
-
-			if (dx != 0 || dy != 0)
-			{
-				sdl_mouse_input.remainder_x -= dx;
-				sdl_mouse_input.remainder_y -= dy;
-				theKeyboard->mouse_motion(dx, dy, 0, sdl_mouse_input.buttons);
-			}
-		}
-		break;
-
-	case SDL_EVENT_MOUSE_BUTTON_DOWN:
-	case SDL_EVENT_MOUSE_BUTTON_UP:
-	{
-		if (!sdl_mouse_input.captured)
-		{
-			if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN
-				&& event.button.button == SDL_BUTTON_LEFT)
-			{
-				set_mouse_capture_impl(true);
-			}
-			break;
-		}
-
-		int bitmask = 0;
-		switch (event.button.button)
-		{
-		case SDL_BUTTON_LEFT:   bitmask = 0x01; break;
-		case SDL_BUTTON_RIGHT:  bitmask = 0x02; break;
-		case SDL_BUTTON_MIDDLE: bitmask = 0x04; break;
-		default: break;
-		}
-
-		if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
-			sdl_mouse_input.buttons |= bitmask;
-		else
-			sdl_mouse_input.buttons &= ~bitmask;
-
-		theKeyboard->mouse_motion(0, 0, 0, sdl_mouse_input.buttons);
-		break;
-	}
-
-	case SDL_EVENT_MOUSE_WHEEL:
-		if (sdl_mouse_input.captured)
-		{
-			float wy = event.wheel.y;  // SDL3: float; +y = away from user (scroll up)
-			if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED)
-				wy = -wy;
-			int dz = (int)wy;
-			if (dz != 0)
-				theKeyboard->mouse_motion(0, 0, dz, sdl_mouse_input.buttons);
-		}
-		break;
 	case SDL_EVENT_WINDOW_FOCUS_LOST:
 	{
 		// A delayed focus loss from a former source must not end the new one.
@@ -1341,6 +1262,98 @@ void bx_sdl_gui_c::handle_event_impl(const SDL_Event& event)
 void bx_sdl_gui_c::flush(void)
 {
 	//
+}
+
+void bx_sdl_gui_c::handle_mouse_event_impl(const SDL_Event& event)
+{
+	if (!sdl_window)
+		return;
+	switch (event.type)
+	{
+	case SDL_EVENT_MOUSE_MOTION:
+		if (sdl_mouse_input.captured)
+		{
+			double rel_x = (double)event.motion.xrel;
+			double rel_y = (double)event.motion.yrel;
+			if (mouse_absolute)
+			{
+				const double x = (double)event.motion.x;
+				const double y = (double)event.motion.y;
+				if (!mouse_position_valid)
+				{
+					mouse_last_x = x;
+					mouse_last_y = y;
+					mouse_position_valid = true;
+					break;
+				}
+				rel_x = x - mouse_last_x;
+				rel_y = y - mouse_last_y;
+				mouse_last_x = x;
+				mouse_last_y = y;
+			}
+
+			// PS/2 mouse Y is positive-up, SDL is positive-down; hence the
+			// baseline Y negation. invert_x/y flip on top of that.
+			double mx = rel_x * mouse_speed;
+			double my = -rel_y * mouse_speed;
+			sdl_mouse_input.remainder_x += mouse_invert_x ? -mx : mx;
+			sdl_mouse_input.remainder_y += mouse_invert_y ? -my : my;
+
+			int dx = (int)sdl_mouse_input.remainder_x;
+			int dy = (int)sdl_mouse_input.remainder_y;
+
+			if (dx != 0 || dy != 0)
+			{
+				sdl_mouse_input.remainder_x -= dx;
+				sdl_mouse_input.remainder_y -= dy;
+				theKeyboard->mouse_motion(dx, dy, 0, sdl_mouse_input.buttons);
+			}
+		}
+		break;
+
+	case SDL_EVENT_MOUSE_BUTTON_DOWN:
+	case SDL_EVENT_MOUSE_BUTTON_UP:
+	{
+		if (!sdl_mouse_input.captured)
+		{
+			if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN
+				&& event.button.button == SDL_BUTTON_LEFT)
+			{
+				set_mouse_capture_impl(true);
+			}
+			break;
+		}
+
+		int bitmask = 0;
+		switch (event.button.button)
+		{
+		case SDL_BUTTON_LEFT:   bitmask = 0x01; break;
+		case SDL_BUTTON_RIGHT:  bitmask = 0x02; break;
+		case SDL_BUTTON_MIDDLE: bitmask = 0x04; break;
+		default: break;
+		}
+
+		if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+			sdl_mouse_input.buttons |= bitmask;
+		else
+			sdl_mouse_input.buttons &= ~bitmask;
+
+		theKeyboard->mouse_motion(0, 0, 0, sdl_mouse_input.buttons);
+		break;
+	}
+
+	case SDL_EVENT_MOUSE_WHEEL:
+		if (sdl_mouse_input.captured)
+		{
+			float wy = event.wheel.y;  // SDL3: float; +y = away from user (scroll up)
+			if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED)
+				wy = -wy;
+			int dz = (int)wy;
+			if (dz != 0)
+				theKeyboard->mouse_motion(0, 0, dz, sdl_mouse_input.buttons);
+		}
+		break;
+	}
 }
 
 void bx_sdl_gui_c::handle_display_event_impl(const SDL_Event& event)
