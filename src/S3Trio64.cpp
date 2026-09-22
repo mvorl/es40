@@ -2268,7 +2268,7 @@ void CS3Trio64::run()
 /** PCI Configuration Space data block */
 static u32                 s3_cfg_data[64] = {
 	/*00*/ 0x88115333,            // CFID: vendor + device
-	/*04*/ 0x011f0000,            // CFCS: command + status
+	/*04*/ 0x02000000,            // COMMAND=0; STATUS: medium DEVSEL (DB014-B 19-3)
 	/*08*/ 0x03000002,            // CFRV: class + revision
 	/*0c*/ 0x00000000,            // CFLT: latency timer + cache line size
 	/*10*/ 0x00000000,            // BAR0: FB
@@ -2292,7 +2292,7 @@ static u32                 s3_cfg_data[64] = {
  *  initialization and PCI reset use these hardware defaults. */
 static u32                 s3_cfg_mask[64] = {
 	/*00*/ 0x00000000,            // CFID: vendor + device
-	/*04*/ 0x0000ffff,            // CFCS: command + status
+	/*04*/ 0x00000023,            // COMMAND: I/O, memory, DAC snoop only; STATUS fixed (19-2/3)
 	/*08*/ 0x00000000,            // CFRV: class + revision
 	/*0c*/ 0x0000ffff,            // CFLT: latency timer + cache line size
 	/*10*/ 0xff800000,            // BAR0: bits 31:23, 8 MiB allocation (DB014-B 19-4)

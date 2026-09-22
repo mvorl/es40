@@ -3190,8 +3190,9 @@ void CSystem::stop_threads()
 // 2.3 adds a device/media manifest, audio, RAM-disk and flash command state.
 // 2.4 requires the hardware-controlled S3 PCI ROM BAR; no fixed ROM alias.
 // 2.5 stores the canonical Trio64 setup controls and enforces their access gates.
+// 2.6 requires the documented S3 PCI COMMAND mask and fixed STATUS value.
 static const u32 system_state_magic = 0xa1fae540;
-static const u32 system_state_version = 0x00020005;
+static const u32 system_state_version = 0x00020006;
 static const u32 snapshot_identity_limit = 65536;
 
 void CSystem::flush_storage()
@@ -3293,7 +3294,7 @@ bool CSystem::RestoreState(const char* fn)
 	if (version != system_state_version)
 	{
 		printf("%%SYS-I-VERSION: State file %s is incompatible; "
-			"version 2.5 is required.\n", fn);
+			"version 2.6 is required.\n", fn);
 		return false;
 	}
 	if (fread(&memory_size, sizeof(memory_size), 1, f) != 1 ||
