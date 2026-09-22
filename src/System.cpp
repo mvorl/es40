@@ -2077,6 +2077,10 @@ u64 CSystem::ReadMem(u64 address, int dsize, CSystemComponent* source)
  *
  * A write to this register invalidates the scatter-gather TLB. The value written is ignored.
  **/
+// Tsunami HRM Table 10-42: bit 9 is reserved, unlike PERRMASK<9>.
+static const u64 pchip_error_flags = U64(0xdff);
+static const u64 pchip_error_info = U64(0xffffffffffff0000);
+
 u64 CSystem::pchip_csr_read(int num, u32 a)
 {
 	switch (a)
@@ -2106,7 +2110,7 @@ u64 CSystem::pchip_csr_read(int num, u32 a)
 		return state.pchip[num].plat;
 
 	case 0x3c0:
-		return state.pchip[num].perr;
+		return state.pchip[num].perr & (pchip_error_info | pchip_error_flags);
 
 	case 0x400: // PERRMASK; bits 63:12 are RAZ (HRM Table 10-43).
 		return state.pchip[num].perrmask & U64(0xfff);
@@ -2218,12 +2222,28 @@ void CSystem::pchip_csr_write(int num, u32 a, u64 data)
 		state.pchip[num].plat = data;
 		return;
 
-	case 0x3c0: // PERR
+	case 0x3c0: // PERROR; flags are W1C, INFO is read-only.
+		state.pchip[num].perr &= ~(data & pchip_error_flags);
+		update_pchip_error_irqs();
 		return;
 
 	case 0x400: // PERRMASK; only MASK<11:0> is writable.
 		state.pchip[num].perrmask = data & U64(0xfff);
 		return;
+
+	case 0x440: // PERRSET (HRM 10.2.5.8).
+	{
+		const u64 flags = data & state.pchip[num].perrmask & pchip_error_flags;
+		if (!flags)
+			return;
+		if (state.pchip[num].perr & pchip_error_flags)
+			state.pchip[num].perr |= state.pchip[num].perrmask & U64(1); // LOST
+		else
+			// Table 10-44 copies all INFO bits, including software-supplied INV.
+			state.pchip[num].perr = (data & pchip_error_info) | flags;
+		update_pchip_error_irqs();
+		return;
+	}
 
 	case 0x480: // TLBIV
 	case 0x4c0: // TLBIA
@@ -2878,6 +2898,18 @@ void CSystem::interrupt(int number, bool assert)
 	recompute_device_irqs();
 }
 
+// Called with device_bus_mutex held; keep the two Pchip levels coherent.
+void CSystem::update_pchip_error_irqs()
+{
+	std::lock_guard<std::mutex> guard(drir_lock);
+	// ES40 Service Guide Table D-21: Pchip0 -> DRIR<62>, Pchip1 -> DRIR<61>.
+	state.cchip.drir &= ~U64(0x6000000000000000);
+	for (int num = 0; num < 2; ++num)
+		if (state.pchip[num].perr & pchip_error_flags)
+			state.cchip.drir |= U64(1) << (62 - num);
+	recompute_device_irqs();
+}
+
 /**
  * Re-drive each CPU device-interrupt lines from DRIR & DIM. 
  * C-chip actually does this continuously. 
@@ -3437,6 +3469,7 @@ bool CSystem::RestoreState(const char* fn)
 	}
 	for (int i = 0; i < iNumComponents; ++i)
 		acComponents[i]->finalize_restore();
+	update_pchip_error_irqs();
 	return true;
 }
 

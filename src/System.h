@@ -361,6 +361,7 @@ private:
   u8            tig_read(u32 address);
   void          tig_write(u32 address, u8 data);
   void          tig_update_halt_lines();
+  void          update_pchip_error_irqs();
   void          recompute_device_irqs();
 
   // --- MPD / SPD wiring ---
