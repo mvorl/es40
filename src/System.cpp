@@ -2108,8 +2108,8 @@ u64 CSystem::pchip_csr_read(int num, u32 a)
 	case 0x3c0:
 		return state.pchip[num].perr;
 
-	case 0x400:
-		return state.pchip[num].perrmask;
+	case 0x400: // PERRMASK; bits 63:12 are RAZ (HRM Table 10-43).
+		return state.pchip[num].perrmask & U64(0xfff);
 
 	case 0x480: // TLBIV
 	case 0x4c0: // TLBIA
@@ -2221,8 +2221,8 @@ void CSystem::pchip_csr_write(int num, u32 a, u64 data)
 	case 0x3c0: // PERR
 		return;
 
-	case 0x400:
-		state.pchip[num].perrmask = data;
+	case 0x400: // PERRMASK; only MASK<11:0> is writable.
+		state.pchip[num].perrmask = data & U64(0xfff);
 		return;
 
 	case 0x480: // TLBIV
