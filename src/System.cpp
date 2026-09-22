@@ -1300,6 +1300,17 @@ void CSystem::WriteMem(u64 address, int dsize, u64 data, CSystemComponent* sourc
 			return;
 		}
 
+		const u64 config_base = a & ~U64(0xffffff);
+		if ((config_base == U64(0x801fe000000) || config_base == U64(0x803fe000000)) &&
+			(dsize == 8 || dsize == 16 || dsize == 32 || dsize == 64) &&
+			(a & (dsize / 8 - 1)) == 0)
+		{
+			// No function claimed this configuration write. Even a burst aborts once.
+			pchip_config_write_abort(config_base == U64(0x803fe000000) ? 1 : 0,
+				(u32)a & 0xffffff);
+			return;
+		}
+
 		if (a >= U64(0x00000801A0000000) && a <= U64(0x00000801AFFFFFFF))
 		{
 			cchip_csr_write((u32)a & 0xFFFFFFF, data, source);
@@ -2081,6 +2092,37 @@ u64 CSystem::ReadMem(u64 address, int dsize, CSystemComponent* source)
 static const u64 pchip_error_flags = U64(0xdff);
 static const u64 pchip_error_info = U64(0xffffffffffff0000);
 
+void CSystem::latch_pchip_error(int num, u64 data)
+{
+	const u64 flags = data & state.pchip[num].perrmask & pchip_error_flags;
+	if (!flags)
+		return;
+	if (state.pchip[num].perr & pchip_error_flags)
+		state.pchip[num].perr |= state.pchip[num].perrmask & U64(1); // LOST
+	else
+		state.pchip[num].perr = (data & pchip_error_info) | flags;
+	update_pchip_error_irqs();
+}
+
+void CSystem::pchip_config_write_abort(int num, u32 address)
+{
+	u32 pci_address = address & 0xfffffc;
+	if (!(address & 0xff0000))
+	{
+		// HRM 8.5 / Table 10-3: Type 0 uses one-hot IDSEL, not the device number.
+		const unsigned device = (address >> 11) & 31;
+		if (device == 21) // Table 10-3 omits this encoding; leave it unmodeled.
+			return;
+		pci_address = address & 0x7fc;
+		if (device <= 20)
+			pci_address |= 1U << (device + 11);
+		// Devices 22-31 have no IDSEL asserted in Table 10-3.
+	}
+	// HRM 8.8.2.1 / Table 10-42: configuration write CMD=B, NDS, INV=0,
+	// and PCI AD<31:2> in PERROR<47:18>. This is not a dual-address cycle.
+	latch_pchip_error(num, (U64(0xb) << 52) | ((u64)pci_address << 16) | U64(0x100));
+}
+
 u64 CSystem::pchip_csr_read(int num, u32 a)
 {
 	switch (a)
@@ -2232,18 +2274,9 @@ void CSystem::pchip_csr_write(int num, u32 a, u64 data)
 		return;
 
 	case 0x440: // PERRSET (HRM 10.2.5.8).
-	{
-		const u64 flags = data & state.pchip[num].perrmask & pchip_error_flags;
-		if (!flags)
-			return;
-		if (state.pchip[num].perr & pchip_error_flags)
-			state.pchip[num].perr |= state.pchip[num].perrmask & U64(1); // LOST
-		else
-			// Table 10-44 copies all INFO bits, including software-supplied INV.
-			state.pchip[num].perr = (data & pchip_error_info) | flags;
-		update_pchip_error_irqs();
+		// Table 10-44 copies all INFO bits, including software-supplied INV.
+		latch_pchip_error(num, data);
 		return;
-	}
 
 	case 0x480: // TLBIV
 	case 0x4c0: // TLBIA

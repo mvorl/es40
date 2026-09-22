@@ -356,6 +356,8 @@ private:
   void          cchip_csr_write(u32 address, u64 data, CSystemComponent* source);
   u64           pchip_csr_read(int num, u32 address);
   void          pchip_csr_write(int num, u32 address, u64 data);
+  void          latch_pchip_error(int num, u64 data);
+  void          pchip_config_write_abort(int num, u32 address);
   u8            dchip_csr_read(u32 address);
   void          dchip_csr_write(u32 address, u8 data);
   u8            tig_read(u32 address);
