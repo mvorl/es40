@@ -1687,7 +1687,9 @@ void CAliM1543C::pit_clock()
 			if (state.pit_counter[i] <= clocks)
 			{
 				state.pit_counter[i] = 0;
-				state.pit_status[i] |= 0xc0;  // out pin high, no count set.
+				// OUT high only: NULL COUNT (0x40) would make pit_out() read
+				// mode 0 as low, hanging port-61h pollers that miss the edge.
+				state.pit_status[i] |= 0x80;
 			}
 			else
 				state.pit_counter[i] -= (u32)clocks;
