@@ -4641,6 +4641,8 @@ void CS3Trio64::io_write_b(u32 address, u8 data)
 		break;
 
 	case 0x3c7:
+		// CR33.4 also locks the read-index write (DB014-B 12-2, 14-49).
+		if (m_crtc_map.read_byte(0x33) & 0x10) break;
 		ramdac_read_index_w(0, data);
 		break;
 
