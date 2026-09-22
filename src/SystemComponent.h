@@ -119,6 +119,11 @@ public:
   virtual bool  decodes_memory_access(int index, u64 address, int dsize,
     bool write) const noexcept { return true; }
 
+  // Queried only for eligible ranges. Subtractive responders only after 
+  // positive ones decline.
+  virtual bool uses_subtractive_decode(int index, u64 address, int dsize,
+    bool write) const noexcept { return false; }
+
   struct PciIoWrite
   {
     int bus;

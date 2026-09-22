@@ -165,6 +165,8 @@ public:
   virtual void  check_state();
   virtual void  WriteMem_Legacy(int index, u32 address, int dsize, u32 data);
   virtual u32   ReadMem_Legacy(int index, u32 address, int dsize);
+  bool uses_subtractive_decode(int index, u64 address, int dsize,
+    bool write) const noexcept override;
 
   void          do_pit_clock();
 

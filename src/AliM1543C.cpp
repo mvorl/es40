@@ -539,6 +539,16 @@ CAliM1543C::~CAliM1543C()
 		fclose(lpt);
 }
 
+bool CAliM1543C::uses_subtractive_decode(int index, u64, int, bool write) const noexcept
+{
+	// M1543C 3.5: 44h<6> controls PIT/PIC and IACK; docking mode is positive.
+	if (index != 6 && index != 7 && index != 8 && index != 30 &&
+		!(index == 20 && !write))
+		return false;
+	return (endian_32(pci_state.config_data[0][0x44 / 4]) & 0x40) &&
+		!(endian_32(pci_state.config_data[0][0x5c / 4]) & 1);
+}
+
 /**
  * Read (byte,word,longword) from one of the legacy ranges. Only byte-accesses are supported.
  *

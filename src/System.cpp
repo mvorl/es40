@@ -1057,8 +1057,36 @@ void CSystem::cpu_clear_lock(int cpuid)
 	state.cpu_lock_flags &= ~(1 << cpuid);  // atomic fetch_and
 }
 
+// Called with device_bus_mutex held. Positive decode precedes subtractive decode.
+int CSystem::find_memory_target(u64 address, int dsize, bool write,
+	const CSystemComponent* source) const
+{
+	int subtractive = iNumMemories;
+	for (int i = 0; i < iNumMemories; ++i)
+	{
+		const SMemoryUser* range = asMemories[i].get();
+		if (address < range->base || address >= range->base + range->length ||
+			!range->component->decodes_memory_access(range->index,
+				address - range->base, dsize, write))
+			continue;
+		if (range->component->uses_subtractive_decode(range->index,
+			address - range->base, dsize, write))
+		{
+			if (subtractive == iNumMemories)
+				subtractive = i;
+			continue;
+		}
+		if (stop_on_decode_conflict)
+			check_decode_conflict(address, dsize, write, i, false, source);
+		return i;
+	}
+	if (subtractive < iNumMemories && stop_on_decode_conflict)
+		check_decode_conflict(address, dsize, write, subtractive, true, source);
+	return subtractive;
+}
+
 void CSystem::check_decode_conflict(u64 address, int dsize, bool write,
-	int first_range, const CSystemComponent* source) const
+	int first_range, bool subtractive, const CSystemComponent* source) const
 {
 	const SMemoryUser* first = asMemories[first_range].get();
 	std::vector<const SMemoryUser*> eligible = { first };
@@ -1068,7 +1096,9 @@ void CSystem::check_decode_conflict(u64 address, int dsize, bool write,
 		const SMemoryUser* range = asMemories[i].get();
 		if (address >= range->base && address < range->base + range->length &&
 			range->component->decodes_memory_access(range->index,
-				address - range->base, dsize, write))
+				address - range->base, dsize, write) &&
+			range->component->uses_subtractive_decode(range->index,
+				address - range->base, dsize, write) == subtractive)
 		{
 			eligible.push_back(range);
 			ambiguous |= range->component != first->component;
@@ -1081,7 +1111,8 @@ void CSystem::check_decode_conflict(u64 address, int dsize, bool write,
 	message << "debug.stop_on_decode_conflict: multiple eligible mapped components for "
 		<< (write ? "write " : "read ") << dsize << "-bit at 0x"
 		<< std::hex << address << ", source "
-		<< (source ? source->devid_string : "<none>");
+		<< (source ? source->devid_string : "<none>")
+		<< ", " << (subtractive ? "subtractive" : "positive") << " decode";
 	for (const SMemoryUser* range : eligible)
 	{
 		message << "\n  " << range->component->devid_string;
@@ -1240,19 +1271,7 @@ void CSystem::WriteMem(u64 address, int dsize, u64 data, CSystemComponent* sourc
 	if (a >> iNumMemoryBits) // non-memory
 	{
 		std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
-		// check registered device memory ranges
-		for (i = 0; i < iNumMemories; i++)
-		{
-			if ((a >= asMemories[i]->base)
-				&& (a < asMemories[i]->base + asMemories[i]->length)
-				&& asMemories[i]->component->decodes_memory_access(asMemories[i]->index,
-					a - asMemories[i]->base, dsize, true))
-			{
-				if (stop_on_decode_conflict)
-					check_decode_conflict(a, dsize, true, i, source);
-				break;
-			}
-		}
+		i = find_memory_target(a, dsize, true, source);
 		const bool mapped = i < iNumMemories;
 		const u64 io_base = a & ~U64(0x1ffffff);
 		const u64 io_port = a & U64(0x1ffffff);
@@ -1532,19 +1551,11 @@ u64 CSystem::ReadMem(u64 address, int dsize, CSystemComponent* source)
 	if (a >> iNumMemoryBits) // Non Memory
 	{
 		std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
-		// check registered device memory ranges
-		for (i = 0; i < iNumMemories; i++)
+		i = find_memory_target(a, dsize, false, source);
+		if (i < iNumMemories)
 		{
-			if ((a >= asMemories[i]->base)
-				&& (a < asMemories[i]->base + asMemories[i]->length)
-				&& asMemories[i]->component->decodes_memory_access(asMemories[i]->index,
-					a - asMemories[i]->base, dsize, false))
-			{
-				if (stop_on_decode_conflict)
-					check_decode_conflict(a, dsize, false, i, source);
-				return asMemories[i]->component->ReadMem(asMemories[i]->index,
-					a - asMemories[i]->base, dsize);
-			}
+			return asMemories[i]->component->ReadMem(asMemories[i]->index,
+				a - asMemories[i]->base, dsize);
 		}
 
 		// Read back the latched CF8 value 
