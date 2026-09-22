@@ -51,6 +51,8 @@
 
 #include "SystemComponent.h"
 
+class CAliM1543C;
+
   /**
    * \brief Emulated DMA controller.
    **/
@@ -59,8 +61,11 @@
 class CDMA : public CSystemComponent
 {
 public:
-  CDMA(CConfigurator* cfg, CSystem* c);
+  CDMA(CConfigurator* cfg, CSystem* c, const CAliM1543C& bridge);
   virtual       ~CDMA();
+
+  bool uses_subtractive_decode(int index, u64 address, int dsize,
+    bool write) const noexcept override;
 
   virtual int   DoClock();
   virtual void  WriteMem(int index, u64 address, int dsize, u64 data);
@@ -139,6 +144,9 @@ public:
   size_t        get_transfer_size(int channel);
 
 private:
+  // Borrowed configuration owner; never accessed during destruction.
+  const CAliM1543C& isa_bridge;
+
   u8            get_requests(int ctrlr);
   bool          cascade_enabled();
   bool          service_requested(int channel);

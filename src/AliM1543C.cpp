@@ -546,7 +546,12 @@ bool CAliM1543C::uses_subtractive_decode(int index, u64, int, bool write) const 
 		!(index == 20 && !write))
 		return false;
 	return (endian_32(pci_state.config_data[0][0x44 / 4]) & 0x40) &&
-		!(endian_32(pci_state.config_data[0][0x5c / 4]) & 1);
+		!is_docking_mode();
+}
+
+bool CAliM1543C::is_docking_mode() const noexcept
+{
+	return (endian_32(pci_state.config_data[0][0x5c / 4]) & 1) != 0;
 }
 
 /**

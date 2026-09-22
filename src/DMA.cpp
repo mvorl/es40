@@ -70,7 +70,8 @@ CDMA* theDMA = 0;
 /**
  * Constructor.
  **/
-CDMA::CDMA(CConfigurator* cfg, CSystem* c) : CSystemComponent(cfg, c)
+CDMA::CDMA(CConfigurator* cfg, CSystem* c, const CAliM1543C& bridge) :
+	CSystemComponent(cfg, c), isa_bridge(bridge)
 {
 	// DMA Setup
 #define LEGACY_IO(id,port,size) c->RegisterMemory(this, id, U64(0x00000801fc000000) + port, size)
@@ -100,6 +101,14 @@ CDMA::CDMA(CConfigurator* cfg, CSystem* c) : CSystemComponent(cfg, c)
 CDMA::~CDMA()
 {
 }
+
+bool CDMA::uses_subtractive_decode(int index, u64, int, bool) const noexcept
+{
+	// M1543C 3.5: DMA ignores 44h<6>; docking mode makes internal decode positive.
+	return index >= DMA_IO_BASE && index <= DMA1_IO_EXT &&
+		!isa_bridge.is_docking_mode();
+}
+
 int CDMA::DoClock()
 {
 	return 0;

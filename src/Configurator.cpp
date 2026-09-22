@@ -974,7 +974,8 @@ void CConfigurator::initialize()
 			pcidev);
 		new CPort80(this, (CSystem*)pParent->get_device());
 		new CKeyboard(this, (CSystem*)pParent->get_device());
-		new CDMA(this, (CSystem*)pParent->get_device());
+		new CDMA(this, (CSystem*)pParent->get_device(),
+			*static_cast<CAliM1543C*>(myDevice));
 		break;
 
 	case c_floppy:

@@ -167,6 +167,8 @@ public:
   virtual u32   ReadMem_Legacy(int index, u32 address, int dsize);
   bool uses_subtractive_decode(int index, u64 address, int dsize,
     bool write) const noexcept override;
+  // Read the existing PCI state under the system device-bus lock.
+  bool is_docking_mode() const noexcept;
 
   void          do_pit_clock();
 
