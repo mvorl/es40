@@ -339,6 +339,7 @@ private:
   // Diagnostic for ambiguous registered mappings, under device_bus_mutex.
   void check_decode_conflict(u64 address, int dsize, bool write,
     int first_range, const CSystemComponent* source) const;
+  void dispatch_pci_io_write(u64 address, int dsize, u64 data, int target_range);
   void          CheckForShutdown() const;
   void          ResetChipsetState();
   void          UpdateX86BIOSClock();

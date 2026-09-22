@@ -1100,6 +1100,49 @@ void CSystem::check_decode_conflict(u64 address, int dsize, bool write,
 	FAILURE(Runtime, message.str());
 }
 
+void CSystem::dispatch_pci_io_write(u64 address, int dsize, u64 data,
+	int target_range)
+{
+	CSystemComponent* target = nullptr;
+	int target_index = 0;
+	u64 target_offset = 0;
+	if (target_range >= 0)
+	{
+		const auto& range = *asMemories[target_range];
+		target = range.component;
+		target_index = range.index;
+		target_offset = address - range.base;
+	}
+	const CSystemComponent::PciIoWrite write = {
+		address >= U64(0x803fc000000) ? 1 : 0,
+		(u32)(address & U64(0x1ffffff)), dsize, data
+	};
+	struct Observation { CSystemComponent* component; u64 captured; };
+	std::vector<Observation> observers;
+
+	for (CSystemComponent* component : acComponents)
+	{
+		if (!component || component == target)
+			continue;
+		bool already_captured = false;
+		for (const auto& observer : observers)
+			already_captured |= observer.component == component;
+		if (already_captured)
+			continue;
+		const u64 captured = component->capture_pci_io_write(write);
+		if (captured)
+			observers.push_back({ component, captured });
+	}
+
+	if (target)
+		target->WriteMem(target_index, target_offset, dsize, data);
+	const auto dispatch = target
+		? CSystemComponent::PciIoWriteDispatch::MappedTargetReturned
+		: CSystemComponent::PciIoWriteDispatch::NoMappedTarget;
+	for (const auto& observer : observers)
+		observer.component->observe_pci_io_write(write, observer.captured, dispatch);
+}
+
 /**
  * \brief Write 8, 4, 2 or 1 byte(s) to a 64-bit system address. This could be memory,
  * internal chipset registers, nothing or some device.
@@ -1207,11 +1250,27 @@ void CSystem::WriteMem(u64 address, int dsize, u64 data, CSystemComponent* sourc
 			{
 				if (stop_on_decode_conflict)
 					check_decode_conflict(a, dsize, true, i, source);
-				asMemories[i]->component->WriteMem(asMemories[i]->index,
-					a - asMemories[i]->base, dsize, data);
-				return;
+				break;
 			}
 		}
+		const bool mapped = i < iNumMemories;
+		const u64 io_base = a & ~U64(0x1ffffff);
+		const u64 io_port = a & U64(0x1ffffff);
+
+		const bool config_bridge = !mapped && dsize == 32 &&
+			(io_port == 0xcf8 || io_port == 0xcfc);
+		const bool observed_io =
+			(io_base == U64(0x801fc000000) || io_base == U64(0x803fc000000)) &&
+			!config_bridge &&
+			(dsize == 8 || dsize == 16 || dsize == 32) &&
+			(a & 3) + dsize / 8 <= 4;
+		if (observed_io)
+			dispatch_pci_io_write(a, dsize, data, mapped ? i : -1);
+		else if (mapped)
+			asMemories[i]->component->WriteMem(asMemories[i]->index,
+				a - asMemories[i]->base, dsize, data);
+		if (mapped)
+			return;
 
 		if ((a == U64(0x00000801FC000CF8)) && (dsize == 32))
 		{

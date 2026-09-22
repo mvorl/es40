@@ -119,6 +119,24 @@ public:
   virtual bool  decodes_memory_access(int index, u64 address, int dsize,
     bool write) const noexcept { return true; }
 
+  struct PciIoWrite
+  {
+    int bus;
+    u32 port;
+    int dsize; // bits; a contiguous 8/16/32-bit write within one DWORD
+    u64 data;
+  };
+  // These describe emulator dispatch, not PCI Retry/Abort or signal timing.
+  enum class PciIoWriteDispatch { MappedTargetReturned, NoMappedTarget };
+
+  // Passive observation never claims an address. Called under the bus lock,
+  // before handlers, for components other than the selected target. 
+  virtual u64 capture_pci_io_write(const PciIoWrite& write) const noexcept
+    { return 0; }
+  // Consume the captured state without rechecking eligibility. 
+  virtual void observe_pci_io_write(const PciIoWrite& write, u64 captured,
+    PciIoWriteDispatch dispatch) {}
+
   //=== abstract ===
   virtual u64   ReadMem(int index, u64 address, int dsize) { return 0; };
   virtual void  WriteMem(int index, u64 address, int dsize, u64 data) {};
