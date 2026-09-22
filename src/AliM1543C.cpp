@@ -2577,8 +2577,10 @@ void CAliM1543C::check_state()
 		const u64 HWRPB_MAGIC = U64(0x0000004250525748); // "HWRPB\0\0\0" LE
 		const u64 CTB_OFF_OFF = U64(0xB8);  // offset of rpb_ctb_off in HWRPB
 		const u64 CTB_TYPE_OFF = U64(0x00);   // offset of ctb_type in CTB
+		const u64 CTB_TERM_TYPE_OFF = U64(0x38); // terminal type within CTB type 4
 		const u64 CTB_TS_OFF = U64(0xF0);   // offset of ctb_turboslot in CTB
-		const u64 CTB_GRAPHICS = U64(4);       // ctb_type for graphics console
+		const u64 CTB_MULTIPURPOSE = U64(4);
+		const u64 CTB_TERM_GRAPHICS = U64(3);
 
 		// Step 1: Check if HWRPB is built (magic signature present)
 		u64 magic = cSystem->ReadMem(HWRPB_BASE + U64(0x08), 64, this);
@@ -2608,19 +2610,25 @@ void CAliM1543C::check_state()
 		}
 #endif
 
-		// Step 3: Verify this is a graphics console CTB
+		// Step 3: CTB type 4 is multipurpose; its terminal type identifies graphics.
 		u64 ctb_type = cSystem->ReadMem(ctb_phys + CTB_TYPE_OFF, 64, this);
 		if (ctb_type == 0)
 			return;  // CTB not populated yet — try again later
-		if (ctb_type != CTB_GRAPHICS)
+		if (ctb_type != CTB_MULTIPURPOSE)
 		{
-			// Confirmed serial/printer console — turboslot doesn't matter
+			// This workaround only handles the multipurpose CTB layout.
 			ctb_fixed = true;
 			return;
 		}
+		if (cSystem->ReadMem(ctb_phys + CTB_TERM_TYPE_OFF, 64, this) != CTB_TERM_GRAPHICS)
+			return; // Leave serial and not-yet-populated terminal metadata alone.
 
 		// Step 4: Read current turboslot value
 		u64 turboslot = cSystem->ReadMem(ctb_phys + CTB_TS_OFF, 64, this);
+		// pci_bus() selects a Tsunami hose; directly attached cards are on PCI bus 0.
+		const int vga_hose = console->pci_bus() & 0xFF;
+		const int vga_dev = console->pci_dev() & 0xFF;
+		const u64 ts = (((u64)vga_hose) << 24) | (U64(3) << 16) | ((u64)vga_dev);
 
 		// Step 5: Check if it needs fixing
 		// SRM leaves this as all-FF for non-TGA adapters
@@ -2628,22 +2636,19 @@ void CAliM1543C::check_state()
 
 		if (needs_fix)
 		{
-			int vga_bus = console->pci_bus() & 0xFF;
-			int vga_dev = console->pci_dev() & 0xFF;
-			u64 ts = (U64(0x0003) << 16) | (((u64)vga_bus) << 8) | ((u64)vga_dev);
 			cSystem->WriteMem(ctb_phys + CTB_TS_OFF, 64, ts, this);
 			static bool printed = false;
 #ifdef DEBUG_HWRPB_TURBOSLOT
 			if (!printed) {
 				printf("%s: fixed CTB turboslot at phys 0x%" PRIx64
 					" from 0x%" PRIx64 " to 0x%08" PRIx64
-					" (PCI bus=%d dev=%d)\n",
+					" (PCI hose=%d bus=0 dev=%d)\n",
 					devid_string, ctb_phys + CTB_TS_OFF,
-					turboslot, ts, vga_bus, vga_dev);
+					turboslot, ts, vga_hose, vga_dev);
 			}
 #endif
 		}
-		else if (turboslot == ((U64(0x0003) << 16) | (((u64)(console->pci_bus() & 0xFF)) << 8) | ((u64)(console->pci_dev() & 0xFF))))
+		else if (turboslot == ts)
 		{
 			// Our value is there and SRM didn't overwrite it — we're done
 			ctb_fixed = true;
