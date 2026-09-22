@@ -3088,6 +3088,13 @@ bool CS3Trio64::decodes_memory_access(int index, u64 address, int dsize,
 	const bool color_io = (vga.miscellaneous_output & 0x01) != 0;
 	switch (index)
 	{
+	case 2: // 3C0-3CF
+		// DB014-B 12-2/17-10: CR65.2 selects 3C3 instead of 46E8.
+		// A wider transfer also covers ordinary VGA ports; its inactive
+		// setup byte is ignored by the byte handler, not the whole access.
+		return address != 3 || dsize != 8 || (s3.cr65 & 0x04);
+	case 12: // 46E8, an 8-bit setup register (DB014-B 14-48)
+		return address == 0 && !(s3.cr65 & 0x04);
 	case 1: // 3B4/3B5
 	case 3: // 3BA
 		return !color_io;
@@ -4355,7 +4362,7 @@ u32 CS3Trio64::io_read(u32 address, int dsize)
 		break;
 
 	case 0x3c3:
-		data = m_vga_subsys_enable ? 0x01 : 0x00;
+		data = (s3.cr65 & 0x04) ? (m_vga_subsys_enable ? 0x01 : 0x00) : 0xff;
 		break;
 
 	case 0x3c4:
@@ -4450,7 +4457,7 @@ u32 CS3Trio64::io_read(u32 address, int dsize)
 		break;
 
 	case 0x46E8:
-		data = m_video_subsys_enable_46e8;
+		data = (s3.cr65 & 0x04) ? 0xff : m_video_subsys_enable_46e8;
 		break;
 	case 0x0102:
 		data = m_setup_option_select_0102;
@@ -4563,7 +4570,9 @@ void CS3Trio64::io_write_b(u32 address, u8 data)
 		break;
 
 	case 0x3c3:
-		m_vga_subsys_enable = (data & 0x01) != 0;
+		// Also guard this byte when reached by a wider neighboring write.
+		if (s3.cr65 & 0x04)
+			m_vga_subsys_enable = (data & 0x01) != 0;
 		break;
 
 	case 0x3c4:
@@ -4641,7 +4650,8 @@ void CS3Trio64::io_write_b(u32 address, u8 data)
 		// S3 Trio32/Trio64 "Video Subsystem Enable" / setup register
 		// bit3 AD_DEC: enable video I/O+memory decode
 		// bit4 EN_SUP: setup enable
-		m_video_subsys_enable_46e8 = data;
+		if (!(s3.cr65 & 0x04))
+			m_video_subsys_enable_46e8 = data;
 		break;
 	case 0x0102:
 		// Setup Option Select (used in chip-wakeup sequences)
