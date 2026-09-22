@@ -3116,18 +3116,14 @@ bool CS3Trio64::decodes_memory_access(int index, u64 address, int dsize,
 	if ((pci_state.config_data[0][1] & endian_32(enable)) == 0)
 		return false;
 
-	// A neighboring multi-byte write may contain the selected 3C3 setup
-	// byte even while ordinary ports are disabled. Handlers gate each lane.
 	if (index == 12 || index == 32)
 		return address == 0 && io_access_enabled(index == 12 ? 0x46e8U : 0x0102U, write);
+	// PCI 2.1 section 3.7.1: the first addressed byte selects the target.
+	// A later enabled lane (for example 3C3 in a word at disabled 3C2)
+	// cannot make this card claim the access. Handlers still gate the lanes
+	// of transactions that this card does claim.
 	if (index == 2)
-	{
-		const u32 port = 0x3c0U + (u32)address;
-		for (int lane = 0; lane < dsize / 8 && address + lane < 16; ++lane)
-			if (io_access_enabled(port + lane, write))
-				return true;
-		return false;
-	}
+		return address < 16 && io_access_enabled(0x3c0U + (u32)address, write);
 	if (!normal_access_enabled())
 		return false;
 
