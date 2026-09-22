@@ -3025,6 +3025,18 @@ _next_instruction:
 	last_instruction = ins;
 #endif
 	opcode = ins >> 26;
+
+	// EV6 retires FP operates (ITFP/FLTV/FLTI/FLTL) into F31 at decode: no FEN
+	// or arith trap (21264 HRM 2.5, Table 2-6). MT_FPCR (no dest) and MF_FPCR
+	// (dest is Fa) are excluded.
+	if (opcode >= 0x14 && opcode <= 0x17 && (ins & 0x1f) == 31
+		&& !(opcode == 0x17 && (((ins >> 5) & 0x7fe) == 0x024))
+#if defined(IDB)
+		&& !bListing
+#endif
+		)
+		ES40_EXECUTE_END();
+
 	switch (opcode)
 	{
 	case 0x00:  // CALL_PAL
