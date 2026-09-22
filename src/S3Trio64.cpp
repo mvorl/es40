@@ -2279,7 +2279,7 @@ static u32                 s3_cfg_data[64] = {
 	/*24*/ 0x00000000,            // BAR5:
 	/*28*/ 0x00000000,            // CCIC: CardBus
 	/*2c*/ 0x00000000,            // CSID: subsystem + vendor
-	/*30*/ 0x00000000,            // BAR6: expansion rom base
+	/*30*/ 0x000c0000,            // BIOS ROM base; ADE clear (DB014-B 19-5)
 	/*34*/ 0x00000000,            // CCAP: capabilities pointer
 	/*38*/ 0x00000000,
 	/*3c*/ 0x281401ff,            // CFIT: interrupt configuration
@@ -2303,7 +2303,7 @@ static u32                 s3_cfg_mask[64] = {
 	/*24*/ 0x00000000,            // BAR5:
 	/*28*/ 0x00000000,            // CCIC: CardBus
 	/*2c*/ 0x00000000,            // CSID: subsystem + vendor
-	/*30*/ 0x00000000,            // BAR6: expansion rom base
+	/*30*/ 0xffff0001,            // BIOS ROM: 64 KiB aperture and ADE (19-5)
 	/*34*/ 0x00000000,            // CCAP: capabilities pointer
 	/*38*/ 0x00000000,
 	/*3c*/ 0x000000ff,            // CFIT: interrupt configuration
@@ -2582,9 +2582,6 @@ void CS3Trio64::init()
 
 	rom_max = (unsigned)fread(option_rom, 1, sizeof(option_rom), rom);
 	fclose(rom);
-
-	// Option ROM address space: C0000
-	add_legacy_mem(5, 0xc0000, rom_max);
 
 	vga.attribute.state = 1;
 
@@ -3173,11 +3170,6 @@ u32 CS3Trio64::ReadMem_Legacy(int index, u32 address, int dsize)
 		data = legacy_read(address, dsize);
 		break;
 
-		// ROM
-	case 5:
-		data = rom_read(address, dsize);
-		break;
-
 		// IO Port 0x3d4
 	case 8:
 		data = io_read(address + 0x3d4, dsize);
@@ -3700,6 +3692,8 @@ u32 CS3Trio64::ReadMem_Bar(int func, int bar, u32 address, int dsize)
 		if (address >= 0xa0000 && address <= 0xbffff)
 			return mem_r(address - 0xa0000);
 		return mem_read(address, dsize);
+	case 6:
+		return func == 0 ? rom_read(address, dsize) : 0;
 	}
 
 	return 0;
@@ -4286,26 +4280,26 @@ void CS3Trio64::legacy_write(u32 address, int dsize, u32 data)
  */
 u32 CS3Trio64::rom_read(u32 address, int dsize)
 {
-	u32   data = 0x00;
-	u8* x = (u8*)option_rom;
-	if (address <= rom_max)
-	{
-		x += address;
-		switch (dsize)
-		{
-		case 8:   data = (u32)endian_8((*((u8*)x)) & 0xff); break;
-		case 16:  data = (u32)endian_16((*((u16*)x)) & 0xffff); break;
-		case 32:  data = (u32)endian_32((*((u32*)x)) & 0xffffffff); break;
-		}
+	if (dsize != 8 && dsize != 16 && dsize != 32)
+		return 0;
 
+	// Preserve zero padding beyond the loaded image. Assemble bytes so reads
+	// at the end of an image or the 64 KiB aperture never overrun the buffer.
+	u32 data = 0;
+	for (int byte = 0; byte < dsize / 8; ++byte)
+	{
+		const u64 offset = (u64)address + byte;
+		if (offset < rom_max)
+			data |= (u32)option_rom[offset] << (byte * 8);
+	}
+	if (address < rom_max)
+	{
 		//printf("S3 rom read: %" PRIx64 ", %d, %" PRIx64 "\n", address, dsize,data);
 	}
 	else
 	{
-
 		//printf("S3 (BAD) rom read: %" PRIx64 ", %d, %" PRIx64 "\n", address, dsize,data);
 	}
-
 	return data;
 }
 

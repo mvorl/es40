@@ -505,7 +505,7 @@ bool CSystem::has_vga_device(const CVGA* exclude) const noexcept
 	return false;
 }
 
-const CVGA* CSystem::get_vga_console() const
+const CVGA* CSystem::get_sole_vga_device() const noexcept
 {
 	const CVGA* console = nullptr;
 	for (const CSystemComponent* component : acComponents)
@@ -514,7 +514,7 @@ const CVGA* CSystem::get_vga_console() const
 		if (!card)
 			continue;
 		if (console)
-			FAILURE(Configuration, "VGA console selection requires a single card");
+			return nullptr;
 		console = card;
 	}
 	return console;
@@ -3188,8 +3188,9 @@ void CSystem::stop_threads()
 // 2.2 includes complete S3 graphics and NIC packet state. 
 // Reject 2.1 before changing RAM.
 // 2.3 adds a device/media manifest, audio, RAM-disk and flash command state.
+// 2.4 requires the hardware-controlled S3 PCI ROM BAR; no fixed ROM alias.
 static const u32 system_state_magic = 0xa1fae540;
-static const u32 system_state_version = 0x00020003;
+static const u32 system_state_version = 0x00020004;
 static const u32 snapshot_identity_limit = 65536;
 
 void CSystem::flush_storage()
@@ -3291,7 +3292,7 @@ bool CSystem::RestoreState(const char* fn)
 	if (version != system_state_version)
 	{
 		printf("%%SYS-I-VERSION: State file %s is incompatible; "
-			"version 2.3 is required.\n", fn);
+			"version 2.4 is required.\n", fn);
 		return false;
 	}
 	if (fread(&memory_size, sizeof(memory_size), 1, f) != 1 ||

@@ -269,8 +269,8 @@ public:
   int           RegisterCPU(class CAlphaCPU* cpu);
 
   bool has_vga_device(const CVGA* exclude = nullptr) const noexcept;
-  // Sole-card console until explicit multi-card console selection is added.
-  const CVGA* get_vga_console() const;
+  // Unambiguous fallback for missing firmware metadata; null for zero/many.
+  const CVGA* get_sole_vga_device() const noexcept;
 
   struct SDisplayOutput
   {
