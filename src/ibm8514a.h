@@ -71,7 +71,7 @@ public:
   void ibm8514_bgcolour_w(uint16_t data);
   uint16_t ibm8514_bgcolour_r_hi();
   void ibm8514_bgcolour_w_hi(uint16_t data);
-  uint16_t ibm8514_multifunc_r();
+  uint16_t ibm8514_multifunc_r(uint16_t setup_control);
   void ibm8514_multifunc_w(uint16_t data);
   uint16_t ibm8514_backmix_r();
   void ibm8514_backmix_w(uint16_t data);

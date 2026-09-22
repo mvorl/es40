@@ -1383,7 +1383,7 @@ void ibm8514a_device::ibm8514_write_mask_w_hi(uint16_t data)
 	LOG("8514/A: Read Mask (High) write = %04x\n", data);
 }
 
-uint16_t ibm8514a_device::ibm8514_multifunc_r()
+uint16_t ibm8514a_device::ibm8514_multifunc_r(uint16_t setup_control)
 {
 	uint16_t ret = 0;
 
@@ -1398,7 +1398,7 @@ uint16_t ibm8514a_device::ibm8514_multifunc_r()
 	case 6:  ret = ibm8514.multifunc_misc; break;           // Index 0Eh
 	case 7:  ret = ibm8514.current_cmd & 0x1fff; break;    // 9AE8h, bits 15-13 forced to 0
 	case 8:  ret = ibm8514.substatus & 0x0fff; break;      // 42E8h, bits 15-12 forced to 0
-	case 9:  ret = 0; break;                                 // 46E8h - stub i guess
+	case 9:  ret = setup_control & 0x18; break;          // Video Subsystem Enable
 	case 10: ret = ibm8514.multifunc_misc2; break;          // Index 0Dh
 	default: ret = 0xff; break;
 	}

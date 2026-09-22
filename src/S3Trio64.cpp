@@ -3060,12 +3060,45 @@ CS3Trio64::~CS3Trio64()
 	stop_threads();
 }
 
+void CS3Trio64::ResetPCI()
+{
+	// Reset the setup controls and their address selector together (DB014-B
+	// sections 5, 14.6 and 17-10). Scanout has its own enable controls.
+	m_video_subsys_enable = 0;
+	m_setup_option_select_0102 = 0;
+	s3.cr65 = 0;
+	CPCIDevice::ResetPCI();
+}
+
+bool CS3Trio64::normal_access_enabled() const noexcept
+{
+	return (m_video_subsys_enable & 0x18) == 0x08 &&
+		(m_setup_option_select_0102 & 0x01);
+}
+
+bool CS3Trio64::io_access_enabled(u32 port, bool write) const noexcept
+{
+	// The selected setup register must remain writable to enter and leave
+	// setup, including while asleep (DB014-B 11-1, 14-47/48).
+	if (port == 0x3c3 || port == 0x46e8)
+		return write && port == ((s3.cr65 & 0x04) ? 0x3c3U : 0x46e8U);
+	if ((port > 0x46e8 && port <= 0x46eb) || (port > 0x0102 && port <= 0x0105))
+		return false; // wider writes have no additional setup-register lanes
+	if (port == 0x0102)
+		return (m_video_subsys_enable & 0x10) != 0;
+	return normal_access_enabled();
+}
+
 bool CS3Trio64::decodes_memory_access(int index, u64 address, int dsize,
 	bool write) const noexcept
 {
 	if (index >= PCI_RANGE_BASE)
 	{
 		if (!CPCIDevice::decodes_memory_access(index, address, dsize, write))
+			return false;
+		// PCI configuration and expansion-ROM decoding remain independent:
+		// the ROM must be accessible before its code wakes the video core.
+		if ((index - PCI_RANGE_BASE) % 8 < 6 && !normal_access_enabled())
 			return false;
 		if (index == PCI_RANGE_BASE && uses_sized_linear_bar_window())
 		{
@@ -3083,18 +3116,25 @@ bool CS3Trio64::decodes_memory_access(int index, u64 address, int dsize,
 	if ((pci_state.config_data[0][1] & endian_32(enable)) == 0)
 		return false;
 
-	// DB014-B section 14.1, MISC bit 0 (IOA SEL): only the selected
-	// 3Bx/3Dx CRTC and status/feature-control ports respond. 
+	// A neighboring multi-byte write may contain the selected 3C3 setup
+	// byte even while ordinary ports are disabled. Handlers gate each lane.
+	if (index == 12 || index == 32)
+		return address == 0 && io_access_enabled(index == 12 ? 0x46e8U : 0x0102U, write);
+	if (index == 2)
+	{
+		const u32 port = 0x3c0U + (u32)address;
+		for (int lane = 0; lane < dsize / 8 && address + lane < 16; ++lane)
+			if (io_access_enabled(port + lane, write))
+				return true;
+		return false;
+	}
+	if (!normal_access_enabled())
+		return false;
+
+	// DB014-B 14-1: MISC bit 0 selects the 3Bx/3Dx port group.
 	const bool color_io = (vga.miscellaneous_output & 0x01) != 0;
 	switch (index)
 	{
-	case 2: // 3C0-3CF
-		// DB014-B 12-2/17-10: CR65.2 selects 3C3 instead of 46E8.
-		// A wider transfer also covers ordinary VGA ports; its inactive
-		// setup byte is ignored by the byte handler, not the whole access.
-		return address != 3 || dsize != 8 || (s3.cr65 & 0x04);
-	case 12: // 46E8, an 8-bit setup register (DB014-B 14-48)
-		return address == 0 && !(s3.cr65 & 0x04);
 	case 1: // 3B4/3B5
 	case 3: // 3BA
 		return !color_io;
@@ -3154,6 +3194,8 @@ bool CS3Trio64::decodes_memory_access(int index, u64 address, int dsize,
  **/
 u32 CS3Trio64::ReadMem_Legacy(int index, u32 address, int dsize)
 {
+	if (!decodes_memory_access(index, address, dsize, false))
+		return dsize == 8 ? 0xffU : dsize == 16 ? 0xffffU : 0xffffffffU;
 	u32 data = 0;
 	switch (index)
 	{
@@ -3224,6 +3266,8 @@ u32 CS3Trio64::ReadMem_Legacy(int index, u32 address, int dsize)
  **/
 void CS3Trio64::WriteMem_Legacy(int index, u32 address, int dsize, u32 data)
 {
+	if (!decodes_memory_access(index, address, dsize, true))
+		return;
 	switch (index)
 	{
 		// IO Port 0x3b4
@@ -3375,11 +3419,31 @@ u8 CS3Trio64::AccelIORead(u32 port)
 	case 0xBAE8: { uint16_t v = dev->ibm8514_foremix_r();       return (port & 1) ? (v >> 8) : (v & 0xff); }
 	case 0xB2E8: { uint16_t v = dev->ibm8514_color_cmp_r();     return (port & 1) ? (v >> 8) : (v & 0xff); }
 	case 0xB2EA: { uint16_t v = dev->ibm8514_color_cmp_r_hi();  return (port & 1) ? (v >> 8) : (v & 0xff); }
-	case 0xBEE8: { uint16_t v = dev->ibm8514_multifunc_r();     return (port & 1) ? (v >> 8) : (v & 0xff); }
+	case 0xBEE8: { uint16_t v = dev->ibm8514_multifunc_r(m_video_subsys_enable);     return (port & 1) ? (v >> 8) : (v & 0xff); }
 
 	default:
 		return 0x00;
 	}
+}
+
+u32 CS3Trio64::AccelIORead(u32 port, int dsize)
+{
+	if (dsize != 8 && dsize != 16 && dsize != 32)
+		FAILURE(InvalidArgument, "Unsupported dsize");
+	u32 result = 0;
+	for (int lane = 0; lane < dsize / 8; ++lane)
+	{
+		// BEE8 is one register read, not two byte reads: READ_SEL advances
+		// once for a word transaction (DB014-B 18-19/18-24).
+		if (port + lane == 0xbee8 && lane + 1 < dsize / 8 && s3.enable_8514)
+		{
+			result |= (u32)m_8514.ibm8514_multifunc_r(m_video_subsys_enable) << (lane * 8);
+			++lane;
+		}
+		else
+			result |= (u32)AccelIORead(port + lane) << (lane * 8);
+	}
+	return result;
 }
 
 static inline void write16_low_high(u16& reg, u32 port, u8 data) {
@@ -3672,6 +3736,8 @@ bool CS3Trio64::IsAccelPort(u32 p) const {
  **/
 u32 CS3Trio64::ReadMem_Bar(int func, int bar, u32 address, int dsize)
 {
+	if (bar == 0 && !normal_access_enabled())
+		return dsize == 8 ? 0xffU : dsize == 16 ? 0xffffU : 0xffffffffU;
 #ifdef S3_LFB_TRACE
 	if (lfb_trace_needs_first_access_note) {
 		printf("%s: LFB first BAR access @+%llx size=%d\n",
@@ -3711,6 +3777,8 @@ u32 CS3Trio64::ReadMem_Bar(int func, int bar, u32 address, int dsize)
  **/
 void CS3Trio64::WriteMem_Bar(int func, int bar, u32 address, int dsize, u32 data)
 {
+	if (bar == 0 && !normal_access_enabled())
+		return;
 #ifdef DEBUG_PCI
 	printf("[S3::WriteMem_Bar] func=%d bar=%d addr=%08X dsize=%d data=%08X\n",
 		func, bar, address, dsize, data);
@@ -3746,6 +3814,8 @@ void CS3Trio64::WriteMem_Bar(int func, int bar, u32 address, int dsize, u32 data
 // --- Only include LFB here; legacy VGA paths fall through to CVGA ---
 u64 CS3Trio64::ReadMem(int index, u64 address, int dsize)
 {
+	if (index == DEV_LFB_IDX && !normal_access_enabled())
+		return dsize == 8 ? 0xffU : dsize == 16 ? 0xffffU : dsize == 32 ? 0xffffffffU : ~U64(0);
 	// LFB window (registered by update_linear_mapping)
 	if (index == DEV_LFB_IDX && lfb_active && lfb_size)
 	{
@@ -3772,17 +3842,8 @@ u64 CS3Trio64::ReadMem(int index, u64 address, int dsize)
 				}
 				else {
 					const u32 p = (u32)(off - win_lo); // ports by offset
-					if (IsAccelPort(p)) {
-						switch (dsize) {
-						case 8:
-							return (u64)AccelIORead(p);
-						case 16:
-							return (u64)AccelIORead(p + 0) | ((u64)AccelIORead(p + 1) << 8);
-						case 32:
-							return (u64)AccelIORead(p + 0) | ((u64)AccelIORead(p + 1) << 8) | ((u64)AccelIORead(p + 2) << 16) | ((u64)AccelIORead(p + 3) << 24);
-						default: FAILURE(InvalidArgument, "Unsupported dsize");
-						}
-					}
+					if (IsAccelPort(p))
+						return AccelIORead(p, dsize);
 				}
 			}
 		}
@@ -3819,6 +3880,8 @@ u64 CS3Trio64::ReadMem(int index, u64 address, int dsize)
 
 void CS3Trio64::WriteMem(int index, u64 address, int dsize, u64 data)
 {
+	if (index == DEV_LFB_IDX && !normal_access_enabled())
+		return;
 	if (index == DEV_LFB_IDX && lfb_active && lfb_size)
 	{
 		const u64 off = address; // dispatcher already subtracts base
@@ -4029,8 +4092,8 @@ int CS3Trio64::SaveState(FILE* f)
 	auto saved_vga = vga;
 	saved_state.memory = nullptr;
 	saved_vga.memory = nullptr;
-	const u8 io_state[] = { (u8)m_ioas, (u8)m_vga_subsys_enable,
-		m_video_subsys_enable_46e8, m_setup_option_select_0102 };
+	const u8 io_state[] = { (u8)m_ioas,
+		m_video_subsys_enable, m_setup_option_select_0102 };
 	const u32 vram_size = (u32)vga.svga_intf.vram_size;
 
 	if (fwrite(&s3_magic1, sizeof(s3_magic1), 1, f) != 1 ||
@@ -4078,7 +4141,7 @@ int CS3Trio64::RestoreState(FILE* f)
 	decltype(s3) saved_s3{};
 	decltype(svga) saved_svga{};
 	decltype(m_8514.ibm8514) saved_accel{};
-	u8 io_state[4]{};
+	u8 io_state[3]{};
 	u32 magic = 0, video_magic = 0, vram_size = 0;
 	if (fread(&magic, sizeof(magic), 1, f) != 1 || magic != s3_magic1 ||
 		fread(&video_magic, sizeof(video_magic), 1, f) != 1 ||
@@ -4089,7 +4152,8 @@ int CS3Trio64::RestoreState(FILE* f)
 		fread(&vram_size, sizeof(vram_size), 1, f) != 1 ||
 		vram_size != vga.svga_intf.vram_size ||
 		saved_vga.svga_intf.vram_size != vga.svga_intf.vram_size ||
-		saved_state.memsize != state.memsize || io_state[0] > 1 || io_state[1] > 1)
+		saved_state.memsize != state.memsize || io_state[0] > 1 ||
+		(io_state[1] & ~0x18) || (io_state[2] & ~0x01))
 	{
 		printf("%s: Invalid or incompatible graphics state.\n", devid_string);
 		return -1;
@@ -4111,9 +4175,8 @@ int CS3Trio64::RestoreState(FILE* f)
 	svga = saved_svga;
 	m_8514.ibm8514 = saved_accel;
 	m_ioas = io_state[0] != 0;
-	m_vga_subsys_enable = io_state[1] != 0;
-	m_video_subsys_enable_46e8 = io_state[2];
-	m_setup_option_select_0102 = io_state[3];
+	m_video_subsys_enable = io_state[1];
+	m_setup_option_select_0102 = io_state[2];
 	memcpy(vga.memory, saved_vram.data(), vram_size);
 
 	// Rebuild host rendering caches from the restored registers. 
@@ -4219,15 +4282,8 @@ u32 CS3Trio64::legacy_read(u32 address, int dsize)
 				}
 			}
 			// Upper half: register reads via AccelIORead
-			if (IsAccelPort(off)) {
-				switch (dsize) {
-				case 8:  return AccelIORead(off);
-				case 16: return AccelIORead(off) | ((u32)AccelIORead(off + 1) << 8);
-				case 32: return AccelIORead(off) | ((u32)AccelIORead(off + 1) << 8) |
-					((u32)AccelIORead(off + 2) << 16) | ((u32)AccelIORead(off + 3) << 24);
-				default: FAILURE(InvalidArgument, "Unsupported dsize");
-				}
-			}
+			if (IsAccelPort(off))
+				return AccelIORead(off, dsize);
 		}
 	}
 
@@ -4315,6 +4371,18 @@ u32 CS3Trio64::rom_read(u32 address, int dsize)
  */
 u32 CS3Trio64::io_read(u32 address, int dsize)
 {
+	if (!io_access_enabled(address, false))
+		return dsize == 8 ? 0xffU : dsize == 16 ? 0xffffU : 0xffffffffU;
+	if (address == 0x0102)
+	{
+		// Only the option byte is implemented; unused read lanes float high.
+		switch (dsize) {
+		case 8: return m_setup_option_select_0102;
+		case 16: return 0xff00U | m_setup_option_select_0102;
+		case 32: return 0xffffff00U | m_setup_option_select_0102;
+		default: FAILURE(InvalidArgument, "Unsupported dsize");
+		}
+	}
 	u32 data = 0;
 	// Always intercept S3 8514/A-style ports. If the port block is not enabled
 	// yet (CR40 == 0), hardware behaves benignly: reads return bus pull-ups,
@@ -4329,18 +4397,7 @@ u32 CS3Trio64::io_read(u32 address, int dsize)
 			default: FAILURE(InvalidArgument, "Unsupported dsize");
 			}
 		}
-		if ((m_crtc_map.read_byte(0x40) & 0x01) && IsAccelPort(address)) {
-			switch (dsize) {
-			case 8:  return AccelIORead(address);
-			case 16: return (u32)AccelIORead(address + 0) |
-				((u32)AccelIORead(address + 1) << 8);
-			case 32: return (u32)AccelIORead(address + 0) |
-				((u32)AccelIORead(address + 1) << 8) |
-				((u32)AccelIORead(address + 2) << 16) |
-				((u32)AccelIORead(address + 3) << 24);
-			default: FAILURE(InvalidArgument, "Unsupported dsize");
-			}
-		}
+		return AccelIORead(address, dsize);
 	}
 
 	if (dsize != 8)
@@ -4359,10 +4416,6 @@ u32 CS3Trio64::io_read(u32 address, int dsize)
 
 	case 0x3c2:
 		data = read_b_3c2();
-		break;
-
-	case 0x3c3:
-		data = (s3.cr65 & 0x04) ? (m_vga_subsys_enable ? 0x01 : 0x00) : 0xff;
 		break;
 
 	case 0x3c4:
@@ -4456,13 +4509,6 @@ u32 CS3Trio64::io_read(u32 address, int dsize)
 		data = 0xFF;  // open bus
 		break;
 
-	case 0x46E8:
-		data = (s3.cr65 & 0x04) ? 0xff : m_video_subsys_enable_46e8;
-		break;
-	case 0x0102:
-		data = m_setup_option_select_0102;
-		break;
-
 	default:
 		printf("S3: Unhandled io port %x read\n", address);
 	}
@@ -4477,6 +4523,8 @@ u32 CS3Trio64::io_read(u32 address, int dsize)
  */
 void CS3Trio64::io_write(u32 address, int dsize, u32 data)
 {
+	if (IsAccelPort(address) && !normal_access_enabled())
+		return;
 	// 8514/A-style accel window (S3 engine). Intercept first, and swallow writes
 	// until CR40 enables the port block (to avoid falling through to VGA path).
 	if (IsAccelPort(address)) {
@@ -4541,6 +4589,8 @@ void CS3Trio64::io_write(u32 address, int dsize, u32 data)
  **/
 void CS3Trio64::io_write_b(u32 address, u8 data)
 {
+	if (!io_access_enabled(address, true))
+		return;
 	switch (address)
 	{
 	case 0x3c0:
@@ -4570,9 +4620,9 @@ void CS3Trio64::io_write_b(u32 address, u8 data)
 		break;
 
 	case 0x3c3:
-		// Also guard this byte when reached by a wider neighboring write.
-		if (s3.cr65 & 0x04)
-			m_vga_subsys_enable = (data & 0x01) != 0;
+	case 0x46E8:
+		// Address selection and access were checked above; reserved bits read 0.
+		m_video_subsys_enable = data & 0x18;
 		break;
 
 	case 0x3c4:
@@ -4646,16 +4696,8 @@ void CS3Trio64::io_write_b(u32 address, u8 data)
 		// Real hardware silently ignores them.
 		break;
 
-	case 0x46E8:
-		// S3 Trio32/Trio64 "Video Subsystem Enable" / setup register
-		// bit3 AD_DEC: enable video I/O+memory decode
-		// bit4 EN_SUP: setup enable
-		if (!(s3.cr65 & 0x04))
-			m_video_subsys_enable_46e8 = data;
-		break;
 	case 0x0102:
-		// Setup Option Select (used in chip-wakeup sequences)
-		m_setup_option_select_0102 = data;
+		m_setup_option_select_0102 = data & 0x01;
 		break;
 
 	default:
@@ -4754,19 +4796,6 @@ u8 CS3Trio64::read_b_3c2()
 	return res;
 }
 
-/**
- * Read from the VGA Enable register (0x3c3)
- *
- * (Not sure where this comes from; doesn't seem to be in the VGA specs.)
- **/
-u8 CS3Trio64::read_b_3c3()
-{
-#if DEBUG_VGA_NOISY
-	printf("VGA: 3c3 READ VGA ENABLE 0x%02x\n", vga_enabled());
-#endif
-	return vga_enabled();
-}
-
 u8 CS3Trio64::read_b_3ca()
 {
 	return 0;
@@ -4793,7 +4822,8 @@ void CS3Trio64::update(void)
 	/* no screen update necessary
 	   Trio32/Trio64: SR0 reset bits are not functional
 	   Gate on ATC video enable and SR1 "Screen Off" */
-	if (!m_vga_subsys_enable || !atc_video_enabled())
+	// Setup/sleep controls CPU access; existing video output continues (14-47).
+	if (!atc_video_enabled())
 		return;
 
 	const bool screen_off = (vga.sequencer.data[1] & 0x20) != 0; // SR1 bit5

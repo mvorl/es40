@@ -98,6 +98,7 @@ public:
   virtual int   SaveState(FILE* f) override;
   virtual int   RestoreState(FILE* f) override;
   virtual void  check_state() override;
+  void ResetPCI() override;
   virtual void  WriteMem_Legacy(int index, u32 address, int dsize, u32 data) override;
   virtual u32   ReadMem_Legacy(int index, u32 address, int dsize) override;
   bool decodes_memory_access(int index, u64 address, int dsize,
@@ -301,10 +302,6 @@ protected:
     state.vga_mem_updated = 1;
   }
 
-  inline bool vga_enabled() const {
-    return seq_reset1() && seq_reset2();
-  }
-
   inline bool dtp_enabled() const { return (s3.cr34 & 0x10) != 0; }
 
   inline bool ilrt_enabled() const { return (s3.cr42 & 0x20) != 0; }
@@ -323,13 +320,12 @@ private:
   void refresh_pitch_offset();
   // END MAME CODE - rest is es40 specific or pending removal
 
-  // VGA Subsystem Enable register (port 3C3) — no MAME equivalent;
-  // MAME uses mode_setup_w on ISA $46E8 instead.
-  bool m_vga_subsys_enable = true;
-
-  // Trio setup regs (46E8h/0102h). Defaults chosen to not "brick" the emulated card.
-  u8 m_video_subsys_enable_46e8 = 0x08; // AD_DEC=1, EN_SUP=0
-  u8 m_setup_option_select_0102 = 0x00; // bit0=1 "respond" - reset default is 0x00
+  // DB014-B 14-47/48: one setup register, selected by CR65.2, and
+  // its option byte. Both power on with CPU display access disabled.
+  u8 m_video_subsys_enable = 0x00;
+  u8 m_setup_option_select_0102 = 0x00;
+  bool normal_access_enabled() const noexcept;
+  bool io_access_enabled(u32 port, bool write) const noexcept;
 
   u32   mem_read(u32 address, int dsize);
   void  mem_write(u32 address, int dsize, u32 data);
@@ -352,6 +348,7 @@ private:
   // accel I/O (S3 Trio uses 0x42E8/0x4AE8)
   void          AccelIOWrite(u32 port, u8 data);
   u8            AccelIORead(u32 port);
+  u32           AccelIORead(u32 port, int dsize);
   bool    IsAccelPort(u32 port) const;
   int     BytesPerPixel() const;
   u32     PitchBytes() const;   // from CRTC 13h + hi bits
@@ -374,7 +371,6 @@ private:
   void  write_b_3c2(u8 data);
 
   u8    read_b_3c2();
-  u8    read_b_3c3();
   u8    read_b_3ca();
 
   u32   legacy_read(u32 address, int dsize);
