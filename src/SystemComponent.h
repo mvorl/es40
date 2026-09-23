@@ -86,6 +86,8 @@
 #include "Configurator.h"
 #include <typeinfo>
 
+class CAliM1543C;
+
   /**
    * \brief Abstract base class for devices that connect to the Typhoon chipset.
    **/
@@ -123,6 +125,12 @@ public:
   // positive ones decline.
   virtual bool uses_subtractive_decode(int index, u64 address, int dsize,
     bool write) const noexcept { return false; }
+
+  // Host-only wiring, established after construction and before device init.
+  virtual void bind_isa_bridge(CAliM1543C* bridge) {}
+  virtual const CSystemComponent* memory_decode_owner() const noexcept { return this; }
+  // A bridge forwarding range yields to its own more specific device handler.
+  virtual bool memory_decode_fallback(int index) const noexcept { return false; }
 
   struct PciIoWrite
   {

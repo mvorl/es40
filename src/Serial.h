@@ -99,6 +99,8 @@
 #include "SystemComponent.h"
 #include "network/telnet.h"
 
+class CAliM1543C;
+
 #define STAGE_SIZE 8192
 
   /**
@@ -115,6 +117,14 @@ public:
   virtual u64   ReadMem(int index, u64 address, int dsize);
   CSerial(CConfigurator* cfg, CSystem* c, u16 number);
   virtual       ~CSerial();
+
+  void bind_isa_bridge(CAliM1543C* bridge) override { isa_bridge = bridge; }
+  const CSystemComponent* memory_decode_owner() const noexcept override;
+  bool decodes_memory_access(int index, u64 address, int dsize,
+    bool write) const noexcept override;
+  bool uses_subtractive_decode(int index, u64 address, int dsize,
+    bool write) const noexcept override;
+
   int           receive(const char* data, int dsize);
   virtual void  check_state();
   virtual int   SaveState(FILE* f);
@@ -128,6 +138,9 @@ public:
   virtual void  start_threads();
   virtual void  stop_threads();
 private:
+  // Borrowed routing owner; not part of the saved device state.
+  const CAliM1543C* isa_bridge = nullptr;
+
   void          serial_menu();
   void          drain_staging();
 

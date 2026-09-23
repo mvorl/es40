@@ -30,6 +30,7 @@
   **/
 #include "StdAfx.h"
 #include "AliM1543C_pmu.h"
+#include "AliM1543C.h"
 #include "System.h"
 #include <chrono>
 
@@ -69,6 +70,7 @@ static u32 pmu_cfg_data[64] = {
 //   BAR0  mask 0xffffffc0 : 64-byte alignment, low bit (IO type) read-only
 //   BAR1  mask 0xffffffe0 : 32-byte alignment
 //   CFIT  read-only zero (reserved range)
+//   68h, 6Ch, 70h, A4h: address selectors used by M1543C docking decode.
 static u32 pmu_cfg_mask[64] = {
 	/*00*/  0x00000000,
 	/*04*/  0x00000001,
@@ -86,9 +88,17 @@ static u32 pmu_cfg_mask[64] = {
 	/*34*/  0x00000000,
 	/*38*/  0x00000000,
 	/*3c*/  0x00000000,
-	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+	/*40*/  0,0,0,0,0,0,0,0,
+	/*60*/  0,0,
+	/*68*/  0x00000001, // FDD address selector
+	/*6c*/  0x0000fffc, // Audio I/O address selectors
+	/*70*/  0x000007ff, // Serial and parallel I/O address selectors
+	/*74*/  0,0,0,
+	/*80*/  0,0,0,0,0,0,0,0,
+	/*a0*/  0,
+	/*a4*/  0x0000ffff, // I/O Group C address and mask
+	/*a8*/  0,0,0,0,0,0,
+	/*c0*/  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 };
 
 CAliM1543C_pmu::CAliM1543C_pmu(CConfigurator* cfg, CSystem* c, int pcibus, int pcidev)
@@ -113,6 +123,39 @@ CAliM1543C_pmu::CAliM1543C_pmu(CConfigurator* cfg, CSystem* c, int pcibus, int p
 }
 
 CAliM1543C_pmu::~CAliM1543C_pmu() {}
+
+void CAliM1543C_pmu::bind_isa_bridge(CAliM1543C* bridge)
+{
+	isa_bridge = bridge;
+}
+
+const CSystemComponent* CAliM1543C_pmu::memory_decode_owner() const noexcept
+{
+	return isa_bridge ? static_cast<const CSystemComponent*>(isa_bridge) : this;
+}
+
+bool CAliM1543C_pmu::uses_subtractive_decode(int index, u64, int, bool) const noexcept
+{
+	// M1543C 3.5(e/h): ACPI/SMBus I/O follows 44h<6>, except in docking mode.
+	return isa_bridge && (index == PCI_RANGE_BASE || index == PCI_RANGE_BASE + 1) &&
+		isa_bridge->programmable_io_is_subtractive();
+}
+
+bool CAliM1543C_pmu::decodes_memory_access(int index, u64 address, int dsize,
+	bool write) const noexcept
+{
+	// 5Fh<2> hides PCI configuration; PMU operation remains programmable via ALi.
+	if (index == PCI_RANGE_BASE + 7 && isa_bridge && isa_bridge->is_pmu_hidden())
+		return false;
+	return CPCIDevice::decodes_memory_access(index, address, dsize, write);
+}
+
+u32 CAliM1543C_pmu::docking_config(u32 aligned_offset) const noexcept
+{
+	if (aligned_offset >= 0x100 || (aligned_offset & 3))
+		return 0;
+	return endian_32(pci_state.config_data[0][aligned_offset / 4]);
+}
 
 u32 CAliM1543C_pmu::ReadMem_Bar(int func, int bar, u32 address, int dsize)
 {

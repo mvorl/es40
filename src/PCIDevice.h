@@ -52,7 +52,7 @@
 #if !defined(__PCIDEVICE_H__)
 #define __PCIDEVICE_H__
 
-#define MAX_DEV_RANGES  50
+#define MAX_DEV_RANGES  64
 
 #define PCI_RANGE_BASE  0x0800
 

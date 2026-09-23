@@ -313,6 +313,8 @@
   **/
 #define __STDC_FORMAT_MACROS 1
 #include "StdAfx.h"
+#include "AliM1543C.h"
+#include "AliM1543C_pmu.h"
 #include "System.h"
 #include "PCIDevice.h"
 #include "VGA.h"
@@ -913,7 +915,6 @@ void CSystem::ResetChipsetState()
 	state.tig.ModInfo = 0;
 	memset(state.tig.ipcr, 0, sizeof(state.tig.ipcr));
 
-	memset(state.cf8_address, 0, sizeof(state.cf8_address));
 }
 
 /**
@@ -1057,6 +1058,29 @@ void CSystem::cpu_clear_lock(int cpuid)
 	state.cpu_lock_flags &= ~(1 << cpuid);  // atomic fetch_and
 }
 
+// A forwarding claim and a device behind that bridge are one PCI responder.
+int CSystem::prefer_bridge_handler(int first_range, u64 address, int dsize,
+	bool write, bool subtractive) const
+{
+	const SMemoryUser* first = asMemories[first_range].get();
+	if (!first->component->memory_decode_fallback(first->index))
+		return first_range;
+	const auto* owner = first->component->memory_decode_owner();
+	for (int i = first_range + 1; i < iNumMemories; ++i)
+	{
+		const SMemoryUser* range = asMemories[i].get();
+		if (range->component->memory_decode_owner() == owner &&
+			!range->component->memory_decode_fallback(range->index) &&
+			address >= range->base && address < range->base + range->length &&
+			range->component->decodes_memory_access(range->index,
+				address - range->base, dsize, write) &&
+			range->component->uses_subtractive_decode(range->index,
+				address - range->base, dsize, write) == subtractive)
+			return i;
+	}
+	return first_range;
+}
+
 // Called with device_bus_mutex held. Positive decode precedes subtractive decode.
 int CSystem::find_memory_target(u64 address, int dsize, bool write,
 	const CSystemComponent* source) const
@@ -1076,12 +1100,17 @@ int CSystem::find_memory_target(u64 address, int dsize, bool write,
 				subtractive = i;
 			continue;
 		}
+		i = prefer_bridge_handler(i, address, dsize, write, false);
 		if (stop_on_decode_conflict)
 			check_decode_conflict(address, dsize, write, i, false, source);
 		return i;
 	}
-	if (subtractive < iNumMemories && stop_on_decode_conflict)
-		check_decode_conflict(address, dsize, write, subtractive, true, source);
+	if (subtractive < iNumMemories)
+	{
+		subtractive = prefer_bridge_handler(subtractive, address, dsize, write, true);
+		if (stop_on_decode_conflict)
+			check_decode_conflict(address, dsize, write, subtractive, true, source);
+	}
 	return subtractive;
 }
 
@@ -1091,8 +1120,10 @@ void CSystem::check_decode_conflict(u64 address, int dsize, bool write,
 	const SMemoryUser* first = asMemories[first_range].get();
 	std::vector<const SMemoryUser*> eligible = { first };
 	bool ambiguous = false;
-	for (int i = first_range + 1; i < iNumMemories; ++i)
+	for (int i = 0; i < iNumMemories; ++i)
 	{
+		if (i == first_range)
+			continue;
 		const SMemoryUser* range = asMemories[i].get();
 		if (address >= range->base && address < range->base + range->length &&
 			range->component->decodes_memory_access(range->index,
@@ -1101,7 +1132,12 @@ void CSystem::check_decode_conflict(u64 address, int dsize, bool write,
 				address - range->base, dsize, write) == subtractive)
 		{
 			eligible.push_back(range);
-			ambiguous |= range->component != first->component;
+			const bool same_owner = range->component->memory_decode_owner() ==
+				first->component->memory_decode_owner();
+			const bool forwarding_alias = same_owner &&
+				(range->component->memory_decode_fallback(range->index) ||
+				 first->component->memory_decode_fallback(first->index));
+			ambiguous |= range->component != first->component && !forwarding_alias;
 		}
 	}
 	if (!ambiguous)
@@ -1153,7 +1189,8 @@ void CSystem::dispatch_pci_io_write(u64 address, int dsize, u64 data,
 
 	for (CSystemComponent* component : acComponents)
 	{
-		if (!component || component == target)
+		if (!component || (target && component->memory_decode_owner() ==
+			target->memory_decode_owner()))
 			continue;
 		bool already_captured = false;
 		for (const auto& observer : observers)
@@ -1274,13 +1311,9 @@ void CSystem::WriteMem(u64 address, int dsize, u64 data, CSystemComponent* sourc
 		i = find_memory_target(a, dsize, true, source);
 		const bool mapped = i < iNumMemories;
 		const u64 io_base = a & ~U64(0x1ffffff);
-		const u64 io_port = a & U64(0x1ffffff);
 
-		const bool config_bridge = !mapped && dsize == 32 &&
-			(io_port == 0xcf8 || io_port == 0xcfc);
 		const bool observed_io =
 			(io_base == U64(0x801fc000000) || io_base == U64(0x803fc000000)) &&
-			!config_bridge &&
 			(dsize == 8 || dsize == 16 || dsize == 32) &&
 			(a & 3) + dsize / 8 <= 4;
 		if (observed_io)
@@ -1290,34 +1323,6 @@ void CSystem::WriteMem(u64 address, int dsize, u64 data, CSystemComponent* sourc
 				a - asMemories[i]->base, dsize, data);
 		if (mapped)
 			return;
-
-		if ((a == U64(0x00000801FC000CF8)) && (dsize == 32))
-		{
-			state.cf8_address[0] = (u32)data & 0x00ffffff;
-			return;
-		}
-
-		if ((a == U64(0x00000803FC000CF8)) && (dsize == 32))
-		{
-			state.cf8_address[1] = (u32)data & 0x00ffffff;
-			return;
-		}
-
-		if ((a == U64(0x00000801FC000CFC)) && (dsize == 32))
-		{
-			printf("PCI 0 config space write through CF8/CFC mechanism.   \n");
-			WriteMem(U64(0x00000801FE000000) | state.cf8_address[0], dsize, data,
-				source);
-			return;
-		}
-
-		if ((a == U64(0x00000803FC000CFC)) && (dsize == 32))
-		{
-			printf("PCI 1 config space write through CF8/CFC mechanism.   \n");
-			WriteMem(U64(0x00000803FE000000) | state.cf8_address[1], dsize, data,
-				source);
-			return;
-		}
 
 		const u64 config_base = a & ~U64(0xffffff);
 		if ((config_base == U64(0x801fe000000) || config_base == U64(0x803fe000000)) &&
@@ -1556,27 +1561,6 @@ u64 CSystem::ReadMem(u64 address, int dsize, CSystemComponent* source)
 		{
 			return asMemories[i]->component->ReadMem(asMemories[i]->index,
 				a - asMemories[i]->base, dsize);
-		}
-
-		// Read back the latched CF8 value 
-		if (a == U64(0x00000801FC000CF8) && dsize == 32)
-			return state.cf8_address[0];
-		if (a == U64(0x00000803FC000CF8) && dsize == 32)
-			return state.cf8_address[1];
-
-		// Reads from CFC are forwarded into the dense config window
-		if ((a == U64(0x00000801FC000CFC)) && (dsize == 32))
-		{
-			printf("PCI 0 config space read through CF8/CFC mechanism.   \n");
-			return ReadMem(U64(0x00000801FE000000) | state.cf8_address[0], dsize,
-				source);
-		}
-
-		if ((a == U64(0x00000803FC000CFC)) && (dsize == 32))
-		{
-			printf("PCI 1 config space read through CF8/CFC mechanism.   \n");
-			return ReadMem(U64(0x00000803FE000000) | state.cf8_address[1], dsize,
-				source);
 		}
 
 		if (a >= U64(0x00000801A0000000) && a <= U64(0x00000801AFFFFFFF))
@@ -3271,8 +3255,42 @@ u64 CSystem::PCI_Phys_scatter_gather(u32 address, u64 wsm, u64 tba)
 /**
  * Initialize all devices.
  **/
+void CSystem::bind_isa_devices()
+{
+	CAliM1543C* bridge = nullptr;
+	for (auto* component : acComponents)
+		if (auto* candidate = dynamic_cast<CAliM1543C*>(component))
+		{
+			if (bridge && bridge != candidate)
+				FAILURE(Configuration, "Multiple ISA bridges in one system");
+			bridge = candidate;
+		}
+	CAliM1543C_pmu* pmu = nullptr;
+	if (bridge)
+		for (auto* component : acComponents)
+			if (auto* candidate = dynamic_cast<CAliM1543C_pmu*>(component))
+				if (candidate->pci_bus() == bridge->pci_bus())
+				{
+					if (pmu && pmu != candidate)
+						FAILURE(Configuration, "Multiple PMU functions for one ISA bridge");
+					pmu = candidate;
+				}
+	if (bridge)
+		bridge->bind_pmu(pmu);
+	for (auto* component : acComponents)
+		if (component)
+		{
+			const auto* pci = dynamic_cast<const CPCIDevice*>(component);
+			// Non-PCI endpoints currently have fixed hose-0 I/O registrations.
+			component->bind_isa_bridge(bridge && (pci ?
+				pci->pci_bus() == bridge->pci_bus() : bridge->pci_bus() == 0)
+				? bridge : nullptr);
+		}
+}
+
 void CSystem::init()
 {
+	bind_isa_devices();
 	if (!bNativePal)
 		printf("%%SYS-I-VMSPAL: running the optimized vmspal PALcode replacement routines on all CPUs (set palcode.vms.nohle=true for native PALcode).\n");
 	for (int i = 0; i < iNumComponents; i++)
@@ -3327,7 +3345,8 @@ void CSystem::stop_threads()
 // 2.5 stores the canonical Trio64 setup controls and enforces their access gates.
 // 2.6 requires the documented S3 PCI COMMAND mask and fixed STATUS value.
 static const u32 system_state_magic = 0xa1fae540;
-static const u32 system_state_version = 0x00020006;
+// 2.7 requires writable M7101 docking selectors and removes the CF8/CFC latch.
+static const u32 system_state_version = 0x00020007;
 static const u32 snapshot_identity_limit = 65536;
 
 void CSystem::flush_storage()
@@ -3429,7 +3448,7 @@ bool CSystem::RestoreState(const char* fn)
 	if (version != system_state_version)
 	{
 		printf("%%SYS-I-VERSION: State file %s is incompatible; "
-			"version 2.6 is required.\n", fn);
+			"version 2.7 is required.\n", fn);
 		return false;
 	}
 	if (fread(&memory_size, sizeof(memory_size), 1, f) != 1 ||

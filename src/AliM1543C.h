@@ -142,6 +142,8 @@
 
 #include <chrono>
 
+class CAliM1543C_pmu;
+
   /**
    * \brief Emulated ISA part of the ALi M1543C chipset.
    *
@@ -167,8 +169,21 @@ public:
   virtual u32   ReadMem_Legacy(int index, u32 address, int dsize);
   bool uses_subtractive_decode(int index, u64 address, int dsize,
     bool write) const noexcept override;
-  // Read the existing PCI state under the system device-bus lock.
+  bool decodes_memory_access(int index, u64 address, int dsize,
+    bool write) const noexcept override;
+  bool memory_decode_fallback(int index) const noexcept override;
+
+  // Read existing register state under the system device-bus lock.
+  enum class IsaIoDecode { None, Positive, Subtractive };
+  IsaIoDecode isa_io_decode(u32 port) const noexcept;
   bool is_docking_mode() const noexcept;
+  bool is_pmu_hidden() const noexcept;
+  bool programmable_io_is_subtractive() const noexcept;
+  bool superio_claims_port(u32 port, bool write) const noexcept;
+  void bind_pmu(CAliM1543C_pmu* pmu) { docking_pmu = pmu; }
+  u32 config_read_custom(int func, u32 address, int dsize, u32 data) override;
+  void config_write_custom(int func, u32 address, int dsize,
+    u32 old_data, u32 new_data, u32 data) override;
 
   void          do_pit_clock();
 
@@ -188,6 +203,8 @@ public:
   void          save_toy_nvram(bool verbose = false);
   void          restore_toy_nvram();
 private:
+  // Host wiring; the PMU's selector bytes already live in saved PCI state.
+  CAliM1543C_pmu* docking_pmu = nullptr;
   CThread* myThread;
   CMutex* myRegLock;
   bool      StopThread;

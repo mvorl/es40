@@ -34,6 +34,8 @@
 
 #include "PCIDevice.h"
 
+class CAliM1543C;
+
 class CAliM1543C_pmu : public CPCIDevice
 {
 public:
@@ -44,8 +46,17 @@ public:
 	virtual       ~CAliM1543C_pmu();
 	virtual void  WriteMem_Bar(int func, int bar, u32 address, int dsize, u32 data);
 	virtual u32   ReadMem_Bar(int func, int bar, u32 address, int dsize);
+	void bind_isa_bridge(CAliM1543C* bridge) override;
+	const CSystemComponent* memory_decode_owner() const noexcept override;
+	bool uses_subtractive_decode(int index, u64 address, int dsize,
+		bool write) const noexcept override;
+	bool decodes_memory_access(int index, u64 address, int dsize,
+		bool write) const noexcept override;
+	u32 docking_config(u32 aligned_offset) const noexcept;
 
 private:
+	const CAliM1543C* isa_bridge = nullptr;
+
 	u32   pm_io_read(u32 address, int dsize);
 	void  pm_io_write(u32 address, int dsize, u32 data);
 	u32   smb_io_read(u32 address, int dsize);

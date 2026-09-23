@@ -238,6 +238,30 @@ CSerial::CSerial(CConfigurator* cfg, CSystem* c, u16 number) : CSystemComponent(
 	state.iNumber = number;
 }
 
+const CSystemComponent* CSerial::memory_decode_owner() const noexcept
+{
+	return isa_bridge ? static_cast<const CSystemComponent*>(isa_bridge) : this;
+}
+
+bool CSerial::decodes_memory_access(int index, u64 address, int, bool) const noexcept
+{
+	if (!(index == 0 && address < 8))
+		return false;
+	if (!isa_bridge)
+		return true;
+	const u32 port = 0x3f8u - 0x100u * (u32)state.iNumber + (u32)address;
+	return isa_bridge->isa_io_decode(port) != CAliM1543C::IsaIoDecode::None;
+}
+
+bool CSerial::uses_subtractive_decode(int index, u64 address, int dsize,
+	bool write) const noexcept
+{
+	if (!isa_bridge || !decodes_memory_access(index, address, dsize, write))
+		return false;
+	const u32 port = 0x3f8u - 0x100u * (u32)state.iNumber + (u32)address;
+	return isa_bridge->isa_io_decode(port) == CAliM1543C::IsaIoDecode::Subtractive;
+}
+
 /**
  * Initialize the Serial port device.
  **/

@@ -336,6 +336,9 @@ public:
   bool          IsShutdownRequested() const noexcept;
 
 private:
+  void bind_isa_devices();
+  int prefer_bridge_handler(int first_range, u64 address, int dsize, bool write,
+    bool subtractive) const;
   int find_memory_target(u64 address, int dsize, bool write,
     const CSystemComponent* source) const;
   // Diagnostic for ambiguous registered mappings, under device_bus_mutex.
@@ -580,7 +583,6 @@ private:
       u64 tba[4];
     } pchip[2];
 
-    u32 cf8_address[2];
   } state;
   void* memory;
 

@@ -268,6 +268,7 @@
   **/
 #include "StdAfx.h"
 #include "AliM1543C.h"
+#include "AliM1543C_pmu.h"
 #include "System.h"
 #include "VGA.h"
 
@@ -486,6 +487,9 @@ void CAliM1543C::init()
 	// power on defaults
 	superio_reset();
 
+	// Docking windows may forward to ISA even when no modeled dev exists.
+	add_legacy_io(60, 0, 0x10000);
+
 	// ISA Plug-and-Play address (0x279) and write-data (0xA79) ports.
 	// The OS-selectable READ_DATA port (id 52) is registered dynamically
 	// when the OS programs it via PnP register 0x00.
@@ -541,17 +545,185 @@ CAliM1543C::~CAliM1543C()
 
 bool CAliM1543C::uses_subtractive_decode(int index, u64, int, bool write) const noexcept
 {
-	// M1543C 3.5: 44h<6> controls PIT/PIC and IACK; docking mode is positive.
-	if (index != 6 && index != 7 && index != 8 && index != 30 &&
-		!(index == 20 && !write))
-		return false;
-	return (endian_32(pci_state.config_data[0][0x44 / 4]) & 0x40) &&
-		!is_docking_mode();
+	// M1543C 3.5(g/h): NMI/RTC and external ISA are normally subtractive.
+	switch (index)
+	{
+	case 1: case 2:
+	case 9: case 27: case 40: case 50: case 51: case 52:
+		return !is_docking_mode();
+	}
+
+	// M1543C 3.5(b/e/h): 44h<6> controls PIT/PIC and IACK reads.
+	if (index == 6 || index == 7 || index == 8 || index == 30 ||
+		(index == 20 && !write))
+		return programmable_io_is_subtractive();
+	return false;
 }
 
 bool CAliM1543C::is_docking_mode() const noexcept
 {
 	return (endian_32(pci_state.config_data[0][0x5c / 4]) & 1) != 0;
+}
+
+bool CAliM1543C::is_pmu_hidden() const noexcept
+{
+	return (endian_32(pci_state.config_data[0][0x5c / 4]) & 0x04000000U) != 0;
+}
+
+u32 CAliM1543C::config_read_custom(int func, u32 address, int dsize, u32 data)
+{
+	// M1543C 5Fh<2>, p.71: hidden M7101 registers 7Ch-FFh alias here.
+	if (func != 0 || !is_pmu_hidden() || !docking_pmu ||
+		(dsize != 8 && dsize != 16 && dsize != 32))
+		return data;
+	for (u32 lane = 0; lane < (u32)dsize / 8; ++lane)
+		if (address + lane >= 0x7c && address + lane < 0x100)
+		{
+			const u32 value = docking_pmu->config_read(0, address + lane, 8);
+			data = (data & ~(0xffU << (lane * 8))) | (value << (lane * 8));
+		}
+	return data;
+}
+
+void CAliM1543C::config_write_custom(int func, u32 address, int dsize,
+	u32, u32, u32 data)
+{
+	if (func != 0 || !is_pmu_hidden() || !docking_pmu ||
+		(dsize != 8 && dsize != 16 && dsize != 32))
+		return;
+	// The generic write hook receives data in stored byte order.
+	if (dsize == 16)
+		data = endian_16((u16)data);
+	else if (dsize == 32)
+		data = endian_32(data);
+	for (u32 lane = 0; lane < (u32)dsize / 8; ++lane)
+		if (address + lane >= 0x7c && address + lane < 0x100)
+			// Use the PMU's own mask and register handling for every byte lane.
+			docking_pmu->config_write(0, address + lane, 8,
+				(data >> (lane * 8)) & 0xff);
+}
+
+bool CAliM1543C::programmable_io_is_subtractive() const noexcept
+{
+	return (endian_32(pci_state.config_data[0][0x44 / 4]) & 0x40) &&
+		!is_docking_mode();
+}
+
+CAliM1543C::IsaIoDecode CAliM1543C::isa_io_decode(u32 port) const noexcept
+{
+	if (!is_docking_mode())
+		return IsaIoDecode::Subtractive;
+
+	// PCI positive I/O decode compares every address bit; no high-bit alias.
+	if (port > 0xffff)
+		return IsaIoDecode::None;
+
+	// DMDC 5D:5C (M1543C p.69) enables the UNION of address windows.
+	// Selectors belong to M7101.
+	const u32 dmdc = endian_32(pci_state.config_data[0][0x5c / 4]);
+	if ((dmdc & 0x04) && port >= 0x3b0 && port <= 0x3df)
+		return IsaIoDecode::Positive;
+	if ((dmdc & 0x20) && (port == 0x60 || port == 0x64))
+		return IsaIoDecode::Positive;
+
+	if (dmdc & 0x08)
+	{
+		const u32 selector = docking_pmu ? docking_pmu->docking_config(0x68) : 0;
+		const u32 base = (selector & 1) ? 0x370 : 0x3f0;
+		if (port >= base && port < base + 8)
+			return IsaIoDecode::Positive;
+	}
+
+	if (dmdc & 0x02)
+	{
+		const u32 selector = docking_pmu ? docking_pmu->docking_config(0x6c) : 0;
+		// M7101 6D:6C<15:2>, p.140. The book explicitly prints 338h for ADLIB.
+		static const u16 bases[] = { 0x200, 0x338, 0x300, 0x310, 0x320, 0x330,
+			0x220, 0x240, 0x260, 0x280, 0x530, 0x604, 0xe80, 0xf40 };
+		static const u8 lengths[] = { 8, 4, 4, 4, 4, 4, 20, 20, 20, 20, 8, 8, 8, 8 };
+		for (unsigned i = 0; i < sizeof(bases) / sizeof(bases[0]); ++i)
+			if ((selector & (1U << (i + 2))) &&
+				port >= bases[i] && port < (u32)bases[i] + lengths[i])
+				return IsaIoDecode::Positive;
+	}
+
+	if (dmdc & 0x50)
+	{
+		const u32 selector = docking_pmu ? docking_pmu->docking_config(0x70) : 0;
+		if (dmdc & 0x10)
+		{
+			static const u16 bases[] = { 0x3f8, 0x2f8, 0x3e8, 0x2e8,
+				0x220, 0x228, 0x238, 0x338 };
+			for (unsigned i = 0; i < sizeof(bases) / sizeof(bases[0]); ++i)
+				if ((selector & (1U << i)) && port >= bases[i] && port < (u32)bases[i] + 8)
+					return IsaIoDecode::Positive;
+		}
+		if (dmdc & 0x40)
+		{
+			// 71h<2:0> are address selectors; DRQ/event enables are not ranges.
+			if (((selector & 0x100) && port >= 0x378 && port <= 0x37f) ||
+				((selector & 0x200) && port >= 0x278 && port <= 0x27f) ||
+				((selector & 0x400) && port >= 0x3bc && port <= 0x3be))
+				return IsaIoDecode::Positive;
+		}
+	}
+
+	if (dmdc & 0x200)
+	{
+		// A5:A4<1:0> mask address bits 3:2; A1:0 are always ignored (p.156).
+		const u32 selector = docking_pmu ? docking_pmu->docking_config(0xa4) : 0;
+		const u32 mask = 0xfffcU & ~((selector & 3) << 2);
+		if (((port ^ selector) & mask) == 0)
+			return IsaIoDecode::Positive;
+	}
+	return IsaIoDecode::None;
+}
+
+bool CAliM1543C::superio_claims_port(u32 port, bool write) const noexcept
+{
+	// The strapped 370h index is write-only; 371h is valid in config mode.
+	return ((port == 0x370 && write) ||
+		(port == 0x371 && state.superio_config_mode)) &&
+		isa_io_decode(port) != IsaIoDecode::None;
+}
+
+bool CAliM1543C::decodes_memory_access(int index, u64 address, int dsize,
+	bool write) const noexcept
+{
+	u32 base;
+	u32 length;
+	switch (index)
+	{
+	case 9: base = 0x22; length = 2; break;
+	case 27:
+		base = (state.superio_ldn_regs[3][0x60] << 8) | state.superio_ldn_regs[3][0x61];
+		if (!(state.superio_ldn_regs[3][0x30] & 1) || base == 0)
+			return false;
+		base &= 0xfffc;
+		length = 4;
+		break;
+	case 40:
+		return address < 2 && superio_claims_port(0x370 + (u32)address, write);
+	case 50: base = 0x279; length = 1; break;
+	case 51: base = 0xa79; length = 1; break;
+	case 52:
+		base = state.isapnp_rd_port;
+		if (base == 0)
+			return false;
+		length = 1;
+		break;
+	case 60:
+		return is_docking_mode() && address <= 0xffff &&
+			isa_io_decode((u32)address) == IsaIoDecode::Positive;
+	default:
+		return CPCIDevice::decodes_memory_access(index, address, dsize, write);
+	}
+	return address < length && isa_io_decode(base + (u32)address) != IsaIoDecode::None;
+}
+
+bool CAliM1543C::memory_decode_fallback(int index) const noexcept
+{
+	return index == 60;
 }
 
 /**
@@ -572,7 +744,7 @@ bool CAliM1543C::is_docking_mode() const noexcept
  **/
 u32 CAliM1543C::ReadMem_Legacy(int index, u32 address, int dsize)
 {
-	if (dsize != 8 && index != 20) // when interrupt vector is read, dsize doesn't matter.
+	if (dsize != 8 && index != 20 && index != 60) // IACK and ISA forwarding admit wider accesses.
 	{
 		FAILURE_4(InvalidArgument,
 			"%s: DSize %d reading from legacy memory range # %d at address %02x\n",
@@ -618,6 +790,9 @@ u32 CAliM1543C::ReadMem_Legacy(int index, u32 address, int dsize)
 
 	case 52:  // OS-programmed READ_DATA port — no cards => 0xff
 		return isapnp_data_read(address);
+
+	case 60:  // Docking window forwarded to an unpopulated ISA address.
+		return dsize == 8 ? 0xffU : dsize == 16 ? 0xffffU : 0xffffffffU;
 	}
 
 	return 0;
@@ -645,7 +820,7 @@ u32 CAliM1543C::ReadMem_Legacy(int index, u32 address, int dsize)
  **/
 void CAliM1543C::WriteMem_Legacy(int index, u32 address, int dsize, u32 data)
 {
-	if (dsize != 8 && index != 40) // SuperIO 
+	if (dsize != 8 && index != 40 && index != 60) // SuperIO and ISA forwarding
 	{
 		FAILURE_4(InvalidArgument,
 			"%s: DSize %d writing to legacy memory range # %d at address %02x\n",
@@ -701,6 +876,7 @@ void CAliM1543C::WriteMem_Legacy(int index, u32 address, int dsize, u32 data)
 		return;
 
 	case 52:  // OS-programmed READ_DATA port — read-only on real cards
+	case 60:  // No local ISA handler at this forwarded address.
 		return;
 	}
 }
@@ -836,6 +1012,7 @@ void CAliM1543C::superio_reset()
 	state.superio_ldn_regs[0xc][0xf2] = 0x11;
 	state.superio_ldn_regs[0xc][0xf3] = 0x71;
 	state.superio_ldn_regs[0xc][0xf4] = 0x42;
+	superio_apply_ldn(3);
 }
 
 u8 CAliM1543C::superio_current_reg() const
@@ -917,7 +1094,11 @@ void CAliM1543C::superio_write(u32 address, u8 data)
 	if (state.superio_index == 0x02)
 	{
 		if (data & 0x01)
+		{
+			// Reset the configuration registers within the current session.
 			superio_reset();
+			state.superio_config_mode = true;
+		}
 		return;
 	}
 
@@ -966,8 +1147,8 @@ void CAliM1543C::superio_apply_ldn(int ldn)
 		break;
 
 	case 3:  // LPT — only LDN with dynamic binding implemented.
+		add_legacy_io(27, base & 0xfffc, activate && base != 0 ? 4 : 0);
 		if (activate && base != 0) {
-			add_legacy_io(27, base & 0xfffc, 4);
 #ifdef DEBUG_SUPERIO
 			printf("%s: LPT activated at %#06x\n", devid_string, base & 0xfffc);
 #endif
@@ -2426,6 +2607,10 @@ int CAliM1543C::RestoreState(FILE* f)
 		printf("%s: MAGIC 1 does not match!\n", devid_string);
 		return -1;
 	}
+
+	// Rebuild dynamic ISA mappings from the restored register state.
+	superio_apply_ldn(3);
+	add_legacy_io(52, state.isapnp_rd_port, state.isapnp_rd_port ? 1 : 0);
 
 	printf("%s: %d bytes restored.\n", devid_string, (int)ss);
 	return 0;

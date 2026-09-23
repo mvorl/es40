@@ -7,6 +7,9 @@
 
 #include <windows.h>
 #include <mmsystem.h>
+
+class CAliM1543C;
+
 class CMPU401 : public CSystemComponent
 {
   virtual int   RestoreState(FILE* f) override
@@ -19,6 +22,9 @@ class CMPU401 : public CSystemComponent
   }
 
 private:
+  // Borrowed routing owner; not part of the saved device state.
+  const CAliM1543C* isa_bridge = nullptr;
+
   HMIDIOUT hmo;
   MIDIHDR hdr;
 
@@ -57,6 +63,13 @@ public:
   {
     midiOutClose(hmo);
   }
+  void bind_isa_bridge(CAliM1543C* bridge) override { isa_bridge = bridge; }
+  const CSystemComponent* memory_decode_owner() const noexcept override;
+  bool decodes_memory_access(int index, u64 address, int dsize,
+    bool write) const noexcept override;
+  bool uses_subtractive_decode(int index, u64 address, int dsize,
+    bool write) const noexcept override;
+
   virtual u64   ReadMem(int index, u64 address, int dsize) override;
   virtual void  WriteMem(int index, u64 address, int dsize, u64 data) override;
 };

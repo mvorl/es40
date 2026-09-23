@@ -66,6 +66,7 @@ public:
 
   bool uses_subtractive_decode(int index, u64 address, int dsize,
     bool write) const noexcept override;
+  const CSystemComponent* memory_decode_owner() const noexcept override;
 
   virtual int   DoClock();
   virtual void  WriteMem(int index, u64 address, int dsize, u64 data);

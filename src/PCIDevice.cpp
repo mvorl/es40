@@ -173,6 +173,8 @@ void CPCIDevice::add_function(int func, u32 data[64], u32 mask[64])
 
 void CPCIDevice::add_legacy_io(int id, u32 base, u32 length)
 {
+	if (id < 0 || id >= MAX_DEV_RANGES)
+		FAILURE(InvalidArgument, "Legacy PCI range index out of bounds");
 	dev_range_is_io[id] = true;
 	cSystem->RegisterMemory(this, id,
 		U64(0x00000801fc000000) + (U64(0x0000000200000000) * myPCIBus) + base,
@@ -181,6 +183,8 @@ void CPCIDevice::add_legacy_io(int id, u32 base, u32 length)
 
 void CPCIDevice::add_legacy_mem(int id, u32 base, u32 length)
 {
+	if (id < 0 || id >= MAX_DEV_RANGES)
+		FAILURE(InvalidArgument, "Legacy PCI range index out of bounds");
 	dev_range_is_io[id] = false;
 	cSystem->RegisterMemory(this, id,
 		U64(0x0000080000000000) + (U64(0x0000000200000000) * myPCIBus) + base,

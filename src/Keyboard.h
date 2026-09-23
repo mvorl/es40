@@ -56,6 +56,8 @@
 #include "SystemComponent.h"
 #include "gui/gui.h"
 
+class CAliM1543C;
+
 #define BX_KBD_ELEMENTS     16
 #define BX_MOUSE_BUFF_SIZE  48
 
@@ -73,6 +75,13 @@ public:
   CKeyboard(CConfigurator* cfg, CSystem* c);
   virtual       ~CKeyboard();
 
+  void bind_isa_bridge(CAliM1543C* bridge) override { isa_bridge = bridge; }
+  const CSystemComponent* memory_decode_owner() const noexcept override;
+  bool decodes_memory_access(int index, u64 address, int dsize,
+    bool write) const noexcept override;
+  bool uses_subtractive_decode(int index, u64 address, int dsize,
+    bool write) const noexcept override;
+
   virtual void  check_state();
   virtual void  WriteMem(int index, u64 address, int dsize, u64 data);
   virtual u64   ReadMem(int index, u64 address, int dsize);
@@ -89,6 +98,9 @@ public:
   virtual void  start_threads();
   virtual void  stop_threads();
 private:
+  // Borrowed routing owner; not part of the saved device state.
+  const CAliM1543C* isa_bridge = nullptr;
+
   CThread* myThread;
   bool      StopThread;
 

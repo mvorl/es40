@@ -177,6 +177,9 @@ public:
   virtual       ~CAliM1543C_ide();
   virtual void  register_disk(class CDisk* dsk, int bus, int dev);
 
+  bool decodes_memory_access(int index, u64 address, int dsize,
+    bool write) const noexcept override;
+
   virtual void  WriteMem_Legacy(int index, u32 address, int dsize, u32 data);
   virtual u32   ReadMem_Legacy(int index, u32 address, int dsize);
 
@@ -210,7 +213,7 @@ private:
 
   void  raise_interrupt(int channel);
   void  deassert_interrupt(int channel);
-  bool  channel_is_native(int channel);
+  bool  channel_is_native(int channel) const noexcept;
   void  set_signature(int channel, int id);
   u8    get_status(int index);
   void  command_aborted(int index, u8 command);

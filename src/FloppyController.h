@@ -79,6 +79,8 @@
 #include "DMA.h"
 #include <mutex>
 
+class CAliM1543C;
+
   /**
    * \brief Emulated floppy-drive controller.
    **/
@@ -89,12 +91,24 @@ public:
   virtual void  WriteMem(int index, u64 address, int dsize, u64 data);
   CFloppyController(class CConfigurator* cfg, class CSystem* c, int id);
   virtual       ~CFloppyController();
+
+  void bind_isa_bridge(CAliM1543C* bridge) override { isa_bridge = bridge; }
+  const CSystemComponent* memory_decode_owner() const noexcept override;
+  bool decodes_memory_access(int index, u64 address, int dsize,
+    bool write) const noexcept override;
+  bool uses_subtractive_decode(int index, u64 address, int dsize,
+    bool write) const noexcept override;
+
   virtual int   RestoreState(FILE* f);
   virtual int   SaveState(FILE* f);
   virtual void  init();
   virtual void  check_state() override;
 
 private:
+  // Borrowed routing owner; not part of the saved device state.
+  const CAliM1543C* isa_bridge = nullptr;
+  const u32 isa_io_base;
+
   void          service_pending_media_actions_if_idle();
   struct SFloppyGeometry {
     int cylinders;

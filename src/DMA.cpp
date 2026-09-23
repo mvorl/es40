@@ -109,6 +109,11 @@ bool CDMA::uses_subtractive_decode(int index, u64, int, bool) const noexcept
 		!isa_bridge.is_docking_mode();
 }
 
+const CSystemComponent* CDMA::memory_decode_owner() const noexcept
+{
+	return &isa_bridge;
+}
+
 int CDMA::DoClock()
 {
 	return 0;

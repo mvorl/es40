@@ -96,7 +96,9 @@
   /**
    * Constructor.
    **/
-CFloppyController::CFloppyController(CConfigurator* cfg, CSystem* c, int id) : CSystemComponent(cfg, c), CDiskController(1, 2)
+CFloppyController::CFloppyController(CConfigurator* cfg, CSystem* c, int id) :
+	CSystemComponent(cfg, c), CDiskController(1, 2),
+	isa_io_base(0x3f0u - 0x80u * (u32)id)
 {
 	c->RegisterMemory(this, 1536, U64(0x00000801fc0003f0) - (0x80 * id), 6);
 	c->RegisterMemory(this, 1537, U64(0x00000801fc0003f7) - (0x80 * id), 1);
@@ -115,6 +117,32 @@ CFloppyController::CFloppyController(CConfigurator* cfg, CSystem* c, int id) : C
  **/
 CFloppyController::~CFloppyController()
 {
+}
+
+const CSystemComponent* CFloppyController::memory_decode_owner() const noexcept
+{
+	return isa_bridge ? static_cast<const CSystemComponent*>(isa_bridge) : this;
+}
+
+bool CFloppyController::decodes_memory_access(int index, u64 address, int, bool write) const noexcept
+{
+	if (!((index == 1536 && address < 6) || (index == 1537 && address == 0)))
+		return false;
+	if (!isa_bridge)
+		return true;
+	const u32 port = isa_io_base + (index == 1537 ? 7u : 0u) + (u32)address;
+	if (isa_bridge->superio_claims_port(port, write))
+		return false;
+	return isa_bridge->isa_io_decode(port) != CAliM1543C::IsaIoDecode::None;
+}
+
+bool CFloppyController::uses_subtractive_decode(int index, u64 address, int dsize,
+	bool write) const noexcept
+{
+	if (!isa_bridge || !decodes_memory_access(index, address, dsize, write))
+		return false;
+	const u32 port = isa_io_base + (index == 1537 ? 7u : 0u) + (u32)address;
+	return isa_bridge->isa_io_decode(port) == CAliM1543C::IsaIoDecode::Subtractive;
 }
 
 void CFloppyController::service_pending_media_actions_if_idle()

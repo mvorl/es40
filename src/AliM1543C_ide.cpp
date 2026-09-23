@@ -522,6 +522,32 @@ int CAliM1543C_ide::RestoreState(FILE* f)
 /*
  * Region read/write redirection
  */
+bool CAliM1543C_ide::decodes_memory_access(int index, u64 address, int dsize,
+	bool write) const noexcept
+{
+	if (!CPCIDevice::decodes_memory_access(index, address, dsize, write))
+		return false;
+
+	// PCI IDE 1.0 section 2.4; M1543C section 4.2.3.4: each channel
+	// decodes either its fixed compatibility ports or its command/control BARs.
+	const bool io_enabled = (endian_32(pci_state.config_data[0][1]) & 1U) != 0;
+	switch (index)
+	{
+	case PRI_COMMAND:
+	case PRI_CONTROL:
+		return io_enabled && !channel_is_native(0);
+	case SEC_COMMAND:
+	case SEC_CONTROL:
+		return io_enabled && !channel_is_native(1);
+	}
+
+	if (index >= PCI_RANGE_BASE + BAR_PRI_COMMAND &&
+		index <= PCI_RANGE_BASE + BAR_SEC_CONTROL)
+		return channel_is_native((index - PCI_RANGE_BASE) / 2);
+
+	return true;
+}
+
 u32 CAliM1543C_ide::ReadMem_Legacy(int index, u32 address, int dsize)
 {
 	int channel = 0;
@@ -1213,7 +1239,7 @@ void CAliM1543C_ide::set_signature(int index, int id)
 //   bit 0 = primary native, bit 2 = secondary native; 0 = compat mode.
 // Compat mode:  ISA IRQ 14/15 via 8259 cascade — no PCI INTx.
 // Native mode:  shared PCI INTA — no 8259 IRQ.
-bool CAliM1543C_ide::channel_is_native(int index)
+bool CAliM1543C_ide::channel_is_native(int index) const noexcept
 {
 	const u8 prog_if = (endian_32(pci_state.config_data[0][0x02]) >> 8) & 0xff;
 	return (prog_if >> (index ? 2 : 0)) & 1;
