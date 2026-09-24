@@ -177,6 +177,12 @@
     <ClCompile Include="..\System.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\System_tig.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\System_tsunami.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\SystemComponent.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

@@ -412,6 +412,8 @@ list(APPEND ES40_SOURCES
     src/Sym53C810.cpp
     src/Sym53C895.cpp
     src/System.cpp
+    src/System_tig.cpp
+    src/System_tsunami.cpp
     src/SystemComponent.cpp
     src/TraceEngine.cpp
     src/VGA.cpp

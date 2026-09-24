@@ -2257,6 +2257,8 @@
     <ClCompile Include="..\Sym53C810.cpp" />
     <ClCompile Include="..\Sym53C895.cpp" />
     <ClCompile Include="..\System.cpp" />
+    <ClCompile Include="..\System_tig.cpp" />
+    <ClCompile Include="..\System_tsunami.cpp" />
     <ClCompile Include="..\SystemComponent.cpp" />
     <ClCompile Include="..\TraceEngine.cpp" />
     <ClCompile Include="..\VGA.cpp" />
