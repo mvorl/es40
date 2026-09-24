@@ -31,6 +31,9 @@
 #include <vector>
 #include <memory>
 
+// SPD EEPROM image for one registered-ECC PC100 SDR SDRAM DIMM of dimm_mb MB.
+std::vector<uint8_t> build_sdram_spd(uint32_t dimm_mb, bool registered_ecc = true);
+
 /* ------------ I2C abstract device (open-drain bus) ------------ */
 class I2CDevice {
 public:

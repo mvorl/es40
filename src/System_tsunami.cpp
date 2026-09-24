@@ -36,6 +36,474 @@
 #include "AlphaCPU.h"
 
 /**
+ * \brief Write to PIO space (address above main memory): a mapped device,
+ * internal chipset registers, or nothing.
+ *
+ * Source: HRM, 10.1.1:
+ *
+ * System Space and Address Map
+ *
+ * The system address space is divided into two parts: system memory and PIO. This division
+ * is indicated by physical memory bit <43> = 1 for PIO accesses from the CPU, and
+ * by the PTP bit in the window registers for PTP accesses from the Pchip. While the operating
+ * system may choose bit <40> instead of bit <43> to represent PIO space, bit <43>
+ * is used throughout this chapter. In general, bits <42:35> are don’t cares if bit <43> is
+ * asserted.
+ *
+ * There is 16GB of PIO space available on the 21272 chipset with 8GB assigned to each
+ * Pchip. The Pchip supports up to bit <34> (35 bits total) of system address. However, the
+ * Version 1 Cchip only supports 4GB of system memory (32 bits total). As described in
+ * Chapter 6, the CAPbus protocol between the Pchip and Cchip does support up to bit
+ * <34>, as does the Cchip’s interface to the CPU. The Typhoon Cchip supports 32GB of
+ * system memory (35 bits total).
+ *
+ * The system address space is divided as shown in the following table:
+ *
+ * \code
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Space             | Size   | System Address <43:0>         | Comments                        |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | System memory     |    4GB | 000.0000.0000 - 000.FFFF.FFFF | Cacheable and prefetchable.     |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Reserved          | 8188GB | 001.0000.0000 - 7FF.FFFF.FFFF | E                              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Pchip0 PCI memory |    4GB | 800.0000.0000 - 800.FFFF.FFFF | Linear addressing.              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | TIGbus            |    1GB | 801.0000.0000 - 801.3FFF.FFFF | addr<5:0> = 0. Single byte      |
+ * |                   |        |                               | valid in quadword access.       |
+ * |                   |        |                               | 16MB accessible.                |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Reserved          |    1GB | 801.4000.0000 - 801.7FFF.FFFF | E                              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Pchip0 CSRs       |  256MB | 801.8000.0000 - 801.8FFF.FFFF | addr<5:0> = 0. Quadword access. |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Reserved          |  256MB | 801.9000.0000 - 801.9FFF.FFFF | E                              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Cchip CSRs        |  256MB | 801.A000.0000 - 801.AFFF.FFFF | addr<5:0> = 0. Quadword access. |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Dchip CSRs        |  256MB | 801.B000.0000 - 801.BFFF.FFFF | addr<5:0> = 0. All eight bytes  |
+ * |                   |        |                               | in quadword access must be      |
+ * |                   |        |                               | identical.                      |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Reserved          |  768MB | 801.C000.0000 - 801.EFFF.FFFF | E                              |
+ * | Reserved          |  128MB | 801.F000.0000 - 801.F7FF.FFFF | E                              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Pchip 0 PCI IACK  |   64MB | 801.F800.0000 - 801.FBFF.FFFF | Linear addressing.              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Pchip0 PCI I/O    |   32MB | 801.FC00.0000 - 801.FDFF.FFFF | Linear addressing.              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Pchip0 PCI conf   |   16MB | 801.FE00.0000 - 801.FEFF.FFFF | Linear addressing.              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Reserved          |   16MB | 801.FF00.0000 - 801.FFFF.FFFF | E                              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Pchip1 PCI memory |    4GB | 802.0000.0000 - 802.FFFF.FFFF | Linear addressing.              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Reserved          |    2GB | 803.0000.0000 - 803.7FFF.FFFF | E                              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Pchip1 CSRs       |  256MB | 803.8000.0000 - 803.8FFF.FFFF | addr<5:0> = 0, quadword access. |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Reserved          | 1536MB | 803.9000.0000 - 803.EFFF.FFFF | E                              |
+ * | Reserved          |  128MB | 803.F000.0000 - 803.F7FF.FFFF | E                              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Pchip 1 PCI IACK  |   64MB | 803.F800.0000 - 803.FBFF.FFFF | Linear addressing.              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Pchip1 PCI I/O    |   32MB | 803.FC00.0000 - 803.FDFF.FFFF | Linear addressing.              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Pchip1 PCI conf   |   16MB | 803.FE00.0000 - 803.FEFF.FFFF | Linear addressing.              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Reserved          |   16MB | 803.FF00.0000 - 803.FFFF.FFFF | E                              |
+ * | Reserved          | 8172GB | 804.0000.0000 - FFF.FFFF.FFFF | Bits <42:35> are don’t cares if |
+ * |                   |        |                               | bit <43> is asserted.           |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * \endcode
+ **/
+void CSystem::pio_write(u64 a, int dsize, u64 data, CSystemComponent* source)
+{
+	int   i;
+
+	std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
+	i = find_memory_target(a, dsize, true, source);
+	const bool mapped = i < iNumMemories;
+	const u64 io_base = a & ~U64(0x1ffffff);
+
+	const bool observed_io =
+		(io_base == U64(0x801fc000000) || io_base == U64(0x803fc000000)) &&
+		(dsize == 8 || dsize == 16 || dsize == 32) &&
+		(a & 3) + dsize / 8 <= 4;
+	if (observed_io)
+		dispatch_pci_io_write(a, dsize, data, mapped ? i : -1);
+	else if (mapped)
+		asMemories[i]->component->WriteMem(asMemories[i]->index,
+			a - asMemories[i]->base, dsize, data);
+	if (mapped)
+		return;
+
+	const u64 config_base = a & ~U64(0xffffff);
+	if ((config_base == U64(0x801fe000000) || config_base == U64(0x803fe000000)) &&
+		(dsize == 8 || dsize == 16 || dsize == 32 || dsize == 64) &&
+		(a & (dsize / 8 - 1)) == 0)
+	{
+		// No function claimed this configuration write. Even a burst aborts once.
+		pchip_config_write_abort(config_base == U64(0x803fe000000) ? 1 : 0,
+			(u32)a & 0xffffff);
+		return;
+	}
+
+	if (a >= U64(0x00000801A0000000) && a <= U64(0x00000801AFFFFFFF))
+	{
+		cchip_csr_write((u32)a & 0xFFFFFFF, data, source);
+		return;
+	}
+
+	if (a >= U64(0x0000080180000000) && a <= U64(0x000008018FFFFFFF))
+	{
+		pchip_csr_write(0, (u32)a & 0xFFFFFFF, data);
+		return;
+	}
+
+	if (a >= U64(0x0000080380000000) && a <= U64(0x000008038FFFFFFF))
+	{
+		pchip_csr_write(1, (u32)a & 0xFFFFFFF, data);
+		return;
+	}
+
+	if (a >= U64(0x00000801B0000000) && a <= U64(0x00000801BFFFFFFF))
+	{
+		dchip_csr_write((u32)a & 0xFFFFFFF, (u8)data & 0xff);
+		return;
+	}
+
+	if (a >= U64(0x0000080100000000) && a <= U64(0x000008013FFFFFFF))
+	{
+		tig_write((u32)a & 0x3FFFFFFF, (u8)data);
+		return;
+	}
+
+	if (a >= U64(0x801fc000000) && a < U64(0x801fe000000))
+	{
+		const u64 io_port = a & U64(0x1ffffff);
+
+		if (io_port == U64(0x100))
+		{
+			if (!m_reported_3c509_probe.exchange(true, std::memory_order_acq_rel))
+				printf("%%ISA-I-ELINKPROBE: 3c509 not implemented; ignoring likely BSD probe at IO port 100.\n");
+			return;
+		}
+
+		// OpenVMS's floppy path retains an Intel 82357/EISA high-count-byte
+		// clear even on the M1543C non-EISA machine.
+		// The M1543C does not document port 405h so we can safely swallow
+		if (io_port == U64(0x405) && dsize == 8 && (data & 0xff) == 0)
+			return;
+
+		// Unused PCI I/O space
+		if (source)
+			printf("Write to unknown IO port %" PRIx64 " (dsize=%d data=%" PRIx64 ") on PCI 0 from %s\n",
+				io_port, dsize, data, source->devid_string);
+		else
+			printf("Write to unknown IO port %" PRIx64 " (dsize=%d data=%" PRIx64 ") on PCI 0\n",
+				io_port, dsize, data);
+		return;
+	}
+
+	if (a >= U64(0x803fc000000) && a < U64(0x803fe000000))
+	{
+
+		// Unused PCI I/O space
+		if (source)
+		{
+			printf("Write to unknown IO port %" PRIx64 " on PCI 1 from %s   \n",
+				a & U64(0x1ffffff), source->devid_string);
+		}
+		else
+			printf("Write to unknown IO port %" PRIx64 " on PCI 1   \n",
+				a & U64(0x1ffffff));
+		return;
+	}
+
+	if (a >= U64(0x80000000000) && a < U64(0x80100000000))
+	{
+
+		// Unused PCI memory space
+		u64 paddr = a & U64(0xffffffff);
+		if (paddr > 0xb8fff || paddr < 0xb8000)
+		{ // skip legacy video
+#ifdef DEBUG_UNKMEM
+			if (source)
+			{
+				printf("Write to unknown memory %" PRIx64 " on PCI 0 from %s   \n",
+					a & U64(0xffffffff), source->devid_string);
+			}
+			else
+				printf("Write to unknown memory %" PRIx64 " on PCI 0   \n",
+					a & U64(0xffffffff));
+#endif
+		}
+	}
+
+	if (a >= U64(0x80200000000) && a < U64(0x80300000000))
+	{
+#ifdef DEBUG_UNKMEM
+		// Unused PCI memory space
+		if (source)
+		{
+			printf("Write to unknown memory %" PRIx64 " on PCI 1 from %s   \n",
+				a & U64(0xffffffff), source->devid_string);
+		}
+		else
+			printf("Write to unknown memory %" PRIx64 " on PCI 1   \n",
+				a & U64(0xffffffff));
+#endif
+		return;
+	}
+
+#ifdef DEBUG_UNKMEM
+	if (source)
+		printf("Write to unknown memory %" PRIx64 " from %s   \n", a,
+			source->devid_string);
+	else
+		printf("Write to unknown memory %" PRIx64 "   \n", a);
+#endif //defined(DEBUG_UNKMEM)
+}
+
+/**
+ * \brief Read from PIO space (address above main memory): a mapped device,
+ * internal chipset registers, or nothing.
+ *
+ * Source: HRM, 10.1.1:
+ *
+ * System Space and Address Map
+ *
+ * The system address space is divided into two parts: system memory and PIO. This division
+ * is indicated by physical memory bit <43> = 1 for PIO accesses from the CPU, and
+ * by the PTP bit in the window registers for PTP accesses from the Pchip. While the operating
+ * system may choose bit <40> instead of bit <43> to represent PIO space, bit <43>
+ * is used throughout this chapter. In general, bits <42:35> are don’t cares if bit <43> is
+ * asserted.
+ *
+ * There is 16GB of PIO space available on the 21272 chipset with 8GB assigned to each
+ * Pchip. The Pchip supports up to bit <34> (35 bits total) of system address. However, the
+ * Version 1 Cchip only supports 4GB of system memory (32 bits total). As described in
+ * Chapter 6, the CAPbus protocol between the Pchip and Cchip does support up to bit
+ * <34>, as does the Cchip’s interface to the CPU. The Typhoon Cchip supports 32GB of
+ * system memory (35 bits total).
+ *
+ * The system address space is divided as shown in the following table:
+ *
+ * \code
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Space             | Size   | System Address <43:0>         | Comments                        |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | System memory     |    4GB | 000.0000.0000 - 000.FFFF.FFFF | Cacheable and prefetchable.     |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Reserved          | 8188GB | 001.0000.0000 - 7FF.FFFF.FFFF | E                              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Pchip0 PCI memory |    4GB | 800.0000.0000 - 800.FFFF.FFFF | Linear addressing.              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | TIGbus            |    1GB | 801.0000.0000 - 801.3FFF.FFFF | addr<5:0> = 0. Single byte      |
+ * |                   |        |                               | valid in quadword access.       |
+ * |                   |        |                               | 16MB accessible.                |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Reserved          |    1GB | 801.4000.0000 - 801.7FFF.FFFF | E                              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Pchip0 CSRs       |  256MB | 801.8000.0000 - 801.8FFF.FFFF | addr<5:0> = 0. Quadword access. |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Reserved          |  256MB | 801.9000.0000 - 801.9FFF.FFFF | E                              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Cchip CSRs        |  256MB | 801.A000.0000 - 801.AFFF.FFFF | addr<5:0> = 0. Quadword access. |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Dchip CSRs        |  256MB | 801.B000.0000 - 801.BFFF.FFFF | addr<5:0> = 0. All eight bytes  |
+ * |                   |        |                               | in quadword access must be      |
+ * |                   |        |                               | identical.                      |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Reserved          |  768MB | 801.C000.0000 - 801.EFFF.FFFF | E                              |
+ * | Reserved          |  128MB | 801.F000.0000 - 801.F7FF.FFFF | E                              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Pchip 0 PCI IACK  |   64MB | 801.F800.0000 - 801.FBFF.FFFF | Linear addressing.              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Pchip0 PCI I/O    |   32MB | 801.FC00.0000 - 801.FDFF.FFFF | Linear addressing.              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Pchip0 PCI conf   |   16MB | 801.FE00.0000 - 801.FEFF.FFFF | Linear addressing.              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Reserved          |   16MB | 801.FF00.0000 - 801.FFFF.FFFF | E                              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Pchip1 PCI memory |    4GB | 802.0000.0000 - 802.FFFF.FFFF | Linear addressing.              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Reserved          |    2GB | 803.0000.0000 - 803.7FFF.FFFF | E                              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Pchip1 CSRs       |  256MB | 803.8000.0000 - 803.8FFF.FFFF | addr<5:0> = 0, quadword access. |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Reserved          | 1536MB | 803.9000.0000 - 803.EFFF.FFFF | E                              |
+ * | Reserved          |  128MB | 803.F000.0000 - 803.F7FF.FFFF | E                              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Pchip 1 PCI IACK  |   64MB | 803.F800.0000 - 803.FBFF.FFFF | Linear addressing.              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Pchip1 PCI I/O    |   32MB | 803.FC00.0000 - 803.FDFF.FFFF | Linear addressing.              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Pchip1 PCI conf   |   16MB | 803.FE00.0000 - 803.FEFF.FFFF | Linear addressing.              |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * | Reserved          |   16MB | 803.FF00.0000 - 803.FFFF.FFFF | E                              |
+ * | Reserved          | 8172GB | 804.0000.0000 - FFF.FFFF.FFFF | Bits <42:35> are don’t cares if |
+ * |                   |        |                               | bit <43> is asserted.           |
+ * +-------------------+--------+-------------------------------+---------------------------------+
+ * \endcode
+ **/
+u64 CSystem::pio_read(u64 a, int dsize, CSystemComponent* source)
+{
+	int   i;
+
+	std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
+	i = find_memory_target(a, dsize, false, source);
+	if (i < iNumMemories)
+	{
+		return asMemories[i]->component->ReadMem(asMemories[i]->index,
+			a - asMemories[i]->base, dsize);
+	}
+
+	if (a >= U64(0x00000801A0000000) && a <= U64(0x00000801AFFFFFFF))
+		return cchip_csr_read((u32)a & 0xFFFFFFF, source);
+
+	if (a >= U64(0x0000080180000000) && a <= U64(0x000008018FFFFFFF))
+		return pchip_csr_read(0, (u32)a & 0xFFFFFFF);
+
+	if (a >= U64(0x0000080380000000) && a <= U64(0x000008038FFFFFFF))
+		return pchip_csr_read(1, (u32)a & 0xFFFFFFF);
+
+	if (a >= U64(0x00000801B0000000) && a <= U64(0x00000801BFFFFFFF))
+		return dchip_csr_read((u32)a & 0xFFFFFFF) * U64(0x0101010101010101);
+
+	if (a >= U64(0x0000080100000000) && a <= U64(0x000008013FFFFFFF))
+		return tig_read((u32)a & 0x3FFFFFFF);
+
+	if ((a >= U64(0x801fe000000) && a < U64(0x801ff000000))
+		|| (a >= U64(0x803fe000000) && a < U64(0x803ff000000)))
+	{
+
+		// Unused PCI configuration space
+		switch (dsize)
+		{
+		case 8:   return X64_BYTE;
+		case 16:  return X64_WORD;
+		case 32:  return X64_LONG;
+		case 64:  return X64_QUAD;
+		}
+	}
+
+	if (a >= U64(0x800000c0000) && a < U64(0x801000e0000))
+	{
+
+		// Unused PCI ROM BIOS space — return all-ones (PCI master abort)
+		switch (dsize)
+		{
+		case 8:   return X64_BYTE;
+		case 16:  return X64_WORD;
+		case 32:  return X64_LONG;
+		case 64:  return X64_QUAD;
+		}
+	}
+
+	if (a >= U64(0x801fc000000) && a < U64(0x801fe000000))
+	{
+
+		// Unused PCI I/O space — return all-ones (PCI master abort)
+		//if (source)
+		//  printf("Read from unknown IO port %" PRIx64 " on PCI 0 from %s   \n",a & U64(0x1ffffff),source->devid_string);
+		//else
+		//  printf("Read from unknown IO port %" PRIx64 " on PCI 0   \n",a & U64(0x1ffffff));
+		switch (dsize)
+		{
+		case 8:   return X64_BYTE;
+		case 16:  return X64_WORD;
+		case 32:  return X64_LONG;
+		case 64:  return X64_QUAD;
+		}
+	}
+
+	if (a >= U64(0x803fc000000) && a < U64(0x803fe000000))
+	{
+
+		// Unused PCI I/O space — return all-ones (PCI master abort)
+		if (source)
+		{
+			printf("Read from unknown IO port %" PRIx64 " on PCI 1 from %s   \n",
+				a & U64(0x1ffffff), source->devid_string);
+		}
+		else
+			printf("Read from unknown IO port %" PRIx64 " on PCI 1   \n",
+				a & U64(0x1ffffff));
+		switch (dsize)
+		{
+		case 8:   return X64_BYTE;
+		case 16:  return X64_WORD;
+		case 32:  return X64_LONG;
+		case 64:  return X64_QUAD;
+		}
+	}
+
+	if (a >= U64(0x80000000000) && a < U64(0x80100000000))
+	{
+
+		// Unused PCI memory space — return all-ones (PCI master abort)
+		u64 paddr = a & U64(0xffffffff);
+		if (paddr > 0xb8fff || paddr < 0xb8000)
+		{ // skip legacy video
+#ifdef DEBUG_UNKMEM
+			if (source)
+			{
+				printf("Read from unknown memory %" PRIx64 " on PCI 0 from %s   \n",
+					a & U64(0xffffffff), source->devid_string);
+			}
+			else
+				printf("Read from unknown memory %" PRIx64 " on PCI 0   \n",
+					a & U64(0xffffffff));
+#endif
+		}
+
+		switch (dsize)
+		{
+		case 8:   return X64_BYTE;
+		case 16:  return X64_WORD;
+		case 32:  return X64_LONG;
+		case 64:  return X64_QUAD;
+		}
+	}
+
+	if (a >= U64(0x80200000000) && a < U64(0x80300000000))
+	{
+
+		// Unused PCI memory space — return all-ones (PCI master abort)
+#ifdef DEBUG_UNKMEM
+		if (source)
+		{
+			printf("Read from unknown memory %" PRIx64 " on PCI 1 from %s   \n",
+				a & U64(0xffffffff), source->devid_string);
+		}
+		else
+			printf("Read from unknown memory %" PRIx64 " on PCI 1   \n",
+				a & U64(0xffffffff));
+#endif
+		switch (dsize)
+		{
+		case 8:   return X64_BYTE;
+		case 16:  return X64_WORD;
+		case 32:  return X64_LONG;
+		case 64:  return X64_QUAD;
+		}
+	}
+
+#if defined(DEBUG_UNKMEM)
+	if (source)
+		printf("Read from unknown memory %" PRIx64 " from %s   \n", a,
+			source->devid_string);
+	else
+		printf("Read from unknown memory %" PRIx64 "   \n", a);
+#endif //defined(DEBUG_UNKMEM)
+	return 0x00;
+
+	//                    return 0x77; // 7f
+}
+
+/**
  * \brief Read one of the PCHIP registers.
  *
  * Source: HRM, 10.2.5:

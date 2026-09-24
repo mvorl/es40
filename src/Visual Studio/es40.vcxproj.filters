@@ -177,7 +177,7 @@
     <ClCompile Include="..\System.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\System_tig.cpp">
+    <ClCompile Include="..\System_es40.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\System_tsunami.cpp">

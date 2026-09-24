@@ -25,7 +25,7 @@
 
  /**
   * \file
-  * ES40 TIGbus registers.
+  * ES40 (Clipper) board: TIGbus registers and DIMM topology.
   *
   * Split out of System.cpp; change history remains there.
   **/
@@ -177,4 +177,25 @@ void CSystem::tig_write(u32 a, u8 data)
 	default:
 		printf("Unknown TIG %07x write with %02x attempted.\n", a, data);
 	}
+}
+
+/* ---------------- DIMM topology ---------------- */
+
+void CSystem::init_spd_from_config_mb(uint32_t total_mb)
+{
+	// Sets of 4 identical DIMMs fill one MMB's slot set (J1-4, then J5-8);
+	// each populated MMB is one array (8 DIMMs max = Typhoon ASIZ max 8GB).
+	// DIMM size = total/4 capped at 1GB, so every config is a 4-stick set
+	// minimum and SRM reports 4-way interleave; >4GB spills to more sets.
+	m_dimm_layout.dimm_mb = (total_mb / 4 > 1024) ? 1024 : total_mb / 4;
+	uint32_t n_dimms = total_mb / m_dimm_layout.dimm_mb;
+	m_dimm_layout.n_arrays = (int)((n_dimms + 7) / 8);
+	m_dimm_layout.dimms_per_array = (int)(n_dimms / m_dimm_layout.n_arrays);
+	m_dimm_spd = build_sdram_spd(m_dimm_layout.dimm_mb, /*registered_ecc*/true);
+
+	// The I2C bus can't carry every DIMM (HRM 9.10): attach one
+	// representative EEPROM per 4-DIMM set, at 0x50 + array*2 + set.
+	for (int a = 0; a < m_dimm_layout.n_arrays; a++)
+		for (int s = 0; s < m_dimm_layout.dimms_per_array / 4; s++)
+			m_mpd_bus.attach(std::make_shared<Eeprom24C02>(uint8_t(0x50 + a * 2 + s), m_dimm_spd));
 }

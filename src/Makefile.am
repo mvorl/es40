@@ -124,7 +124,7 @@ es40_SOURCES = AliM1543C.cpp \
        Sym53C895.cpp \
        SystemComponent.cpp \
        System.cpp \
-       System_tig.cpp \
+       System_es40.cpp \
        System_tsunami.cpp \
        SnapshotFile.h \
        TraceEngine.cpp \
