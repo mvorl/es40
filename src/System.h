@@ -150,6 +150,7 @@
 #include <chrono>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <vector>
 
 #if !defined(INCLUDED_SYSTEM_H)
@@ -337,14 +338,23 @@ public:
 
 private:
   void bind_isa_devices();
-  int prefer_bridge_handler(int first_range, u64 address, int dsize, bool write,
-    bool subtractive) const;
-  int find_memory_target(u64 address, int dsize, bool write,
-    const CSystemComponent* source) const;
-  // Diagnostic for ambiguous registered mappings, under device_bus_mutex.
-  void check_decode_conflict(u64 address, int dsize, bool write,
-    int first_range, bool subtractive, const CSystemComponent* source) const;
-  void dispatch_pci_io_write(u64 address, int dsize, u64 data, int target_range);
+  // Every component claiming one access, found before any handler runs.
+  struct SDecodeClaims
+  {
+    static constexpr int kMax = 16;
+    int count = 0;
+    int range[kMax];
+    bool subtractive = false;
+  };
+  void collect_decode_claims(u64 address, int dsize, bool write,
+    SDecodeClaims& claims, const CSystemComponent* source) const;
+  [[noreturn]] void report_decode_overlap(u64 address, int dsize, bool write,
+    const SDecodeClaims& claims, const CSystemComponent* source,
+    const char* reason, const std::string& detail = std::string()) const;
+  std::string describe_claimant(int range, u64 address) const;
+  void note_pio_access(u64 address, int dsize, bool write, u64 data, int claims);
+  void dispatch_pci_io_write(u64 address, int dsize, u64 data,
+    const SDecodeClaims& claims);
   void          CheckForShutdown() const;
   void          ResetChipsetState();
   void          UpdateX86BIOSClock();
@@ -595,6 +605,12 @@ private:
   std::vector<std::unique_ptr<SMemoryUser>> asMemories;
   // Decode diagnostic policy
   bool stop_on_decode_conflict = false;
+  // Recent mapped PIO accesses, printed when an overlap stops or disagrees.
+  struct SPioTrace { u64 address; u64 data; int dsize; int claims; bool write; };
+  static constexpr int kPioTraceSize = 64;
+  SPioTrace pio_trace[kPioTraceSize] = {};
+  unsigned pio_trace_next = 0;
+  void print_pio_trace() const;
 
   class CAlphaCPU* acCPUs[4];
 

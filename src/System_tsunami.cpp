@@ -119,11 +119,15 @@
  **/
 void CSystem::pio_write(u64 a, int dsize, u64 data, CSystemComponent* source)
 {
-	int   i;
-
 	std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
-	i = find_memory_target(a, dsize, true, source);
-	const bool mapped = i < iNumMemories;
+	SDecodeClaims claims;
+	collect_decode_claims(a, dsize, true, claims, source);
+	const bool mapped = claims.count != 0;
+	if (claims.count > 1)
+		report_decode_overlap(a, dsize, true, claims, source,
+			stop_on_decode_conflict ? "debug.stop_on_decode_conflict" : "multiple claimants");
+	if (mapped)
+		note_pio_access(a, dsize, true, data, claims.count);
 	const u64 io_base = a & ~U64(0x1ffffff);
 
 	const bool observed_io =
@@ -131,10 +135,13 @@ void CSystem::pio_write(u64 a, int dsize, u64 data, CSystemComponent* source)
 		(dsize == 8 || dsize == 16 || dsize == 32) &&
 		(a & 3) + dsize / 8 <= 4;
 	if (observed_io)
-		dispatch_pci_io_write(a, dsize, data, mapped ? i : -1);
-	else if (mapped)
-		asMemories[i]->component->WriteMem(asMemories[i]->index,
-			a - asMemories[i]->base, dsize, data);
+		dispatch_pci_io_write(a, dsize, data, claims);
+	else
+		for (int k = 0; k < claims.count; ++k)
+		{
+			const SMemoryUser* r = asMemories[claims.range[k]].get();
+			r->component->WriteMem(r->index, a - r->base, dsize, data);
+		}
 	if (mapped)
 		return;
 
@@ -350,14 +357,20 @@ void CSystem::pio_write(u64 a, int dsize, u64 data, CSystemComponent* source)
  **/
 u64 CSystem::pio_read(u64 a, int dsize, CSystemComponent* source)
 {
-	int   i;
-
 	std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
-	i = find_memory_target(a, dsize, false, source);
-	if (i < iNumMemories)
+	SDecodeClaims claims;
+	collect_decode_claims(a, dsize, false, claims, source);
+	if (claims.count == 1)
 	{
-		return asMemories[i]->component->ReadMem(asMemories[i]->index,
-			a - asMemories[i]->base, dsize);
+		const SMemoryUser* r = asMemories[claims.range[0]].get();
+		const u64 data = r->component->ReadMem(r->index, a - r->base, dsize);
+		note_pio_access(a, dsize, false, data, 1);
+		return data;
+	}
+	if (claims.count > 1)
+	{
+		report_decode_overlap(a, dsize, false, claims, source,
+			stop_on_decode_conflict ? "debug.stop_on_decode_conflict" : "multiple claimants");
 	}
 
 	if (a >= U64(0x00000801A0000000) && a <= U64(0x00000801AFFFFFFF))

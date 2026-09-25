@@ -132,6 +132,10 @@ public:
   // A bridge forwarding range yields to its own more specific device handler.
   virtual bool memory_decode_fallback(int index) const noexcept { return false; }
 
+  // Register context for overlap diagnostics. Must have no side effects.
+  virtual std::string describe_access_context(int index, u64 address) const
+    { return std::string(); }
+
   struct PciIoWrite
   {
     int bus;

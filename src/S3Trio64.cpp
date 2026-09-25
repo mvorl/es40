@@ -3185,6 +3185,19 @@ bool CS3Trio64::decodes_memory_access(int index, u64 address, int dsize,
 	}
 }
 
+std::string CS3Trio64::describe_access_context(int index, u64 address) const
+{
+	char text[160];
+	snprintf(text, sizeof(text),
+		"cmd %04x setup %02x opt %02x cr65 %02x misc %02x seq %02x gc %02x "
+		"crtc %02x atc %02x/%u",
+		(unsigned)(endian_32(pci_state.config_data[0][1]) & 0xffff),
+		m_video_subsys_enable, m_setup_option_select_0102, s3.cr65,
+		vga.miscellaneous_output, vga.sequencer.index, vga.gc.index,
+		vga.crtc.index, vga.attribute.index, (unsigned)vga.attribute.state);
+	return text;
+}
+
 /**
  * Read from one of the Legacy (fixed-address) memory ranges.
  **/

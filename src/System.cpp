@@ -1058,128 +1058,149 @@ void CSystem::cpu_clear_lock(int cpuid)
 	state.cpu_lock_flags &= ~(1 << cpuid);  // atomic fetch_and
 }
 
-// A forwarding claim and a device behind that bridge are one PCI responder.
-int CSystem::prefer_bridge_handler(int first_range, u64 address, int dsize,
-	bool write, bool subtractive) const
+// Called with device_bus_mutex held, before any handler runs. 
+// Positive decode precedes subtractive decode. 
+// A bridge forwarding claim yields to that bridge's specific handler. 
+// Distinct remaining components are claimants.
+void CSystem::collect_decode_claims(u64 address, int dsize, bool write,
+	SDecodeClaims& claims, const CSystemComponent* source) const
 {
-	const SMemoryUser* first = asMemories[first_range].get();
-	if (!first->component->memory_decode_fallback(first->index))
-		return first_range;
-	const auto* owner = first->component->memory_decode_owner();
-	for (int i = first_range + 1; i < iNumMemories; ++i)
-	{
-		const SMemoryUser* range = asMemories[i].get();
-		if (range->component->memory_decode_owner() == owner &&
-			!range->component->memory_decode_fallback(range->index) &&
-			address >= range->base && address < range->base + range->length &&
-			range->component->decodes_memory_access(range->index,
-				address - range->base, dsize, write) &&
-			range->component->uses_subtractive_decode(range->index,
-				address - range->base, dsize, write) == subtractive)
-			return i;
-	}
-	return first_range;
-}
+	claims.count = 0;
+	claims.subtractive = false;
+	auto eligible = [&](const SMemoryUser* r) {
+		return address >= r->base && address < r->base + r->length &&
+			r->component->decodes_memory_access(r->index, address - r->base, dsize, write);
+	};
 
-// Called with device_bus_mutex held. Positive decode precedes subtractive decode.
-int CSystem::find_memory_target(u64 address, int dsize, bool write,
-	const CSystemComponent* source) const
-{
-	int subtractive = iNumMemories;
-	for (int i = 0; i < iNumMemories; ++i)
-	{
-		const SMemoryUser* range = asMemories[i].get();
-		if (address < range->base || address >= range->base + range->length ||
-			!range->component->decodes_memory_access(range->index,
-				address - range->base, dsize, write))
-			continue;
-		if (range->component->uses_subtractive_decode(range->index,
-			address - range->base, dsize, write))
-		{
-			if (subtractive == iNumMemories)
-				subtractive = i;
-			continue;
-		}
-		i = prefer_bridge_handler(i, address, dsize, write, false);
-		if (stop_on_decode_conflict)
-			check_decode_conflict(address, dsize, write, i, false, source);
-		return i;
-	}
-	if (subtractive < iNumMemories)
-	{
-		subtractive = prefer_bridge_handler(subtractive, address, dsize, write, true);
-		if (stop_on_decode_conflict)
-			check_decode_conflict(address, dsize, write, subtractive, true, source);
-	}
-	return subtractive;
-}
-
-void CSystem::check_decode_conflict(u64 address, int dsize, bool write,
-	int first_range, bool subtractive, const CSystemComponent* source) const
-{
-	const SMemoryUser* first = asMemories[first_range].get();
-	std::vector<const SMemoryUser*> eligible = { first };
-	bool ambiguous = false;
-	for (int i = 0; i < iNumMemories; ++i)
-	{
-		if (i == first_range)
-			continue;
-		const SMemoryUser* range = asMemories[i].get();
-		if (address >= range->base && address < range->base + range->length &&
-			range->component->decodes_memory_access(range->index,
-				address - range->base, dsize, write) &&
-			range->component->uses_subtractive_decode(range->index,
-				address - range->base, dsize, write) == subtractive)
-		{
-			eligible.push_back(range);
-			const bool same_owner = range->component->memory_decode_owner() ==
-				first->component->memory_decode_owner();
-			const bool forwarding_alias = same_owner &&
-				(range->component->memory_decode_fallback(range->index) ||
-				 first->component->memory_decode_fallback(first->index));
-			ambiguous |= range->component != first->component && !forwarding_alias;
-		}
-	}
-	if (!ambiguous)
+	int first = 0;
+	while (first < iNumMemories && !eligible(asMemories[first].get()))
+		++first;
+	if (first == iNumMemories)
 		return;
 
-	std::ostringstream message;
-	message << "debug.stop_on_decode_conflict: multiple eligible mapped components for "
-		<< (write ? "write " : "read ") << dsize << "-bit at 0x"
-		<< std::hex << address << ", source "
-		<< (source ? source->devid_string : "<none>")
-		<< ", " << (subtractive ? "subtractive" : "positive") << " decode";
-	for (const SMemoryUser* range : eligible)
+	int positive[SDecodeClaims::kMax * 4];
+	int subtractive[SDecodeClaims::kMax * 4];
+	int npos = 0, nsub = 0;
+	for (int i = first; i < iNumMemories; ++i)
 	{
-		message << "\n  " << range->component->devid_string;
-		if (const auto* pci = dynamic_cast<const CPCIDevice*>(range->component))
+		const SMemoryUser* r = asMemories[i].get();
+		if (!eligible(r))
+			continue;
+		const bool sub = r->component->uses_subtractive_decode(r->index,
+			address - r->base, dsize, write);
+		int* list = sub ? subtractive : positive;
+		int& n = sub ? nsub : npos;
+		if (n == SDecodeClaims::kMax * 4)
 		{
-			message << " PCI " << std::dec << pci->pci_bus() << ':' << pci->pci_dev();
-			if (range->index >= PCI_RANGE_BASE && range->index < PCI_RANGE_BASE + 64)
-				message << '.' << (range->index - PCI_RANGE_BASE) / 8;
+			SDecodeClaims partial;
+			for (int k = 0; k < SDecodeClaims::kMax; ++k)
+				partial.range[partial.count++] = list[k];
+			report_decode_overlap(address, dsize, write, partial, source,
+				"too many eligible ranges to resolve");
 		}
-		message << " range " << std::dec << range->index
-			<< " base 0x" << std::hex << range->base
-			<< " length 0x" << range->length
-			<< " offset 0x" << address - range->base;
+		list[n++] = i;
 	}
-	// This is a model diagnostic, not a PCI error or target arbitration rule.
+	const int* list = npos ? positive : subtractive;
+	const int n = npos ? npos : nsub;
+	claims.subtractive = npos == 0;
+
+	for (int k = 0; k < n; ++k)
+	{
+		const SMemoryUser* r = asMemories[list[k]].get();
+		if (r->component->memory_decode_fallback(r->index))
+		{
+			bool yields = false;
+			for (int m = 0; m < n && !yields; ++m)
+			{
+				const SMemoryUser* o = asMemories[list[m]].get();
+				yields = o->component->memory_decode_owner() == r->component->memory_decode_owner() &&
+					!o->component->memory_decode_fallback(o->index);
+			}
+			if (yields)
+				continue;
+		}
+		bool seen = false;
+		for (int m = 0; m < claims.count && !seen; ++m)
+			seen = asMemories[claims.range[m]]->component == r->component;
+		if (seen)
+			continue; // same-component alias
+		if (claims.count == SDecodeClaims::kMax)
+			report_decode_overlap(address, dsize, write, claims, source,
+				"too many claimants to resolve");
+		claims.range[claims.count++] = list[k];
+	}
+}
+
+std::string CSystem::describe_claimant(int range, u64 address) const
+{
+	const SMemoryUser* r = asMemories[range].get();
+	std::ostringstream s;
+	s << r->component->devid_string;
+	if (const auto* pci = dynamic_cast<const CPCIDevice*>(r->component))
+	{
+		s << " PCI " << std::dec << pci->pci_bus() << ':' << pci->pci_dev();
+		if (r->index >= PCI_RANGE_BASE && r->index < PCI_RANGE_BASE + 64)
+			s << '.' << (r->index - PCI_RANGE_BASE) / 8;
+	}
+	s << " range " << std::dec << r->index << " base 0x" << std::hex << r->base
+		<< " length 0x" << r->length;
+	const std::string context = r->component->describe_access_context(r->index,
+		address - r->base);
+	if (!context.empty())
+		s << " [" << context << ']';
+	return s.str();
+}
+
+static std::string describe_source(const CSystemComponent* source)
+{
+	std::ostringstream s;
+	s << (source ? source->devid_string : "<none>");
+	if (auto* cpu = dynamic_cast<const CAlphaCPU*>(source))
+		s << " pc 0x" << std::hex << const_cast<CAlphaCPU*>(cpu)->get_clean_pc();
+	return s.str();
+}
+
+void CSystem::print_pio_trace() const
+{
+	printf("Recent mapped PIO accesses (oldest first):\n");
+	for (unsigned k = 0; k < kPioTraceSize; ++k)
+	{
+		const SPioTrace& t = pio_trace[(pio_trace_next + k) % kPioTraceSize];
+		if (!t.dsize)
+			continue;
+		printf("  %c%-2d 0x%011" PRIx64 " data 0x%" PRIx64 " claimants %d\n",
+			t.write ? 'W' : 'R', t.dsize, t.address, t.data, t.claims);
+	}
+}
+
+void CSystem::note_pio_access(u64 address, int dsize, bool write, u64 data,
+	int claims)
+{
+	pio_trace[pio_trace_next] = { address, data, dsize, claims, write };
+	pio_trace_next = (pio_trace_next + 1) % kPioTraceSize;
+}
+
+void CSystem::report_decode_overlap(u64 address, int dsize, bool write,
+	const SDecodeClaims& claims, const CSystemComponent* source,
+	const char* reason, const std::string& detail) const
+{
+	print_pio_trace();
+	std::ostringstream message;
+	message << "Unresolved PCI decode overlap (" << reason << ") for "
+		<< (write ? "write " : "read ") << std::dec << dsize << "-bit at 0x"
+		<< std::hex << address << ", source " << describe_source(source)
+		<< ", " << (claims.subtractive ? "subtractive" : "positive") << " decode";
+	for (int k = 0; k < claims.count; ++k)
+		message << "\n  " << describe_claimant(claims.range[k], address);
+	if (!detail.empty())
+		message << "\n  " << detail;
+	// An emulator stop, not a PCI error or target arbitration rule.
 	FAILURE(Runtime, message.str());
 }
 
 void CSystem::dispatch_pci_io_write(u64 address, int dsize, u64 data,
-	int target_range)
+	const SDecodeClaims& claims)
 {
-	CSystemComponent* target = nullptr;
-	int target_index = 0;
-	u64 target_offset = 0;
-	if (target_range >= 0)
-	{
-		const auto& range = *asMemories[target_range];
-		target = range.component;
-		target_index = range.index;
-		target_offset = address - range.base;
-	}
 	const CSystemComponent::PciIoWrite write = {
 		address >= U64(0x803fc000000) ? 1 : 0,
 		(u32)(address & U64(0x1ffffff)), dsize, data
@@ -1189,22 +1210,27 @@ void CSystem::dispatch_pci_io_write(u64 address, int dsize, u64 data,
 
 	for (CSystemComponent* component : acComponents)
 	{
-		if (!component || (target && component->memory_decode_owner() ==
-			target->memory_decode_owner()))
+		if (!component)
 			continue;
-		bool already_captured = false;
+		bool skip = false;
+		for (int k = 0; k < claims.count && !skip; ++k)
+			skip = component->memory_decode_owner() ==
+				asMemories[claims.range[k]]->component->memory_decode_owner();
 		for (const auto& observer : observers)
-			already_captured |= observer.component == component;
-		if (already_captured)
+			skip |= observer.component == component;
+		if (skip)
 			continue;
 		const u64 captured = component->capture_pci_io_write(write);
 		if (captured)
 			observers.push_back({ component, captured });
 	}
 
-	if (target)
-		target->WriteMem(target_index, target_offset, dsize, data);
-	const auto dispatch = target
+	for (int k = 0; k < claims.count; ++k)
+	{
+		const SMemoryUser* r = asMemories[claims.range[k]].get();
+		r->component->WriteMem(r->index, address - r->base, dsize, data);
+	}
+	const auto dispatch = claims.count
 		? CSystemComponent::PciIoWriteDispatch::MappedTargetReturned
 		: CSystemComponent::PciIoWriteDispatch::NoMappedTarget;
 	for (const auto& observer : observers)
