@@ -353,6 +353,21 @@ CSystem::CSystem(CConfigurator* cfg)
 	if (theSystem != 0)
 		FAILURE(Configuration, "More than one system");
 	stop_on_decode_conflict = cfg->get_bool_value("debug.stop_on_decode_conflict", false);
+	const std::string read_policy = cfg->get_text_value("debug.shared_read_policy", "stop");
+	if (read_policy == "claimant")
+	{
+		shared_read_policy = SharedReadPolicy::Claimant;
+		const char* id = cfg->get_text_value("debug.shared_read_claimant", "");
+		if (sscanf(id, "%d:%d", &shared_read_hose, &shared_read_device) != 2)
+			FAILURE(Configuration,
+				"debug.shared_read_policy=claimant needs debug.shared_read_claimant=<hose>:<device>");
+	}
+	else if (read_policy == "and")
+		shared_read_policy = SharedReadPolicy::And;
+	else if (read_policy == "or")
+		shared_read_policy = SharedReadPolicy::Or;
+	else if (read_policy != "stop")
+		FAILURE(Configuration, "debug.shared_read_policy must be stop, claimant, and or or");
 	theSystem = this;
 	myCfg = cfg;
 
@@ -1196,6 +1211,125 @@ void CSystem::report_decode_overlap(u64 address, int dsize, bool write,
 		message << "\n  " << detail;
 	// An emulator stop, not a PCI error or target arbitration rule.
 	FAILURE(Runtime, message.str());
+}
+
+// Logs at occurrences 1, 2, 4, 8, ... of each distinct event.
+void CSystem::log_shared_event(const std::string& key, const std::string& line)
+{
+	const u64 n = ++shared_event_counts[key];
+	if ((n & (n - 1)) == 0)
+		printf("%%PCI-I-SHARED: %s (occurrence %" PRIu64 ")\n", line.c_str(), n);
+}
+
+// before any side effect, figure whether several claimants can complete
+// this access together. Only a profile every claimant reports is modeled.
+void CSystem::prepare_shared_access(u64 address, int dsize, bool write,
+	const SDecodeClaims& claims, const CSystemComponent* source)
+{
+	if (stop_on_decode_conflict)
+		report_decode_overlap(address, dsize, write, claims, source,
+			"debug.stop_on_decode_conflict");
+	if (claims.subtractive)
+		report_decode_overlap(address, dsize, write, claims, source,
+			"several subtractive responders");
+	using Profile = CSystemComponent::SharedAccessProfile;
+	Profile profile = Profile::None;
+	for (int k = 0; k < claims.count; ++k)
+	{
+		const SMemoryUser* r = asMemories[claims.range[k]].get();
+		const Profile p = r->component->shared_access_profile(r->index,
+			address - r->base, dsize, write);
+		if (p == Profile::None || (k && p != profile))
+			report_decode_overlap(address, dsize, write, claims, source,
+				"no shared-access profile covers every claimant");
+		profile = p;
+	}
+
+	std::ostringstream key, line;
+	key << (write ? 'W' : 'R') << dsize << ':' << std::hex << address;
+	for (int k = 0; k < claims.count; ++k)
+		key << ':' << asMemories[claims.range[k]]->component->devid_string;
+	line << (write ? "write " : "read ") << std::dec << dsize << "-bit 0x"
+		<< std::hex << address << " claimed by " << std::dec << claims.count
+		<< " claimants";
+	for (int k = 0; k < claims.count; ++k)
+		line << (k ? ", " : " ") << asMemories[claims.range[k]]->component->devid_string;
+	log_shared_event(key.str(), line.str());
+}
+
+// Every claimant performs the read before one value is chosen. 
+// Disagreement is undefined contention on real hardware.
+u64 CSystem::resolve_shared_read(u64 address, int dsize,
+	const SDecodeClaims& claims, const CSystemComponent* source)
+{
+	const u64 mask = dsize == 64 ? ~U64(0) : (U64(1) << dsize) - 1;
+	u64 values[SDecodeClaims::kMax];
+	std::string contexts[SDecodeClaims::kMax];
+	bool agree = true;
+	for (int k = 0; k < claims.count; ++k)
+	{
+		const SMemoryUser* r = asMemories[claims.range[k]].get();
+		// Capture register context before the read's own side effects.
+		contexts[k] = r->component->describe_access_context(r->index,
+			address - r->base);
+		values[k] = r->component->ReadMem(r->index, address - r->base, dsize) & mask;
+		agree &= values[k] == values[0];
+	}
+	if (agree)
+		return values[0];
+
+	u64 anded = mask, ored = 0, differ = 0;
+	for (int k = 0; k < claims.count; ++k)
+	{
+		anded &= values[k];
+		ored |= values[k];
+		differ |= values[k] ^ values[0];
+	}
+	std::ostringstream key, detail;
+	key << std::hex << address << ':' << dsize << ':' << differ;
+	detail << "claimant values differ, mask 0x" << std::hex << differ
+		<< ", policy ";
+	switch (shared_read_policy)
+	{
+	case SharedReadPolicy::Stop: detail << "stop"; break;
+	case SharedReadPolicy::Claimant: detail << "claimant " << std::dec
+		<< shared_read_hose << ':' << shared_read_device; break;
+	case SharedReadPolicy::And: detail << "and"; break;
+	case SharedReadPolicy::Or: detail << "or"; break;
+	}
+	for (int k = 0; k < claims.count; ++k)
+	{
+		detail << "\n    " << asMemories[claims.range[k]]->component->devid_string
+			<< " returned 0x" << std::hex << values[k];
+		if (!contexts[k].empty())
+			detail << " [" << contexts[k] << ']';
+		key << ':' << contexts[k];
+	}
+	if (shared_read_policy == SharedReadPolicy::Stop)
+		report_decode_overlap(address, dsize, false, claims, source,
+			"claimants returned different read data", detail.str());
+
+	std::ostringstream line;
+	line << "read " << std::dec << dsize << "-bit 0x" << std::hex << address
+		<< " from " << describe_source(source) << ": " << detail.str();
+	log_shared_event("contention:" + key.str(), line.str());
+
+	switch (shared_read_policy)
+	{
+	case SharedReadPolicy::And: return anded;
+	case SharedReadPolicy::Or: return ored;
+	default: break;
+	}
+	for (int k = 0; k < claims.count; ++k)
+	{
+		const auto* pci = dynamic_cast<const CPCIDevice*>(
+			asMemories[claims.range[k]]->component);
+		if (pci && pci->pci_bus() == shared_read_hose &&
+			pci->pci_dev() == shared_read_device)
+			return values[k];
+	}
+	report_decode_overlap(address, dsize, false, claims, source,
+		"debug.shared_read_claimant is not among the claimants", detail.str());
 }
 
 void CSystem::dispatch_pci_io_write(u64 address, int dsize, u64 data,

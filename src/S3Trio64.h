@@ -103,6 +103,8 @@ public:
   virtual u32   ReadMem_Legacy(int index, u32 address, int dsize) override;
   bool decodes_memory_access(int index, u64 address, int dsize,
     bool write) const noexcept override;
+  SharedAccessProfile shared_access_profile(int index, u64 address, int dsize,
+    bool write) const noexcept override;
   std::string describe_access_context(int index, u64 address) const override;
 
   virtual void  WriteMem_Bar(int func, int bar, u32 address, int dsize,

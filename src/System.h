@@ -151,6 +151,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #if !defined(INCLUDED_SYSTEM_H)
@@ -348,10 +349,15 @@ private:
   };
   void collect_decode_claims(u64 address, int dsize, bool write,
     SDecodeClaims& claims, const CSystemComponent* source) const;
+  void prepare_shared_access(u64 address, int dsize, bool write,
+    const SDecodeClaims& claims, const CSystemComponent* source);
+  u64 resolve_shared_read(u64 address, int dsize, const SDecodeClaims& claims,
+    const CSystemComponent* source);
   [[noreturn]] void report_decode_overlap(u64 address, int dsize, bool write,
     const SDecodeClaims& claims, const CSystemComponent* source,
     const char* reason, const std::string& detail = std::string()) const;
   std::string describe_claimant(int range, u64 address) const;
+  void log_shared_event(const std::string& key, const std::string& line);
   void note_pio_access(u64 address, int dsize, bool write, u64 data, int claims);
   void dispatch_pci_io_write(u64 address, int dsize, u64 data,
     const SDecodeClaims& claims);
@@ -605,6 +611,13 @@ private:
   std::vector<std::unique_ptr<SMemoryUser>> asMemories;
   // Decode diagnostic policy
   bool stop_on_decode_conflict = false;
+  // Emulator continuation for a shared read whose claimants disagree.
+  // Not PCI spec, it's undefined there. 
+  enum class SharedReadPolicy { Stop, Claimant, And, Or };
+  SharedReadPolicy shared_read_policy = SharedReadPolicy::Stop;
+  int shared_read_hose = -1;
+  int shared_read_device = -1;
+  std::unordered_map<std::string, u64> shared_event_counts;
   // Recent mapped PIO accesses, printed when an overlap stops or disagrees.
   struct SPioTrace { u64 address; u64 data; int dsize; int claims; bool write; };
   static constexpr int kPioTraceSize = 64;

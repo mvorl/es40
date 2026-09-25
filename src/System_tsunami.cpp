@@ -124,8 +124,7 @@ void CSystem::pio_write(u64 a, int dsize, u64 data, CSystemComponent* source)
 	collect_decode_claims(a, dsize, true, claims, source);
 	const bool mapped = claims.count != 0;
 	if (claims.count > 1)
-		report_decode_overlap(a, dsize, true, claims, source,
-			stop_on_decode_conflict ? "debug.stop_on_decode_conflict" : "multiple claimants");
+		prepare_shared_access(a, dsize, true, claims, source);
 	if (mapped)
 		note_pio_access(a, dsize, true, data, claims.count);
 	const u64 io_base = a & ~U64(0x1ffffff);
@@ -369,8 +368,10 @@ u64 CSystem::pio_read(u64 a, int dsize, CSystemComponent* source)
 	}
 	if (claims.count > 1)
 	{
-		report_decode_overlap(a, dsize, false, claims, source,
-			stop_on_decode_conflict ? "debug.stop_on_decode_conflict" : "multiple claimants");
+		prepare_shared_access(a, dsize, false, claims, source);
+		const u64 data = resolve_shared_read(a, dsize, claims, source);
+		note_pio_access(a, dsize, false, data, claims.count);
+		return data;
 	}
 
 	if (a >= U64(0x00000801A0000000) && a <= U64(0x00000801AFFFFFFF))

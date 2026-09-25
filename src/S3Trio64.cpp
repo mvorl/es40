@@ -3185,6 +3185,39 @@ bool CS3Trio64::decodes_memory_access(int index, u64 address, int dsize,
 	}
 }
 
+// shared-completion model for register-file I/O. 
+// DB014-B specifies medium DEVSEL (19-3) and basic cycle timing (6-1, 6-2). 
+// It does not guarantee simultaneous completion by multiple cards. 
+// Excluded: RAMDAC 3C6-3C9 (CR34 abort/retry, 8-3/15-5), display memory (7.4)
+// and enhanced ports (command FIFO, 10-12).
+CSystemComponent::SharedAccessProfile CS3Trio64::shared_access_profile(int index,
+	u64 address, int dsize, bool write) const noexcept
+{
+	if (dsize != 8 && dsize != 16)
+		return SharedAccessProfile::None;
+	const u64 last = address + dsize / 8 - 1;
+	switch (index)
+	{
+	case 12: // 46E8 setup
+	case 32: // 102 option select
+		return dsize == 8 && address == 0 ? SharedAccessProfile::Trio64RegisterIo
+			: SharedAccessProfile::None;
+	case 2: // 3C0-3CF without the RAMDAC lanes
+		return last < 16 && (last < 6 || address > 9)
+			? SharedAccessProfile::Trio64RegisterIo : SharedAccessProfile::None;
+	case 1: // 3B4/3B5
+	case 3: // 3BA/3BB
+	case 8: // 3D4/3D5
+		return last < 2 ? SharedAccessProfile::Trio64RegisterIo
+			: SharedAccessProfile::None;
+	case 9: // 3DA
+		return last < 1 ? SharedAccessProfile::Trio64RegisterIo
+			: SharedAccessProfile::None;
+	default:
+		return SharedAccessProfile::None;
+	}
+}
+
 std::string CS3Trio64::describe_access_context(int index, u64 address) const
 {
 	char text[160];
