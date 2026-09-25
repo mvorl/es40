@@ -202,6 +202,9 @@ struct SMemoryUser
   int                 index;      /**< Index within the device. Used by devices that occupy more than one range. */
   u64                 base;       /**< Address of first byte. */
   u64                 length;     /**< Number of bytes in range. */
+  // Geometry only: another range's span intersects this one. Recomputed on
+  // every registration or remap; eligibility is always queried live.
+  bool                may_overlap = true;
 };
 
 /// Structure used for configuration values.
@@ -347,6 +350,7 @@ private:
     int range[kMax];
     bool subtractive = false;
   };
+  void recompute_range_overlaps();
   void collect_decode_claims(u64 address, int dsize, bool write,
     SDecodeClaims& claims, const CSystemComponent* source) const;
   void prepare_shared_access(u64 address, int dsize, bool write,

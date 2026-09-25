@@ -650,6 +650,7 @@ int CSystem::RegisterMemory(CSystemComponent* component, int index, u64 base,
 		{
 			asMemories[i]->base = base;
 			asMemories[i]->length = length;
+			recompute_range_overlaps();
 			return 0;
 		}
 	}
@@ -672,6 +673,7 @@ int CSystem::RegisterMemory(CSystemComponent* component, int index, u64 base,
 		FAILURE(OutOfMemory, "System memory-range registry capacity exhausted");
 	}
 	iNumMemories++;
+	recompute_range_overlaps();
 	return 0;
 }
 
@@ -1073,6 +1075,36 @@ void CSystem::cpu_clear_lock(int cpuid)
 	state.cpu_lock_flags &= ~(1 << cpuid);  // atomic fetch_and
 }
 
+// Geometry only; called under device_bus_mutex whenever a range or owner link
+// changes. A bridge forwarding range always yields to its own bridge's
+// handlers, so only the forwarding range itself is flagged for that overlap.
+void CSystem::recompute_range_overlaps()
+{
+	auto yields_to = [](const SMemoryUser* specific, const SMemoryUser* fallback) {
+		return fallback->component->memory_decode_fallback(fallback->index) &&
+			fallback->component->memory_decode_owner() ==
+			specific->component->memory_decode_owner();
+	};
+	for (int i = 0; i < iNumMemories; ++i)
+		asMemories[i]->may_overlap = false;
+	for (int i = 0; i < iNumMemories; ++i)
+	{
+		SMemoryUser* a = asMemories[i].get();
+		if (!a->length)
+			continue;
+		for (int j = i + 1; j < iNumMemories; ++j)
+		{
+			SMemoryUser* b = asMemories[j].get();
+			if (!b->length || a->base >= b->base + b->length || b->base >= a->base + a->length)
+				continue;
+			if (!yields_to(a, b))
+				a->may_overlap = true;
+			if (!yields_to(b, a))
+				b->may_overlap = true;
+		}
+	}
+}
+
 // Called with device_bus_mutex held, before any handler runs. 
 // Positive decode precedes subtractive decode. 
 // A bridge forwarding claim yields to that bridge's specific handler. 
@@ -1092,6 +1124,11 @@ void CSystem::collect_decode_claims(u64 address, int dsize, bool write,
 		++first;
 	if (first == iNumMemories)
 		return;
+	if (!asMemories[first]->may_overlap)
+	{
+		claims.range[claims.count++] = first;
+		return;
+	}
 
 	int positive[SDecodeClaims::kMax * 4];
 	int subtractive[SDecodeClaims::kMax * 4];
@@ -1636,6 +1673,11 @@ void CSystem::bind_isa_devices()
 void CSystem::init()
 {
 	bind_isa_devices();
+	{
+		// Owner links are bound above, after the ranges were registered.
+		std::lock_guard<std::recursive_mutex> bus_lock(device_bus_mutex);
+		recompute_range_overlaps();
+	}
 	if (!bNativePal)
 		printf("%%SYS-I-VMSPAL: running the optimized vmspal PALcode replacement routines on all CPUs (set palcode.vms.nohle=true for native PALcode).\n");
 	for (int i = 0; i < iNumComponents; i++)
