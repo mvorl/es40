@@ -1179,6 +1179,16 @@ bool CPermedia2::validate_texture_copy(uint32_t value)
 	// The initial indexed copy uses a linear CI8 map and one texel per native
 	// framebuffer pixel (SLAU011A, sections 4.9.1/4.9.4/4.13.1).
 	const uint32_t read_mode = r(TextureReadMode);
+	const uint32_t format =
+		((r(DitherMode) >> 2) & 15) | ((r(DitherMode) >> 12) & 16);
+	const uint32_t logical_mode = r(LogicalOpMode);
+	const unsigned logical_op = (logical_mode >> 1) & 15;
+	const bool destination_op = (logical_mode & 1) &&
+		logical_op != 0 && logical_op != 3 && logical_op != 12 &&
+		logical_op != 15;
+	// Non-dithered CI8 formatting preserves the texture index in either color
+	// order. The ordinary logical-op unit then combines it with the destination
+	// (SLAU011A, sections 4.9.4/4.15.1 and the DitherMode format table).
 	if ((value & 0xc0) != PrimitiveTrapezoid ||
 		(value & (FastFill | SyncMask | SyncHost | 1u)) ||
 		r(TextureAddressMode) != 1 || r(TextureColorMode) != 7 ||
@@ -1191,10 +1201,12 @@ bool CPermedia2::validate_texture_copy(uint32_t value)
 		((read_mode >> 9) & 15) > 11 || ((read_mode >> 13) & 15) > 11 ||
 		render_bytes() != 1 || (r(ColorDDAMode) & 1) ||
 		(r(DepthMode) & 1) || (r(LBWriteMode) & 1) ||
-		(r(DitherMode) & 1) || (r(LogicalOpMode) & 0x21) ||
+		((r(DitherMode) & 1) && format != 14) || (logical_mode & 0x20) ||
 		(r(FBReadMode) & (ReadSource | Packed | 0x48000u)) ||
 		(r(FBWriteConfig) & 0x40000u) ||
-		(r(FBSoftwareWriteMask) != 0xffffffffu &&
+		((r(FBReadMode) & ReadDestination) &&
+			((r(FBReadMode) ^ r(FBWriteConfig)) & 0x101ffu)) ||
+		((destination_op || r(FBSoftwareWriteMask) != 0xffffffffu) &&
 			!(r(FBReadMode) & ReadDestination)))
 	{
 		report("RENDER_MODE", Render, value,
