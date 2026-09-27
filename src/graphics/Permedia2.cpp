@@ -2002,6 +2002,37 @@ void CPermedia2::continue_render(uint32_t address, uint32_t value)
 		return;
 	}
 	const bool line = address == ContinueNewLine;
+	if (!line && (value & 0xfff) == 0 && !m_job.active &&
+		m_job.primitive == PrimitiveRectangle && m_job.col == 0 &&
+		m_job.row == m_job.rows)
+	{
+		// A zero scanline count emits no fragments; NewDom/NewSub still load
+		// their selected edge (SLAU011A, pp. 7-19/7-20/7-22). Rectangle rendering
+		// did not traverse the Start* DDAs, so there is no deferred edge step.
+		if (address == ContinueNewDom || address == ContinueNewSub)
+		{
+			const unsigned coordinate_bias = (r(RasterizerMode) >> 4) & 3;
+			if (coordinate_bias == 3)
+			{
+				report("RASTERIZER_BIAS", RasterizerMode, r(RasterizerMode),
+					"Undefined coordinate bias encoding", true);
+				return;
+			}
+			const int64_t bias = coordinate_bias == 1 ? 0x8000
+				: coordinate_bias == 2 ? 0x7fff : 0;
+			if (address == ContinueNewDom)
+				m_job.xdom = int64_t(sx(r(StartXDom), 32)) + bias;
+			else
+				m_job.xsub = int64_t(sx(r(StartXSub), 32)) + bias;
+		}
+		m_job.dxdom = sx(r(dXDom), 32);
+		m_job.dxsub = sx(r(dXSub), 32);
+		m_job.dy = sx(r(dY), 32);
+		m_job.row = m_job.col = m_job.rows = 0;
+		// Keep the rectangle identity: this does not establish a nonzero
+		// line/trapezoid continuation history.
+		return;
+	}
 	if (m_job.active || m_job.col != 0 || m_job.row != m_job.rows ||
 		(line ? m_job.primitive != PrimitiveLine || m_job.columns != 1
 			  : m_job.primitive != PrimitiveTrapezoid))
