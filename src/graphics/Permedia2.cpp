@@ -2158,10 +2158,11 @@ void CPermedia2::composite_cursor(Frame& frame) const
 	const unsigned selected = (control >> 4) & 3;
 	const unsigned pattern_base =
 		large ? 0 : (selected & 1) * 4 + (selected >> 1) * 256;
+	// Position registers specify the selected cursor's bottom-right corner.
 	const int origin_x =
-		int(((r(CursorXHigh) & 255) << 8) | (r(CursorXLow) & 255)) - 64;
+		int(((r(CursorXHigh) & 255) << 8) | (r(CursorXLow) & 255)) - int(size);
 	const int origin_y =
-		int(((r(CursorYHigh) & 255) << 8) | (r(CursorYLow) & 255)) - 64;
+		int(((r(CursorYHigh) & 255) << 8) | (r(CursorYLow) & 255)) - int(size);
 
 	// Table 5.4 indexes the planes as (plane1 << 1) | plane0. Zero means
 	// transparent and -1 means complement; colors occupy slots1-3 (slot0 unused).
