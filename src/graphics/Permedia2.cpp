@@ -292,9 +292,13 @@ bool CPermedia2::register_write(uint32_t address, uint32_t value)
 		r(SuspendUntilFrameBlank) = value;
 		return true;
 	case DrawTriangle:
+	case RepeatTriangle:
+	case DrawLine01:
+	case DrawLine10:
+	case RepeatLine:
 		report(
 			"UNSUPPORTED_COMMAND",
-			DrawTriangle,
+			address,
 			value,
 			"Setup-unit command not implemented",
 			true);
@@ -568,6 +572,15 @@ const char* CPermedia2::register_name(uint32_t a)
 		R(TextureColorMode);
 		R(FogMode);
 		R(RStart);
+		R(dRdx);
+		R(dRdyDom);
+		R(GStart);
+		R(dGdx);
+		R(dGdyDom);
+		R(BStart);
+		R(dBdx);
+		R(dBdyDom);
+		R(AStart);
 		R(ColorDDAMode);
 		R(ConstantColor);
 		R(Color);
@@ -579,6 +592,16 @@ const char* CPermedia2::register_name(uint32_t a)
 		R(LogicalOpMode);
 		R(FBWriteData);
 		R(LBReadMode);
+		R(LBReadFormat);
+		R(LBWindowBase);
+		R(LBWriteFormat);
+		R(Window);
+		R(ZStartU);
+		R(ZStartL);
+		R(dZdxU);
+		R(dZdxL);
+		R(dZdyDomU);
+		R(dZdyDomL);
 		R(LBWriteMode);
 		R(TextureData);
 		R(TextureDownloadOffset);
@@ -606,6 +629,10 @@ const char* CPermedia2::register_name(uint32_t a)
 		R(YUVMode);
 		R(DeltaMode);
 		R(DrawTriangle);
+		R(RepeatTriangle);
+		R(DrawLine01);
+		R(DrawLine10);
+		R(RepeatLine);
 #undef R
 	default:
 		return "REGISTER";
@@ -832,7 +859,10 @@ bool CPermedia2::packet_word(uint32_t value)
 	if (m_decoder.remaining == 0)
 	{
 		const uint32_t mode = (value >> 14) & 3;
-		if (mode == 3 || (value & 0x3e00u))
+		// Delta vertex/setup registers occupy groups 0x20..0x26, requiring
+		// ten-bit tags (SLAU011A, Table 8-1), despite the nine-bit
+		// description in section 2.3.4. Bits 10..13 remain reserved.
+		if (mode == 3 || (value & 0x3c00u))
 		{
 			report(
 				"FIFO_PACKET",
@@ -843,11 +873,11 @@ bool CPermedia2::packet_word(uint32_t value)
 			return false;
 		}
 		m_decoder.mode = mode;
-		m_decoder.tag = value & 0x1ff;
+		m_decoder.tag = value & 0x3ff;
 		m_decoder.mask = value >> 16;
 		if (mode == 2)
 		{
-			m_decoder.tag &= 0x1f0;
+			m_decoder.tag &= 0x3f0;
 			m_decoder.remaining = 0;
 			for (uint32_t m = m_decoder.mask; m; m >>= 1)
 				m_decoder.remaining += m & 1;
@@ -877,7 +907,7 @@ bool CPermedia2::packet_word(uint32_t value)
 	m_input.push_back({0x8000 + tagv * 8, value});
 	--m_decoder.remaining;
 	if (m_decoder.mode == 1)
-		m_decoder.tag = (m_decoder.tag + 1) & 0x1ff;
+		m_decoder.tag = (m_decoder.tag + 1) & 0x3ff;
 	return true;
 }
 
@@ -1143,8 +1173,7 @@ bool CPermedia2::validate_texture_block(uint32_t value)
 
 bool CPermedia2::load_texture_mask()
 {
-	// RestoreState accepts the serialized Job without re-running Render.
-	// Recheck this new path before deriving addresses from restored modes.
+	// Recheck the mask layout before deriving a source address.
 	if (!validate_texture_block(m_job.command))
 		return false;
 	const unsigned bytes = texture_bytes();
@@ -1187,6 +1216,240 @@ bool CPermedia2::load_texture_mask()
 	return true;
 }
 
+bool CPermedia2::validate_interpolants(uint32_t value)
+{
+	// Block-write fragments do not visit the color or local-buffer units.
+	if (value & FastFill)
+		return true;
+	const bool gouraud = (r(ColorDDAMode) & 3) == 3;
+	const bool depth = (r(DepthMode) & 1) != 0;
+	const bool local = depth || (r(LBWriteMode) & 1);
+	if ((gouraud || local) &&
+		((r(RasterizerMode) & 0x40000) ||
+			((r(ScissorMode) & 2) &&
+				(sx(r(WindowOrigin), 12) || sx(r(WindowOrigin) >> 16, 12)))))
+	{
+		report("INTERPOLATION_CLIP", Render, value,
+			"Rasterizer limits and translated screen scissoring are not "
+			"implemented for color/depth interpolation", true);
+		return false;
+	}
+	if ((r(ColorDDAMode) & 1) && (r(ColorDDAMode) & ~3u))
+	{
+		report("COLOR_DDA_MODE", ColorDDAMode, r(ColorDDAMode),
+			"Unknown enabled color DDA control", true);
+		return false;
+	}
+	if ((gouraud || local) &&
+		((value & (SyncHost | SyncMask)) || (r(FBReadMode) & Packed) ||
+			(r(FBReadMode) & ReadSource) || framebuffer_upload(value)))
+	{
+		report("INTERPOLATION_MODE", Render, value,
+			"Host streams, packed pixels and framebuffer copies/uploads are "
+			"not implemented with interpolated color or depth", true);
+		return false;
+	}
+	if (gouraud && (value & 0xc0) == PrimitiveRectangle)
+	{
+		report("COLOR_DDA_PRIMITIVE", Render, value,
+			"Gouraud rectangle interpolation is not implemented", true);
+		return false;
+	}
+	if (!local)
+		return true;
+	const uint32_t mode = r(LBReadMode);
+	const uint32_t read_format = r(LBReadFormat);
+	const uint32_t write_format = r(LBWriteFormat);
+	const unsigned function = (r(DepthMode) >> 4) & 7;
+	const unsigned source = (r(DepthMode) >> 2) & 3;
+	const bool write = (r(LBWriteMode) & 1) && !(r(Window) & 0x40000);
+	if ((mode & ~(0x1ffu | 0x400u | 0x40000u)) ||
+		pitch_from_products(mode) == 0 ||
+		(read_format != 0 && read_format != 3) ||
+		(write_format != 0 && write_format != 3) ||
+		(write && read_format != write_format) ||
+		(r(LBWriteMode) & ~1u) || (r(LBWindowBase) & 0xff000000u) ||
+		(r(Window) & ~(0x18u | 0x40000u)) ||
+		(depth && ((r(DepthMode) & ~0x7fu) || (source != 0 && source != 2))) ||
+		(depth && function != 0 && function != 7 && !(mode & 0x400)))
+	{
+		report("DEPTH_MODE", DepthMode, r(DepthMode),
+			"Only linear 15/16-bit local-buffer depth tests with fragment or "
+			"constant-register depth are implemented", true);
+		return false;
+	}
+	if (depth && source == 0 && (value & 0xc0) == PrimitiveRectangle)
+	{
+		report("DEPTH_PRIMITIVE", Render, value,
+			"Depth DDA rectangle interpolation is not implemented", true);
+		return false;
+	}
+	// Force-update interactions with a failed test or masked depth are outside
+	// this first slice. The ordinary constant-depth clear is unambiguous.
+	if (write && (r(Window) & 8) &&
+		(!(r(Window) & 16) || !depth || source != 2 || function != 7 ||
+			!(r(DepthMode) & 2)))
+	{
+		report("DEPTH_FORCE_MODE", Window, r(Window),
+			"Forced local-buffer updates require a writable constant-depth "
+			"clear with an Always comparison", true);
+		return false;
+	}
+	return true;
+}
+
+uint32_t CPermedia2::interpolation_kind(uint32_t value) const
+{
+	if (value & FastFill)
+		return 0;
+	return ((r(ColorDDAMode) & 3) == 3 ? 1u : 0u) |
+		((r(DepthMode) & 1) ? (((r(DepthMode) >> 2) & 3) == 0 ? 2u : 4u) : 0u);
+}
+
+void CPermedia2::load_interpolants(bool starts)
+{
+	if (starts)
+		m_job.interpolation = interpolation_kind(m_job.command);
+	// Color registers carry signed 9.11 in bits 23..4. Alpha uses the same
+	// start format but is not interpolated (SLAU011A, sections 4.12/7.11).
+	if (m_job.interpolation & 1)
+	{
+		for (unsigned i = 0; i < 3; ++i)
+		{
+			if (starts)
+				m_job.color[i] = sx(r(RStart + i * 24) >> 4, 20);
+			m_job.dcolor_dx[i] = sx(r(dRdx + i * 24) >> 4, 20);
+			m_job.dcolor_dy[i] = sx(r(dRdyDom + i * 24) >> 4, 20);
+		}
+		if (starts)
+		{
+			const int32_t alpha = sx(r(AStart) >> 4, 20);
+			m_job.alpha = static_cast<uint32_t>(
+				std::max(0, std::min(255, alpha / 2048)));
+		}
+	}
+	if (m_job.interpolation & 2)
+	{
+		// Upper words carry signed 17-bit integers; lower words carry eleven
+		// left-justified fractional bits (SLAU011A, pp. 7-59..7-62).
+		if (starts)
+			m_job.z = int64_t(sx(r(ZStartU), 17)) * 2048 + (r(ZStartL) >> 21);
+		m_job.dzdx = int64_t(sx(r(dZdxU), 17)) * 2048 + (r(dZdxL) >> 21);
+		m_job.dzdy = int64_t(sx(r(dZdyDomU), 17)) * 2048 + (r(dZdyDomL) >> 21);
+	}
+}
+
+void CPermedia2::step_interpolants()
+{
+	if (m_job.interpolation & 1)
+		for (unsigned i = 0; i < 3; ++i)
+			m_job.color[i] += m_job.dcolor_dy[i];
+	if (m_job.interpolation & 2)
+		m_job.z += m_job.dzdy;
+}
+
+uint32_t CPermedia2::fragment_color() const
+{
+	if (!(r(ColorDDAMode) & 2))
+		return r(ConstantColor);
+	uint32_t color = m_job.alpha << 24;
+	for (unsigned i = 0; i < 3; ++i)
+	{
+		// X derivatives are increments along the span, from dominant toward
+		// subordinate. Lines use only the dominant-edge derivative.
+		const int64_t component = m_job.color[i] +
+			(m_job.primitive == PrimitiveTrapezoid
+					? int64_t(m_job.col) * m_job.dcolor_dx[i]
+					: 0);
+		const uint32_t byte = static_cast<uint32_t>(
+			std::max<int64_t>(0, std::min<int64_t>(255, component / 2048)));
+		color |= byte << (8 * i);
+	}
+	return color;
+}
+
+bool CPermedia2::depth_test(int32_t x, int32_t y)
+{
+	if (!(r(DepthMode) & 1))
+		return true;
+	// Keep malformed restored states bounded as well as newly issued draws.
+	const uint32_t format = r(LBReadFormat);
+	const unsigned pitch = pitch_from_products(r(LBReadMode));
+	if ((format != 0 && format != 3) || pitch == 0)
+	{
+		report("DEPTH_LAYOUT", LBReadMode, r(LBReadMode),
+			"Invalid active local-buffer depth layout", true);
+		return false;
+	}
+	const uint32_t mask = format == 3 ? 0x7fff : 0xffff;
+	int64_t z = 0;
+	if (((r(DepthMode) >> 2) & 3) == 2)
+		z = int64_t(r(Depth)) * 2048;
+	else
+		z = m_job.z + (m_job.primitive == PrimitiveTrapezoid
+							 ? int64_t(m_job.col) * m_job.dzdx
+							 : 0);
+	// Color saturation is specified; depth overflow is not. Reject values
+	// outside the modeled depth range instead of inventing wrap or clamp rules.
+	if (z < 0 || z > int64_t(mask) * 2048 + 2047)
+	{
+		report("DEPTH_RANGE", DepthMode, r(DepthMode),
+			"Interpolated depth exceeds the local-buffer depth width", true);
+		return false;
+	}
+	const int64_t sign = (r(LBReadMode) & 0x40000) ? -1 : 1;
+	const int64_t pixel = int64_t(r(LBWindowBase)) +
+		int64_t(y) * pitch * sign + x;
+	const int64_t address = pixel * 2;
+	if (address < 0 || address > int64_t(VramSize - 2))
+	{
+		report("DEPTH_ADDRESS", LBWindowBase, r(LBWindowBase),
+			"Local-buffer fragment lies outside VRAM", true);
+		return false;
+	}
+	const uint32_t old = pixel_read(address, 2);
+	const uint32_t source = old & mask;
+	const uint32_t fragment = static_cast<uint32_t>(z / 2048);
+	bool pass = false;
+	switch ((r(DepthMode) >> 4) & 7)
+	{
+	case 0:
+		pass = false;
+		break;
+	case 1:
+		pass = fragment < source;
+		break;
+	case 2:
+		pass = fragment == source;
+		break;
+	case 3:
+		pass = fragment <= source;
+		break;
+	case 4:
+		pass = fragment > source;
+		break;
+	case 5:
+		pass = fragment != source;
+		break;
+	case 6:
+		pass = fragment >= source;
+		break;
+	case 7:
+		pass = true;
+		break;
+	}
+	if (pass && (r(DepthMode) & 2) && (r(LBWriteMode) & 1) &&
+		!(r(Window) & 0x40000))
+	{
+		// Depth writes have their own controls; framebuffer software/hardware
+		// masks do not replace DepthMode.WriteMask. Preserve non-depth planes.
+		const uint32_t value = (old & ~mask) | fragment;
+		m_vram[static_cast<size_t>(address)] = uint8_t(value);
+		m_vram[static_cast<size_t>(address) + 1] = uint8_t(value >> 8);
+	}
+	return pass;
+}
+
 bool CPermedia2::validate_render(uint32_t value)
 {
 	// Render.Texture qualifies the texture units (SLAU011A, p. 4-79). Their
@@ -1196,21 +1459,40 @@ bool CPermedia2::validate_render(uint32_t value)
 	const bool texture_block =
 		(value & (FastFill | Texture)) == (FastFill | Texture);
 	const uint32_t unsupported = r(AlphaBlendMode) | r(AlphaTestMode) |
-		r(DepthMode) | r(StencilMode) | r(FogMode) | r(AntialiasMode) |
+		r(StencilMode) | r(FogMode) | r(AntialiasMode) |
 		r(YUVMode);
 	if ((unsupported & 1) || ((value & Texture) && !texture_block) ||
-		(r(LBWriteMode) & 1) || (r(ColorDDAMode) & 2) ||
-		(r(FBReadMode) & 0x40000) || (r(FBWriteConfig) & 0x40000) ||
 		(r(DitherMode) & 2) || (r(LogicalOpMode) & ~63u))
 	{
 		report(
 			"RENDER_MODE",
 			Render,
 			value,
-			"Active 3D, interpolated, patched, dithered or unsupported logical "
-			"mode",
+			"Unsupported blending, alpha/stencil test, fog, antialias, YUV, "
+			"texture, dither or logical-operation mode",
 			true);
 		return false;
+	}
+	if (!validate_interpolants(value))
+		return false;
+	if ((r(FBReadMode) | r(FBWriteConfig)) & 0x40000)
+	{
+		// Subpatch host downloads use native 32-bit pixels and a top-left
+		// origin. Other patched reads, copies and render operations still need
+		// their own addressing and pipeline rules.
+		const uint32_t layout = 0x6000000u | 0x40000u | 0x10000u | 0x1ffu;
+		if ((r(FBReadMode) & layout) != (r(FBWriteConfig) & layout) ||
+			(r(FBWriteConfig) & (0x6000000u | 0x10000u)) != 0x2000000u ||
+			!(value & SyncHost) || (value & (FastFill | Texture | SyncMask)) ||
+			(r(FBReadMode) & (ReadSource | ReadDestination | Packed)) ||
+			(r(ColorDDAMode) & 1) || !(r(FBWriteMode) & 1) ||
+			render_bytes() != 4 || pitch_from_products(r(FBWriteConfig)) == 0)
+		{
+			report("FB_PATCH_MODE", FBWriteConfig, r(FBWriteConfig),
+				"Only top-left 32-bit Subpatch host downloads are implemented",
+				true);
+			return false;
+		}
 	}
 	if (texture_block && !validate_texture_block(value))
 		return false;
@@ -1225,8 +1507,12 @@ bool CPermedia2::validate_render(uint32_t value)
 		return false;
 	}
 	const unsigned bytes = render_bytes();
-	if (bytes == 0 || pitch_from_products(r(FBWriteConfig)) == 0 ||
-		((r(FBReadMode) & Packed) && (bytes == 3)))
+	const bool depth_only = !(value & FastFill) && (r(DepthMode) & 1) &&
+		!(r(FBWriteMode) & 1) &&
+		!(r(FBReadMode) & (ReadSource | ReadDestination | Packed));
+	if (!depth_only && (bytes == 0 ||
+		pitch_from_products(r(FBWriteConfig)) == 0 ||
+		((r(FBReadMode) & Packed) && (bytes == 3))))
 	{
 		report(
 			"PIXEL_LAYOUT",
@@ -1239,10 +1525,10 @@ bool CPermedia2::validate_render(uint32_t value)
 	// FBColor destination reads go directly to Host Out, independently of
 	// FBWriteMode.WriteEnable (SLAU011A, Table 4-18). Formatted uploads and
 	// combined read/write pipelines require additional ordering/format rules.
-	if ((r(FBReadMode) & 0x8000) &&
+	if (!(value & FastFill) && (r(FBReadMode) & 0x8000) &&
 		(r(FBReadMode) & (ReadSource | ReadDestination)))
 	{
-		if (!framebuffer_upload() || (r(FBReadMode) & ReadSource) ||
+		if (!framebuffer_upload(value) || (r(FBReadMode) & ReadSource) ||
 			(r(DitherMode) & 1) || (r(FBWriteMode) & 1) ||
 			(value & (FastFill | Texture | SyncMask | SyncHost)) ||
 			((value & 1) && (r(AreaStippleMode) & 1)) ||
@@ -1262,14 +1548,15 @@ bool CPermedia2::validate_render(uint32_t value)
 			return false;
 		}
 	}
-	const bool constant_fb_data = !framebuffer_upload() &&
+	const bool constant_fb_data = !framebuffer_upload(value) &&
 		!(value & FastFill) && (r(LogicalOpMode) & 0x20);
 	if (constant_fb_data)
 	{
 		// FBWriteData replaces the fragment color in the Logic Op unit. It cannot
 		// be combined with logical operations or software writemasking
 		// (SLAU011A, pp. 7-81/7-102); hardware writemasks still apply.
-		if ((r(LogicalOpMode) & 1) || r(FBSoftwareWriteMask) != 0xffffffffu)
+		if ((r(LogicalOpMode) & 1) || r(FBSoftwareWriteMask) != 0xffffffffu ||
+			(r(DepthMode) & 1) || (r(ColorDDAMode) & 3) == 3)
 		{
 			report(
 				"FB_CONSTANT_MODE",
@@ -1277,7 +1564,7 @@ bool CPermedia2::validate_render(uint32_t value)
 				r(LogicalOpMode),
 				"Constant framebuffer data requires disabled logical "
 				"operations "
-				"and software writemasking",
+				"and software writemasking, flat color and no depth test",
 				true);
 			return false;
 		}
@@ -1306,8 +1593,9 @@ bool CPermedia2::validate_render(uint32_t value)
 			"RENDER_FLAGS", Render, value, "Unimplemented Render flag", true);
 		return false;
 	}
-	// NT4 sets reserved bit 2 (SLAU011A, p. 7-82); retain it without effect.
-	if (r(FBWriteMode) & ~(1u | 0x4u))
+	// NT4 sets reserved bits 1 and 2 (SLAU011A, p. 7-82). Retain them
+	// without effect; the actual host-upload control is bit 3.
+	if (r(FBWriteMode) & ~7u)
 	{
 		report(
 			"FB_WRITE_MODE",
@@ -1412,11 +1700,15 @@ void CPermedia2::start_render(uint32_t value)
 	m_job.dxdom = sx(r(dXDom), 32);
 	m_job.dxsub = sx(r(dXSub), 32);
 	m_job.dy = sx(r(dY), 32);
+	load_interpolants(true);
 	if (m_job.primitive == PrimitiveRectangle)
 	{
 		m_job.columns = r(RectangleSize) & 0xffff;
 		m_job.rows = (r(RectangleSize) >> 16) & 0xffff;
-		if ((r(FBReadMode) & Packed) && !framebuffer_upload())
+		// Packed-copy coordinates are converted by the framebuffer read unit.
+		// Block fills bypass that unit and keep the rasterizer's native pixels.
+		if ((r(FBReadMode) & Packed) && !(value & FastFill) &&
+			!framebuffer_upload(value))
 		{
 			m_job.origin_x *= static_cast<int32_t>(4 / bytes);
 			m_job.columns *= 4 / bytes;
@@ -1449,7 +1741,7 @@ void CPermedia2::start_render(uint32_t value)
 				true);
 			return;
 		}
-		if (r(FBReadMode) & Packed)
+		if ((r(FBReadMode) & Packed) && !(value & FastFill))
 		{
 			report(
 				"PACKED_PRIMITIVE",
@@ -1498,7 +1790,14 @@ void CPermedia2::continue_render(uint32_t address, uint32_t value)
 	}
 	if (!validate_render(m_job.command))
 		return;
-	if (r(FBReadMode) & Packed)
+	if (m_job.interpolation != interpolation_kind(m_job.command))
+	{
+		report("CONTINUATION_INTERPOLATION", address, value,
+			"Changing color/depth interpolation sources during a continuation "
+			"chain is not implemented", true);
+		return;
+	}
+	if ((r(FBReadMode) & Packed) && !(m_job.command & FastFill))
 	{
 		report(
 			"PACKED_PRIMITIVE",
@@ -1518,6 +1817,11 @@ void CPermedia2::continue_render(uint32_t address, uint32_t value)
 		next.xdom += next.dxdom;
 		next.xsub += next.dxsub;
 		next.y += next.dy;
+		if (next.interpolation & 1)
+			for (unsigned i = 0; i < 3; ++i)
+				next.color[i] += next.dcolor_dy[i];
+		if (next.interpolation & 2)
+			next.z += next.dzdy;
 	}
 	if (line)
 	{
@@ -1582,7 +1886,24 @@ void CPermedia2::continue_render(uint32_t address, uint32_t value)
 			true);
 		return;
 	}
+	if (next.interpolation & 1)
+		for (unsigned i = 0; i < 3; ++i)
+			if (!valid_dda(next.color[i], sx(r(dRdyDom + i * 24) >> 4, 20)))
+			{
+				report("COLOR_RANGE", address, value,
+					"Continued color DDA exceeds the modeled range", true);
+				return;
+			}
+	const int64_t dzdy = int64_t(sx(r(dZdyDomU), 17)) * 2048 +
+		(r(dZdyDomL) >> 21);
+	if ((next.interpolation & 2) && !valid_dda(next.z, dzdy))
+	{
+		report("DEPTH_RANGE", address, value,
+			"Continued depth DDA exceeds the modeled range", true);
+		return;
+	}
 	m_job = next;
+	load_interpolants(false);
 	set_span();
 	// Empty trapezoid spans still advance the DDAs and consume a scanline.
 	m_job.active = m_job.rows != 0;
@@ -1614,6 +1935,7 @@ void CPermedia2::next_fragment()
 		m_job.active = false;
 		return;
 	}
+	step_interpolants();
 	if (m_job.primitive != PrimitiveRectangle)
 	{
 		// Accumulate before extracting coordinates, retaining subpixel carry.
@@ -1725,7 +2047,7 @@ bool CPermedia2::draw_step()
 				? static_cast<int32_t>(m_job.col)
 				: -static_cast<int32_t>(m_job.col) - 1;
 	}
-	if (framebuffer_upload())
+	if (framebuffer_upload(m_job.command))
 	{
 		if (!upload_pixel(x, y))
 			return false;
@@ -1733,7 +2055,7 @@ bool CPermedia2::draw_step()
 		return true;
 	}
 	const bool dda = (r(ColorDDAMode) & 1) != 0;
-	uint32_t color = dda ? r(ConstantColor) : r(Color);
+	uint32_t color = dda ? fragment_color() : r(Color);
 	bool raw = !dda, draw = true;
 	if (m_job.command & FastFill)
 	{
@@ -1785,7 +2107,7 @@ bool CPermedia2::draw_step()
 			m_job.primitive == PrimitiveRectangle)
 			x += m_relative_offset;
 	}
-	else if (r(FBReadMode) & ReadSource)
+	else if (!(m_job.command & FastFill) && (r(FBReadMode) & ReadSource))
 	{
 		const int64_t sign = (r(FBReadMode) & 0x10000) ? -1 : 1;
 		const int64_t src = int64_t(r(FBSourceBase)) +
@@ -1797,13 +2119,18 @@ bool CPermedia2::draw_step()
 	}
 	if (draw)
 		emit_pixel(x, y, color, raw);
+	if (m_halted)
+		return false;
 	next_fragment();
 	return true;
 }
 
-bool CPermedia2::framebuffer_upload() const
+bool CPermedia2::framebuffer_upload(uint32_t command) const
 {
-	return (r(FBReadMode) & (0x8000u | ReadDestination)) ==
+	// Block-write fragments bypass the framebuffer read unit, regardless of its
+	// retained read enables and datatype (SLAU011A, section 4.4.6).
+	return !(command & FastFill) &&
+		(r(FBReadMode) & (0x8000u | ReadDestination)) ==
 		(0x8000u | ReadDestination);
 }
 
@@ -1943,9 +2270,11 @@ uint32_t CPermedia2::format_color(uint32_t v) const
 	if (fmt == 14)
 		return v & 255; // Color index, not a RAMDAC ColorMode enum
 	const bool rgb = (r(DitherMode) & 0x400) != 0;
-	const uint32_t red = rgb ? (v & 255) : ((v >> 16) & 255),
-				   green = (v >> 8) & 255,
-				   blue = rgb ? ((v >> 16) & 255) : (v & 255);
+	// Internal color is AABBGGRR. RGB framebuffer order puts red in the
+	// higher channel; BGR puts it in the lower one (SLAU011A, p. 7-36).
+	const uint32_t red = v & 255, green = (v >> 8) & 255,
+				   blue = (v >> 16) & 255;
+	const uint32_t low = rgb ? blue : red, high = rgb ? red : blue;
 	uint32_t alpha = v >> 24;
 	if (r(DitherMode) & 0x1000)
 		alpha = 0;
@@ -1954,15 +2283,15 @@ uint32_t CPermedia2::format_color(uint32_t v) const
 	switch (fmt)
 	{
 	case 0:
-		return red | (green << 8) | (blue << 16) | (alpha << 24);
+		return low | (green << 8) | (high << 16) | (alpha << 24);
 	case 1:
-		return (red >> 3) | ((green >> 3) << 5) | ((blue >> 3) << 10) |
+		return (low >> 3) | ((green >> 3) << 5) | ((high >> 3) << 10) |
 			((alpha >> 7) << 15);
 	case 2:
-		return (red >> 4) | ((green >> 4) << 4) | ((blue >> 4) << 8) |
+		return (low >> 4) | ((green >> 4) << 4) | ((high >> 4) << 8) |
 			((alpha >> 4) << 12);
 	case 16:
-		return (red >> 3) | ((green >> 2) << 5) | ((blue >> 3) << 11);
+		return (low >> 3) | ((green >> 2) << 5) | ((high >> 3) << 11);
 	default:
 		return 0; // start_render rejects unsupported active formats
 	}
@@ -1970,7 +2299,9 @@ uint32_t CPermedia2::format_color(uint32_t v) const
 
 bool CPermedia2::emit_pixel(int32_t x, int32_t y, uint32_t value, bool raw)
 {
-	if (!(r(FBWriteMode) & 1) || clipped(x, y))
+	// Packed-copy edge limits do not trim block-write fragments. The rasterizer
+	// defines their native-pixel area; ordinary scissoring still applies.
+	if (clipped(x, y, !(m_job.command & FastFill)))
 		return false;
 	if ((m_job.command & 1) && (r(AreaStippleMode) & 1))
 	{
@@ -1998,11 +2329,38 @@ bool CPermedia2::emit_pixel(int32_t x, int32_t y, uint32_t value, bool raw)
 				return false;
 		}
 	}
+	// Depth/local-buffer updates precede the optional framebuffer write.
+	// Block fragments bypass both units (SLAU011A, section 4.4.6).
+	if (!(m_job.command & FastFill) && !depth_test(x, y))
+		return false;
+	if (!(r(FBWriteMode) & 1))
+		return false;
 	const unsigned bytes = render_bytes();
 	const int64_t sign = (r(FBWriteConfig) & 0x10000) ? -1 : 1;
-	const int64_t pixel = int64_t(r(FBWindowBase)) +
-		int64_t(y) * pitch_from_products(r(FBWriteConfig)) * sign + x +
-		r(FBPixelOffset);
+	int64_t offset = int64_t(y) * pitch_from_products(r(FBWriteConfig)) *
+		sign + x;
+	if (r(FBWriteConfig) & 0x40000)
+	{
+		if (x < 0 || y < 0)
+		{
+			report("FB_PATCH_ADDRESS", FBWriteConfig, r(FBWriteConfig),
+				"Negative Subpatch host coordinates are not implemented", true);
+			return false;
+		}
+		// Subpatch stores 32x32 pixels in interleaved X/Y order. Complete
+		// tile rows retain the configured pitch; the window base and pixel
+		// offset are applied after converting the local coordinates.
+		uint32_t within = 0;
+		for (unsigned bit = 0; bit < 5; ++bit)
+		{
+			within |= ((uint32_t(x) >> bit) & 1) << (2 * bit);
+			within |= ((uint32_t(y) >> bit) & 1) << (2 * bit + 1);
+		}
+		offset = int64_t(uint32_t(y) & ~31u) *
+			pitch_from_products(r(FBWriteConfig)) +
+			int64_t(uint32_t(x) & ~31u) * 32 + within;
+	}
+	const int64_t pixel = int64_t(r(FBWindowBase)) + offset + r(FBPixelOffset);
 	const int64_t address = pixel * bytes;
 	if (address < 0 || address > int64_t(VramSize - bytes))
 	{
@@ -2384,7 +2742,7 @@ static void require(bool p)
 void CPermedia2::SaveState(std::ostream& s) const
 {
 	s.write("PM2SNP01", 8);
-	put32(s, 3);
+	put32(s, 4);
 	put32(s, VramSize);
 	put32(s, m_options.chip_config);
 	put32(s, m_options.mem_control);
@@ -2435,6 +2793,13 @@ void CPermedia2::SaveState(std::ostream& s) const
 	for (const int64_t v :
 		{m_job.xdom, m_job.xsub, m_job.y, m_job.dxdom, m_job.dxsub, m_job.dy})
 		put64(s, uint64_t(v));
+	for (const auto* a : {&m_job.color, &m_job.dcolor_dx, &m_job.dcolor_dy})
+		for (const int64_t v : *a)
+			put64(s, uint64_t(v));
+	put32(s, m_job.alpha);
+	put32(s, m_job.interpolation);
+	for (const int64_t v : {m_job.z, m_job.dzdx, m_job.dzdy})
+		put64(s, uint64_t(v));
 	put32(s, static_cast<uint32_t>(m_input.size()));
 	for (const auto& c : m_input)
 	{
@@ -2465,7 +2830,7 @@ void CPermedia2::restore_state(std::istream& s)
 	char magic[8]{};
 	s.read(magic, 8);
 	require(std::string(magic, 8) == "PM2SNP01");
-	require(get32(s) == 3);
+	require(get32(s) == 4);
 	require(get32(s) == VramSize);
 	m_options.chip_config = get32(s);
 	m_options.mem_control = get32(s);
@@ -2523,6 +2888,23 @@ void CPermedia2::restore_state(std::istream& s)
 			 &m_job.dxsub,
 			 &m_job.dy})
 		*p = signed64(get64(s));
+	for (auto* a : {&m_job.color, &m_job.dcolor_dx, &m_job.dcolor_dy})
+		for (int64_t& v : *a)
+			v = signed64(get64(s));
+	m_job.alpha = get32(s);
+	m_job.interpolation = get32(s);
+	for (int64_t* p : {&m_job.z, &m_job.dzdx, &m_job.dzdy})
+		*p = signed64(get64(s));
+	for (const int64_t v : m_job.color)
+		require(v >= -(int64_t(1) << 47) && v < (int64_t(1) << 47));
+	for (const auto* a : {&m_job.dcolor_dx, &m_job.dcolor_dy})
+		for (const int64_t v : *a)
+			require(v >= -(int64_t(1) << 19) && v < (int64_t(1) << 19));
+	require(m_job.alpha <= 255);
+	require(m_job.interpolation <= 5);
+	require(m_job.z >= -(int64_t(1) << 47) && m_job.z < (int64_t(1) << 47));
+	for (const int64_t v : {m_job.dzdx, m_job.dzdy})
+		require(v >= -(int64_t(1) << 27) && v < (int64_t(1) << 27));
 	require(
 		m_palette_w < 768 && m_palette_r < 768 && m_cursor_color_pos < 12 &&
 		m_cursor_pos < 1024);
@@ -2530,7 +2912,7 @@ void CPermedia2::restore_state(std::istream& s)
 		m_active_screen_base <= 0x1fffff && m_relative_offset >= -4 &&
 		m_relative_offset <= 3);
 	require(
-		m_decoder.mode <= 2 && m_decoder.tag < 512 &&
+		m_decoder.mode <= 2 && m_decoder.tag < 1024 &&
 		m_decoder.remaining <= 65536 && m_decoder.mask <= 65535);
 	if (m_decoder.mode == 2)
 	{
@@ -2590,10 +2972,13 @@ void CPermedia2::restore_state(std::istream& s)
 	require(bool(s));
 	m_warned.fill(false);
 	m_irq = (r(IntFlags) & r(IntEnable)) != 0;
-	// Device-generated active jobs must have a supported nonzero pixel layout.
+	// Active jobs must have valid layouts for the units they actually use.
 	if (m_job.active)
-		require(
-			render_bytes() != 0 && pitch_from_products(r(FBWriteConfig)) != 0);
+	{
+		require((m_job.command & 0xc0) == m_job.primitive);
+		require(validate_render(m_job.command));
+		require(m_job.interpolation == interpolation_kind(m_job.command));
+	}
 }
 
 void CPermedia2::RestoreState(std::istream& s)

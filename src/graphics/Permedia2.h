@@ -97,20 +97,29 @@ public:
     TextureBaseAddress = 0x8580, TextureMapFormat = 0x8588,
     TextureDataFormat = 0x8590, Texel0 = 0x8600, TextureReadMode = 0x8670,
     TextureLUTMode = 0x8678, TextureColorMode = 0x8680, FogMode = 0x8690,
-    RStart = 0x8780, ColorDDAMode = 0x87e0, ConstantColor = 0x87e8,
+    RStart = 0x8780, dRdx = 0x8788, dRdyDom = 0x8790,
+    GStart = 0x8798, dGdx = 0x87a0, dGdyDom = 0x87a8,
+    BStart = 0x87b0, dBdx = 0x87b8, dBdyDom = 0x87c0,
+    AStart = 0x87c8, ColorDDAMode = 0x87e0, ConstantColor = 0x87e8,
     Color = 0x87f0, AlphaTestMode = 0x8800, AntialiasMode = 0x8808,
     AlphaBlendMode = 0x8810, DitherMode = 0x8818, FBSoftwareWriteMask = 0x8820,
-    LogicalOpMode = 0x8828, FBWriteData = 0x8830, LBReadMode = 0x8880,
-    LBWriteMode = 0x88c0, TextureData = 0x88e8, TextureDownloadOffset = 0x88f0,
-    StencilMode = 0x8988, Stencil = 0x8998, DepthMode = 0x89a0,
-    Depth = 0x89a8, FBReadMode = 0x8a80,
+    LogicalOpMode = 0x8828, FBWriteData = 0x8830,
+    LBReadMode = 0x8880, LBReadFormat = 0x8888,
+    LBWindowBase = 0x88b8, LBWriteMode = 0x88c0, LBWriteFormat = 0x88c8,
+    TextureData = 0x88e8, TextureDownloadOffset = 0x88f0,
+    Window = 0x8980, StencilMode = 0x8988, Stencil = 0x8998, DepthMode = 0x89a0,
+    Depth = 0x89a8, ZStartU = 0x89b0, ZStartL = 0x89b8,
+    dZdxU = 0x89c0, dZdxL = 0x89c8,
+    dZdyDomU = 0x89d0, dZdyDomL = 0x89d8, FBReadMode = 0x8a80,
     FBSourceOffset = 0x8a88, FBPixelOffset = 0x8a90, FBColor = 0x8a98,
     FBData = 0x8aa0, FBSourceData = 0x8aa8, FBWindowBase = 0x8ab0,
     FBWriteMode = 0x8ab8, FBHardwareWriteMask = 0x8ac0, FBBlockColor = 0x8ac8,
     FBReadPixel = 0x8ad0, FBWriteConfig = 0x8ae8, FilterMode = 0x8c00,
     StatisticMode = 0x8c08, Sync = 0x8c40, SuspendUntilFrameBlank = 0x8c78,
     FBSourceBase = 0x8d80, FBSourceDelta = 0x8d88, Config = 0x8d90,
-    YUVMode = 0x8f00, DeltaMode = 0x9300, DrawTriangle = 0x9308;
+    YUVMode = 0x8f00, DeltaMode = 0x9300, DrawTriangle = 0x9308,
+    RepeatTriangle = 0x9310, DrawLine01 = 0x9318,
+    DrawLine10 = 0x9320, RepeatLine = 0x9328;
 
   static constexpr uint32_t PrimitiveLine = 0, PrimitiveTrapezoid = 0x40,
                             PrimitivePoint = 0x80, PrimitiveRectangle = 0xc0,
@@ -222,6 +231,9 @@ private:
     uint32_t payload = 0, payload_left = 0, payload_tag = 0;
     int32_t origin_x = 0, origin_y = 0;
     int64_t xdom = 0, xsub = 0, y = 0, dxdom = 0, dxsub = 0, dy = 0;
+    std::array<int64_t, 3> color{}, dcolor_dx{}, dcolor_dy{};
+    uint32_t alpha = 0, interpolation = 0;
+    int64_t z = 0, dzdx = 0, dzdy = 0;
   } m_job;
 
   Options m_options;
@@ -260,11 +272,17 @@ private:
   bool execute(const Command&);
   bool validate_render(uint32_t value);
   bool validate_texture_block(uint32_t value);
+  bool validate_interpolants(uint32_t value);
+  uint32_t interpolation_kind(uint32_t value) const;
+  void load_interpolants(bool starts);
+  void step_interpolants();
+  uint32_t fragment_color() const;
+  bool depth_test(int32_t x, int32_t y);
   bool load_texture_mask();
   void start_render(uint32_t value);
   void continue_render(uint32_t address, uint32_t value);
   bool draw_step();
-  bool framebuffer_upload() const;
+  bool framebuffer_upload(uint32_t command) const;
   bool upload_pixel(int32_t x, int32_t y);
   void next_fragment();
   void set_span();
