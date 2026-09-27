@@ -129,6 +129,7 @@ private:
   };
 
   void reset_vga();
+  void sync_pci_config();
   bool legacy_enabled(bool memory) const noexcept;
   u8 io_read_b(u32 port);
   void io_write_b(u32 port, u8 data);

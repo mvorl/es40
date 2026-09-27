@@ -1171,10 +1171,6 @@ CGloriaSynergy::~CGloriaSynergy()
 		m_thread->join();
 		delete m_thread;
 	}
-	std::lock_guard<std::recursive_mutex> guard(
-		cSystem->get_device_bus_mutex());
-	if (m_initialized)
-		do_pci_interrupt(0, false);
 	if (m_trace)
 		m_trace.flush();
 }
@@ -1202,6 +1198,7 @@ void CGloriaSynergy::ResetPCI()
 		cSystem->get_device_bus_mutex());
 	CPCIDevice::ResetPCI();
 	m_permedia2.reset();
+	sync_pci_config();
 	reset_vga();
 	m_access_count = 0;
 	if (m_trace)
@@ -1239,6 +1236,31 @@ void CGloriaSynergy::stop_threads()
 }
 
 // PCI and legacy access
+
+void CGloriaSynergy::sync_pci_config()
+{
+	const u32 chip_config = m_permedia2.peek(CPermedia2::ChipConfig);
+	const bool fixed = (chip_config & 4) != 0;
+	// HRM 2.14.4: non-fixed VGA is an "other" display controller. Keep the
+	// board VGA class when fixed decode is enabled.
+	const u32 class_code = (chip_config & 1)
+		? (fixed ? 0x000100u : 0x000000u)
+		: (fixed ? 0x030000u : 0x038000u);
+	pci_state.config_data[0][2] = endian_32(
+		(class_code << 8) | (endian_32(pci_state.config_data[0][2]) & 0xff));
+
+	// HRM 2.14.6: without fixed VGA decode, I/O and palette snoop enables
+	// are read-only zero. Re-enabling decode does not restore their old values.
+	const u32 vga_command_bits = 0x21;
+	u32 command = endian_32(pci_state.config_data[0][1]);
+	u32 mask = endian_32(pci_state.config_mask[0][1]);
+	mask = (mask & ~vga_command_bits) |
+		(fixed ? endian_32(std_config_mask[0][1]) & vga_command_bits : 0);
+	if (!fixed)
+		command &= ~vga_command_bits;
+	pci_state.config_data[0][1] = endian_32(command);
+	pci_state.config_mask[0][1] = endian_32(mask);
+}
 
 bool CGloriaSynergy::legacy_enabled(bool memory) const noexcept
 {
@@ -1391,6 +1413,9 @@ void CGloriaSynergy::WriteMem_Bar(
 		}
 		else if (m_permedia2.WriteMem(address, dsize, data))
 		{
+			if ((address & 0xffff) == CPermedia2::ChipConfig ||
+				(address & 0xffff) == CPermedia2::ResetStatus)
+				sync_pci_config();
 			if ((address & 0xffff) == CPermedia2::PaletteRead)
 				vga.dac.read = 1;
 			if ((address & 0xffff) == CPermedia2::PaletteWrite)
@@ -1674,6 +1699,7 @@ int CGloriaSynergy::RestoreState(FILE* f)
 		m_mode640 = u8(mode640);
 		m_ioas = (vga.miscellaneous_output & 1) != 0;
 		m_access_count = u64(lo) | (u64(hi) << 32);
+		sync_pci_config();
 		vga.dac.dirty = 1;
 		return 0;
 	}

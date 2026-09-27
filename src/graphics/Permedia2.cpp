@@ -26,6 +26,7 @@
 
 #include "Permedia2.h"
 #include <algorithm>
+#include <cstdlib>
 #include <istream>
 #include <limits>
 #include <ostream>
@@ -539,6 +540,8 @@ const char* CPermedia2::register_name(uint32_t a)
 		R(Continue);
 		R(BitMaskPattern);
 		R(RasterizerMode);
+		R(XLimits);
+		R(YLimits);
 		R(RectangleOrigin);
 		R(RectangleSize);
 		R(PackedDataLimits);
@@ -1111,7 +1114,7 @@ unsigned CPermedia2::texture_bytes() const
 bool CPermedia2::validate_texture_block(uint32_t value)
 {
 	// Bound section 4.9.7's cached-font operation to forward rectangles and a
-	// linear one-dimensional mask stream. Other texture pipelines stay fatal.
+	// linear one-dimensional mask stream.
 	if ((value & 0xc0) != PrimitiveRectangle ||
 		(value & (PositiveX | PositiveY)) != (PositiveX | PositiveY) ||
 		(value & (SyncMask | SyncHost)) || (r(FBReadMode) & Packed))
@@ -1168,6 +1171,102 @@ bool CPermedia2::validate_texture_block(uint32_t value)
 			true);
 		return false;
 	}
+	return true;
+}
+
+bool CPermedia2::validate_texture_copy(uint32_t value)
+{
+	// The initial indexed copy uses a linear CI8 map and one texel per native
+	// framebuffer pixel (SLAU011A, sections 4.9.1/4.9.4/4.13.1).
+	const uint32_t read_mode = r(TextureReadMode);
+	if ((value & 0xc0) != PrimitiveTrapezoid ||
+		(value & (FastFill | SyncMask | SyncHost | 1u)) ||
+		r(TextureAddressMode) != 1 || r(TextureColorMode) != 7 ||
+		r(TextureLUTMode) != 0 ||
+		(r(TextureDataFormat) & ~0x20u) != 14 ||
+		(r(TextureMapFormat) & ~0x1ffu) ||
+		pitch_from_products(r(TextureMapFormat)) == 0 ||
+		(r(TextureBaseAddress) & 0xff000000u) ||
+		(read_mode & ~0x1fe01u) || !(read_mode & 1) ||
+		((read_mode >> 9) & 15) > 11 || ((read_mode >> 13) & 15) > 11 ||
+		render_bytes() != 1 || (r(ColorDDAMode) & 1) ||
+		(r(DepthMode) & 1) || (r(LBWriteMode) & 1) ||
+		(r(DitherMode) & 1) || (r(LogicalOpMode) & 0x21) ||
+		(r(FBReadMode) & (ReadSource | Packed | 0x48000u)) ||
+		(r(FBWriteConfig) & 0x40000u) ||
+		(r(FBSoftwareWriteMask) != 0xffffffffu &&
+			!(r(FBReadMode) & ReadDestination)))
+	{
+		report("RENDER_MODE", Render, value,
+			"Only linear nearest-clamped CI8 texture copies with native "
+			"indexed framebuffer pixels are implemented", true);
+		return false;
+	}
+	const int64_t left = int64_t(sx(r(StartXDom), 32)) / 65536;
+	const int64_t right = int64_t(sx(r(StartXSub), 32)) / 65536;
+	const int64_t top = int64_t(sx(r(StartY), 32)) / 65536;
+	const uint32_t rows = r(RasterCount) & 0xffff;
+	if (((r(StartXDom) | r(StartXSub) | r(StartY)) & 0xffff) ||
+		r(dXDom) != 0 || r(dXSub) != 0 || r(dY) != 0x10000 ||
+		right < left || right - left > 65535 || (r(RasterizerMode) & 0x30) ||
+		((r(SStart) | r(TStart)) & 0xfffff) || r(dSdx) != 0x100000 ||
+		r(dSdyDom) != 0 || r(dTdx) != 0 || r(dTdyDom) != 0x100000)
+	{
+		report("TEXTURE_COPY_GEOMETRY", Render, value,
+			"Indexed texture copies require an integral forward trapezoid "
+			"and unit S/T steps", true);
+		return false;
+	}
+	// Limit clipping can alter rasterizer interpolation. Admit only a complete
+	// footprint inside the limits until that continuation behavior is modeled.
+	if ((r(RasterizerMode) & 0x40000) && rows != 0 && right != left &&
+		(left < sx(r(XLimits), 12) || right > sx(r(XLimits) >> 16, 12) ||
+			top < sx(r(YLimits), 12) ||
+			top + rows > sx(r(YLimits) >> 16, 12)))
+	{
+		report("TEXTURE_COPY_LIMITS", RasterizerMode, r(RasterizerMode),
+			"Indexed texture-copy footprint must lie inside active X/Y limits",
+			true);
+		return false;
+	}
+	if ((r(ScissorMode) & 2) &&
+		(sx(r(WindowOrigin), 12) || sx(r(WindowOrigin) >> 16, 12)))
+	{
+		report("TEXTURE_COPY_SCISSOR", WindowOrigin, r(WindowOrigin),
+			"Translated screen scissoring is not implemented for texture copies",
+			true);
+		return false;
+	}
+	return true;
+}
+
+bool CPermedia2::texture_copy_color(uint32_t& value)
+{
+	const unsigned width_bits = (r(TextureReadMode) >> 9) & 15;
+	const unsigned height_bits = (r(TextureReadMode) >> 13) & 15;
+	const unsigned pitch = pitch_from_products(r(TextureMapFormat));
+	if (width_bits > 11 || height_bits > 11 || pitch == 0)
+	{
+		report("TEXTURE_COPY_LAYOUT", TextureMapFormat, r(TextureMapFormat),
+			"Invalid active indexed texture layout", true);
+		return false;
+	}
+	// Integral unit gradients let row/col preserve the complete texture DDA
+	// position, including across snapshots, without additional hidden state.
+	const int64_t s = int64_t(sx(r(SStart), 32)) / 0x100000 + m_job.col;
+	const int64_t t = int64_t(sx(r(TStart), 32)) / 0x100000 + m_job.row;
+	const int64_t sc = std::max<int64_t>(0,
+		std::min<int64_t>((int64_t(1) << width_bits) - 1, s));
+	const int64_t tc = std::max<int64_t>(0,
+		std::min<int64_t>((int64_t(1) << height_bits) - 1, t));
+	const int64_t address = int64_t(r(TextureBaseAddress)) + tc * pitch + sc;
+	if (address < 0 || address >= int64_t(VramSize))
+	{
+		report("TEXTURE_COPY_RANGE", TextureBaseAddress, r(TextureBaseAddress),
+			"Indexed texture source lies outside local VRAM", true);
+		return false;
+	}
+	value = m_vram[static_cast<size_t>(address)];
 	return true;
 }
 
@@ -1450,18 +1549,71 @@ bool CPermedia2::depth_test(int32_t x, int32_t y)
 	return pass;
 }
 
+bool CPermedia2::packed_trapezoid(uint32_t command) const
+{
+	return (command & 0xc0) == PrimitiveTrapezoid && !(command & FastFill) &&
+		(r(FBReadMode) & Packed);
+}
+
+bool CPermedia2::validate_packed_trapezoid(
+	const Job& job, uint32_t address, uint32_t value)
+{
+	if (job.row >= job.rows)
+		return true;
+	const unsigned bytes = render_bytes();
+	if (bytes != 1 && bytes != 2 && bytes != 4)
+		return false;
+	const int64_t scale = 4 / bytes;
+	const int64_t steps = job.rows - job.row - 1;
+	const int64_t a = fixed_integer(job.xdom);
+	const int64_t b = fixed_integer(job.xsub);
+	const int64_t ae = fixed_integer(job.xdom + job.dxdom * steps);
+	const int64_t be = fixed_integer(job.xsub + job.dxsub * steps);
+	const int64_t y = fixed_integer(job.y);
+	const int64_t ye = fixed_integer(job.y + job.dy * steps);
+	const int64_t left = std::min(std::min(a, b), std::min(ae, be));
+	const int64_t right = std::max(std::max(a, b), std::max(ae, be));
+	const int64_t width = std::max(std::abs(job.xdom - job.xsub),
+		std::abs(job.xdom + job.dxdom * steps -
+			job.xsub - job.dxsub * steps));
+	if (left * scale < INT32_MIN || right * scale > INT32_MAX ||
+		std::min(y, ye) < INT32_MIN || std::max(y, ye) > INT32_MAX ||
+		(width + 65535) / 65536 > 65535 ||
+		(steps != 0 && job.dy != 65536 && job.dy != -65536))
+	{
+		report("PACKED_GEOMETRY", address, value,
+			"Packed trapezoids require bounded coordinates and unit scanline steps",
+			true);
+		return false;
+	}
+	// Limits belong to the rasterizer, before the framebuffer read unit
+	// converts DWORD-group X coordinates into native pixels (PRM 4.4.13/6.4.1).
+	if ((r(RasterizerMode) & 0x40000) &&
+		(left < sx(r(XLimits), 12) || right > sx(r(XLimits) >> 16, 12) ||
+			std::min(y, ye) < sx(r(YLimits), 12) ||
+			std::max(y, ye) >= sx(r(YLimits) >> 16, 12)))
+	{
+		report("PACKED_LIMITS", address, value,
+			"Packed trapezoid footprint must lie inside active X/Y limits",
+			true);
+		return false;
+	}
+	return true;
+}
+
 bool CPermedia2::validate_render(uint32_t value)
 {
 	// Render.Texture qualifies the texture units (SLAU011A, p. 4-79). Their
 	// retained mode registers have no effect when this command leaves it clear.
-	// Section 4.9.7 defines a separate block-fill mask path; ordinary color
-	// texturing remains unsupported.
+	// Section 4.9.7 defines a separate block-fill mask path. Ordinary texture
+	// reads are bounded to the linear indexed copy path validated below.
 	const bool texture_block =
 		(value & (FastFill | Texture)) == (FastFill | Texture);
+	const bool texture_copy = (value & Texture) && !(value & FastFill);
 	const uint32_t unsupported = r(AlphaBlendMode) | r(AlphaTestMode) |
 		r(StencilMode) | r(FogMode) | r(AntialiasMode) |
 		r(YUVMode);
-	if ((unsupported & 1) || ((value & Texture) && !texture_block) ||
+	if ((unsupported & 1) ||
 		(r(DitherMode) & 2) || (r(LogicalOpMode) & ~63u))
 	{
 		report(
@@ -1496,6 +1648,8 @@ bool CPermedia2::validate_render(uint32_t value)
 	}
 	if (texture_block && !validate_texture_block(value))
 		return false;
+	if (texture_copy && !validate_texture_copy(value))
+		return false;
 	if ((value & SyncMask) && (value & SyncHost))
 	{
 		report(
@@ -1521,6 +1675,37 @@ bool CPermedia2::validate_render(uint32_t value)
 			"Invalid pitch/pixel size or packed 24-bit mode",
 			true);
 		return false;
+	}
+	if ((r(FBReadMode) & Packed) && !(value & FastFill) &&
+		(value & 0xc0) != PrimitiveRectangle)
+	{
+		if ((value & 0xc0) != PrimitiveTrapezoid ||
+			(value & (SyncHost | SyncMask | Texture)) ||
+			!(r(FBReadMode) & ReadSource) || (r(FBReadMode) & 0x8000) ||
+			pitch_from_products(r(FBReadMode)) == 0 ||
+			((value & 1) && (r(AreaStippleMode) & 1)) ||
+			(r(ColorDDAMode) & 1) || (r(DitherMode) & 1) ||
+			(r(LogicalOpMode) & 0x20) || (r(ScissorMode) & 3))
+		{
+			report("PACKED_PRIMITIVE", Render, value,
+				"Only linear raw framebuffer-source copies are implemented for "
+				"packed trapezoids", true);
+			return false;
+		}
+		const uint32_t mask = r(FBSoftwareWriteMask);
+		const bool repeated = bytes == 4 ||
+			(bytes == 2 && (mask & 0xffff) * 0x10001u == mask) ||
+			(bytes == 1 && (mask & 0xff) * 0x1010101u == mask);
+		if (!repeated || (mask != 0xffffffffu &&
+			!(r(FBReadMode) & ReadDestination)))
+		{
+			report("PACKED_MASK", FBSoftwareWriteMask, mask,
+				!repeated
+					? "Nonreplicated packed trapezoid software masks are not implemented"
+					: "Software writemasking requires framebuffer destination reads",
+				true);
+			return false;
+		}
 	}
 	// FBColor destination reads go directly to Host Out, independently of
 	// FBWriteMode.WriteEnable (SLAU011A, Table 4-18). Formatted uploads and
@@ -1586,7 +1771,7 @@ bool CPermedia2::validate_render(uint32_t value)
 	const uint32_t reserved_bit_5 = 0x20u;
 	const uint32_t supported = 0xc0u | 1u | reserved_bit_5 | FastFill |
 		SyncMask | SyncHost | PositiveX | PositiveY |
-		(texture_block ? Texture : 0);
+		((texture_block || texture_copy) ? Texture : 0);
 	if (value & ~supported)
 	{
 		report(
@@ -1741,17 +1926,10 @@ void CPermedia2::start_render(uint32_t value)
 				true);
 			return;
 		}
-		if ((r(FBReadMode) & Packed) && !(value & FastFill))
-		{
-			report(
-				"PACKED_PRIMITIVE",
-				Render,
-				value,
-				"Packed line/trapezoid not implemented",
-				true);
-			return;
-		}
 		set_span();
+		if (packed_trapezoid(value) &&
+			!validate_packed_trapezoid(m_job, Render, value))
+			return;
 	}
 	if (m_job.columns > 262140 || m_job.rows > 65535)
 	{
@@ -1765,6 +1943,13 @@ void CPermedia2::start_render(uint32_t value)
 
 void CPermedia2::continue_render(uint32_t address, uint32_t value)
 {
+	if ((m_job.command & Texture) && !(m_job.command & FastFill))
+	{
+		report("TEXTURE_COPY_CONTINUATION", address, value,
+			"Texture-copy continuation requires retained S/T accumulators "
+			"that are not implemented", true);
+		return;
+	}
 	const bool line = address == ContinueNewLine;
 	if (m_job.active || m_job.col != 0 || m_job.row != m_job.rows ||
 		(line ? m_job.primitive != PrimitiveLine || m_job.columns != 1
@@ -1797,17 +1982,6 @@ void CPermedia2::continue_render(uint32_t address, uint32_t value)
 			"chain is not implemented", true);
 		return;
 	}
-	if ((r(FBReadMode) & Packed) && !(m_job.command & FastFill))
-	{
-		report(
-			"PACKED_PRIMITIVE",
-			address,
-			value,
-			"Packed line/trapezoid not implemented",
-			true);
-		return;
-	}
-
 	Job next = m_job;
 	// Completed jobs retain the last rendered DDA position. Recover the
 	// hardware's next endpoint using the OLD slopes, before loading new ones
@@ -1902,6 +2076,9 @@ void CPermedia2::continue_render(uint32_t address, uint32_t value)
 			"Continued depth DDA exceeds the modeled range", true);
 		return;
 	}
+	if (packed_trapezoid(next.command) &&
+		!validate_packed_trapezoid(next, address, value))
+		return;
 	m_job = next;
 	load_interpolants(false);
 	set_span();
@@ -1919,6 +2096,10 @@ void CPermedia2::set_span()
 	const int64_t a = fixed_integer(m_job.xdom), b = fixed_integer(m_job.xsub);
 	const int64_t width = a > b ? a - b : b - a;
 	m_job.columns = static_cast<uint32_t>(std::min<int64_t>(width, 65535));
+	// The rasterizer retains group coordinates. Expand only the emitted span;
+	// multiplying a fractional DDA before taking its integer part changes edges.
+	if (packed_trapezoid(m_job.command))
+		m_job.columns *= 4 / render_bytes();
 }
 
 void CPermedia2::next_fragment()
@@ -2042,6 +2223,8 @@ bool CPermedia2::draw_step()
 	{
 		y = static_cast<int32_t>(fixed_integer(m_job.y));
 		x = static_cast<int32_t>(fixed_integer(m_job.xdom));
+		if (packed_trapezoid(m_job.command))
+			x *= static_cast<int32_t>(4 / bytes);
 		if (m_job.primitive == PrimitiveTrapezoid)
 			x += (m_job.xsub >= m_job.xdom)
 				? static_cast<int32_t>(m_job.col)
@@ -2051,6 +2234,14 @@ bool CPermedia2::draw_step()
 	{
 		if (!upload_pixel(x, y))
 			return false;
+		next_fragment();
+		return true;
+	}
+	const bool texture_copy =
+		(m_job.command & Texture) && !(m_job.command & FastFill);
+	// User/screen scissoring discards fragments before texture memory reads.
+	if (texture_copy && clipped(x, y, false))
+	{
 		next_fragment();
 		return true;
 	}
@@ -2067,6 +2258,12 @@ bool CPermedia2::draw_step()
 		draw = (m_job.payload & 1) != 0;
 		m_job.payload >>= 1;
 		--m_job.payload_left;
+	}
+	else if (texture_copy)
+	{
+		if (!texture_copy_color(color))
+			return false;
+		raw = true; // A CI8 texture in a CI8 framebuffer preserves its index.
 	}
 	else if (mask_stream)
 	{
@@ -2978,6 +3175,28 @@ void CPermedia2::restore_state(std::istream& s)
 		require((m_job.command & 0xc0) == m_job.primitive);
 		require(validate_render(m_job.command));
 		require(m_job.interpolation == interpolation_kind(m_job.command));
+		if (packed_trapezoid(m_job.command))
+		{
+			require(validate_packed_trapezoid(m_job, Render, m_job.command));
+			const int64_t width = std::abs(fixed_integer(m_job.xdom) -
+				fixed_integer(m_job.xsub));
+			const unsigned lanes = 4 / render_bytes();
+			require(m_job.columns == uint64_t(width) * lanes);
+			require(m_job.columns != 0 || m_job.col == 0);
+			require(m_job.payload_left == 0);
+		}
+		if ((m_job.command & Texture) && !(m_job.command & FastFill))
+		{
+			// The indexed copy derives texture positions from progress within
+			// its original straight trapezoid. Restored geometry must match it.
+			require(m_job.rows == (r(RasterCount) & 0xffff));
+			require(m_job.xdom == sx(r(StartXDom), 32));
+			require(m_job.xsub == sx(r(StartXSub), 32));
+			require(m_job.y == int64_t(sx(r(StartY), 32)) +
+				int64_t(m_job.row) * 65536);
+			require(m_job.dxdom == 0 && m_job.dxsub == 0 && m_job.dy == 65536);
+			require(m_job.columns == uint32_t((m_job.xsub - m_job.xdom) / 65536));
+		}
 	}
 }
 

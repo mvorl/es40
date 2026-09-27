@@ -85,6 +85,7 @@ public:
     StartY = 0x8020, dY = 0x8028, RasterCount = 0x8030, Render = 0x8038,
     ContinueNewLine = 0x8040, ContinueNewDom = 0x8048, ContinueNewSub = 0x8050,
     Continue = 0x8058, BitMaskPattern = 0x8068, RasterizerMode = 0x80a0,
+    YLimits = 0x80a8, XLimits = 0x80c8,
     RectangleOrigin = 0x80d0, RectangleSize = 0x80d8, PackedDataLimits = 0x8150,
     ScissorMode = 0x8180, ScissorMin = 0x8188, ScissorMax = 0x8190,
     ScreenSize = 0x8198, AreaStippleMode = 0x81a0, WindowOrigin = 0x81c8,
@@ -271,7 +272,11 @@ private:
   bool packet_word(uint32_t value);
   bool execute(const Command&);
   bool validate_render(uint32_t value);
+  bool packed_trapezoid(uint32_t command) const;
+  bool validate_packed_trapezoid(const Job&, uint32_t address, uint32_t value);
   bool validate_texture_block(uint32_t value);
+  bool validate_texture_copy(uint32_t value);
+  bool texture_copy_color(uint32_t& value);
   bool validate_interpolants(uint32_t value);
   uint32_t interpolation_kind(uint32_t value) const;
   void load_interpolants(bool starts);
