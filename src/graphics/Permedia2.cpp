@@ -1576,6 +1576,8 @@ bool CPermedia2::validate_packed_trapezoid(
 	if (bytes != 1 && bytes != 2 && bytes != 4)
 		return false;
 	const int64_t scale = 4 / bytes;
+	const bool host = (job.command & SyncHost) != 0;
+	const int64_t alignment = host ? m_relative_offset : 0;
 	const int64_t steps = job.rows - job.row - 1;
 	const int64_t a = fixed_integer(job.xdom);
 	const int64_t b = fixed_integer(job.xsub);
@@ -1589,6 +1591,8 @@ bool CPermedia2::validate_packed_trapezoid(
 		std::abs(job.xdom + job.dxdom * steps -
 			job.xsub - job.dxsub * steps));
 	if (left * scale < INT32_MIN || right * scale > INT32_MAX ||
+		left * scale + alignment < INT32_MIN ||
+		right * scale + alignment > INT32_MAX ||
 		std::min(y, ye) < INT32_MIN || std::max(y, ye) > INT32_MAX ||
 		(width + 65535) / 65536 > 65535 ||
 		(steps != 0 && job.dy != 65536 && job.dy != -65536))
@@ -1598,9 +1602,17 @@ bool CPermedia2::validate_packed_trapezoid(
 			true);
 		return false;
 	}
+	if (host && (job.xdom > job.xsub ||
+		job.xdom + job.dxdom * steps > job.xsub + job.dxsub * steps))
+	{
+		report("PACKED_HOST_DIRECTION", address, value,
+			"Reverse-X packed trapezoid host downloads are not implemented", true);
+		return false;
+	}
 	// Limits belong to the rasterizer, before the framebuffer read unit
 	// converts DWORD-group X coordinates into native pixels (PRM 4.4.13/6.4.1).
-	if ((r(RasterizerMode) & 0x40000) &&
+	// Host synchronization automatically disables these limits (PRM 4.4.13).
+	if (!host && (r(RasterizerMode) & 0x40000) &&
 		(left < sx(r(XLimits), 12) || right > sx(r(XLimits) >> 16, 12) ||
 			std::min(y, ye) < sx(r(YLimits), 12) ||
 			std::max(y, ye) >= sx(r(YLimits) >> 16, 12)))
@@ -1691,17 +1703,20 @@ bool CPermedia2::validate_render(uint32_t value)
 	if ((r(FBReadMode) & Packed) && !(value & FastFill) &&
 		(value & 0xc0) != PrimitiveRectangle)
 	{
+		const bool host = (value & SyncHost) != 0;
 		if ((value & 0xc0) != PrimitiveTrapezoid ||
-			(value & (SyncHost | SyncMask | Texture)) ||
-			!(r(FBReadMode) & ReadSource) || (r(FBReadMode) & 0x8000) ||
+			(value & (SyncMask | Texture)) ||
+			(host ? (r(FBReadMode) & ReadSource) != 0
+				  : !(r(FBReadMode) & ReadSource)) ||
+			(r(FBReadMode) & 0x8000) ||
 			pitch_from_products(r(FBReadMode)) == 0 ||
 			((value & 1) && (r(AreaStippleMode) & 1)) ||
 			(r(ColorDDAMode) & 1) || (r(DitherMode) & 1) ||
 			(r(LogicalOpMode) & 0x20) || (r(ScissorMode) & 3))
 		{
 			report("PACKED_PRIMITIVE", Render, value,
-				"Only linear raw framebuffer-source copies are implemented for "
-				"packed trapezoids", true);
+				"Only linear raw framebuffer-source copies and host downloads "
+				"are implemented for packed trapezoids", true);
 			return false;
 		}
 		const uint32_t mask = r(FBSoftwareWriteMask);
@@ -1717,6 +1732,29 @@ bool CPermedia2::validate_render(uint32_t value)
 					: "Software writemasking requires framebuffer destination reads",
 				true);
 			return false;
+		}
+		if (host)
+		{
+			const uint32_t logical_mode = r(LogicalOpMode);
+			const unsigned op = (logical_mode >> 1) & 15;
+			const bool destination_op = (logical_mode & 1) &&
+				op != 0 && op != 3 && op != 12 && op != 15;
+			if ((destination_op && !(r(FBReadMode) & ReadDestination)) ||
+				((r(FBReadMode) & ReadDestination) &&
+					((r(FBReadMode) ^ r(FBWriteConfig)) & 0x101ffu)))
+			{
+				report("PACKED_HOST_READ", FBReadMode, r(FBReadMode),
+					"Packed host logical operations require matching destination reads",
+					true);
+				return false;
+			}
+			if (std::abs(m_relative_offset) >= int(4 / bytes))
+			{
+				report("HOST_ALIGNMENT", FBReadMode, r(FBReadMode),
+					"Whole-word packed trapezoid host alignment is not implemented",
+					true);
+				return false;
+			}
 		}
 	}
 	// FBColor destination reads go directly to Host Out, independently of
@@ -1805,7 +1843,8 @@ bool CPermedia2::validate_render(uint32_t value)
 	}
 	if ((value & SyncHost) && (r(FBReadMode) & Packed) &&
 		m_relative_offset != 0 &&
-		(!(value & PositiveX) || (r(DitherMode) & 1)))
+		((!packed_trapezoid(value) && !(value & PositiveX)) ||
+			(r(DitherMode) & 1)))
 	{
 		report(
 			"HOST_ALIGNMENT",
@@ -2172,13 +2211,14 @@ bool CPermedia2::draw_step()
 			return true;
 		}
 		if (host_stream &&
-			(c.address == Depth || c.address == Stencil || c.address == Texel0))
+			(c.address == Depth || c.address == Stencil || c.address == Texel0 ||
+				(packed_trapezoid(m_job.command) && c.address == FBSourceData)))
 		{
 			report(
 				"HOST_DATA",
 				c.address,
 				c.value,
-				"Depth, stencil or texture host data not implemented",
+				"This host-data source is not implemented for the active primitive",
 				true);
 			return false;
 		}
@@ -2313,7 +2353,8 @@ bool CPermedia2::draw_step()
 		// Packed downloads shift the destination stream in native pixels
 		// (SLAU011A, section 6.4.2), including across DWORD boundaries.
 		if ((r(FBReadMode) & Packed) &&
-			m_job.primitive == PrimitiveRectangle)
+			(m_job.primitive == PrimitiveRectangle ||
+				packed_trapezoid(m_job.command)))
 			x += m_relative_offset;
 	}
 	else if (!(m_job.command & FastFill) && (r(FBReadMode) & ReadSource))
@@ -3195,7 +3236,18 @@ void CPermedia2::restore_state(std::istream& s)
 			const unsigned lanes = 4 / render_bytes();
 			require(m_job.columns == uint64_t(width) * lanes);
 			require(m_job.columns != 0 || m_job.col == 0);
-			require(m_job.payload_left == 0);
+			if (m_job.command & SyncHost)
+			{
+				const unsigned used = m_job.col % lanes;
+				require(used == 0
+					? m_job.payload_left == 0 || m_job.payload_left == lanes
+					: m_job.payload_left == lanes - used);
+				if (m_job.payload_left)
+					require(m_job.columns != 0 &&
+						(m_job.payload_tag == Color || m_job.payload_tag == FBData));
+			}
+			else
+				require(m_job.payload_left == 0);
 		}
 		if ((m_job.command & Texture) && !(m_job.command & FastFill))
 		{
