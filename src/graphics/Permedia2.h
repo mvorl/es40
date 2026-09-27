@@ -44,8 +44,8 @@ public:
   struct Options
   {
     uint32_t chip_config = 0, mem_control = 0, mem_config = 0;
-    // HRM Issue 6 says 256; SLAU011A contains conflicting 32-entry text.
-    uint32_t input_fifo_entries = 256;
+    // InFIFOSpace and command admission use the same total capacity.
+    uint32_t input_fifo_entries = 258;
   };
 
   struct Diagnostic

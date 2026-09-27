@@ -2264,9 +2264,10 @@ CPermedia2::CPermedia2() : CPermedia2(Options{})
 
 CPermedia2::CPermedia2(const Options& o) : m_options(o), m_vram(VramSize)
 {
-	if (o.input_fifo_entries != 32 && o.input_fifo_entries != 256)
+	if (o.input_fifo_entries != 32 && o.input_fifo_entries != 256 &&
+		o.input_fifo_entries != 258)
 		throw std::invalid_argument(
-			"Permedia2 input FIFO capacity must be 32 or 256");
+			"Permedia2 input FIFO capacity must be 32, 256 or 258");
 	dac_map(m_dac_map);
 	reset();
 }
@@ -2472,7 +2473,8 @@ void CPermedia2::restore_state(std::istream& s)
 	m_options.input_fifo_entries = get32(s);
 	require(
 		m_options.input_fifo_entries == 32 ||
-		m_options.input_fifo_entries == 256);
+		m_options.input_fifo_entries == 256 ||
+		m_options.input_fifo_entries == 258);
 	for (auto& v : m_regs)
 		v = get32(s);
 	s.read(

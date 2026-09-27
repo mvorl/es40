@@ -92,7 +92,8 @@ static CPermedia2::Options gloria_options(CConfigurator* c)
 	o.chip_config = gloria_setting(c, "chip_config", 6);
 	o.mem_control = gloria_setting(c, "mem_control", 0);
 	o.mem_config = gloria_setting(c, "mem_config", 0);
-	o.input_fifo_entries = gloria_setting(c, "fifo_entries", 256);
+	o.input_fifo_entries =
+		gloria_setting(c, "fifo_entries", o.input_fifo_entries);
 	if (c->get_bool_value("subsystem_from_rom", false))
 		o.chip_config |= 0x1000;
 	return o;
