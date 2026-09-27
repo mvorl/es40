@@ -998,7 +998,7 @@ try
 	m_profile.device = gloria_setting16(cfg, "device", m_profile.device);
 	m_profile.subsystem_vendor = gloria_setting16(cfg, "subsystem_vendor", 0);
 	m_profile.subsystem_device = gloria_setting16(cfg, "subsystem_device", 0);
-	const auto revision = gloria_setting(cfg, "revision", 0);
+	const auto revision = gloria_setting(cfg, "revision", m_profile.revision);
 	if (revision > 255)
 		throw std::runtime_error("gloria revision exceeds 8 bits");
 	m_profile.revision = static_cast<uint8_t>(revision);

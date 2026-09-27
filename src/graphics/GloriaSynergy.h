@@ -50,7 +50,7 @@ public:
   {
     u16 vendor = 0x104c, device = 0x3d07, subsystem_vendor = 0,
         subsystem_device = 0;
-    u8 revision = 0;
+    u8 revision = 1; // TVP4020 HRM: CFGRevisionId.
     u32 class_code = 0x030000;
     std::array<u32, 64> config_data() const;
     static std::array<u32, 64> config_mask();
