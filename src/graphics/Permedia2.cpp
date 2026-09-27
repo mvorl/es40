@@ -65,7 +65,8 @@ static uint32_t width_mask(unsigned bits)
 static bool host_tag(uint32_t a)
 {
 	return a == CPermedia2::FBData || a == CPermedia2::FBSourceData ||
-		a == CPermedia2::Color;
+		a == CPermedia2::Color || a == CPermedia2::Depth ||
+		a == CPermedia2::Stencil || a == CPermedia2::Texel0;
 }
 
 // Register dispatch and indexed RAMDAC registers
@@ -1648,7 +1649,24 @@ bool CPermedia2::draw_step()
 			return false;
 		const Command c = m_input.front();
 		if (mask_stream ? c.address != BitMaskPattern : !host_tag(c.address))
+		{
+			// A non-data write aborts a rasterizer waiting for host input.
+			// Keep the command queued for normal execution; pixels already
+			// supplied by the host remain drawn.
+			m_job.active = false;
+			return true;
+		}
+		if (host_stream &&
+			(c.address == Depth || c.address == Stencil || c.address == Texel0))
+		{
+			report(
+				"HOST_DATA",
+				c.address,
+				c.value,
+				"Depth, stencil or texture host data not implemented",
+				true);
 			return false;
+		}
 		m_input.pop_front();
 		m_job.payload = c.value;
 		m_job.payload_tag = c.address;
@@ -1842,10 +1860,10 @@ bool CPermedia2::clipped(int64_t x, int64_t y, bool packed_limits) const
 	}
 	if (packed_limits && (r(FBReadMode) & Packed))
 	{
-		const int32_t start =
-			static_cast<int32_t>((r(PackedDataLimits) >> 16) & 0xfff);
-		const int32_t end = static_cast<int32_t>(r(PackedDataLimits) & 0xfff);
-		if (x < start || x >= end)
+		const int32_t start = sx(r(PackedDataLimits) >> 16, 12);
+		const int32_t end = sx(r(PackedDataLimits), 12);
+		// Drivers may specify the two native-pixel edges in either order.
+		if (x < std::min(start, end) || x >= std::max(start, end))
 			return true;
 	}
 	return false;
