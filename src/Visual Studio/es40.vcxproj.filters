@@ -49,6 +49,12 @@
     <Filter Include="Source Files\network">
       <UniqueIdentifier>{b29c1411-aef3-4be3-bdc3-1ac39d8d7aa1}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\graphics">
+      <UniqueIdentifier>{76aece89-c338-4804-88e4-094c4624fa04}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\graphics">
+      <UniqueIdentifier>{26e6ce89-351d-4e12-b425-99458488a6ea}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\AliM1543C.cpp">
@@ -78,8 +84,8 @@
     <ClCompile Include="..\AlphaSim.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\Cirrus.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\graphics\Cirrus.cpp">
+      <Filter>Source Files\graphics</Filter>
     </ClCompile>
     <ClCompile Include="..\Configurator.cpp">
       <Filter>Source Files</Filter>
@@ -150,8 +156,14 @@
     <ClCompile Include="..\Port80.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\S3Trio64.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\graphics\S3Trio64.cpp">
+      <Filter>Source Files\graphics</Filter>
+    </ClCompile>
+    <ClCompile Include="..\graphics\GloriaSynergy.cpp">
+      <Filter>Source Files\graphics</Filter>
+    </ClCompile>
+    <ClCompile Include="..\graphics\Permedia2.cpp">
+      <Filter>Source Files\graphics</Filter>
     </ClCompile>
     <ClCompile Include="..\SCSIBus.cpp">
       <Filter>Source Files</Filter>
@@ -189,14 +201,14 @@
     <ClCompile Include="..\TraceEngine.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\VGA.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\graphics\VGA.cpp">
+      <Filter>Source Files\graphics</Filter>
     </ClCompile>
     <ClCompile Include="..\i2c_spd.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\ibm8514a.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\graphics\ibm8514a.cpp">
+      <Filter>Source Files\graphics</Filter>
     </ClCompile>
     <ClCompile Include="..\gui\sdl.cpp">
       <Filter>Source Files\gui</Filter>
@@ -254,8 +266,8 @@
     <ClInclude Include="..\AlphaCPU.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\Cirrus.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\graphics\Cirrus.h">
+      <Filter>Header Files\graphics</Filter>
     </ClInclude>
     <ClInclude Include="..\config_vms.h">
       <Filter>Header Files</Filter>
@@ -386,8 +398,14 @@
     <ClInclude Include="..\Port80.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\S3Trio64.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\graphics\S3Trio64.h">
+      <Filter>Header Files\graphics</Filter>
+    </ClInclude>
+    <ClInclude Include="..\graphics\GloriaSynergy.h">
+      <Filter>Header Files\graphics</Filter>
+    </ClInclude>
+    <ClInclude Include="..\graphics\Permedia2.h">
+      <Filter>Header Files\graphics</Filter>
     </ClInclude>
     <ClInclude Include="..\SCSIBus.h">
       <Filter>Header Files</Filter>
@@ -425,8 +443,8 @@
     <ClInclude Include="..\TraceEngine.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\VGA.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\graphics\VGA.h">
+      <Filter>Header Files\graphics</Filter>
     </ClInclude>
     <ClInclude Include="..\i2c_spd.h">
       <Filter>Header Files</Filter>
@@ -449,8 +467,8 @@
     <ClInclude Include="..\mame_shims.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\ibm8514a.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\graphics\ibm8514a.h">
+      <Filter>Header Files\graphics</Filter>
     </ClInclude>
     <ClInclude Include="..\emu\emu.h">
       <Filter>Header Files\emu</Filter>

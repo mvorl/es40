@@ -1,5 +1,5 @@
 /* ES40 Emulator.
- * Copyright (C) 2007-2008 by the ES40 Emulator Project
+ * Copyright (C) 2007-2008, 2026 by the ES40 Emulator Project
  *
  * WWW    : https://github.com/ES40-Emu/es40
  *
@@ -143,9 +143,10 @@
 #include "DiskDevice.h"
 #include "DiskRam.h"
 #include "Port80.h"
-#include "S3Trio64.h"
+#include "graphics/S3Trio64.h"
+#include "graphics/GloriaSynergy.h"
 #ifdef HAVE_CIRRUS
-#include "Cirrus.h" // to be re-added and fixed in the future
+#include "graphics/Cirrus.h" // to be re-added and fixed in the future
 #endif
 #include "FloppyController.h"
 #include "gui/plugin.h"
@@ -733,6 +734,11 @@ static const char* const kv_serial[] = {
 static const char* const kv_ali[] = { "vga_console", "lpt.outfile", 0 };
 static const char* const kv_ali_ide[] = { "dma", 0 };
 static const char* const kv_vga[] = { "rom", 0 };
+static const char* const kv_gloria[] = {
+  "rom", "rom_layout", "subsystem_from_rom", "vendor", "device", "revision",
+  "subsystem_vendor", "subsystem_device", "chip_config", "mem_control",
+  "mem_config", "fifo_entries", "service_budget", "scanline_access_divisor",
+  "allow_dma", "trace", "trace_apertures", "frame_file", 0 };
 static const char* const kv_lsi53c1020[] = { "flash", "rom", "firmware", 0 };
 static const char* const kv_dec21143[] = {
   "adapter", "mac", "queue", "crc", "trace_packets",
@@ -765,6 +771,7 @@ classinfo classes[] = {
   {"ali_pmu", c_ali_pmu, IS_PCI, kv_none},
   {"serial", c_serial, ON_CS, kv_serial},
   {"s3", c_s3, IS_PCI | ON_GUI, kv_vga},
+  {"gloria", c_gloria, IS_PCI | ON_GUI, kv_gloria},
   //{"cirrus", c_cirrus, IS_PCI | ON_GUI, kv_vga},
   {"dec21143", c_dec21143, IS_PCI | IS_NIC, kv_dec21143},
   {"lsi53c1020", c_lsi53c1020, IS_PCI | HAS_DISK, kv_lsi53c1020},
@@ -1014,6 +1021,11 @@ void CConfigurator::initialize()
 
 	case c_s3:
 		myDevice = new CS3Trio64(this, (CSystem*)pParent->get_device(), pcibus,
+			pcidev, bx_gui->display_for_output(get_device_path(), 0));
+		break;
+
+	case c_gloria:
+		myDevice = new CGloriaSynergy(this, (CSystem*)pParent->get_device(), pcibus,
 			pcidev, bx_gui->display_for_output(get_device_path(), 0));
 		break;
 

@@ -78,7 +78,7 @@ es40_idb_LDADD = $(ASMJIT_LDADD) $(ES40_LIBS)
 es40_lss_LDADD = $(ASMJIT_LDADD) $(ES40_LIBS)
 es40_lsm_LDADD = $(ASMJIT_LDADD) $(ES40_LIBS)
 
-#       Cirrus.cpp  - readd this to the sources line below when it's fixed
+#       graphics/Cirrus.cpp  - readd this to the sources line below when it's fixed
 
 es40_SOURCES = AliM1543C.cpp \
        AliM1543C_ide.cpp \
@@ -96,7 +96,7 @@ es40_SOURCES = AliM1543C.cpp \
        DiskDevice.cpp \
        DiskFile.cpp \
        DiskRam.cpp \
-       ibm8514a.cpp \
+       graphics/ibm8514a.cpp \
        DMA.cpp \
        DPR.cpp \
        es40_debug.cpp \
@@ -114,7 +114,11 @@ es40_SOURCES = AliM1543C.cpp \
        network/NetworkVmnetIPC.h \
        PCIDevice.cpp \
        Port80.cpp \
-       S3Trio64.cpp \
+       graphics/S3Trio64.cpp \
+       graphics/GloriaSynergy.cpp \
+       graphics/GloriaSynergy.h \
+       graphics/Permedia2.cpp \
+       graphics/Permedia2.h \
        SCSIBus.cpp \
        SCSIDevice.cpp \
        Serial.cpp \
@@ -128,7 +132,7 @@ es40_SOURCES = AliM1543C.cpp \
        System_tsunami.cpp \
        SnapshotFile.h \
        TraceEngine.cpp \
-       VGA.cpp \
+       graphics/VGA.cpp \
        i2c_spd.cpp \
 	base/ThreadTLS.cpp \
        gui/gui.cpp \

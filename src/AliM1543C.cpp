@@ -270,7 +270,7 @@
 #include "AliM1543C.h"
 #include "AliM1543C_pmu.h"
 #include "System.h"
-#include "VGA.h"
+#include "graphics/VGA.h"
 
 #ifdef DEBUG_PIC
 bool  pic_messages = false;

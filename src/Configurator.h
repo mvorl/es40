@@ -106,6 +106,7 @@ typedef enum
   c_ali_usb,
   c_ali_pmu,
   c_s3,
+  c_gloria,
   c_cirrus,
   c_radeon,
   c_dec21143,

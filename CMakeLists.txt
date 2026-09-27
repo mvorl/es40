@@ -375,7 +375,7 @@ list(APPEND ES40_SOURCES
     src/AlphaCPU_vmspal.cpp
     src/AlphaCPU.cpp
     src/AlphaSim.cpp
-    # src/Cirrus.cpp
+    # src/graphics/Cirrus.cpp
     src/Configurator.cpp
     src/DEC21143.cpp
     src/Disk.cpp
@@ -391,8 +391,9 @@ list(APPEND ES40_SOURCES
     src/network/Ethernet.cpp
     src/Flash.cpp
     src/FloppyController.cpp
+    src/graphics/GloriaSynergy.cpp
     src/i2c_spd.cpp
-    src/ibm8514a.cpp
+    src/graphics/ibm8514a.cpp
     src/Keyboard.cpp
     src/network/lockstep.cpp
     src/MPU401.cpp
@@ -402,8 +403,9 @@ list(APPEND ES40_SOURCES
     src/network/NetworkVmnet.cpp
     src/network/NetworkVmnetIPC.cpp
     src/PCIDevice.cpp
+    src/graphics/Permedia2.cpp
     src/Port80.cpp
-    src/S3Trio64.cpp
+    src/graphics/S3Trio64.cpp
     src/SCSIBus.cpp
     src/SCSIDevice.cpp
     src/Serial.cpp
@@ -416,7 +418,7 @@ list(APPEND ES40_SOURCES
     src/System_tsunami.cpp
     src/SystemComponent.cpp
     src/TraceEngine.cpp
-    src/VGA.cpp
+    src/graphics/VGA.cpp
     src/jit/jitengine.cpp
     src/jit/jitengine_x64.cpp
     src/jit/jitengine_a64.cpp

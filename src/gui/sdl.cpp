@@ -79,7 +79,7 @@
 #include "gui.h"
 #include "keymap.h"
 #include "sdl_media.h"
-#include "../VGA.h"
+#include "../graphics/VGA.h"
 #include "../System.h"
 
   //#include "../AliM1543C.h"

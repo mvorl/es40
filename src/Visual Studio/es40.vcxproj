@@ -2200,7 +2200,7 @@
     <ClCompile Include="..\AlphaCPU_vmspal.cpp" />
     <ClCompile Include="..\AlphaSim.cpp" />
     <ClCompile Include="..\base\ThreadTLS.cpp" />
-    <ClCompile Include="..\Cirrus.cpp">
+    <ClCompile Include="..\graphics\Cirrus.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release JIT|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release - SSE2|x64'">true</ExcludedFromBuild>
@@ -2239,13 +2239,15 @@
     <ClCompile Include="..\gui\gui.cpp" />
     <ClCompile Include="..\gui\gui_win32.cpp" />
     <ClCompile Include="..\i2c_spd.cpp" />
-    <ClCompile Include="..\ibm8514a.cpp" />
+    <ClCompile Include="..\graphics\ibm8514a.cpp" />
     <ClCompile Include="..\Keyboard.cpp" />
     <ClCompile Include="..\gui\keymap.cpp" />
     <ClCompile Include="..\network\lockstep.cpp" />
     <ClCompile Include="..\PCIDevice.cpp" />
     <ClCompile Include="..\Port80.cpp" />
-    <ClCompile Include="..\S3Trio64.cpp" />
+    <ClCompile Include="..\graphics\S3Trio64.cpp" />
+    <ClCompile Include="..\graphics\GloriaSynergy.cpp" />
+    <ClCompile Include="..\graphics\Permedia2.cpp" />
     <ClCompile Include="..\gui\scancodes.cpp" />
     <ClCompile Include="..\SCSIBus.cpp" />
     <ClCompile Include="..\SCSIDevice.cpp" />
@@ -2261,7 +2263,7 @@
     <ClCompile Include="..\System_tsunami.cpp" />
     <ClCompile Include="..\SystemComponent.cpp" />
     <ClCompile Include="..\TraceEngine.cpp" />
-    <ClCompile Include="..\VGA.cpp" />
+    <ClCompile Include="..\graphics\VGA.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\address_map.h" />
@@ -2279,7 +2281,7 @@
     <ClInclude Include="..\base\RWLock.h" />
     <ClInclude Include="..\base\Semaphore.h" />
     <ClInclude Include="..\base\Thread.h" />
-    <ClInclude Include="..\Cirrus.h" />
+    <ClInclude Include="..\graphics\Cirrus.h" />
     <ClInclude Include="..\config_debug.h" />
     <ClInclude Include="..\config_vms.h" />
     <ClInclude Include="..\config_win32.h" />
@@ -2327,7 +2329,7 @@
     <ClInclude Include="..\FloppyController.h" />
     <ClInclude Include="..\gui\gui.h" />
     <ClInclude Include="..\i2c_spd.h" />
-    <ClInclude Include="..\ibm8514a.h" />
+    <ClInclude Include="..\graphics\ibm8514a.h" />
     <ClInclude Include="..\jit\jitengine.h" />
     <ClInclude Include="..\jit\jitengine_internal.h" />
     <ClInclude Include="..\Keyboard.h" />
@@ -2339,7 +2341,9 @@
     <ClInclude Include="..\PCIDevice.h" />
     <ClInclude Include="..\gui\plugin.h" />
     <ClInclude Include="..\Port80.h" />
-    <ClInclude Include="..\S3Trio64.h" />
+    <ClInclude Include="..\graphics\S3Trio64.h" />
+    <ClInclude Include="..\graphics\GloriaSynergy.h" />
+    <ClInclude Include="..\graphics\Permedia2.h" />
     <ClInclude Include="..\gui\scancodes.h" />
     <ClInclude Include="..\SCSIBus.h" />
     <ClInclude Include="..\SCSIDevice.h" />
@@ -2357,7 +2361,7 @@
     <ClInclude Include="..\network\telnet.h" />
     <ClInclude Include="..\TraceEngine.h" />
     <ClInclude Include="..\gui\vga.h" />
-    <ClInclude Include="..\VGA.h" />
+    <ClInclude Include="..\graphics\VGA.h" />
     <ClInclude Include="..\xtal.h" />
   </ItemGroup>
   <ItemGroup>

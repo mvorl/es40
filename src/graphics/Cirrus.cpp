@@ -708,8 +708,8 @@ u32 CCirrus::rom_read(u32 address, int dsize)
 	}
 	else
 	{
-		printf("cirrus: (BAD) rom read: %" PRIx64 ", %d, %" PRIx64 "\n", address, dsize,
-			data);
+		printf("%s: Invalid ROM read (address=%08" PRIx32 ", dsize=%d, data=%08" PRIx32 ").\n",
+			devid_string, address, dsize, data);
 	}
 
 	return data;

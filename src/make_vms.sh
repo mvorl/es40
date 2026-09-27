@@ -217,6 +217,10 @@ VMS_EOF
       source_FILE=${source_FILE#network/}
       object_FILE="network_$source_FILE"
       source_FILE="[.network]$source_FILE"
+    elif test "${source_FILE:0:9}" = "graphics/"; then
+      source_FILE=${source_FILE#graphics/}
+      object_FILE="graphics_$source_FILE"
+      source_FILE="[.graphics]$source_FILE"
     else
       object_FILE=$source_FILE
     fi

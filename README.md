@@ -122,6 +122,10 @@ Zenity is unavailable.
 ------------------------------------------------------------------------  
   
 ## Status  
+
+## 9/27/2026 - ELSA GLoria Synergy (experimental)
+Experimental ELSA GLoria Synergy (Permedia 2) graphics are available as the
+`gloria` device. Unfinished, many parts don't work/exist. 
   
 ## 9/15/26 - Saved-state compatibility  
   

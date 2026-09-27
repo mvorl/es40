@@ -317,7 +317,7 @@
 #include "AliM1543C_pmu.h"
 #include "System.h"
 #include "PCIDevice.h"
-#include "VGA.h"
+#include "graphics/VGA.h"
 #include "AlphaCPU.h"
 #include "network/lockstep.h"
 #include "DPR.h"

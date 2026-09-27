@@ -1,7 +1,12 @@
 /* ES40 Emulator.
  * Copyright (C) 2007-2008 by the ES40 Emulator Project
+ * Copyright (C) 2003-2014 Nathan Woods from MAME
+ * Copyright (C) 2000 Peter Trauner from MAME
+ * Copyright (C) 2011-2026 Angelo Salese from MAME
  *
  * WWW    : https://github.com/ES40-Emu/es40
+ *
+ * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -53,8 +58,6 @@
 #include "System.h"
 
 #include "emu.h"
-
-#include "logmacro.h"
 
   /**
    * Constructor.
@@ -191,11 +194,8 @@ void CVGA::sequencer_data_w(offs_t offset, u8 data)
 
 u8 CVGA::ramdac_mask_r(offs_t offset)
 {
-#ifdef DEBUG_VGA_RENDER
-	static int mask_read_count = 0;
-	if (mask_read_count < 20)
-		LOG("DIAG: ramdac_mask_r called (count=%d) mask=%02x\n", mask_read_count, vga.dac.mask);
-	mask_read_count++;
+#ifdef DEBUG_VGA_NOISY
+	printf("%s: VGA ramdac_mask_r mask=%02x\n", devid_string, vga.dac.mask);
 #endif
 	return vga.dac.mask;
 }
@@ -273,8 +273,8 @@ void CVGA::ramdac_read_index_w(offs_t offset, u8 data)
 
 void CVGA::ramdac_write_index_w(offs_t offset, u8 data)
 {
-#ifdef DEBUG_VGA_RENDER
-		LOG("DIAG: ramdac_write_index_w data=%02x\n", data);
+#ifdef DEBUG_VGA_NOISY
+	printf("%s: VGA ramdac_write_index_w data=%02x\n", devid_string, data);
 #endif
 	vga.dac.write_index = data;
 	vga.dac.state = 0;
@@ -283,18 +283,9 @@ void CVGA::ramdac_write_index_w(offs_t offset, u8 data)
 
 void CVGA::ramdac_data_w(offs_t offset, u8 data)
 {
-#ifdef DEBUG_VGA_RENDER
-	// log first DAC writes
-	static int dac_write_count = 0;
-	if (dac_write_count < 20) {
-		LOG("DIAG: ramdac_data_w data=%02x state=%d write_index=%02x read=%d\n",
-			data, vga.dac.state, vga.dac.write_index, vga.dac.read);
-		dac_write_count++;
-	}
-
-	printf("ramdac_data_w: data=%02x read=%d state=%d widx=%02x\n",
-		data, vga.dac.read, vga.dac.state, vga.dac.write_index);
-
+#ifdef DEBUG_VGA_NOISY
+	printf("%s: VGA ramdac_data_w data=%02x read=%d state=%d write_index=%02x\n",
+		devid_string, data, vga.dac.read, vga.dac.state, vga.dac.write_index);
 #endif
 	if (!vga.dac.read)
 	{
@@ -657,8 +648,8 @@ void CVGA::palette_update()
 	static bool palette_dumped = false;
 	if (!palette_dumped) {
 		for (int i = 0; i < 8; i++) {
-			LOG("DIAG: DAC[%d] = R:%02x G:%02x B:%02x (mask=%02x)\n",
-				i,
+			printf("%s: VGA DAC[%d] = R:%02x G:%02x B:%02x (mask=%02x)\n",
+				devid_string, i,
 				vga.dac.color[3 * (i & vga.dac.mask) + 0],
 				vga.dac.color[3 * (i & vga.dac.mask) + 1],
 				vga.dac.color[3 * (i & vga.dac.mask) + 2],
@@ -676,30 +667,6 @@ u16 CVGA::line_compare_mask()
 
 void CVGA::svga_vh_rgb8(bitmap_rgb32& bitmap, const rectangle& cliprect)
 {
-#ifdef DEBUG_VGA_RENDER
-	static int rgb8_dump_late = 0;
-		printf("RGB8 LATE RENDER: start_addr=%04x start_shift=%d offset=%d\n",
-			vga.crtc.start_addr,
-			(!(vga.sequencer.data[4] & 0x08) || svga.ignore_chain4) ? 2 : 0,
-			offset());
-		printf("  pen(0)=%08x pen(2)=%08x pen(130)=%08x\n",
-			pen(0), pen(2), pen(0x82));
-		// Check VRAM at locations where color 2 fills should be
-		// Fill at (6,252) means VRAM offset = 252*1024+6 = 258054
-		int off1 = 252 * 1024 + 10;  // middle of first color-2 fill
-		int off2 = 280 * 1024 + 500; // middle of the large fill area
-		printf("  VRAM[0]=%02x VRAM[100]=%02x VRAM[%d]=%02x VRAM[%d]=%02x\n",
-			vga.memory[0], vga.memory[100], off1, vga.memory[off1], off2, vga.memory[off2]);
-		// Also dump first 16 bytes of line 252 (where color-2 fill starts)
-		int line252 = 252 * 1024;
-		printf("  LINE252[0..15]=%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
-			vga.memory[line252 + 0], vga.memory[line252 + 1], vga.memory[line252 + 2], vga.memory[line252 + 3],
-			vga.memory[line252 + 4], vga.memory[line252 + 5], vga.memory[line252 + 6], vga.memory[line252 + 7],
-			vga.memory[line252 + 8], vga.memory[line252 + 9], vga.memory[line252 + 10], vga.memory[line252 + 11],
-			vga.memory[line252 + 12], vga.memory[line252 + 13], vga.memory[line252 + 14], vga.memory[line252 + 15]);
-		rgb8_dump_late++;
-#endif
-
 	const int height = vga.crtc.maximum_scan_line * (vga.crtc.scan_doubling + 1);
 
 	const uint16_t mask_comp = line_compare_mask();
@@ -738,19 +705,6 @@ void CVGA::svga_vh_rgb8(bitmap_rgb32& bitmap, const rectangle& cliprect)
 					if (!screen().visible_area().contains(dest_x, line + yi))
 						continue;
 					bitmapline[dest_x] = pen(vga.memory[pos + xi]);
-					// check what renderer is reading
-#ifdef DEBUG_VGA_RENDER
-					static int render_diag = 0;
-					if (line == 255 && xi == 10 && render_diag < 5) {
-						uint32_t addr_check = pos + xi;
-						LOG("DIAG: rgb8 render line=%d pos=%d xi=%d addr=%06x "
-							"memval=%02x pen=%08x offset=%d start_addr=%06x start_shift=%d\n",
-							line, pos, xi, addr_check,
-							vga.memory[addr_check], pen(vga.memory[addr_check]),
-							offset(), vga.crtc.start_addr, start_shift);
-						render_diag++;
-					}
-#endif
 				}
 			}
 		}
@@ -1102,7 +1056,6 @@ uint8_t CVGA::mem_r(offs_t offset)
 		uint8_t i, data;
 
 		data = 0;
-		//printf("%08x\n",offset);
 
 		for (i = 0; i < 4; i++)
 		{

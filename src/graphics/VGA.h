@@ -1,7 +1,12 @@
 /* ES40 Emulator.
  * Copyright (C) 2007-2008 by the ES40 Emulator Project
+ * Copyright (C) 2003-2014 Nathan Woods from MAME
+ * Copyright (C) 2000 Peter Trauner from MAME
+ * Copyright (C) 2011-2026 Angelo Salese from MAME
  *
  * WWW    : https://github.com/ES40-Emu/es40
+ *
+ * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License

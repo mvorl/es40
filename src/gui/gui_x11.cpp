@@ -61,7 +61,7 @@
 #include "gui.h"
 #include "keymap.h"
 #include "../Configurator.h"
-#include "../VGA.h"
+#include "../graphics/VGA.h"
 #include "../Keyboard.h"
 
 extern "C"

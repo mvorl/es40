@@ -1,5 +1,5 @@
 /* ES40 Emulator.
- * Copyright (C) 2007-2008 by the ES40 Emulator Project
+ * Copyright (C) 2007-2008, 2026 by the ES40 Emulator Project
  *
  * WWW    : https://github.com/ES40-Emu/es40
  *
@@ -974,6 +974,7 @@ int main(int argc, char* argv[])
 		vga_q.addAnswer("none", "", "No graphics card");
 		//vga_q.addAnswer("Cirrus", "cirrus", "Cirrus CL-GD something");
 		vga_q.addAnswer("S3", "s3", "S3 Trio 64");
+		vga_q.addAnswer("Gloria", "gloria", "ELSA GLoria Synergy (Permedia 2)");
 #if defined(HAVE_RADEON)
 		/* Radeon support is optional, and currently
 		 * unreleased, because the specs are only
@@ -1006,6 +1007,18 @@ int main(int argc, char* argv[])
 		os << "  " << pci_q.ask() << " = " << vga_q.getAnswer() << "\n";
 		os << "  {\n";
 		os << "    rom = \"" << rom_q.ask() << "\";\n";
+		if (vga_q.getAnswer() == "gloria")
+		{
+			MultipleChoiceQuestion layout_q;
+			layout_q.setQuestion("How should the GLoria option ROM fill its 64 KiB aperture?");
+			layout_q.setExplanation("Choose how the ROM image is mapped into the card's 64 KiB ROM aperture.");
+			layout_q.addAnswer("exact", "exact", "Use a complete 64 KiB dump");
+			layout_q.addAnswer("mirror32", "mirror32", "Repeat a 32 KiB image in the upper half");
+			layout_q.addAnswer("pad_ff", "pad_ff", "Fill the upper half with 0xFF for a 32 KiB image");
+			layout_q.setDefault("exact");
+			os << "    rom_layout = \"" << layout_q.ask() << "\";\n";
+			os << "    allow_dma = true;\n";
+		}
 		os << "  }\n\n";
 	}
 
@@ -1296,6 +1309,10 @@ int main(int argc, char* argv[])
 	vgacons_q.addAnswer("serial", "false", "Console on serial port 0");
 	vgacons_q.addAnswer("graphics", "true", "Console on graphics controller");
 	vgacons_q.setDefault("graphics");
+	if (vga_q.getAnswer() == "gloria")
+	{
+		vgacons_q.setDefault("serial");
+	}
 
 	if (vga_q.getAnswer() != "")
 	{

@@ -1,27 +1,40 @@
 /* ES40 emulator.
  * Copyright (C) 2007-2008 by the ES40 Emulator Project & Others
  * Copyright (C) 2020-2025 by gdwnldsKSC
- * Copyright (C) 2014-2024 by Barry Rodewald, MAME project
+ * Copyright (C) 2012-2020 Barry Rodewald from MAME
+ * Copyright (C) 2003-2014 Nathan Woods from MAME
+ * Copyright (C) 2000 Peter Trauner from MAME
+ * Copyright (C) 2011-2026 Angelo Salese from MAME
  *
  * WWW    : https://github.com/gdwnldsKSC/es40
  *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
+ * SPDX-License-Identifier: BSD-3-Clause
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ * 1. Redistributions of source code must retain the above copyright notice,
+ *    this list of conditions and the following disclaimer.
  *
- * Although this is not required, the author would appreciate being notified of,
- * and receiving any modifications you may make to the source code that might serve
- * the general public.
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS AND CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  */
 
  /**
@@ -110,13 +123,23 @@
 
 // begin MAME code
 
-#define LOG_WARN      (1U << 1)
-#define LOG_REGS      (1U << 2) // deprecated
-#define LOG_DSW       (1U << 3) // Input sense at $3c2
-#define LOG_CRTC      (1U << 4) // CRTC setups with monitor geometry
+#define LOG_GENERAL   (1U << 0)
+#define LOG_REGS      (1U << 2)
+#define LOG_CRTC      (1U << 4)
 
-//#define VERBOSE (LOG_GENERAL | LOG_CRTC | LOG_WARN | LOG_REGS)
-  //#define LOG_OUTPUT_FUNC osd_printf_info
+// Keep the inherited register log groups under ES40's central debug controls.
+static constexpr unsigned s3_log_mask = 0
+#if defined(DEBUG_VGA) || defined(DEBUG_VGA_NOISY)
+	| LOG_GENERAL
+#endif
+#ifdef DEBUG_VGA_NOISY
+	| LOG_REGS
+#endif
+#ifdef DEBUG_VGA_RENDER
+	| LOG_CRTC
+#endif
+	;
+#define VERBOSE s3_log_mask
 #include "logmacro.h"
 
 // TODO: remove this enum
@@ -132,9 +155,7 @@ enum
 	MACH8_DRAWING_SCAN
 };
 
-#define LOGWARN(...)           LOGMASKED(LOG_WARN, __VA_ARGS__)
 #define LOGREGS(...)           LOGMASKED(LOG_REGS, __VA_ARGS__)
-#define LOGDSW(...)            LOGMASKED(LOG_DSW, __VA_ARGS__)
 #define LOGCRTC(...)           LOGMASKED(LOG_CRTC, __VA_ARGS__)
 
 
@@ -168,9 +189,6 @@ enum
 #define TLINES (LINES)
 #define TGA_COLUMNS (EGA_COLUMNS)
 #define TGA_LINE_LENGTH (vga.crtc.offset<<3)
-
-static int s3_diag_update_counter = 0;
-static int s3_diag_frame_counter = 0;
 
 // MAME FUNCTIONS - not all present yet
 
@@ -249,7 +267,7 @@ void CS3Trio64::s3_define_video_mode()
 		case 0x07: svga.rgb32_en = 1; divisor = 4; break;
 		case 0x0d: svga.rgb32_en = 1; divisor = 1; break;
 		default:
-			popmessage("pc_vga_s3: PA16B-COLOR-MODE %02x\n", ((s3.ext_misc_ctrl_2) >> 4));
+			printf("%s: Unsupported pixel color mode %02x.\n", devid_string, ((s3.ext_misc_ctrl_2) >> 4));
 			break;
 		}
 	}
@@ -263,9 +281,9 @@ void CS3Trio64::s3_define_video_mode()
 	}
 
 #ifdef DEBUG_VGA_RENDER
-	LOG("S3: define_video_mode: ext_misc_ctrl_2=%02x memory_config=%02x "
+	LOGCRTC("%s: define_video_mode: ext_misc_ctrl_2=%02x memory_config=%02x "
 		"rgb8=%d rgb15=%d rgb16=%d rgb32=%d crtc_offset=%03x offset()=%d\n",
-		s3.ext_misc_ctrl_2, s3.memory_config,
+		devid_string, s3.ext_misc_ctrl_2, s3.memory_config,
 		svga.rgb8_en, svga.rgb15_en, svga.rgb16_en, svga.rgb32_en,
 		vga.crtc.offset, offset());
 #endif
@@ -291,7 +309,7 @@ void CS3Trio64::crtc_map(address_map& map)
 			}),
 		NAME([this](offs_t offset, u8 data) {
 			// doom (DOS) tries to write to protected regs
-			LOGCRTC("CR00 H total %02x %s", data, vga.crtc.protect_enable ? "P?\n" : "-> ");
+			LOGCRTC("%s: CR00 H total %02x %s", devid_string, data, vga.crtc.protect_enable ? "P?\n" : "-> ");
 			if (vga.crtc.protect_enable)
 				return;
 			vga.crtc.horz_total = (vga.crtc.horz_total & ~0xff) | (data & 0xff);
@@ -304,7 +322,7 @@ void CS3Trio64::crtc_map(address_map& map)
 			return vga.crtc.horz_disp_end & 0xff;
 			}),
 		NAME([this](offs_t offset, u8 data) {
-			LOGCRTC("CR01 H display end %02x %s", data, vga.crtc.protect_enable ? "P?\n" : "-> ");
+			LOGCRTC("%s: CR01 H display end %02x %s", devid_string, data, vga.crtc.protect_enable ? "P?\n" : "-> ");
 			if (vga.crtc.protect_enable)
 				return;
 			vga.crtc.horz_disp_end = (vga.crtc.horz_disp_end & ~0xff) | (data & 0xff);
@@ -317,7 +335,7 @@ void CS3Trio64::crtc_map(address_map& map)
 			return vga.crtc.horz_blank_start & 0xff;
 			}),
 		NAME([this](offs_t offset, u8 data) {
-			LOGCRTC("CR02 H start blank %02x %s", data, vga.crtc.protect_enable ? "P?\n" : "-> ");
+			LOGCRTC("%s: CR02 H start blank %02x %s", devid_string, data, vga.crtc.protect_enable ? "P?\n" : "-> ");
 			if (vga.crtc.protect_enable)
 				return;
 			vga.crtc.horz_blank_start = (vga.crtc.horz_blank_start & ~0xff) | (data & 0xff);
@@ -332,7 +350,7 @@ void CS3Trio64::crtc_map(address_map& map)
 			return res;
 			}),
 		NAME([this](offs_t offset, u8 data) {
-			LOGCRTC("CR03 H blank end %02x %s", data, vga.crtc.protect_enable ? "P?\n" : "-> ");
+			LOGCRTC("%s: CR03 H blank end %02x %s", devid_string, data, vga.crtc.protect_enable ? "P?\n" : "-> ");
 			if (vga.crtc.protect_enable)
 				return;
 			vga.crtc.horz_blank_end &= ~0x1f;
@@ -347,7 +365,7 @@ void CS3Trio64::crtc_map(address_map& map)
 			return vga.crtc.horz_retrace_start & 0xff;
 			}),
 		NAME([this](offs_t offset, u8 data) {
-			LOGCRTC("CR04 H retrace start %02x %s", data, vga.crtc.protect_enable ? "P?\n" : "-> ");
+			LOGCRTC("%s: CR04 H retrace start %02x %s", devid_string, data, vga.crtc.protect_enable ? "P?\n" : "-> ");
 			if (vga.crtc.protect_enable)
 				return;
 			vga.crtc.horz_retrace_start = (vga.crtc.horz_retrace_start & ~0xff) | (data & 0xff);
@@ -362,7 +380,7 @@ void CS3Trio64::crtc_map(address_map& map)
 			return res;
 			}),
 		NAME([this](offs_t offset, u8 data) {
-			LOGCRTC("CR05 H blank end %02x %s", data, vga.crtc.protect_enable ? "P?\n" : "-> ");
+			LOGCRTC("%s: CR05 H blank end %02x %s", devid_string, data, vga.crtc.protect_enable ? "P?\n" : "-> ");
 			if (vga.crtc.protect_enable)
 				return;
 			vga.crtc.horz_blank_end &= ~0x20;
@@ -381,7 +399,7 @@ void CS3Trio64::crtc_map(address_map& map)
 			return vga.crtc.vert_total & 0xff;
 			}),
 		NAME([this](offs_t offset, u8 data) {
-			LOGCRTC("CR06 V total %02x %s", data, vga.crtc.protect_enable ? "P?\n" : "-> ");
+			LOGCRTC("%s: CR06 V total %02x %s", devid_string, data, vga.crtc.protect_enable ? "P?\n" : "-> ");
 			if (vga.crtc.protect_enable)
 				return;
 			vga.crtc.vert_total &= ~0xff;
@@ -406,7 +424,7 @@ void CS3Trio64::crtc_map(address_map& map)
 		NAME([this](offs_t offset, u8 data) {
 			vga.crtc.line_compare &= ~0x100;
 			vga.crtc.line_compare |= ((data & 0x10) << (8 - 4));
-			LOGCRTC("CR07 Overflow %02x -> line compare %04d %s", data, vga.crtc.line_compare, vga.crtc.protect_enable ? "P?\n" : "");
+			LOGCRTC("%s: CR07 Overflow %02x -> line compare %04d %s", devid_string, data, vga.crtc.line_compare, vga.crtc.protect_enable ? "P?\n" : "");
 			if (vga.crtc.protect_enable)
 				return;
 			vga.crtc.vert_total &= ~0x300;
@@ -439,8 +457,8 @@ void CS3Trio64::crtc_map(address_map& map)
 		NAME([this](offs_t offset, u8 data) {
 			vga.crtc.byte_panning = (data & 0x60) >> 5;
 			vga.crtc.preset_row_scan = (data & 0x1f);
-			LOGCRTC("CR08 Preset Row Scan %02x -> %02d byte panning %d\n"
-				, data
+			LOGCRTC("%s: CR08 Preset Row Scan %02x -> %02d byte panning %d\n"
+				, devid_string, data
 				, vga.crtc.preset_row_scan
 				, vga.crtc.byte_panning
 			);
@@ -462,8 +480,8 @@ void CS3Trio64::crtc_map(address_map& map)
 			vga.crtc.line_compare |= ((data & 0x40) << (9 - 6));
 			vga.crtc.vert_blank_start |= ((data & 0x20) << (9 - 5));
 			vga.crtc.maximum_scan_line = (data & 0x1f) + 1;
-			LOGCRTC("CR09 Maximum Scan Line %02x -> %02d V blank start %04d line compare %04d scan doubling %d\n"
-				, data
+			LOGCRTC("%s: CR09 Maximum Scan Line %02x -> %02d V blank start %04d line compare %04d scan doubling %d\n"
+				, devid_string, data
 				, vga.crtc.maximum_scan_line
 				, vga.crtc.vert_blank_start
 				, vga.crtc.line_compare
@@ -522,7 +540,7 @@ void CS3Trio64::crtc_map(address_map& map)
 		NAME([this](offs_t offset, u8 data) {
 			vga.crtc.vert_retrace_start &= ~0xff;
 			vga.crtc.vert_retrace_start |= data & 0xff;
-			LOGCRTC("CR10 V retrace start %02x -> %04d\n", data, vga.crtc.vert_retrace_start);
+			LOGCRTC("%s: CR10 V retrace start %02x -> %04d\n", devid_string, data, vga.crtc.vert_retrace_start);
 			})
 	);
 	map(0x11, 0x11).lrw8(
@@ -549,8 +567,8 @@ void CS3Trio64::crtc_map(address_map& map)
 				m_vsync_cb(0);
 			}
 
-			LOGCRTC("CR11 V retrace end %02x -> %02d protect enable %d bandwidth %d irq %02x\n"
-				, data
+			LOGCRTC("%s: CR11 V retrace end %02x -> %02d protect enable %d bandwidth %d irq %02x\n"
+				, devid_string, data
 				, vga.crtc.vert_retrace_end
 				, vga.crtc.protect_enable
 				, vga.crtc.bandwidth
@@ -565,7 +583,7 @@ void CS3Trio64::crtc_map(address_map& map)
 		NAME([this](offs_t offset, u8 data) {
 			vga.crtc.vert_disp_end &= ~0xff;
 			vga.crtc.vert_disp_end |= data & 0xff;
-			LOGCRTC("CR12 V display end %02x -> %04d\n", data, vga.crtc.vert_disp_end);
+			LOGCRTC("%s: CR12 V display end %02x -> %04d\n", devid_string, data, vga.crtc.vert_disp_end);
 			recompute_params();
 			})
 	);
@@ -598,7 +616,7 @@ void CS3Trio64::crtc_map(address_map& map)
 		NAME([this](offs_t offset, u8 data) {
 			vga.crtc.vert_blank_start &= ~0xff;
 			vga.crtc.vert_blank_start |= data & 0xff;
-			LOGCRTC("CR15 V blank start %02x -> %04d\n", data, vga.crtc.vert_blank_start);
+			LOGCRTC("%s: CR15 V blank start %02x -> %04d\n", devid_string, data, vga.crtc.vert_blank_start);
 			})
 	);
 	map(0x16, 0x16).lrw8(
@@ -607,7 +625,7 @@ void CS3Trio64::crtc_map(address_map& map)
 			}),
 		NAME([this](offs_t offset, u8 data) {
 			vga.crtc.vert_blank_end = (vga.crtc.vert_blank_end & ~0x7f) | (data & 0x7f);
-			LOGCRTC("CR16 V blank end %02x -> %04d\n", data, vga.crtc.vert_blank_end);
+			LOGCRTC("%s: CR16 V blank end %02x -> %04d\n", devid_string, data, vga.crtc.vert_blank_end);
 			})
 	);
 	map(0x17, 0x17).lrw8(
@@ -629,8 +647,8 @@ void CS3Trio64::crtc_map(address_map& map)
 			vga.crtc.sldiv = BIT(data, 2);
 			vga.crtc.map14 = BIT(data, 1);
 			vga.crtc.map13 = BIT(data, 0);
-			LOGCRTC("CR17 Mode control %02x -> Sync Enable %d Word/Byte %d Address Wrap select %d\n"
-				, data
+			LOGCRTC("%s: CR17 Mode control %02x -> Sync Enable %d Word/Byte %d Address Wrap select %d\n"
+				, devid_string, data
 				, vga.crtc.sync_en
 				, vga.crtc.word_mode
 				, vga.crtc.aw
@@ -650,7 +668,7 @@ void CS3Trio64::crtc_map(address_map& map)
 		NAME([this](offs_t offset, u8 data) {
 			vga.crtc.line_compare &= ~0xff;
 			vga.crtc.line_compare |= data & 0xff;
-			LOGCRTC("CR18 Line Compare %02x -> %04d\n", data, vga.crtc.line_compare);
+			LOGCRTC("%s: CR18 Line Compare %02x -> %04d\n", devid_string, data, vga.crtc.line_compare);
 			})
 	);
 	// TODO: (undocumented) CR22 Memory Data Latch Register (read only)
@@ -661,7 +679,7 @@ void CS3Trio64::crtc_map(address_map& map)
 	map(0x24, 0x24).lr8(
 		NAME([this](offs_t offset) {
 			if (!machine().side_effects_disabled())
-				LOG("CR24 read undocumented Attribute reg\n");
+				LOG("%s: CR24 read undocumented Attribute reg\n", devid_string);
 			return vga.attribute.state << 7;
 			})
 	);
@@ -752,7 +770,7 @@ void CS3Trio64::crtc_map(address_map& map)
 			if (s3.reg_lock2 == 0xa5)
 			{
 				s3.strapping = (s3.strapping & 0xffffff00) | data;
-				LOG("CR36: Strapping data = %08x\n", s3.strapping);
+				LOG("%s: CR36: Strapping data = %08x\n", devid_string, s3.strapping);
 			}
 			})
 	);
@@ -766,7 +784,7 @@ void CS3Trio64::crtc_map(address_map& map)
 			if (s3.reg_lock2 == 0xa5)
 			{
 				s3.strapping = (s3.strapping & 0xffff00ff) | (data << 8);
-				LOG("CR37: Strapping data = %08x\n", s3.strapping);
+				LOG("%s: CR37: Strapping data = %08x\n", devid_string, s3.strapping);
 			}
 			})
 	);
@@ -1016,7 +1034,6 @@ void CS3Trio64::crtc_map(address_map& map)
 			}),
 		NAME([this](offs_t offset, u8 data) {
 			s3.cursor_start_addr = (s3.cursor_start_addr & 0x00ff) | (data << 8);
-			//popmessage("HW Cursor Data Address %04x\n",s3.cursor_start_addr);
 			})
 	);
 	map(0x4d, 0x4d).lrw8(
@@ -1025,7 +1042,6 @@ void CS3Trio64::crtc_map(address_map& map)
 			}),
 		NAME([this](offs_t offset, u8 data) {
 			s3.cursor_start_addr = (s3.cursor_start_addr & 0xff00) | data;
-			//popmessage("HW Cursor Data Address %04x\n",s3.cursor_start_addr);
 			})
 	);
 	/*
@@ -1392,7 +1408,7 @@ void CS3Trio64::crtc_map(address_map& map)
 			if (s3.reg_lock2 == 0xa5)
 			{
 				s3.strapping = (s3.strapping & 0xff00ffff) | (data << 16);
-				LOG("CR68: Strapping data = %08x\n", s3.strapping);
+				LOG("%s: CR68: Strapping data = %08x\n", devid_string, s3.strapping);
 			}
 			})
 	);
@@ -1454,7 +1470,7 @@ void CS3Trio64::crtc_map(address_map& map)
 			if (s3.reg_lock2 == 0xa5)
 			{
 				s3.strapping = (s3.strapping & 0x00ffffff) | (data << 24);
-				LOG("CR6F: Strapping data = %08x\n", s3.strapping);
+				LOG("%s: CR6F: Strapping data = %08x\n", devid_string, s3.strapping);
 			}
 			})
 	);
@@ -1467,7 +1483,7 @@ void CS3Trio64::sequencer_map(address_map& map)
 		NAME([this](offs_t offset) {
 			const u8 res = vga.sequencer.data[offset];
 			if (!machine().side_effects_disabled())
-				LOGREGS("Reading unmapped sequencer read register [%02x] -> %02x (SVGA?)\n", offset, res);
+				LOGREGS("%s: Reading unmapped sequencer read register [%02x] -> %02x (SVGA?)\n", devid_string, offset, res);
 			return res;
 			})
 	);
@@ -1516,8 +1532,6 @@ void CS3Trio64::sequencer_map(address_map& map)
 			// optimization for screen update inner loop
 			vga.sequencer.char_sel.base[0] = 0x20000 + (vga.sequencer.char_sel.B * 0x2000);
 			vga.sequencer.char_sel.base[1] = 0x20000 + (vga.sequencer.char_sel.A * 0x2000);
-			//if(data)
-			//	popmessage("Char SEL checker (%02x %02x)\n",vga.sequencer.char_sel.A,vga.sequencer.char_sel.B);
 			})
 	);
 	// Sequencer Memory Mode Register
@@ -1675,7 +1689,7 @@ void CS3Trio64::mem_w(offs_t offset, uint8_t data)
 		}
 
 #ifdef DEBUG_VGA_MEMW
-		printf("mem_w offset: 0x%05x data: 0x%02x\n", (unsigned)offset, (unsigned)data);
+		printf("%s: Memory write offset=%05x data=%02x\n", devid_string, (unsigned)offset, (unsigned)data);
 #endif
 
 		switch (offset)
@@ -1904,7 +1918,7 @@ void CS3Trio64::mem_w(offs_t offset, uint8_t data)
 			AccelIOWrite(offset, data);
 			break;
 		default:
-			LOG("S3: MMIO offset %05x write %02x\n", offset + 0xa0000, data);
+			LOG("%s: MMIO offset %05x write %02x\n", devid_string, offset + 0xa0000, data);
 			break;
 		}
 		return;
@@ -1912,7 +1926,6 @@ void CS3Trio64::mem_w(offs_t offset, uint8_t data)
 
 	if (svga.rgb8_en || svga.rgb15_en || svga.rgb16_en || svga.rgb32_en)
 	{
-		//printf("%08x %02x (%02x %02x) %02X\n",offset,data,vga.sequencer.map_mask,svga.bank_w,(vga.sequencer.data[4] & 0x08));
 		if (offset & 0x10000)
 			return;
 		if (vga.sequencer.data[4] & 0x8)
@@ -1950,43 +1963,18 @@ uint32_t CS3Trio64::screen_update(bitmap_rgb32& bitmap, const rectangle& cliprec
 #ifdef DEBUG_VGA_RENDER
 	static uint8_t last_mode = 0xff;
 	if (cur_mode != last_mode) {
-		LOG("S3: screen mode changed to %d (rgb8=%d sync=%d graphic=%d)\n",
-			cur_mode, svga.rgb8_en, vga.crtc.sync_en, vga.gc.alpha_dis);
-		last_mode = cur_mode;
-	}
-
-	// log screen configuration  
-	static bool screen_diag = false;
-	if (cur_mode == 6 && !screen_diag) {  // 6 = RGB8_MODE
-		const rectangle& vis = cliprect;
-		LOG("DIAG: screen visible_area=(%d,%d)-(%d,%d) bitmap=%dx%d\n",
-			vis.min_x, vis.min_y, vis.max_x, vis.max_y,
+		LOGCRTC("%s: Screen mode changed to %d (rgb8=%d sync=%d graphic=%d)\n",
+			devid_string, cur_mode, svga.rgb8_en, vga.crtc.sync_en, vga.gc.alpha_dis);
+		LOGCRTC("%s: Visible area=(%d,%d)-(%d,%d) bitmap=%dx%d\n",
+			devid_string, cliprect.min_x, cliprect.min_y, cliprect.max_x, cliprect.max_y,
 			bitmap.width(), bitmap.height());
-		LOG("DIAG: CRTC offset=%03x seq4=%02x chain4=%d height=%d LINES=%d VGA_COLUMNS=%d\n",
-			vga.crtc.offset, vga.sequencer.data[4],
+		LOGCRTC("%s: CRTC offset=%03x seq4=%02x chain4=%d height=%d lines=%d columns=%d\n",
+			devid_string, vga.crtc.offset, vga.sequencer.data[4],
 			(vga.sequencer.data[4] & 0x08) ? 1 : 0,
 			vga.crtc.maximum_scan_line * (vga.crtc.scan_doubling + 1),
 			(vga.crtc.vert_disp_end + 1), (vga.crtc.horz_disp_end + 1));
-		screen_diag = true;
-
-		static int dac_frame_count = 0;
-		if (cur_mode == 6 && (dac_frame_count % 60 == 0) && dac_frame_count < 300) {
-			LOG("DIAG[frame %d]: dac.dirty=%d DAC[0]=%02x,%02x,%02x DAC[2]=%02x,%02x,%02x\n",
-				dac_frame_count, vga.dac.dirty,
-				vga.dac.color[0], vga.dac.color[1], vga.dac.color[2],
-				vga.dac.color[6], vga.dac.color[7], vga.dac.color[8]);
-		}
-		dac_frame_count++;
+		last_mode = cur_mode;
 	}
-
-
-	printf("PALETTE: dirty=%d DAC[0]=%02x,%02x,%02x DAC[2]=%02x,%02x,%02x DAC[130]=%02x,%02x,%02x\n",
-		vga.dac.dirty,
-		vga.dac.color[0], vga.dac.color[1], vga.dac.color[2],
-		vga.dac.color[6], vga.dac.color[7], vga.dac.color[8],
-		vga.dac.color[390], vga.dac.color[391], vga.dac.color[392]);
-
-
 #endif
 
 	// draw hardware graphics cursor
@@ -2049,10 +2037,6 @@ uint32_t CS3Trio64::screen_update(bitmap_rgb32& bitmap, const rectangle& cliprec
 			break;
 		}
 
-		//popmessage("%08x %08x",(s3.cursor_bg[0])|(s3.cursor_bg[1]<<8)|(s3.cursor_bg[2]<<16)|(s3.cursor_bg[3]<<24)
-		//                    ,(s3.cursor_fg[0])|(s3.cursor_fg[1]<<8)|(s3.cursor_fg[2]<<16)|(s3.cursor_fg[3]<<24));
-//      for(x=0;x<64;x++)
-//          printf("%08x: %02x %02x %02x %02x\n",src+x*4,vga.memory[src+x*4],vga.memory[src+x*4+1],vga.memory[src+x*4+2],vga.memory[src+x*4+3]);
 		for (int y = 0; y < 64; y++)
 		{
 			if (cy + y < cliprect.max_y && cx < cliprect.max_x)
@@ -2229,7 +2213,7 @@ void CS3Trio64::run()
 
 	catch (CException& e)
 	{
-		printf("Exception in S3 thread: %s.\n", e.displayText().c_str());
+		printf("%s: Exception in display thread: %s.\n", devid_string, e.displayText().c_str());
 
 		// Let the thread die...
 	}
@@ -2408,8 +2392,8 @@ void CS3Trio64::update_linear_mapping()
 	lfb_size = s3_lfb_size_from_cr58(m_crtc_map.read_byte(0x58));
 	lfb_base = s3_lfb_base_from_regs();
 #ifdef S3_LFB_TRACE
-	printf("LFB (BAR-only): CR58=%02x base=%08x size=%x active=%d\n",
-		m_crtc_map.read_byte(0x58), lfb_base, lfb_size, lfb_active);
+	printf("%s: LFB (BAR-only): CR58=%02x base=%08x size=%x active=%d\n",
+		devid_string, m_crtc_map.read_byte(0x58), lfb_base, lfb_size, lfb_active);
 #endif
 }
 
@@ -2869,8 +2853,6 @@ void CS3Trio64::gc_map(address_map& map)
 			vga.gc.host_oe = BIT(data, 4);
 			vga.gc.read_mode = BIT(data, 3);
 			vga.gc.write_mode = data & 3;
-			//if(data & 0x10 && vga.gc.alpha_dis)
-			//  popmessage("Host O/E enabled, contact MAMEdev");
 			})
 	);
 	map(0x06, 0x06).lrw8(
@@ -2887,8 +2869,6 @@ void CS3Trio64::gc_map(address_map& map)
 			vga.gc.memory_map_sel = (data & 0xc) >> 2;
 			vga.gc.chain_oe = BIT(data, 1);
 			vga.gc.alpha_dis = BIT(data, 0);
-			//if(data & 2 && vga.gc.alpha_dis)
-			//  popmessage("Chain O/E enabled, contact MAMEdev");
 			// ES40 side-effects: redraw on mapping/mode change
 			if (prev_memory_mapping != vga.gc.memory_map_sel)
 				redraw_area(0, 0, old_iWidth, old_iHeight);
@@ -3496,7 +3476,7 @@ void CS3Trio64::WriteMem_Legacy(int index, u32 address, int dsize, u32 data)
 			if (bios_message_size > 1)
 			{
 				bios_message[bios_message_size - 1] = '\0';
-				printf("s3: %s\n", bios_message);
+				printf("%s: Option ROM: %s\n", devid_string, bios_message);
 			}
 
 			bios_message_size = 0;
@@ -3883,7 +3863,7 @@ void CS3Trio64::AccelIOWrite(u32 port, u8 data)
 	}
 
 	default:
-		LOG("S3 Accel: unhandled I/O write port=%04x data=%02x\n", port, data);
+		LOG("%s: Accelerator unhandled I/O write port=%04x data=%02x\n", devid_string, port, data);
 		break;
 	}
 }
@@ -3975,8 +3955,8 @@ void CS3Trio64::WriteMem_Bar(int func, int bar, u32 address, int dsize, u32 data
 	if (bar == 0 && !normal_access_enabled())
 		return;
 #ifdef DEBUG_PCI
-	printf("[S3::WriteMem_Bar] func=%d bar=%d addr=%08X dsize=%d data=%08X\n",
-		func, bar, address, dsize, data);
+	printf("%s: PCI BAR write func=%d bar=%d addr=%08X dsize=%d data=%08X\n",
+		devid_string, func, bar, address, dsize, data);
 #endif
 #ifdef S3_LFB_TRACE
 	if (lfb_trace_needs_first_access_note) {
@@ -4019,7 +3999,9 @@ u64 CS3Trio64::ReadMem(int index, u64 address, int dsize)
 		//  - Lower half : PIX_TRANS FIFO (0xE2E8..0xE2EB) for 8/16/32-bit reads
 		//  - Upper half : 8514/A register mirror at *E8 offsets (IsAccelPort())
 		if (s3_new_mmio_enabled()) {
-			printf("NEW MMIO READ !!!\n");
+#ifdef DEBUG_VGA
+			printf("%s: New MMIO read offset=%08" PRIx64 " size=%d\n", devid_string, off, dsize);
+#endif
 			const u64 win_lo = 0x01000000ull;
 			const u64 win_mid = 0x01008000ull;
 			const u64 win_hi = 0x01020000ull;
@@ -4099,14 +4081,14 @@ void CS3Trio64::WriteMem(int index, u64 address, int dsize, u64 data)
 		}
 		if (off >= lfb_size) return;
 
+#ifdef S3_LFB_TRACE
+		printf("%s: LFB W size=%d @%llx <= %08" PRIx64 " (off=%llx)\n",
+			devid_string, dsize, (unsigned long long)address,
+			data, (unsigned long long)(address));
+#endif
 		// Write little-endian into linear VRAM
 		switch (dsize)
 		{
-#ifdef S3_LFB_TRACE
-			printf("%s: LFB W size=%d @%llx <= %08" PRIx64 " (off=%llx)\n",
-				devid_string, dsize, (unsigned long long)address,
-				data, (unsigned long long)(address));
-#endif
 		case 1:  vga.memory[off] = (u8)data; break;
 		case 2:  *(u16*)(vga.memory + off) = (u16)data; break;
 		case 4:  *(u32*)(vga.memory + off) = (u32)data; break;
@@ -4564,14 +4546,6 @@ u32 CS3Trio64::rom_read(u32 address, int dsize)
 		if (offset < rom_max)
 			data |= (u32)option_rom[offset] << (byte * 8);
 	}
-	if (address < rom_max)
-	{
-		//printf("S3 rom read: %" PRIx64 ", %d, %" PRIx64 "\n", address, dsize,data);
-	}
-	else
-	{
-		//printf("S3 (BAD) rom read: %" PRIx64 ", %d, %" PRIx64 "\n", address, dsize,data);
-	}
 	return data;
 }
 
@@ -4710,7 +4684,7 @@ u32 CS3Trio64::io_read(u32 address, int dsize)
 		break;
 
 	default:
-		printf("S3: Unhandled io port %x read\n", address);
+		printf("%s: Unhandled I/O port %x read.\n", devid_string, address);
 	}
 
 	return data;
@@ -4734,8 +4708,8 @@ void CS3Trio64::io_write(u32 address, int dsize, u32 data)
 			return;
 		}
 #ifdef DEBUG_VGA
-		printf("ACCEL HIT @%04X dsize=%d data=%08X\n",
-			(unsigned)address, dsize, (unsigned)data);
+		printf("%s: Accelerator I/O write port=%04x size=%d data=%08x\n",
+			devid_string, (unsigned)address, dsize, (unsigned)data);
 #endif
 		switch (dsize) {
 		case 8:
@@ -4762,7 +4736,6 @@ void CS3Trio64::io_write(u32 address, int dsize, u32 data)
 		}
 	}
 
-	//  printf("S3 io write: %" PRIx64 ", %d, %" PRIx64 "   \n", address+VGA_BASE, dsize, data);
 	switch (dsize)
 	{
 	case 8:
@@ -4775,7 +4748,9 @@ void CS3Trio64::io_write(u32 address, int dsize, u32 data)
 		break;
 
 	case 32:
-		printf("S3 Weird Size io write: %" PRIx32 ", %d, %" PRIx32 "   \n", address, dsize, data);
+#ifdef DEBUG_VGA_NOISY
+		printf("%s: I/O write port=%04" PRIx32 " size=%d data=%08" PRIx32 "\n", devid_string, address, dsize, data);
+#endif
 		io_write_b(address, (u8)data);
 		io_write_b(address + 1, (u8)(data >> 8));
 		io_write_b(address + 2, (u8)(data >> 16));
@@ -4784,7 +4759,7 @@ void CS3Trio64::io_write(u32 address, int dsize, u32 data)
 
 	default:
 #ifdef DEBUG_VGA
-		printf("S3 Weird Size io write: %" PRIx32 ", %d, %" PRIx32 "   \n", address, dsize, data);
+		printf("%s: I/O write port=%04" PRIx32 " size=%d data=%08" PRIx32 "\n", devid_string, address, dsize, data);
 #endif
 		FAILURE(InvalidArgument, "Weird IO size");
 	}
@@ -4916,7 +4891,7 @@ void CS3Trio64::io_write_b(u32 address, u8 data)
 
 	default:
 #ifdef DEBUG_VGA
-		printf("\nFAILURE ON BELOW LISTED PORT BINARY VALUE=" PRINTF_BINARY_PATTERN_INT8 " HEX VALUE=0x%02x\n", PRINTF_BYTE_TO_BINARY_INT8(data), data);
+		printf("%s: Unhandled I/O write port=%04x data=%02x\n", devid_string, address, data);
 #endif
 		FAILURE_1(NotImplemented, "Unhandled port %x write", address);
 	}
@@ -4969,16 +4944,11 @@ void CS3Trio64::write_b_3c2(u8 value)
 	vga.miscellaneous_output = value;
 	load_dclk();
 
-#if DEBUG_VGA_NOISY
-	printf("io write 3c2: misc_output = 0x%02x\n", value);
-	printf("  color_emulation = %u, enable_ram = %u, clock_select = %u\n",
-		(unsigned)state.misc_output.color_emulation,
-		(unsigned)state.misc_output.enable_ram,
-		(unsigned)state.misc_output.clock_select);
-	printf("  select_high_bank = %u, horiz_sync_pol = %u, vert_sync_pol = %u\n",
-		(unsigned)state.misc_output.select_high_bank,
-		(unsigned)state.misc_output.horiz_sync_pol,
-		(unsigned)state.misc_output.vert_sync_pol);
+#ifdef DEBUG_VGA_NOISY
+	printf("%s: Miscellaneous output=%02x color=%u RAM=%u clock=%u "
+		"high_bank=%u hsync_polarity=%u vsync_polarity=%u\n",
+		devid_string, value, unsigned(BIT(value, 0)), unsigned(BIT(value, 1)), unsigned((value >> 2) & 3),
+		unsigned(BIT(value, 5)), unsigned(BIT(value, 6)), unsigned(BIT(value, 7)));
 #endif
 }
 

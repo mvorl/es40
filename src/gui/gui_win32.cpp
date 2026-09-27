@@ -64,7 +64,7 @@
 #include "gui_win32_font.h"
 #include "keymap.h"
 #include "../Configurator.h"
-#include "../VGA.h"
+#include "../graphics/VGA.h"
 #include "../Keyboard.h"
 
 #include "gui.h"
