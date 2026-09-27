@@ -1317,14 +1317,16 @@ bool CPermedia2::validate_render(uint32_t value)
 			true);
 		return false;
 	}
-	if ((value & SyncHost) &&
-		((r(FBReadMode) & Packed) && m_relative_offset != 0))
+	if ((value & SyncHost) && (r(FBReadMode) & Packed) &&
+		m_relative_offset != 0 &&
+		(!(value & PositiveX) || (r(DitherMode) & 1)))
 	{
 		report(
 			"HOST_ALIGNMENT",
-			PackedDataLimits,
-			r(PackedDataLimits),
-			"Nonzero packed host alignment is not yet implemented",
+			FBReadMode,
+			r(FBReadMode),
+			"Nonzero packed host alignment requires forward X and raw "
+			"color mode",
 			true);
 		return false;
 	}
@@ -1759,6 +1761,11 @@ bool CPermedia2::draw_step()
 			m_job.payload >>= bytes * 8;
 		}
 		--m_job.payload_left;
+		// Packed downloads shift the destination stream in native pixels
+		// (SLAU011A, section 6.4.2), including across DWORD boundaries.
+		if ((r(FBReadMode) & Packed) &&
+			m_job.primitive == PrimitiveRectangle)
+			x += m_relative_offset;
 	}
 	else if (r(FBReadMode) & ReadSource)
 	{
