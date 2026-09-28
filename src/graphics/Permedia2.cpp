@@ -1637,8 +1637,10 @@ bool CPermedia2::validate_render(uint32_t value)
 	const uint32_t unsupported = r(AlphaBlendMode) | r(AlphaTestMode) |
 		r(StencilMode) | r(FogMode) | r(AntialiasMode) |
 		r(YUVMode);
-	if ((unsupported & 1) ||
-		(r(DitherMode) & 2) || (r(LogicalOpMode) & ~63u))
+	// Block-write fragments bypass these units and use raw FBBlockColor
+	// (SLAU011A, sections 4.4.6 and 4.11.2). Their retained state is inactive.
+	if (!(value & FastFill) && ((unsupported & 1) ||
+		(r(DitherMode) & 2) || (r(LogicalOpMode) & ~63u)))
 	{
 		report(
 			"RENDER_MODE",
@@ -1856,7 +1858,7 @@ bool CPermedia2::validate_render(uint32_t value)
 			true);
 		return false;
 	}
-	if (r(DitherMode) & 1)
+	if (!(value & FastFill) && (r(DitherMode) & 1))
 	{
 		const uint32_t fmt =
 			((r(DitherMode) >> 2) & 15) | ((r(DitherMode) >> 12) & 16);
