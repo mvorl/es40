@@ -1232,6 +1232,13 @@ bool CPermedia2::validate_texture_block(uint32_t value)
 	// block colors without memory reads and still require validation.
 	if (!(r(TextureReadMode) & 1) && (r(TextureLUTMode) & 3) != 3)
 		return true;
+	if ((value & 1) && (r(AreaStippleMode) & 1))
+	{
+		report("TEXTURE_BLOCK_STIPPLE", AreaStippleMode, r(AreaStippleMode),
+			"Area-stippled texture-memory block-mask streams are not implemented",
+			true);
+		return false;
+	}
 
 	// Bound section 4.9.7's cached-font operation to forward rectangles and a
 	// linear one-dimensional mask stream.
@@ -1408,13 +1415,41 @@ bool CPermedia2::load_texture_mask()
 	if (!validate_texture_block(m_job.command))
 		return false;
 	const unsigned bytes = texture_bytes();
-	// Section 4.9.7 advances S once per 32-pixel block. NT4's captured font
-	// commands use dSdyDom=0; model that stream continuously across rows,
-	// rather than restarting at SStart for each glyph scanline. This derives
-	// progress from the existing Job, keeping snapshot layout unchanged.
-	const uint64_t blocks_per_row = (uint64_t(m_job.columns) + 31) / 32;
-	const int64_t block =
-		int64_t(uint64_t(m_job.row) * blocks_per_row + m_job.col / 32);
+	// Scissor rejection precedes texture addressing, including for block fills
+	// (SLAU011A, sections 4.1/4.5). Only surviving 32-pixel blocks advance the
+	// continuous mask stream of section 4.9.7. Keep a partially clipped block's
+	// original bit phase; rejected pixels within it still consume their bits.
+	const int64_t origin_x = m_job.origin_x, origin_y = m_job.origin_y;
+	int64_t left = origin_x, right = origin_x + m_job.columns;
+	int64_t top = origin_y, bottom = origin_y + m_job.rows;
+	if (r(ScissorMode) & 1)
+	{
+		left = std::max<int64_t>(left, sx(r(ScissorMin), 16));
+		right = std::min<int64_t>(right, sx(r(ScissorMax), 16));
+		top = std::max<int64_t>(top, sx(r(ScissorMin) >> 16, 16));
+		bottom = std::min<int64_t>(bottom, sx(r(ScissorMax) >> 16, 16));
+	}
+	if (r(ScissorMode) & 2)
+	{
+		left = std::max<int64_t>(left, 0);
+		right = std::min<int64_t>(right, r(ScreenSize) & 0xffff);
+		top = std::max<int64_t>(top, 0);
+		bottom = std::min<int64_t>(bottom, r(ScreenSize) >> 16);
+	}
+	const int64_t first_block = (left - origin_x) / 32;
+	const int64_t past_block = (right - origin_x + 31) / 32;
+	const int64_t row = m_job.row, column_block = m_job.col / 32;
+	if (left >= right || top >= bottom || row < top - origin_y ||
+		row >= bottom - origin_y || column_block < first_block ||
+		column_block >= past_block)
+	{
+		// Retain ordinary job progress without reading a rejected source block.
+		m_job.payload = 0;
+		m_job.payload_left = std::min(32u, m_job.columns - m_job.col);
+		return true;
+	}
+	const int64_t block = (row - (top - origin_y)) *
+		(past_block - first_block) + column_block - first_block;
 	const int64_t s = int64_t(sx(r(SStart), 32)) / 0x100000 +
 		block * (int64_t(sx(r(dSdx), 32)) / 0x100000);
 	const int64_t width = int64_t(1) << ((r(TextureReadMode) >> 9) & 15);
@@ -3959,6 +3994,21 @@ void CPermedia2::restore_state(std::istream& s)
 		require((m_job.command & 0xc0) == m_job.primitive);
 		require(validate_render(m_job.command, m_job.setup));
 		require(m_job.interpolation == interpolation_kind(m_job.command));
+		if ((m_job.command & (FastFill | Texture)) == (FastFill | Texture) &&
+			(r(TextureLUTMode) & 3) != 3 && (r(TextureReadMode) & 1))
+		{
+			// Scissored mask-stream positions derive from the original rectangle;
+			// a retained partial block must still match its original column phase.
+			require(m_job.columns == (r(RectangleSize) & 0xffff));
+			require(m_job.rows == (r(RectangleSize) >> 16));
+			require(m_job.origin_x == sx(r(RectangleOrigin), 16));
+			require(m_job.origin_y == sx(r(RectangleOrigin) >> 16, 16));
+			const unsigned used = m_job.col & 31;
+			const unsigned remaining = std::min(32u - used,
+				m_job.columns - m_job.col);
+			require(used == 0 ? m_job.payload_left == 0 ||
+				m_job.payload_left == remaining : m_job.payload_left == remaining);
+		}
 		if (packed_trapezoid(m_job.command))
 		{
 			require(validate_packed_trapezoid(m_job, Render, m_job.command));
