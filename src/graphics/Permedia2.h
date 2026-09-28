@@ -294,6 +294,7 @@ private:
   void start_render(uint32_t value, bool setup = false);
   void continue_render(uint32_t address, uint32_t value);
   bool draw_step();
+  bool draw_block();
   bool framebuffer_upload(uint32_t command) const;
   bool upload_pixel(int32_t x, int32_t y);
   void next_fragment();

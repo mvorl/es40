@@ -1618,7 +1618,7 @@ void CPermedia2::draw_triangle(uint32_t value)
 		(c.x - a.x) * (b.y - a.y);
 	const double direction = determinant > 0 ? 1 : -1;
 	int64_t colors[3]{}, dx[3]{}, dy[3]{}, z = 0, zdx = 0, zdy = 0;
-	const auto interpolate = [&](double av, double bv, double cv, double scale, bool color,
+	const auto interpolate = [&](double av, double bv, double cv, double scale,
 		int64_t minimum, int64_t maximum, int64_t& start, int64_t& xstep,
 		int64_t& ystep) {
 		const double gradient_x = ((bv - av) * (c.y - a.y) -
@@ -1632,15 +1632,13 @@ void CPermedia2::draw_triangle(uint32_t value)
 		for (unsigned i = 0; i < 3; ++i)
 		{
 			const double v = std::trunc(values[i] * 2048);
-			if (!std::isfinite(v) ||
-				v < (color ? double(INT32_MIN) : double(minimum)) ||
-				v > (color ? double(INT32_MAX) : double(maximum)))
+			if (!std::isfinite(v))
 				return false;
-			// The color messages carry signed 9.11 fields. Narrow at the
-			// register boundary, just as for host-supplied DDAs, before any
-			// fragment interpolation or saturation. Subpixel triangles can
-			// generate large derivatives even when they cover no fragments.
-			fixed[i] = color ? sx(uint32_t(int64_t(v)), 20) : int64_t(v);
+			// Delta clamps its float-to-fixed conversions (3Dlabs, Hot Chips
+			// 1996, page 23). Generated color/depth fields are signed 9.11 /
+			// 17.11; this saturation is separate from vertex input clamping
+			// and from the rasterizer's subsequent fixed-point arithmetic.
+			fixed[i] = int64_t(std::max(double(minimum), std::min(double(maximum), v)));
 		}
 		start = fixed[0]; xstep = fixed[1]; ystep = fixed[2];
 		return true;
@@ -1649,14 +1647,14 @@ void CPermedia2::draw_triangle(uint32_t value)
 	if (smooth)
 		for (unsigned i = 0; i < 3; ++i)
 			valid = valid && interpolate(a.color[i], b.color[i], c.color[i],
-				255, true, -524288, 524287, colors[i], dx[i], dy[i]);
+				255, -524288, 524287, colors[i], dx[i], dy[i]);
 	if (depth)
 		valid = valid && interpolate(a.z, b.z, c.z,
-			depth_format ? 65535 : 32767, false, -134217728, 134217727, z, zdx, zdy);
+			depth_format ? 65535 : 32767, -134217728, 134217727, z, zdx, zdy);
 	if (!valid)
 	{
 		report("DELTA_INTERPOLANT_RANGE", DrawTriangle, value,
-			"Triangle derivatives exceed the color/depth fixed-point range",
+			"Triangle interpolation produced a non-finite value",
 			true);
 		return;
 	}
@@ -2643,6 +2641,83 @@ void CPermedia2::next_fragment()
 		m_job.payload_left = 0;
 }
 
+bool CPermedia2::draw_block()
+{
+	const bool rectangle = m_job.primitive == PrimitiveRectangle;
+	const bool forward = rectangle ? (m_job.command & PositiveX) != 0
+		: m_job.xsub >= m_job.xdom;
+	const int64_t first = rectangle
+		? int64_t(m_job.origin_x) + (forward ? 0 : m_job.columns - 1)
+		: fixed_integer(m_job.xdom) - (forward ? 0 : 1);
+	const int64_t last = first + (forward ? int64_t(m_job.columns - 1)
+		: -int64_t(m_job.columns - 1));
+	const int64_t y = rectangle
+		? int64_t(m_job.origin_y) + ((m_job.command & PositiveY)
+			? m_job.row : m_job.rows - 1 - m_job.row)
+		: fixed_integer(m_job.y);
+	// Leave exceptional coordinates to the ordinary fragment path. The block
+	// calculation must not introduce a different narrowing or address wrap.
+	if (first < INT32_MIN || first > INT32_MAX ||
+		last < INT32_MIN || last > INT32_MAX || y < INT32_MIN || y > INT32_MAX)
+		return false;
+	int64_t left = INT32_MIN, right = int64_t(INT32_MAX) + 1;
+	int64_t top = INT32_MIN, bottom = int64_t(INT32_MAX) + 1;
+	if (r(ScissorMode) & 1)
+	{
+		left = sx(r(ScissorMin), 16);
+		right = sx(r(ScissorMax), 16);
+		top = sx(r(ScissorMin) >> 16, 16);
+		bottom = sx(r(ScissorMax) >> 16, 16);
+	}
+	if (r(ScissorMode) & 2)
+	{
+		left = std::max<int64_t>(left, 0);
+		right = std::min<int64_t>(right, r(ScreenSize) & 0xffff);
+		top = std::max<int64_t>(top, 0);
+		bottom = std::min<int64_t>(bottom, r(ScreenSize) >> 16);
+	}
+	const auto finish_span = [this]() {
+		m_job.col = m_job.columns - 1;
+		next_fragment();
+	};
+	if (y < top || y >= bottom || left >= right)
+	{
+		finish_span();
+		return true;
+	}
+	int64_t x = first + (forward ? int64_t(m_job.col) : -int64_t(m_job.col));
+	const int64_t begin = forward ? std::max(x, left) : std::min(x, right - 1);
+	const int64_t end = forward ? std::min(last + 1, right) : std::max(last, left);
+	if (forward ? begin >= end : begin < end)
+	{
+		finish_span();
+		return true;
+	}
+	// Solid block writes have no color/depth interpolants or host payload.
+	// True scissoring can therefore discard a prefix without stepping pixels.
+	// Keep the original column index and span width for continuation/snapshots.
+	m_job.col += uint32_t(forward ? begin - x : x - begin);
+	x = begin;
+	// SGRAM fills use 32 native pixels, with partial blocks at span edges
+	// (SLAU011A, sections 3.3.3.2/4.4.6). Scissor and hardware masks still apply.
+	const uint32_t lane = uint32_t(x) & 31;
+	const uint32_t block = forward ? 32 - lane : lane + 1;
+	const uint32_t count = uint32_t(std::min<int64_t>(block,
+		forward ? end - x : x - end + 1));
+	for (uint32_t i = 0; i < count; ++i)
+	{
+		emit_pixel(int32_t(x), int32_t(y), r(FBBlockColor), true);
+		if (m_halted)
+			return true;
+		++m_job.col;
+		x += forward ? 1 : -1;
+	}
+	// Scissor-rejected suffixes cannot affect another unit in this solid path.
+	if (m_job.col == m_job.columns || (forward ? x >= end : x < end))
+		finish_span();
+	return true;
+}
+
 bool CPermedia2::draw_step()
 {
 	if (m_job.columns == 0)
@@ -2655,6 +2730,12 @@ bool CPermedia2::draw_step()
 	const bool texture_block =
 		(m_job.command & (FastFill | Texture)) == (FastFill | Texture) &&
 		(r(TextureReadMode) & 1);
+	if ((m_job.command & FastFill) && !mask_stream && !host_stream &&
+		!texture_block &&
+		!((m_job.command & 1) && (r(AreaStippleMode) & 1)) &&
+		(m_job.primitive == PrimitiveTrapezoid ||
+			m_job.primitive == PrimitiveRectangle) && draw_block())
+		return true;
 	const unsigned bytes = render_bytes();
 	if (texture_block && m_job.payload_left == 0 && !load_texture_mask())
 		return false;
