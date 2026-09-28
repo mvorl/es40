@@ -1599,6 +1599,8 @@ std::string CGloriaSynergy::snapshot_identity() const
 	const auto reset = gloria_options(myCfg);
 	out << ':' << reset.chip_config << ':' << reset.mem_control << ':'
 		<< reset.mem_config << ':' << reset.input_fifo_entries;
+	// Include the PCI location so otherwise identical cards cannot exchange state.
+	out << "|path=" << get_device_path();
 	return out.str();
 }
 

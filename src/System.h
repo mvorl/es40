@@ -277,6 +277,7 @@ public:
   int           RegisterCPU(class CAlphaCPU* cpu);
 
   bool has_vga_device(const CVGA* exclude = nullptr) const noexcept;
+  bool graphics_multihead_enabled() const noexcept { return graphics_multihead; }
   // Unambiguous fallback for missing firmware metadata; null for zero/many.
   const CVGA* get_sole_vga_device() const noexcept;
 
@@ -629,6 +630,8 @@ private:
   std::vector<CSystemComponent*> acComponents;
   int                   iNumMemories;
   std::vector<std::unique_ptr<SMemoryUser>> asMemories;
+  // Startup permission only; not an emulated register or saved guest state.
+  bool graphics_multihead = false;
   // Decode diagnostic policy
   bool stop_on_decode_conflict = false;
   // Emulator continuation for a shared read whose claimants disagree.

@@ -271,6 +271,7 @@ public:
 	bx_sdl_gui_c& display_for_output(const std::string& device_path, unsigned output_id);
 	const bx_sdl_gui_c* find_display_for_output(const std::string& device_path,
 		unsigned output_id) const;
+	std::string display_title(const bx_sdl_gui_c* display) const;
 	void initialize_keymap();
 	void exit_displays();
 	CConfigurator* configuration() const { return cfg; }
@@ -708,6 +709,16 @@ const bx_gui_c* bx_sdl_gui_c::find_display_for_output(const std::string& device_
 	return application.find_display_for_output(device_path, output_id);
 }
 
+std::string sdl_application::display_title(const bx_sdl_gui_c* display) const
+{
+	// Bindings are established before display initialization on the SDL thread.
+	for (const auto& output : display_outputs)
+		if (output.second == display)
+			return "ES40 Emulator - " + output.first.first + " / output " +
+				std::to_string(output.first.second);
+	return "ES40 Emulator";
+}
+
 void sdl_application::initialize_keymap()
 {
 	if (keymap_initialized)
@@ -896,12 +907,12 @@ void bx_sdl_gui_c::build_window_titles()
 		}
 	};
 
-	window_title = "ES40 Emulator";
+	window_title = application.display_title(this);
+	window_title_grabbed = window_title;
 	append_hint(window_title, hotkey_media, "media");
 	append_hint(window_title, hotkey_ctrl_alt_delete, "sends C+A+Del");
 	append_hint(window_title, hotkey_reset_window, "resets window");
 
-	window_title_grabbed = "ES40 Emulator";
 	append_hint(window_title_grabbed, hotkey_mouse_capture, "releases mouse");
 	append_hint(window_title_grabbed, hotkey_media, "media");
 	append_hint(window_title_grabbed, hotkey_ctrl_alt_delete, "sends C+A+Del");

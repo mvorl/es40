@@ -381,6 +381,7 @@ CSystem::CSystem(CConfigurator* cfg)
 
 	if (theSystem != 0)
 		FAILURE(Configuration, "More than one system");
+	graphics_multihead = cfg->get_bool_value("graphics.multihead", false);
 	stop_on_decode_conflict = cfg->get_bool_value("debug.stop_on_decode_conflict", false);
 	const std::string read_policy = cfg->get_text_value("debug.shared_read_policy", "stop");
 	if (read_policy == "claimant")
@@ -1702,6 +1703,11 @@ void CSystem::bind_isa_devices()
 void CSystem::init()
 {
 	SDeviceAccessScope time_scope(this);
+	// Count outputs as well as cards, including future multi-output devices.
+	// Reject before init creates display resources.
+	if (!graphics_multihead && get_display_outputs().size() > 1)
+		FAILURE(Configuration,
+			"Multiple display outputs require graphics.multihead=true in the system configuration");
 	bind_isa_devices();
 	{
 		// Owner links are bound above, after the ranges were registered.

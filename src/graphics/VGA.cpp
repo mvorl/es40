@@ -62,13 +62,17 @@
   /**
    * Constructor.
    *
-   * Checks if more than one VGA card is present. If so, throws a failure.
+   * Multiple VGA cards require explicit configuration permission.
    **/
 CVGA::CVGA(class CConfigurator* cfg, class CSystem* c, int pcibus, int pcidev) : CPCIDevice(cfg, c, pcibus, pcidev)
 {
-	if (c->has_vga_device(this))
-		FAILURE(Configuration, "More than one VGA");
-	theVGA = this;
+	const bool another_vga = c->has_vga_device(this);
+	if (another_vga && !c->graphics_multihead_enabled())
+		FAILURE(Configuration,
+			"Multiple VGA cards require graphics.multihead=true in the system configuration");
+	// X11 & Win32 single-display backends still use this alias. It does not select
+	// a firmware console when multiple cards are present.
+	theVGA = another_vga ? nullptr : this;
 }
 
 /**
