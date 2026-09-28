@@ -118,7 +118,9 @@ public:
     FBReadPixel = 0x8ad0, FBWriteConfig = 0x8ae8, FilterMode = 0x8c00,
     StatisticMode = 0x8c08, Sync = 0x8c40, SuspendUntilFrameBlank = 0x8c78,
     FBSourceBase = 0x8d80, FBSourceDelta = 0x8d88, Config = 0x8d90,
-    YUVMode = 0x8f00, DeltaMode = 0x9300, DrawTriangle = 0x9308,
+    YUVMode = 0x8f00, V0Fixed = 0x9000, V1Fixed = 0x9080,
+    V2Fixed = 0x9100, V0Float = 0x9180, V1Float = 0x9200,
+    V2Float = 0x9280, DeltaMode = 0x9300, DrawTriangle = 0x9308,
     RepeatTriangle = 0x9310, DrawLine01 = 0x9318,
     DrawLine10 = 0x9320, RepeatLine = 0x9328;
 
@@ -235,6 +237,9 @@ private:
     std::array<int64_t, 3> color{}, dcolor_dx{}, dcolor_dy{};
     uint32_t alpha = 0, interpolation = 0;
     int64_t z = 0, dzdx = 0, dzdy = 0;
+    bool setup = false;
+    uint32_t knee_rows = 0;
+    int64_t knee_xsub = 0, knee_dxsub = 0;
   } m_job;
 
   Options m_options;
@@ -271,20 +276,22 @@ private:
   void output_push(uint32_t value, bool interrupt = false);
   bool packet_word(uint32_t value);
   bool execute(const Command&);
-  bool validate_render(uint32_t value);
+  bool validate_render(uint32_t value, bool setup = false);
+  bool vertex_write(uint32_t address, uint32_t value);
+  void draw_triangle(uint32_t value);
   bool packed_trapezoid(uint32_t command) const;
   bool validate_packed_trapezoid(const Job&, uint32_t address, uint32_t value);
   bool validate_texture_block(uint32_t value);
   bool validate_texture_copy(uint32_t value);
   bool texture_copy_color(uint32_t& value);
-  bool validate_interpolants(uint32_t value);
+  bool validate_interpolants(uint32_t value, bool setup = false);
   uint32_t interpolation_kind(uint32_t value) const;
   void load_interpolants(bool starts);
   void step_interpolants();
   uint32_t fragment_color() const;
   bool depth_test(int32_t x, int32_t y);
   bool load_texture_mask();
-  void start_render(uint32_t value);
+  void start_render(uint32_t value, bool setup = false);
   void continue_render(uint32_t address, uint32_t value);
   bool draw_step();
   bool framebuffer_upload(uint32_t command) const;
@@ -299,7 +306,7 @@ private:
   unsigned render_bytes() const;
   unsigned texture_bytes() const;
   bool clipped(int64_t x, int64_t y, bool packed_limits = true) const;
-  uint32_t format_color(uint32_t value) const;
+  uint32_t format_color(uint32_t value, int32_t x, int32_t y) const;
   uint32_t scanout_color(uint32_t raw, uint8_t format) const;
   void composite_cursor(Frame&) const;
   void restore_state(std::istream&);

@@ -26,6 +26,8 @@
 
 #include "Permedia2.h"
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <cstdlib>
 #include <istream>
 #include <limits>
@@ -68,6 +70,21 @@ static bool host_tag(uint32_t a)
 	return a == CPermedia2::FBData || a == CPermedia2::FBSourceData ||
 		a == CPermedia2::Color || a == CPermedia2::Depth ||
 		a == CPermedia2::Stencil || a == CPermedia2::Texel0;
+}
+
+static float vertex_float(uint32_t bits)
+{
+	float value;
+	static_assert(sizeof(value) == sizeof(bits), "IEEE vertex word size");
+	std::memcpy(&value, &bits, sizeof(value));
+	return value;
+}
+
+static uint32_t vertex_bits(float value)
+{
+	uint32_t bits;
+	std::memcpy(&bits, &value, sizeof(bits));
+	return bits;
 }
 
 // Register dispatch and indexed RAMDAC registers
@@ -152,6 +169,9 @@ bool CPermedia2::register_write(uint32_t address, uint32_t value)
 {
 	if (address >= FIFO && address < 0x3000)
 		return packet_word(value);
+	if (address >= V0Fixed && address < DeltaMode &&
+		vertex_write(address, value))
+		return true;
 	switch (address)
 	{
 	case ResetStatus:
@@ -293,6 +313,9 @@ bool CPermedia2::register_write(uint32_t address, uint32_t value)
 		r(SuspendUntilFrameBlank) = value;
 		return true;
 	case DrawTriangle:
+		r(DrawTriangle) = value;
+		draw_triangle(value);
+		return true;
 	case RepeatTriangle:
 	case DrawLine01:
 	case DrawLine10:
@@ -466,6 +489,19 @@ void CPermedia2::dac_map(address_map& map)
 
 const char* CPermedia2::register_name(uint32_t a)
 {
+	if (a >= V0Fixed && a < DeltaMode)
+	{
+		static const char* const names[3][16] = {
+			{ "V0S", "V0T", "V0Q", "V0Ks", "V0Kd", "V0R", "V0G", "V0B",
+				"V0A", "V0F", "V0X", "V0Y", "V0Z", "REGISTER", "V0Color", "REGISTER" },
+			{ "V1S", "V1T", "V1Q", "V1Ks", "V1Kd", "V1R", "V1G", "V1B",
+				"V1A", "V1F", "V1X", "V1Y", "V1Z", "REGISTER", "V1Color", "REGISTER" },
+			{ "V2S", "V2T", "V2Q", "V2Ks", "V2Kd", "V2R", "V2G", "V2B",
+				"V2A", "V2F", "V2X", "V2Y", "V2Z", "REGISTER", "V2Color", "REGISTER" }
+		};
+		const unsigned vertex = ((a - V0Fixed) / 0x80) % 3;
+		return names[vertex][((a - V0Fixed) / 8) & 15];
+	}
 	switch (a & 0xffff)
 	{
 #define R(x)                                                                   \
@@ -1327,7 +1363,324 @@ bool CPermedia2::load_texture_mask()
 	return true;
 }
 
-bool CPermedia2::validate_interpolants(uint32_t value)
+bool CPermedia2::vertex_write(uint32_t address, uint32_t value)
+{
+	const unsigned parameter = ((address - V0Fixed) / 8) & 15;
+	if (parameter == 13 || parameter == 15)
+		return false;
+	const bool fixed = address < V0Float;
+	const uint32_t canonical = fixed ? address + (V0Float - V0Fixed) : address;
+	const uint32_t vertex = canonical - parameter * 8;
+	if (parameter == 14)
+	{
+		// Both address aliases carry the same packed color layout. Individual
+		// component reads return the shared floating-point vertex storage.
+		r(canonical) = r(canonical - (V0Float - V0Fixed)) = value;
+		for (unsigned i = 0; i < 4; ++i)
+		{
+			const unsigned lane = (r(DeltaMode) & 0x40000) && i != 1 && i != 3
+				? 2 - i : i;
+			const uint32_t component = vertex_bits(float((value >> (lane * 8)) & 255) / 255);
+			r(vertex + (5 + i) * 8) = component;
+			r(vertex - (V0Float - V0Fixed) + (5 + i) * 8) = component;
+		}
+		return true;
+	}
+	float converted = vertex_float(value);
+	if (fixed)
+	{
+		if (parameter == 10 || parameter == 11)
+			converted = float(sx(value, 32) / 65536.0);
+		else if (parameter == 3 || parameter == 4)
+			converted = float(double(value & 0xffffffu) / 4194304.0);
+		else if (parameter == 9)
+			converted = float(sx(value, 32) / 4194304.0);
+		else if (parameter <= 2)
+			converted = float(sx(value, 32) / 1073741824.0);
+		else
+			converted = float(double(value & 0x7fffffffu) / 1073741824.0);
+	}
+	if (std::isfinite(converted))
+	{
+		if (parameter <= 2)
+		{
+			if (((r(DeltaMode) >> 14) & 3) == 1)
+				converted = std::max(-1.0f, std::min(1.0f, converted));
+		}
+		else if (r(DeltaMode) & 0x2000)
+		{
+			const float minimum = parameter == 9 ? -512.0f
+				: parameter == 10 || parameter == 11 ? -32768.0f : 0.0f;
+			const float maximum = parameter == 3 ? 2.0f : parameter == 9 ? 512.0f
+				: parameter == 10 || parameter == 11 ? std::nextafter(32768.0f, 0.0f) : 1.0f;
+			converted = std::max(minimum, std::min(maximum, converted));
+		}
+	}
+	// Fixed and floating ports name one vertex component. Setup sorting must
+	// never alter these values; software reuses them for strips and fans.
+	r(canonical) = r(canonical - (V0Float - V0Fixed)) = vertex_bits(converted);
+	return true;
+}
+
+void CPermedia2::draw_triangle(uint32_t value)
+{
+	const uint32_t mode = r(DeltaMode);
+	// Delta generates the ordinary rasterizer/color/depth register stream.
+	// Texture, fog, setup-only and line setup require their own calculations.
+	const uint32_t delta_controls = 3u | 0xcu | 0xc0u | 0x400u | 0x800u |
+		0x2000u | 0xc000u | 0x20000u | 0x40000u | 0x80000u;
+	if ((mode & ~delta_controls) || (mode & 3) == 1 || (mode & 3) == 3 ||
+		(value & ~(0x40u | 1u | 0x10000u | 0x80000u | 0x100000u)) ||
+		((mode & 0x20000) && ((mode | value) & 0x80000)) ||
+		(value & 0xc0) != PrimitiveTrapezoid ||
+		!(value & 0x10000) || !(mode & 0x400) ||
+		(r(RasterizerMode) & 0x30) || (r(FBReadMode) & Packed))
+	{
+		report("DELTA_MODE", DrawTriangle, value,
+			"Only untextured subpixel-corrected color/depth triangle setup with zero "
+			"coordinate bias is implemented", true);
+		return;
+	}
+	const bool smooth = (mode & 0x40) != 0;
+	const bool depth = (mode & 0x80) != 0;
+	const unsigned depth_format = (mode >> 2) & 3;
+	if (((r(ColorDDAMode) & 3) == 3 && !smooth) ||
+		((r(DepthMode) & 1) && ((r(DepthMode) >> 2) & 3) == 0 && !depth) ||
+		(depth && (depth_format > 1 ||
+			((r(DepthMode) & 1) && r(LBReadFormat) != (depth_format ? 0u : 3u)))))
+	{
+		report("DELTA_INTERPOLATION", DeltaMode, mode,
+			"Triangle setup must supply the enabled color/depth DDAs and "
+			"match the local-buffer depth width", true);
+		return;
+	}
+	// The common driver also emits the Gamma-only Delta coordinate-bias bit
+	// and a legacy strip-orientation bit in Draw. Decode the PM2 fields here;
+	// combinations with enabled face culling remain outside this setup path.
+	const uint32_t command = value & ~(0x80000u | 0x100000u);
+	if (!validate_render(command, true))
+		return;
+	struct Vertex
+	{
+		double x, y, z, color[3], alpha;
+	};
+	Vertex vertex[3]{};
+	for (unsigned i = 0; i < 3; ++i)
+	{
+		const uint32_t base = V0Float + i * 0x80;
+		vertex[i].x = vertex_float(r(base + 10 * 8));
+		vertex[i].y = vertex_float(r(base + 11 * 8));
+		vertex[i].z = vertex_float(r(base + 12 * 8));
+		vertex[i].alpha = vertex_float(r(base + 8 * 8));
+		bool valid = std::isfinite(vertex[i].x) && std::isfinite(vertex[i].y) &&
+			vertex[i].x >= -2048 && vertex[i].x < 2048 &&
+			vertex[i].y >= -2048 && vertex[i].y < 2048;
+		if (depth)
+			valid = valid && std::isfinite(vertex[i].z) &&
+				vertex[i].z >= 0 && vertex[i].z <= 1;
+		if (smooth)
+		{
+			valid = valid && std::isfinite(vertex[i].alpha) &&
+				vertex[i].alpha >= 0 && vertex[i].alpha <= 1;
+			for (unsigned c = 0; c < 3; ++c)
+			{
+				vertex[i].color[c] = vertex_float(r(base + (5 + c) * 8));
+				valid = valid && std::isfinite(vertex[i].color[c]) &&
+					vertex[i].color[c] >= 0 && vertex[i].color[c] <= 1;
+			}
+		}
+		if (!valid)
+		{
+			report("DELTA_VERTEX", base, r(base + 10 * 8),
+				"Triangle vertex exceeds the modeled rasterizer/color/depth range",
+				true);
+			return;
+		}
+	}
+	if (smooth && (vertex[0].alpha != vertex[1].alpha ||
+		vertex[0].alpha != vertex[2].alpha))
+	{
+		report("DELTA_ALPHA", DrawTriangle, value,
+			"Triangle setup with varying vertex alpha is not implemented", true);
+		return;
+	}
+	const double area = (vertex[1].x - vertex[0].x) *
+		(vertex[2].y - vertex[0].y) - (vertex[2].x - vertex[0].x) *
+		(vertex[1].y - vertex[0].y);
+	if (area == 0 || ((mode & 0x20000) &&
+		((value & 0x100000) ? area < 0 : area > 0)))
+	{
+		m_job = {};
+		return;
+	}
+	std::stable_sort(std::begin(vertex), std::end(vertex),
+		[](const Vertex& a, const Vertex& b) { return a.y < b.y; });
+	const Vertex& a = vertex[0];
+	const Vertex& b = vertex[1];
+	const Vertex& c = vertex[2];
+	const double long_slope = (c.x - a.x) / (c.y - a.y);
+	const double first_slope = b.y == a.y ? 0 : (b.x - a.x) / (b.y - a.y);
+	const double second_slope = c.y == b.y ? 0 : (c.x - b.x) / (c.y - b.y);
+	const auto raster_y = [](double y) {
+		return fixed_integer(int64_t(std::trunc(y * 65536)) + 0x7fff);
+	};
+	const int64_t first_y = raster_y(a.y), middle_y = raster_y(b.y);
+	const int64_t last_y = raster_y(c.y);
+	const uint32_t first_rows = uint32_t(middle_y - first_y);
+	const uint32_t second_rows = uint32_t(last_y - middle_y);
+	if (first_rows == 0 && second_rows == 0)
+	{
+		m_job = {};
+		return;
+	}
+	const bool correction = (value & 0x10000) && (mode & 0x400);
+	const int64_t start_y = first_rows ? first_y : middle_y;
+	const double sample_y = double(start_y) + 0.5;
+	const double error_y = correction ? sample_y - a.y : 0;
+	const double xdom = a.x + error_y * long_slope;
+	const double xsub = first_rows ? a.x + error_y * first_slope
+		: b.x + (correction ? sample_y - b.y : 0) * second_slope;
+	const double knee_x = b.x +
+		(correction ? double(middle_y) + 0.5 - b.y : 0) * second_slope;
+	// Pixel-center coverage uses the nearly-half bias before integer DDA
+	// extraction. Sorting is private; the reusable vertex registers are intact.
+	const auto coordinate = [](double x, int64_t& result) {
+		// PM2's signed 12.15 DDAs are aligned to 16.16; bit zero is unused.
+		const double fixed = std::trunc(x * 32768) * 2;
+		if (!std::isfinite(fixed) || fixed < -134217728 || fixed > 134217726)
+			return false;
+		result = int64_t(fixed);
+		return true;
+	};
+	int64_t start_dom, start_sub, delta_dom, delta_sub, next_sub, next_delta;
+	if (!coordinate(xdom, start_dom) ||
+		!coordinate(xsub, start_sub) ||
+		!coordinate(long_slope, delta_dom) ||
+		!coordinate(first_rows ? first_slope : second_slope, delta_sub) ||
+		!coordinate(knee_x, next_sub) ||
+		!coordinate(second_slope, next_delta) ||
+		start_y < -2048 || last_y > 2048 ||
+		first_rows > 65535 || second_rows > 65535)
+	{
+		report("DELTA_RANGE", DrawTriangle, value,
+			"Triangle setup exceeds the modeled fixed-point DDA range", true);
+		return;
+	}
+	const auto edge_range = [](int64_t start, int64_t delta, uint32_t rows) {
+		if (rows == 0)
+			return true;
+		const int64_t end = start + delta * (rows - 1);
+		return start + 0x7fff >= -134217728 && start + 0x7fff < 134217728 &&
+			end + 0x7fff >= -134217728 && end + 0x7fff < 134217728;
+	};
+	if (!edge_range(start_dom, delta_dom, first_rows + second_rows) ||
+		!edge_range(start_sub, delta_sub, first_rows ? first_rows : second_rows) ||
+		(first_rows && !edge_range(next_sub, next_delta, second_rows)))
+	{
+		report("DELTA_RANGE", DrawTriangle, value,
+			"Triangle edge exceeds the modeled rasterizer range", true);
+		return;
+	}
+	// X limits are rasterizer termination controls, not a general scissor.
+	// Admit only triangles wholly enclosed by them in this setup path.
+	if (r(RasterizerMode) & 0x40000)
+	{
+		const double left = std::min(a.x, std::min(b.x, c.x));
+		const double right = std::max(a.x, std::max(b.x, c.x));
+		if (raster_y(left) < sx(r(XLimits), 12) ||
+			raster_y(right) > sx(r(XLimits) >> 16, 12))
+		{
+			report("DELTA_LIMITS", XLimits, r(XLimits),
+				"Triangle setup must lie inside the active rasterizer X limits",
+				true);
+			return;
+		}
+	}
+	const double determinant = (b.x - a.x) * (c.y - a.y) -
+		(c.x - a.x) * (b.y - a.y);
+	const double direction = determinant > 0 ? 1 : -1;
+	int64_t colors[3]{}, dx[3]{}, dy[3]{}, z = 0, zdx = 0, zdy = 0;
+	const auto interpolate = [&](double av, double bv, double cv, double scale, bool color,
+		int64_t minimum, int64_t maximum, int64_t& start, int64_t& xstep,
+		int64_t& ystep) {
+		const double gradient_x = ((bv - av) * (c.y - a.y) -
+			(cv - av) * (b.y - a.y)) / determinant;
+		const double gradient_y = ((b.x - a.x) * (cv - av) -
+			(c.x - a.x) * (bv - av)) / determinant;
+		const double dominant = gradient_y + long_slope * gradient_x;
+		const double values[3] = { (av + error_y * dominant) * scale,
+			gradient_x * direction * scale, dominant * scale };
+		int64_t fixed[3]{};
+		for (unsigned i = 0; i < 3; ++i)
+		{
+			const double v = std::trunc(values[i] * 2048);
+			if (!std::isfinite(v) ||
+				v < (color ? double(INT32_MIN) : double(minimum)) ||
+				v > (color ? double(INT32_MAX) : double(maximum)))
+				return false;
+			// The color messages carry signed 9.11 fields. Narrow at the
+			// register boundary, just as for host-supplied DDAs, before any
+			// fragment interpolation or saturation. Subpixel triangles can
+			// generate large derivatives even when they cover no fragments.
+			fixed[i] = color ? sx(uint32_t(int64_t(v)), 20) : int64_t(v);
+		}
+		start = fixed[0]; xstep = fixed[1]; ystep = fixed[2];
+		return true;
+	};
+	bool valid = true;
+	if (smooth)
+		for (unsigned i = 0; i < 3; ++i)
+			valid = valid && interpolate(a.color[i], b.color[i], c.color[i],
+				255, true, -524288, 524287, colors[i], dx[i], dy[i]);
+	if (depth)
+		valid = valid && interpolate(a.z, b.z, c.z,
+			depth_format ? 65535 : 32767, false, -134217728, 134217727, z, zdx, zdy);
+	if (!valid)
+	{
+		report("DELTA_INTERPOLANT_RANGE", DrawTriangle, value,
+			"Triangle derivatives exceed the color/depth fixed-point range",
+			true);
+		return;
+	}
+	// Delta supplies the edge bias in its generated coordinates. The
+	// rasterizer's separate BiasCoordinates field therefore stays zero.
+	r(StartXDom) = uint32_t(start_dom + 0x7fff);
+	r(StartXSub) = uint32_t(start_sub + 0x7fff);
+	r(StartY) = uint32_t(start_y * 65536);
+	r(dXDom) = uint32_t(delta_dom);
+	r(dXSub) = uint32_t(delta_sub);
+	r(dY) = 65536;
+	r(RasterCount) = first_rows ? first_rows : second_rows;
+	if (smooth)
+	{
+		for (unsigned i = 0; i < 3; ++i)
+		{
+			r(RStart + i * 24) = uint32_t(colors[i]) << 4;
+			r(dRdx + i * 24) = uint32_t(dx[i]) << 4;
+			r(dRdyDom + i * 24) = uint32_t(dy[i]) << 4;
+		}
+		r(AStart) = uint32_t(std::trunc(a.alpha * 255 * 2048)) << 4;
+	}
+	if (depth)
+	{
+		r(ZStartU) = uint32_t(z >> 11) & 0x1ffff;
+		r(ZStartL) = uint32_t(z) << 21;
+		r(dZdxU) = uint32_t(zdx >> 11) & 0x1ffff;
+		r(dZdxL) = uint32_t(zdx) << 21;
+		r(dZdyDomU) = uint32_t(zdy >> 11) & 0x1ffff;
+		r(dZdyDomL) = uint32_t(zdy) << 21;
+	}
+	r(Render) = command;
+	start_render(command, true);
+	if (m_job.active && first_rows && second_rows)
+	{
+		m_job.knee_rows = second_rows;
+		m_job.knee_xsub = next_sub + 0x7fff;
+		m_job.knee_dxsub = next_delta;
+	}
+}
+
+bool CPermedia2::validate_interpolants(uint32_t value, bool setup)
 {
 	// Block-write fragments do not visit the color or local-buffer units.
 	if (value & FastFill)
@@ -1335,7 +1688,7 @@ bool CPermedia2::validate_interpolants(uint32_t value)
 	const bool gouraud = (r(ColorDDAMode) & 3) == 3;
 	const bool depth = (r(DepthMode) & 1) != 0;
 	const bool local = depth || (r(LBWriteMode) & 1);
-	if ((gouraud || local) &&
+	if (!setup && (gouraud || local) &&
 		((r(RasterizerMode) & 0x40000) ||
 			((r(ScissorMode) & 2) &&
 				(sx(r(WindowOrigin), 12) || sx(r(WindowOrigin) >> 16, 12)))))
@@ -1468,10 +1821,18 @@ uint32_t CPermedia2::fragment_color() const
 	{
 		// X derivatives are increments along the span, from dominant toward
 		// subordinate. Lines use only the dominant-edge derivative.
-		const int64_t component = m_job.color[i] +
+		int64_t component = m_job.color[i] +
 			(m_job.primitive == PrimitiveTrapezoid
 					? int64_t(m_job.col) * m_job.dcolor_dx[i]
 					: 0);
+		if (m_job.setup && (m_job.command & 0x10000))
+		{
+			const bool forward = m_job.xdom <= m_job.xsub;
+			const int64_t first = fixed_integer(m_job.xdom) - (forward ? 0 : 1);
+			const int64_t error = first * 65536 + 65535 - m_job.xdom;
+			component += fixed_integer(error * m_job.dcolor_dx[i] *
+				(forward ? 1 : -1));
+		}
 		const uint32_t byte = static_cast<uint32_t>(
 			std::max<int64_t>(0, std::min<int64_t>(255, component / 2048)));
 		color |= byte << (8 * i);
@@ -1500,6 +1861,14 @@ bool CPermedia2::depth_test(int32_t x, int32_t y)
 		z = m_job.z + (m_job.primitive == PrimitiveTrapezoid
 							 ? int64_t(m_job.col) * m_job.dzdx
 							 : 0);
+	if (m_job.setup && (m_job.command & 0x10000) &&
+		((r(DepthMode) >> 2) & 3) == 0)
+	{
+		const bool forward = m_job.xdom <= m_job.xsub;
+		const int64_t first = fixed_integer(m_job.xdom) - (forward ? 0 : 1);
+		const int64_t error = first * 65536 + 65535 - m_job.xdom;
+		z += fixed_integer(error * m_job.dzdx * (forward ? 1 : -1));
+	}
 	// Color saturation is specified; depth overflow is not. Reject values
 	// outside the modeled depth range instead of inventing wrap or clamp rules.
 	if (z < 0 || z > int64_t(mask) * 2048 + 2047)
@@ -1625,7 +1994,7 @@ bool CPermedia2::validate_packed_trapezoid(
 	return true;
 }
 
-bool CPermedia2::validate_render(uint32_t value)
+bool CPermedia2::validate_render(uint32_t value, bool setup)
 {
 	// Render.Texture qualifies the texture units (SLAU011A, p. 4-79). Their
 	// retained mode registers have no effect when this command leaves it clear.
@@ -1640,7 +2009,7 @@ bool CPermedia2::validate_render(uint32_t value)
 	// Block-write fragments bypass these units and use raw FBBlockColor
 	// (SLAU011A, sections 4.4.6 and 4.11.2). Their retained state is inactive.
 	if (!(value & FastFill) && ((unsupported & 1) ||
-		(r(DitherMode) & 2) || (r(LogicalOpMode) & ~63u)))
+		(r(LogicalOpMode) & ~63u)))
 	{
 		report(
 			"RENDER_MODE",
@@ -1651,7 +2020,19 @@ bool CPermedia2::validate_render(uint32_t value)
 			true);
 		return false;
 	}
-	if (!validate_interpolants(value))
+	if (!(value & FastFill) && (r(DitherMode) & 3) == 3)
+	{
+		const uint32_t format =
+			((r(DitherMode) >> 2) & 15) | ((r(DitherMode) >> 12) & 16);
+		if (format != 16 || (r(DitherMode) & 0x800) || render_bytes() != 2)
+		{
+			report("DITHER_MODE", DitherMode, r(DitherMode),
+				"Only ordered RGB565 dithering with native 16-bit pixels "
+				"is implemented", true);
+			return false;
+		}
+	}
+	if (!validate_interpolants(value, setup))
 		return false;
 	if ((r(FBReadMode) | r(FBWriteConfig)) & 0x40000)
 	{
@@ -1824,7 +2205,8 @@ bool CPermedia2::validate_render(uint32_t value)
 	const uint32_t reserved_bit_5 = 0x20u;
 	const uint32_t supported = 0xc0u | 1u | reserved_bit_5 | FastFill |
 		SyncMask | SyncHost | PositiveX | PositiveY |
-		((texture_block || texture_copy) ? Texture : 0);
+		((texture_block || texture_copy) ? Texture : 0) |
+		(setup ? 0x10000u : 0);
 	if (value & ~supported)
 	{
 		report(
@@ -1922,11 +2304,12 @@ bool CPermedia2::validate_render(uint32_t value)
 	return true;
 }
 
-void CPermedia2::start_render(uint32_t value)
+void CPermedia2::start_render(uint32_t value, bool setup)
 {
 	m_job = {};
-	if (!validate_render(value))
+	if (!validate_render(value, setup))
 		return;
+	m_job.setup = setup;
 	const unsigned bytes = render_bytes();
 	const unsigned coordinate_bias = (r(RasterizerMode) >> 4) & 3;
 	m_job.command = value;
@@ -1997,6 +2380,13 @@ void CPermedia2::start_render(uint32_t value)
 
 void CPermedia2::continue_render(uint32_t address, uint32_t value)
 {
+	if (m_job.setup)
+	{
+		report("SETUP_CONTINUATION", address, value,
+			"Host continuations after setup-unit triangles are not implemented",
+			true);
+		return;
+	}
 	if ((m_job.command & Texture) && !(m_job.command & FastFill))
 	{
 		report("TEXTURE_COPY_CONTINUATION", address, value,
@@ -2196,6 +2586,23 @@ void CPermedia2::next_fragment()
 		m_job.payload_left = 0;
 	if (++m_job.row >= m_job.rows)
 	{
+		if (m_job.setup && m_job.knee_rows)
+		{
+			// Delta's second trapezoid keeps the dominant-edge interpolants
+			// and replaces only the subordinate edge (PRM 4.2.1/4.3.10).
+			step_interpolants();
+			m_job.xdom += m_job.dxdom;
+			m_job.y += m_job.dy;
+			m_job.xsub = m_job.knee_xsub;
+			m_job.dxsub = m_job.knee_dxsub;
+			m_job.rows = m_job.knee_rows;
+			m_job.row = m_job.knee_rows = 0;
+			r(StartXSub) = uint32_t(m_job.xsub);
+			r(dXSub) = uint32_t(m_job.dxsub);
+			r(ContinueNewSub) = m_job.rows;
+			set_span();
+			return;
+		}
 		// Leave completed jobs at the last rendered DDA position.
 		// A continuation applies this final DDA step before reloading slopes.
 		m_job.active = false;
@@ -2459,6 +2866,11 @@ bool CPermedia2::upload_pixel(int32_t x, int32_t y)
 
 bool CPermedia2::clipped(int64_t x, int64_t y, bool packed_limits) const
 {
+	if (m_job.setup && (r(RasterizerMode) & 0x40000))
+	{
+		if (y < sx(r(YLimits), 12) || y >= sx(r(YLimits) >> 16, 12))
+			return true;
+	}
 	if (r(ScissorMode) & 1)
 	{
 		if (x < sx(r(ScissorMin), 16) || y < sx(r(ScissorMin) >> 16, 16) ||
@@ -2467,9 +2879,12 @@ bool CPermedia2::clipped(int64_t x, int64_t y, bool packed_limits) const
 	}
 	if (r(ScissorMode) & 2)
 	{
-		if (x < 0 || y < 0 ||
-			x >= static_cast<int32_t>(r(ScreenSize) & 0xffff) ||
-			y >= static_cast<int32_t>(r(ScreenSize) >> 16))
+		const int64_t screen_x = x + (m_job.setup ? sx(r(WindowOrigin), 12) : 0);
+		const int64_t screen_y = y +
+			(m_job.setup ? sx(r(WindowOrigin) >> 16, 12) : 0);
+		if (screen_x < 0 || screen_y < 0 ||
+			screen_x >= static_cast<int32_t>(r(ScreenSize) & 0xffff) ||
+			screen_y >= static_cast<int32_t>(r(ScreenSize) >> 16))
 			return true;
 	}
 	if (packed_limits && (r(FBReadMode) & Packed))
@@ -2548,7 +2963,7 @@ uint32_t CPermedia2::logical_op(unsigned op, uint32_t s, uint32_t d)
 	}
 }
 
-uint32_t CPermedia2::format_color(uint32_t v) const
+uint32_t CPermedia2::format_color(uint32_t v, int32_t x, int32_t y) const
 {
 	if (!(r(DitherMode) & 1))
 		return v;
@@ -2561,7 +2976,22 @@ uint32_t CPermedia2::format_color(uint32_t v) const
 	// higher channel; BGR puts it in the lower one (SLAU011A, p. 7-36).
 	const uint32_t red = v & 255, green = (v >> 8) & 255,
 				   blue = (v >> 16) & 255;
-	const uint32_t low = rgb ? blue : red, high = rgb ? red : blue;
+	uint32_t low = rgb ? blue : red, high = rgb ? red : blue;
+	uint32_t mid = green;
+	if (r(DitherMode) & 2)
+	{
+		// Ordered color reduction adds the position-dependent fraction before
+		// clamping and truncation. XY offsets select window-relative phase
+		// (SLAU011A, section 4.14). The 2x2 pattern follows the GLINT color
+		// formatter described in the 300SX architecture manual, section 13.1.1.
+		static const uint8_t dither[2][2] = {{0, 2}, {3, 1}};
+		const uint32_t dx = (uint32_t(x) + (r(DitherMode) >> 6)) & 1;
+		const uint32_t dy = (uint32_t(y) + (r(DitherMode) >> 8)) & 1;
+		const uint32_t fraction = dither[dy][dx];
+		low = std::min<uint32_t>(255, low + fraction * 2);
+		mid = std::min<uint32_t>(255, mid + fraction);
+		high = std::min<uint32_t>(255, high + fraction * 2);
+	}
 	uint32_t alpha = v >> 24;
 	if (r(DitherMode) & 0x1000)
 		alpha = 0;
@@ -2578,7 +3008,7 @@ uint32_t CPermedia2::format_color(uint32_t v) const
 		return (low >> 4) | ((green >> 4) << 4) | ((high >> 4) << 8) |
 			((alpha >> 4) << 12);
 	case 16:
-		return (low >> 3) | ((green >> 2) << 5) | ((high >> 3) << 11);
+		return (low >> 3) | ((mid >> 2) << 5) | ((high >> 3) << 11);
 	default:
 		return 0; // start_render rejects unsupported active formats
 	}
@@ -2673,7 +3103,7 @@ bool CPermedia2::emit_pixel(int32_t x, int32_t y, uint32_t value, bool raw)
 			value >>= (uint32_t(address) & 3) * 8;
 	}
 	else if (!raw)
-		value = format_color(value);
+		value = format_color(value, x, y);
 	const uint32_t old = pixel_read(address, bytes);
 	if (!(m_job.command & FastFill))
 	{
@@ -3030,7 +3460,7 @@ static void require(bool p)
 void CPermedia2::SaveState(std::ostream& s) const
 {
 	s.write("PM2SNP01", 8);
-	put32(s, 4);
+	put32(s, 5);
 	put32(s, VramSize);
 	put32(s, m_options.chip_config);
 	put32(s, m_options.mem_control);
@@ -3109,6 +3539,10 @@ void CPermedia2::SaveState(std::ostream& s) const
 	// The latched output DMA cursor differs from the independently
 	// programmable OutDMAAddress register.
 	put32(s, m_out_dma_cursor);
+	put32(s, m_job.setup);
+	put32(s, m_job.knee_rows);
+	put64(s, uint64_t(m_job.knee_xsub));
+	put64(s, uint64_t(m_job.knee_dxsub));
 	if (!s)
 		throw std::runtime_error("PM2 snapshot write failed");
 }
@@ -3118,7 +3552,7 @@ void CPermedia2::restore_state(std::istream& s)
 	char magic[8]{};
 	s.read(magic, 8);
 	require(std::string(magic, 8) == "PM2SNP01");
-	require(get32(s) == 4);
+	require(get32(s) == 5);
 	require(get32(s) == VramSize);
 	m_options.chip_config = get32(s);
 	m_options.mem_control = get32(s);
@@ -3257,6 +3691,45 @@ void CPermedia2::restore_state(std::istream& s)
 		reinterpret_cast<char*>(m_vram.data()),
 		static_cast<std::streamsize>(m_vram.size()));
 	m_out_dma_cursor = get32(s);
+	m_job.setup = getbool(s);
+	m_job.knee_rows = get32(s);
+	m_job.knee_xsub = signed64(get64(s));
+	m_job.knee_dxsub = signed64(get64(s));
+	require(m_job.knee_rows <= 4096);
+	require(m_job.knee_xsub >= -134217728 && m_job.knee_xsub < 134217728);
+	require(m_job.knee_dxsub >= -134217728 && m_job.knee_dxsub <= 134217726);
+	if (m_job.setup)
+	{
+		require(m_job.primitive == PrimitiveTrapezoid);
+		require(!(m_job.command & (FastFill | SyncHost | SyncMask | Texture)));
+		require(m_job.payload_left == 0);
+		require(m_job.active || m_job.knee_rows == 0);
+		require(m_job.dy == 65536);
+		require(m_job.y % 65536 == 0);
+		for (const int64_t delta : {m_job.dxdom, m_job.dxsub, m_job.knee_dxsub})
+			require(delta >= -134217728 && delta <= 134217726 && delta % 2 == 0);
+		require((r(RasterizerMode) & 0x30) == 0);
+		const int64_t width = std::abs(fixed_integer(m_job.xdom) -
+			fixed_integer(m_job.xsub));
+		require(width <= 65535 && m_job.columns == uint32_t(width));
+		require(m_job.columns != 0 || m_job.col == 0);
+		const int64_t first_steps = m_job.active ? m_job.rows - m_job.row - 1 : 0;
+		const int64_t steps = first_steps + m_job.knee_rows;
+		const auto coordinate_range = [](int64_t position, int64_t delta,
+			int64_t count) {
+			const int64_t end = position + delta * count;
+			return position >= -134217728 && position < 134217728 &&
+				end >= -134217728 && end < 134217728;
+		};
+		require(coordinate_range(m_job.xdom, m_job.dxdom, steps));
+		require(coordinate_range(m_job.xsub, m_job.dxsub, first_steps));
+		require(coordinate_range(m_job.y, m_job.dy, steps));
+		if (m_job.knee_rows)
+			require(coordinate_range(m_job.knee_xsub, m_job.knee_dxsub,
+				m_job.knee_rows - 1));
+	}
+	else
+		require(m_job.knee_rows == 0);
 	require(bool(s));
 	m_warned.fill(false);
 	m_irq = (r(IntFlags) & r(IntEnable)) != 0;
@@ -3264,7 +3737,7 @@ void CPermedia2::restore_state(std::istream& s)
 	if (m_job.active)
 	{
 		require((m_job.command & 0xc0) == m_job.primitive);
-		require(validate_render(m_job.command));
+		require(validate_render(m_job.command, m_job.setup));
 		require(m_job.interpolation == interpolation_kind(m_job.command));
 		if (packed_trapezoid(m_job.command))
 		{
