@@ -1149,6 +1149,12 @@ unsigned CPermedia2::texture_bytes() const
 
 bool CPermedia2::validate_texture_block(uint32_t value)
 {
+	// Disabled texture reads leave the rasterizer's block mask unchanged
+	// (SLAU011A, sections 4.4.6 and 4.9.7). Direct-index LUT fills generate
+	// block colors without memory reads and still require validation.
+	if (!(r(TextureReadMode) & 1) && (r(TextureLUTMode) & 3) != 3)
+		return true;
+
 	// Bound section 4.9.7's cached-font operation to forward rectangles and a
 	// linear one-dimensional mask stream.
 	if ((value & 0xc0) != PrimitiveRectangle ||
@@ -2582,7 +2588,8 @@ void CPermedia2::next_fragment()
 	if (++m_job.col < m_job.columns)
 		return;
 	m_job.col = 0;
-	if ((m_job.command & (FastFill | Texture)) == (FastFill | Texture))
+	if ((m_job.command & (FastFill | Texture)) == (FastFill | Texture) &&
+		(r(TextureReadMode) & 1))
 		m_job.payload_left = 0;
 	if (++m_job.row >= m_job.rows)
 	{
@@ -2634,7 +2641,8 @@ bool CPermedia2::draw_step()
 	const bool mask_stream = (m_job.command & SyncMask) != 0,
 			   host_stream = (m_job.command & SyncHost) != 0;
 	const bool texture_block =
-		(m_job.command & (FastFill | Texture)) == (FastFill | Texture);
+		(m_job.command & (FastFill | Texture)) == (FastFill | Texture) &&
+		(r(TextureReadMode) & 1);
 	const unsigned bytes = render_bytes();
 	if (texture_block && m_job.payload_left == 0 && !load_texture_mask())
 		return false;
