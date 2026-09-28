@@ -1251,16 +1251,17 @@ bool CPermedia2::validate_texture_block(uint32_t value)
 	}
 
 	// Bound section 4.9.7's cached-font operation to forward rectangles and a
-	// linear one-dimensional mask stream.
+	// linear one-dimensional mask stream. FastFill bypasses the framebuffer
+	// read unit, so retained Packed state does not change these native pixels.
 	if ((value & 0xc0) != PrimitiveRectangle ||
 		(value & (PositiveX | PositiveY)) != (PositiveX | PositiveY) ||
-		(value & (SyncMask | SyncHost)) || (r(FBReadMode) & Packed))
+		(value & (SyncMask | SyncHost)))
 	{
 		report(
 			"TEXTURE_BLOCK_GEOMETRY",
 			Render,
 			value,
-			"Textured block fills require a forward unpacked rectangle without "
+			"Textured block fills require a forward native-pixel rectangle without "
 			"host streams",
 			true);
 		return false;
