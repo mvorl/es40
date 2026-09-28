@@ -694,6 +694,7 @@ const char* CPermedia2::register_name(uint32_t a)
 		R(LBReadMode);
 		R(LBReadFormat);
 		R(LBWindowBase);
+		R(LBSourceOffset);
 		R(LBWriteFormat);
 		R(Window);
 		R(ZStartU);
@@ -1818,6 +1819,14 @@ void CPermedia2::draw_triangle(uint32_t value)
 	}
 }
 
+bool CPermedia2::local_buffer_copy() const
+{
+	// ForceLBUpdate can copy LBSourceData with both tests disabled (SLAU011A,
+	// sections 4.6/4.7 and Window). The write gates are applied separately.
+	return !(r(DepthMode) & 1) && !(r(StencilMode) & 1) &&
+		(r(Window) & 0x18) == 8 && (r(LBReadMode) & 0x200);
+}
+
 bool CPermedia2::validate_interpolants(uint32_t value, bool setup)
 {
 	// Block-write fragments do not visit the color or local-buffer units.
@@ -1825,7 +1834,8 @@ bool CPermedia2::validate_interpolants(uint32_t value, bool setup)
 		return true;
 	const bool gouraud = (r(ColorDDAMode) & 3) == 3;
 	const bool depth = (r(DepthMode) & 1) != 0;
-	const bool local = depth || (r(LBWriteMode) & 1);
+	const bool copy = local_buffer_copy();
+	const bool local = depth || copy || (r(LBWriteMode) & 1);
 	if (!setup && (gouraud || local) &&
 		((r(RasterizerMode) & 0x40000) ||
 			((r(ScissorMode) & 2) &&
@@ -1862,6 +1872,24 @@ bool CPermedia2::validate_interpolants(uint32_t value, bool setup)
 	const uint32_t mode = r(LBReadMode);
 	const uint32_t read_format = r(LBReadFormat);
 	const uint32_t write_format = r(LBWriteFormat);
+	if (copy)
+	{
+		// LBDefault format 0 assigns all sixteen storage bits to depth. Other
+		// field layouts and combined framebuffer operations remain unmodeled.
+		if ((mode & ~(0x1ffu | 0x200u | 0x40000u)) ||
+			pitch_from_products(mode) == 0 || read_format != 0 || write_format != 0 ||
+			(r(LBWriteMode) & ~1u) || (r(LBWindowBase) & 0xff000000u) ||
+			(r(Window) & ~(0x18u | 0x40000u)) || (r(ColorDDAMode) & 1) ||
+			(value & Texture) || (r(FBWriteMode) & 1) ||
+			(r(FBReadMode) & (ReadSource | ReadDestination | Packed)))
+		{
+			report("LB_COPY_MODE", LBReadMode, mode,
+				"Forced local-buffer copies require linear 16-bit LBDefault "
+				"source data with framebuffer reads and writes disabled", true);
+			return false;
+		}
+		return true;
+	}
 	const unsigned function = (r(DepthMode) >> 4) & 7;
 	const unsigned source = (r(DepthMode) >> 2) & 3;
 	const bool write = (r(LBWriteMode) & 1) && !(r(Window) & 0x40000);
@@ -1980,6 +2008,28 @@ uint32_t CPermedia2::fragment_color() const
 
 bool CPermedia2::depth_test(int32_t x, int32_t y)
 {
+	if (local_buffer_copy())
+	{
+		if (!(r(LBWriteMode) & 1) || (r(Window) & 0x40000))
+			return true;
+		const int64_t sign = (r(LBReadMode) & 0x40000) ? -1 : 1;
+		const int64_t destination = int64_t(r(LBWindowBase)) +
+			int64_t(y) * pitch_from_products(r(LBReadMode)) * sign + x;
+		const int64_t source = destination + sx(r(LBSourceOffset), 24);
+		// Both addresses are in native local-buffer pixels, independently of
+		// framebuffer size, pitch and masks (SLAU011A, section 4.6.1).
+		if (destination < 0 || destination >= int64_t(VramSize / 2) ||
+			source < 0 || source >= int64_t(VramSize / 2))
+		{
+			report("LB_COPY_RANGE", LBSourceOffset, r(LBSourceOffset),
+				"Local-buffer copy source or destination lies outside VRAM", true);
+			return false;
+		}
+		const uint32_t data = pixel_read(source * 2, 2);
+		m_vram[static_cast<size_t>(destination * 2)] = uint8_t(data);
+		m_vram[static_cast<size_t>(destination * 2 + 1)] = uint8_t(data >> 8);
+		return true;
+	}
 	if (!(r(DepthMode) & 1))
 		return true;
 	// Keep malformed restored states bounded as well as newly issued draws.
@@ -2207,10 +2257,11 @@ bool CPermedia2::validate_render(uint32_t value, bool setup)
 		return false;
 	}
 	const unsigned bytes = render_bytes();
-	const bool depth_only = !(value & FastFill) && (r(DepthMode) & 1) &&
+	const bool local_only = !(value & FastFill) &&
+		((r(DepthMode) & 1) || local_buffer_copy()) &&
 		!(r(FBWriteMode) & 1) &&
 		!(r(FBReadMode) & (ReadSource | ReadDestination | Packed));
-	if (!depth_only && (bytes == 0 ||
+	if (!local_only && (bytes == 0 ||
 		pitch_from_products(r(FBWriteConfig)) == 0 ||
 		((r(FBReadMode) & Packed) && (bytes == 3))))
 	{

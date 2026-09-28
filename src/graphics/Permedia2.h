@@ -107,7 +107,7 @@ public:
     Color = 0x87f0, AlphaTestMode = 0x8800, AntialiasMode = 0x8808,
     AlphaBlendMode = 0x8810, DitherMode = 0x8818, FBSoftwareWriteMask = 0x8820,
     LogicalOpMode = 0x8828, FBWriteData = 0x8830,
-    LBReadMode = 0x8880, LBReadFormat = 0x8888,
+    LBReadMode = 0x8880, LBReadFormat = 0x8888, LBSourceOffset = 0x8890,
     LBWindowBase = 0x88b8, LBWriteMode = 0x88c0, LBWriteFormat = 0x88c8,
     TextureData = 0x88e8, TextureDownloadOffset = 0x88f0,
     Window = 0x8980, StencilMode = 0x8988, Stencil = 0x8998, DepthMode = 0x89a0,
@@ -295,6 +295,7 @@ private:
   void load_interpolants(bool starts);
   void step_interpolants();
   uint32_t fragment_color() const;
+  bool local_buffer_copy() const;
   bool depth_test(int32_t x, int32_t y);
   bool load_texture_mask();
   void start_render(uint32_t value, bool setup = false);
