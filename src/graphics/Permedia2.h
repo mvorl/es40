@@ -95,6 +95,8 @@ public:
     AreaStipplePattern6 = 0x8230, AreaStipplePattern7 = 0x8238,
     TextureAddressMode = 0x8380, SStart = 0x8388, dSdx = 0x8390,
     dSdyDom = 0x8398, TStart = 0x83a0, dTdx = 0x83a8, dTdyDom = 0x83b0,
+    TexelLUTIndex = 0x84c0, TexelLUTData = 0x84c8,
+    TexelLUTAddress = 0x84d0, TexelLUTTransfer = 0x84d8,
     TextureBaseAddress = 0x8580, TextureMapFormat = 0x8588,
     TextureDataFormat = 0x8590, Texel0 = 0x8600, TextureReadMode = 0x8670,
     TextureLUTMode = 0x8678, TextureColorMode = 0x8680, FogMode = 0x8690,
@@ -116,9 +118,11 @@ public:
     FBData = 0x8aa0, FBSourceData = 0x8aa8, FBWindowBase = 0x8ab0,
     FBWriteMode = 0x8ab8, FBHardwareWriteMask = 0x8ac0, FBBlockColor = 0x8ac8,
     FBReadPixel = 0x8ad0, FBWriteConfig = 0x8ae8, FilterMode = 0x8c00,
-    StatisticMode = 0x8c08, Sync = 0x8c40, SuspendUntilFrameBlank = 0x8c78,
+    StatisticMode = 0x8c08, Sync = 0x8c40, FBBlockColorU = 0x8c68,
+    FBBlockColorL = 0x8c70, SuspendUntilFrameBlank = 0x8c78,
     FBSourceBase = 0x8d80, FBSourceDelta = 0x8d88, Config = 0x8d90,
-    YUVMode = 0x8f00, V0Fixed = 0x9000, V1Fixed = 0x9080,
+    TexelLUT0 = 0x8e80, YUVMode = 0x8f00, TexelLUTID = 0x8f78,
+    V0Fixed = 0x9000, V1Fixed = 0x9080,
     V2Fixed = 0x9100, V0Float = 0x9180, V1Float = 0x9200,
     V2Float = 0x9280, DeltaMode = 0x9300, DrawTriangle = 0x9308,
     RepeatTriangle = 0x9310, DrawLine01 = 0x9318,
@@ -244,6 +248,8 @@ private:
 
   Options m_options;
   std::array<uint32_t, 8192> m_regs{}; // 64K canonical space, 8-byte slots.
+  std::array<uint32_t, 256> m_texel_lut{};
+  uint32_t m_texel_lut_read = 0;
   std::vector<uint8_t> m_vram;
   std::array<uint8_t, 256> m_dac{};
   std::array<uint8_t, 768> m_palette{};
@@ -295,6 +301,7 @@ private:
   void continue_render(uint32_t address, uint32_t value);
   bool draw_step();
   bool draw_block();
+  uint32_t block_color(int32_t x, int32_t y) const;
   bool framebuffer_upload(uint32_t command) const;
   bool upload_pixel(int32_t x, int32_t y);
   void next_fragment();

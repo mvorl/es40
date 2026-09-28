@@ -136,6 +136,16 @@ uint32_t CPermedia2::register_read(uint32_t address)
 			3u; // No EDID device; pulled-up data/clock.
 	case Reboot:
 		return 0;
+	case TexelLUTIndex:
+		// The write index and the sequential readback counter are independent.
+		m_texel_lut_read = 0;
+		return r(TexelLUTIndex);
+	case TexelLUTData:
+	{
+		const uint32_t value = m_texel_lut[m_texel_lut_read];
+		m_texel_lut_read = (m_texel_lut_read + 1) & 255;
+		return value;
+	}
 	case PaletteWrite:
 		return m_palette_w / 3;
 	case PaletteRead:
@@ -169,6 +179,12 @@ bool CPermedia2::register_write(uint32_t address, uint32_t value)
 {
 	if (address >= FIFO && address < 0x3000)
 		return packet_word(value);
+	if (address >= TexelLUT0 && address < TexelLUT0 + 16 * 8)
+	{
+		m_texel_lut[(address - TexelLUT0) / 8] = value;
+		r(address) = value;
+		return true;
+	}
 	if (address >= V0Fixed && address < DeltaMode &&
 		vertex_write(address, value))
 		return true;
@@ -371,6 +387,28 @@ bool CPermedia2::register_write(uint32_t address, uint32_t value)
 	case TextureDownloadOffset:
 		r(TextureDownloadOffset) = value & 0x3fffffu;
 		return true;
+	case TexelLUTIndex:
+		r(TexelLUTIndex) = value & 255;
+		return true;
+	case TexelLUTData:
+	{
+		const uint32_t index = r(TexelLUTIndex);
+		m_texel_lut[index] = value;
+		if (index < 16)
+			r(TexelLUT0 + index * 8) = value;
+		r(TexelLUTData) = value;
+		r(TexelLUTIndex) = (index + 1) & 255;
+		return true;
+	}
+	case TexelLUTTransfer:
+	case TexelLUTID:
+		report("TEXTURE_LUT_TRANSFER", address, value,
+			"Texture LUT memory transfers are not implemented", true);
+		return true;
+	case FBBlockColor:
+		// The convenience register loads both halves of the SGRAM pattern.
+		r(FBBlockColor) = r(FBBlockColorL) = r(FBBlockColorU) = value;
+		return true;
 	case TextureData:
 	{
 		const uint32_t offset = r(TextureDownloadOffset) & 0x3fffffu;
@@ -502,6 +540,15 @@ const char* CPermedia2::register_name(uint32_t a)
 		const unsigned vertex = ((a - V0Fixed) / 0x80) % 3;
 		return names[vertex][((a - V0Fixed) / 8) & 15];
 	}
+	if ((a & 0xffff) >= TexelLUT0 && (a & 0xffff) < TexelLUT0 + 16 * 8)
+	{
+		static const char* const names[16] = {
+			"TexelLUT0", "TexelLUT1", "TexelLUT2", "TexelLUT3",
+			"TexelLUT4", "TexelLUT5", "TexelLUT6", "TexelLUT7",
+			"TexelLUT8", "TexelLUT9", "TexelLUT10", "TexelLUT11",
+			"TexelLUT12", "TexelLUT13", "TexelLUT14", "TexelLUT15"};
+		return names[((a & 0xffff) - TexelLUT0) / 8];
+	}
 	switch (a & 0xffff)
 	{
 #define R(x)                                                                   \
@@ -602,6 +649,11 @@ const char* CPermedia2::register_name(uint32_t a)
 		R(TStart);
 		R(dTdx);
 		R(dTdyDom);
+		R(TexelLUTIndex);
+		R(TexelLUTData);
+		R(TexelLUTAddress);
+		R(TexelLUTTransfer);
+		R(TexelLUTID);
 		R(TextureBaseAddress);
 		R(TextureMapFormat);
 		R(TextureDataFormat);
@@ -656,6 +708,8 @@ const char* CPermedia2::register_name(uint32_t a)
 		R(FBWriteMode);
 		R(FBHardwareWriteMask);
 		R(FBBlockColor);
+		R(FBBlockColorU);
+		R(FBBlockColorL);
 		R(FBReadPixel);
 		R(FBWriteConfig);
 		R(FilterMode);
@@ -1149,6 +1203,30 @@ unsigned CPermedia2::texture_bytes() const
 
 bool CPermedia2::validate_texture_block(uint32_t value)
 {
+	if ((r(TextureLUTMode) & 3) == 3)
+	{
+		// Direct indexing supplies a raw SGRAM pattern at each scanline start;
+		// it does not use the texture-memory enable, address DDAs or format.
+		// Bound the LUT's 8-pixel row layout to the native framebuffer width.
+		const unsigned bytes = render_bytes();
+		const unsigned pixels = (r(TextureLUTMode) >> 10) & 3;
+		if ((r(TextureLUTMode) & ~0xfffu) || pixels == 3 ||
+			(bytes != 1 && bytes != 2 && bytes != 4) ||
+			(1u << pixels) * bytes != 4 ||
+			(r(TextureColorMode) & 15) != 7 || (r(TextureColorMode) & ~15u) ||
+			(value & (SyncHost | SyncMask)) ||
+			((value & 1) && (r(AreaStippleMode) & 0x100001) == 0x100001) ||
+			((value & 0xc0) != PrimitiveRectangle &&
+				(value & 0xc0) != PrimitiveTrapezoid))
+		{
+			report("TEXTURE_LUT_BLOCK_MODE", TextureLUTMode, r(TextureLUTMode),
+				"Direct-index block fills require native 8/16/32-bit pixels, "
+				"matching LUT pixels per entry and texture-copy application",
+				true);
+			return false;
+		}
+		return true;
+	}
 	// Disabled texture reads leave the rasterizer's block mask unchanged
 	// (SLAU011A, sections 4.4.6 and 4.9.7). Direct-index LUT fills generate
 	// block colors without memory reads and still require validation.
@@ -2641,6 +2719,20 @@ void CPermedia2::next_fragment()
 		m_job.payload_left = 0;
 }
 
+uint32_t CPermedia2::block_color(int32_t x, int32_t y) const
+{
+	const unsigned bytes = render_bytes();
+	if (bytes == 3)
+		return r(FBBlockColor); // Preserve the existing 24-bit scalar path.
+	const int64_t sign = (r(FBWriteConfig) & 0x10000) ? -1 : 1;
+	const int64_t pixel = int64_t(r(FBWindowBase)) + r(FBPixelOffset) + x +
+		int64_t(y) * pitch_from_products(r(FBWriteConfig)) * sign;
+	const unsigned shift = (uint32_t(pixel * bytes) & 7) * 8;
+	const uint64_t pattern = uint64_t(r(FBBlockColorL)) |
+		(uint64_t(r(FBBlockColorU)) << 32);
+	return uint32_t(pattern >> shift);
+}
+
 bool CPermedia2::draw_block()
 {
 	const bool rectangle = m_job.primitive == PrimitiveRectangle;
@@ -2706,7 +2798,7 @@ bool CPermedia2::draw_block()
 		forward ? end - x : x - end + 1));
 	for (uint32_t i = 0; i < count; ++i)
 	{
-		emit_pixel(int32_t(x), int32_t(y), r(FBBlockColor), true);
+		emit_pixel(int32_t(x), int32_t(y), block_color(int32_t(x), int32_t(y)), true);
 		if (m_halted)
 			return true;
 		++m_job.col;
@@ -2727,9 +2819,25 @@ bool CPermedia2::draw_step()
 	}
 	const bool mask_stream = (m_job.command & SyncMask) != 0,
 			   host_stream = (m_job.command & SyncHost) != 0;
+	const bool texture_lut =
+		(m_job.command & (FastFill | Texture)) == (FastFill | Texture) &&
+		(r(TextureLUTMode) & 3) == 3;
 	const bool texture_block =
 		(m_job.command & (FastFill | Texture)) == (FastFill | Texture) &&
-		(r(TextureReadMode) & 1);
+		!texture_lut && (r(TextureReadMode) & 1);
+	if (texture_lut && m_job.col == 0)
+	{
+		const int64_t y = m_job.primitive == PrimitiveRectangle
+			? int64_t(m_job.origin_y) + ((m_job.command & PositiveY)
+				? m_job.row : m_job.rows - 1 - m_job.row)
+			: fixed_integer(m_job.y);
+		const uint32_t mode = r(TextureLUTMode);
+		const unsigned index = (((uint32_t(y) & 7) * (8u >> ((mode >> 10) & 3))) +
+			((mode >> 2) & 255)) & 255;
+		// Two raw LUT words replace the retained 64-bit block color (PRM4.9.6).
+		r(FBBlockColorL) = m_texel_lut[index];
+		r(FBBlockColorU) = m_texel_lut[(index + 1) & 255];
+	}
 	if ((m_job.command & FastFill) && !mask_stream && !host_stream &&
 		!texture_block &&
 		!((m_job.command & 1) && (r(AreaStippleMode) & 1)) &&
@@ -2844,7 +2952,7 @@ bool CPermedia2::draw_step()
 	bool raw = !dda, draw = true;
 	if (m_job.command & FastFill)
 	{
-		color = r(FBBlockColor);
+		color = block_color(x, y);
 		raw = true;
 	}
 	if (texture_block)
@@ -3453,6 +3561,8 @@ void CPermedia2::reset(bool clear_vram)
 {
 	// PCI configuration belongs to the board wrapper and is NOT software-reset here.
 	m_regs.fill(0);
+	m_texel_lut.fill(0);
+	m_texel_lut_read = 0;
 	m_dac.fill(0);
 	m_palette.fill(0);
 	m_cursor.fill(0);
@@ -3561,7 +3671,7 @@ static void require(bool p)
 void CPermedia2::SaveState(std::ostream& s) const
 {
 	s.write("PM2SNP01", 8);
-	put32(s, 5);
+	put32(s, 6);
 	put32(s, VramSize);
 	put32(s, m_options.chip_config);
 	put32(s, m_options.mem_control);
@@ -3644,6 +3754,9 @@ void CPermedia2::SaveState(std::ostream& s) const
 	put32(s, m_job.knee_rows);
 	put64(s, uint64_t(m_job.knee_xsub));
 	put64(s, uint64_t(m_job.knee_dxsub));
+	for (const uint32_t value : m_texel_lut)
+		put32(s, value);
+	put32(s, m_texel_lut_read);
 	if (!s)
 		throw std::runtime_error("PM2 snapshot write failed");
 }
@@ -3653,7 +3766,7 @@ void CPermedia2::restore_state(std::istream& s)
 	char magic[8]{};
 	s.read(magic, 8);
 	require(std::string(magic, 8) == "PM2SNP01");
-	require(get32(s) == 5);
+	require(get32(s) == 6);
 	require(get32(s) == VramSize);
 	m_options.chip_config = get32(s);
 	m_options.mem_control = get32(s);
@@ -3796,6 +3909,12 @@ void CPermedia2::restore_state(std::istream& s)
 	m_job.knee_rows = get32(s);
 	m_job.knee_xsub = signed64(get64(s));
 	m_job.knee_dxsub = signed64(get64(s));
+	for (uint32_t& value : m_texel_lut)
+		value = get32(s);
+	m_texel_lut_read = get32(s);
+	require(m_texel_lut_read <= 255 && r(TexelLUTIndex) <= 255);
+	for (unsigned i = 0; i < 16; ++i)
+		require(r(TexelLUT0 + i * 8) == m_texel_lut[i]);
 	require(m_job.knee_rows <= 4096);
 	require(m_job.knee_xsub >= -134217728 && m_job.knee_xsub < 134217728);
 	require(m_job.knee_dxsub >= -134217728 && m_job.knee_dxsub <= 134217726);
@@ -3886,6 +4005,8 @@ void CPermedia2::RestoreState(std::istream& s)
 	using std::swap;
 	swap(m_options, candidate.m_options);
 	swap(m_regs, candidate.m_regs);
+	swap(m_texel_lut, candidate.m_texel_lut);
+	swap(m_texel_lut_read, candidate.m_texel_lut_read);
 	swap(m_vram, candidate.m_vram);
 	swap(m_dac, candidate.m_dac);
 	swap(m_palette, candidate.m_palette);
