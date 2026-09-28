@@ -711,11 +711,10 @@ const bx_gui_c* bx_sdl_gui_c::find_display_for_output(const std::string& device_
 
 std::string sdl_application::display_title(const bx_sdl_gui_c* display) const
 {
-	// Bindings are established before display initialization on the SDL thread.
-	for (const auto& output : display_outputs)
-		if (output.second == display)
-			return "ES40 Emulator - " + output.first.first + " / output " +
-				std::to_string(output.first.second);
+	// Number windows in creation order; hardware output IDs can repeat per card.
+	for (std::size_t i = 0; i < displays.size(); ++i)
+		if (displays[i].get() == display)
+			return "ES40 - Output " + std::to_string(i);
 	return "ES40 Emulator";
 }
 
