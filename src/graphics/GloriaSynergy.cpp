@@ -53,6 +53,7 @@
 #include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 class CGloriaDisplayLock
@@ -763,12 +764,23 @@ void CGloriaSynergy::recompute_params()
 
 CPermedia2::Frame CGloriaSynergy::render_frame()
 {
+	std::lock_guard<std::mutex> frame_guard(m_frame_mutex);
+	std::unique_lock<std::recursive_mutex> bus_guard(
+		cSystem->get_device_bus_mutex());
+	if (m_pause.load())
+		return {};
 	// ChipConfig can disable SVGA entirely; otherwise SR5 bit 3 selects the
 	// VGA or graphics-processor display (SLAU011A, section 5.2.3). Native timing
 	// and blanking follow VideoControl in scanout(), not SR5's VGA VTG control.
 	if (!(m_permedia2.peek(CPermedia2::ChipConfig) & 2) ||
 		!(vga.sequencer.data[5] & 8))
-		return m_permedia2.scanout();
+	{
+		m_permedia2.capture_scanout(m_scanout);
+		bus_guard.unlock();
+		return CPermedia2::scanout(m_scanout);
+	}
+	// CVGA renders live CRTC state and updates text-cursor/palette state.
+	// Keep that legacy path serialized until it has its own captured renderer.
 	if (!vga.crtc.sync_en || (vga.sequencer.data[0] & 3) != 3 ||
 		(vga.sequencer.data[1] & 0x20) || !(vga.attribute.index & 0x20) ||
 		!vga.crtc.maximum_scan_line)
@@ -797,13 +809,7 @@ CPermedia2::Frame CGloriaSynergy::render_frame()
 
 void CGloriaSynergy::update()
 {
-	CPermedia2::Frame frame;
-	{
-		std::lock_guard<std::recursive_mutex> guard(
-			cSystem->get_device_bus_mutex());
-		if (!m_pause.load())
-			frame = render_frame();
-	}
+	const CPermedia2::Frame frame = render_frame();
 	// Never hold the device-bus mutex while acquiring a GUI mutex.
 	{
 		CGloriaDisplayLock guard(m_output.display());
@@ -1531,19 +1537,40 @@ void CGloriaSynergy::config_write_custom(
 
 void CGloriaSynergy::check_state()
 {
-	std::lock_guard<std::recursive_mutex> guard(
-		cSystem->get_device_bus_mutex());
 	if (m_worker_failed.load())
 		FAILURE(Thread, "GLoria display thread failed");
+	// Retain the periodic work allowance, but release the shared bus between
+	// bounded batches so audio DMA and other devices can make progress.
+	for (size_t remaining = 1000000; remaining;)
+	{
+		const size_t budget = std::min(remaining, size_t(4096));
+		size_t used;
+		{
+			std::lock_guard<std::recursive_mutex> guard(
+				cSystem->get_device_bus_mutex());
+			if (m_trace)
+				m_trace << "STEP " << std::hex << budget << std::dec << '\n';
+			used = m_permedia2.service(budget);
+		}
+		if (used < budget)
+			break;
+		remaining -= budget;
+		if (remaining)
+			std::this_thread::yield();
+	}
 	// ES40 currently calls this roughly every 100ms. This compatibility pump
 	// advances ONE virtual frame per call, not a real 60 Hz monitor model.
-	if (m_trace)
-		m_trace << "STEP f4240\n";
-	m_permedia2.service(1000000);
-	const uint32_t lines = (m_permedia2.peek(CPermedia2::VTotal) & 0x7ff) + 1;
-	m_permedia2.advance_scanlines(lines);
-	if (m_trace)
-		m_trace << "LINES " << std::hex << lines << std::dec << '\n';
+	{
+		std::lock_guard<std::recursive_mutex> guard(
+			cSystem->get_device_bus_mutex());
+		const uint32_t lines = (m_permedia2.peek(CPermedia2::VTotal) & 0x7ff) + 1;
+		m_permedia2.advance_scanlines(lines);
+		if (m_trace)
+		{
+			m_trace << "LINES " << std::hex << lines << std::dec << '\n';
+			m_trace.flush();
+		}
+	}
 	try
 	{
 		publish_frame();
@@ -1555,8 +1582,6 @@ void CGloriaSynergy::check_state()
 			devid_string,
 			e.what());
 	}
-	if (m_trace)
-		m_trace.flush();
 }
 
 void CGloriaSynergy::prepare_snapshot()
@@ -1843,9 +1868,12 @@ void CGloriaSynergy::io_write_b(u32 port, u8 data)
 
 void CGloriaSynergy::tick()
 {
+	// The caller may already hold the system bus for a PCI transaction. A
+	// larger configured allowance must not make that transaction monopolize it.
+	const u32 budget = std::min(m_service_budget, u32(4096));
 	if (m_trace)
-		m_trace << "STEP " << std::hex << m_service_budget << std::dec << '\n';
-	m_permedia2.service(m_service_budget);
+		m_trace << "STEP " << std::hex << budget << std::dec << '\n';
+	m_permedia2.service(budget);
 	if (++m_access_count % m_scanline_access_divisor == 0)
 	{
 		m_permedia2.advance_scanlines(1);

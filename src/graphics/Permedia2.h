@@ -61,6 +61,28 @@ public:
     std::vector<uint32_t> argb;
   };
 
+  // Allocate outside the embedding lock, then reuse for native display capture.
+  // Consumers receive independent, read-only state for off-lock conversion.
+  struct Scanout
+  {
+    Scanout();
+    Scanout(const Scanout&) = default;
+    Scanout& operator=(const Scanout&) = default;
+    uint32_t width() const { return m_width; }
+    uint32_t height() const { return m_height; }
+
+  private:
+    friend class CPermedia2;
+    uint32_t m_width = 0, m_height = 0, m_stride = 0, m_bytes = 0;
+    uint32_t m_pixel_mask = 0;
+    uint16_t m_cursor_x = 0, m_cursor_y = 0;
+    std::array<uint8_t, 256> m_dac{};
+    std::array<uint8_t, 768> m_palette{};
+    std::array<uint8_t, 12> m_cursor_colors{};
+    std::array<uint8_t, 1024> m_cursor{};
+    std::vector<uint8_t> m_pixels;
+  };
+
   // Numeric hardware interface: TI TVP4020 PRM SLAU011A and HRM Issue 6.
   static constexpr uint32_t
     ResetStatus = 0x0000,
@@ -205,6 +227,8 @@ public:
   }
 
   Frame scanout(bool include_cursor = true) const;
+  void capture_scanout(Scanout&) const;
+  static Frame scanout(const Scanout&, bool include_cursor = true);
   static void write_ppm(std::ostream&, const Frame&);
   // Versioned little-endian snapshot. Loading validates into a temporary object.
   void SaveState(std::ostream&) const;
@@ -317,7 +341,10 @@ private:
   bool clipped(int64_t x, int64_t y, bool packed_limits = true) const;
   uint32_t format_color(uint32_t value, int32_t x, int32_t y) const;
   uint32_t scanout_color(uint32_t raw, uint8_t format) const;
-  void composite_cursor(Frame&) const;
+  static uint32_t scanout_color(uint32_t raw, uint8_t format,
+    const std::array<uint8_t, 256>& dac,
+    const std::array<uint8_t, 768>& palette, uint32_t pixel_mask);
+  static void composite_cursor(Frame&, const Scanout&);
   void restore_state(std::istream&);
   uint32_t register_read(uint32_t address);
   bool register_write(uint32_t address, uint32_t value);

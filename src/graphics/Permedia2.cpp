@@ -3427,11 +3427,18 @@ bool CPermedia2::emit_pixel(int32_t x, int32_t y, uint32_t value, bool raw)
 
 uint32_t CPermedia2::scanout_color(uint32_t raw, uint8_t format) const
 {
+	return scanout_color(raw, format, m_dac, m_palette, r(PixelMask));
+}
+
+uint32_t CPermedia2::scanout_color(uint32_t raw, uint8_t format,
+	const std::array<uint8_t, 256>& dac,
+	const std::array<uint8_t, 768>& palette, uint32_t pixel_mask)
+{
 	uint32_t red = 0, green = 0, blue = 0;
-	const bool rgb = (m_dac[DACColorMode] & 0x20) != 0;
+	const bool rgb = (dac[DACColorMode] & 0x20) != 0;
 	auto pal = [&](uint32_t index, unsigned lane) -> uint32_t {
-		uint32_t v = m_palette[(index & 255) * 3 + lane];
-		if (!(m_dac[DACMiscControl] & 2))
+		uint32_t v = palette[(index & 255) * 3 + lane];
+		if (!(dac[DACMiscControl] & 2))
 		{
 			v &= 63;
 			v = (v << 2) | (v >> 4);
@@ -3440,7 +3447,7 @@ uint32_t CPermedia2::scanout_color(uint32_t raw, uint8_t format) const
 	};
 	if (format == 0)
 	{
-		const uint32_t index = raw & r(PixelMask) & 255;
+		const uint32_t index = raw & pixel_mask & 255;
 		return 0xff000000u | (pal(index, 0) << 16) | (pal(index, 1) << 8) |
 			pal(index, 2);
 	}
@@ -3479,7 +3486,7 @@ uint32_t CPermedia2::scanout_color(uint32_t raw, uint8_t format) const
 	}
 	// RDColorMode bit 7 selects TrueColor palette bypass. With it clear, packed
 	// components address the LUT. CI8 always uses the indexed path above.
-	if (!(m_dac[DACColorMode] & 0x80))
+	if (!(dac[DACColorMode] & 0x80))
 	{
 		red = pal(red, 0);
 		green = pal(green, 1);
@@ -3488,11 +3495,15 @@ uint32_t CPermedia2::scanout_color(uint32_t raw, uint8_t format) const
 	return 0xff000000u | (red << 16) | (green << 8) | blue;
 }
 
-CPermedia2::Frame CPermedia2::scanout(bool include_cursor) const
+CPermedia2::Scanout::Scanout() : m_pixels(VramSize)
 {
-	Frame f;
+}
+
+void CPermedia2::capture_scanout(Scanout& snapshot) const
+{
+	snapshot.m_width = snapshot.m_height = 0;
 	if (!(r(VideoControl) & 1))
-		return f;
+		return;
 	const uint8_t format = m_dac[DACColorMode] & 15;
 	unsigned bytes = 0;
 	switch (format)
@@ -3513,38 +3524,88 @@ CPermedia2::Frame CPermedia2::scanout(bool include_cursor) const
 		bytes = 3;
 		break;
 	default:
-		return f;
+		return;
 	}
 	const uint32_t total = (r(HTotal) & 0x7ff) + 1, blank = r(HbEnd) & 0x7ff;
 	const uint32_t vtotal = (r(VTotal) & 0x7ff) + 1, vblank = r(VbEnd) & 0x7ff;
 	if (total <= blank || vtotal <= vblank)
-		return f;
+		return;
 	const uint32_t wordbytes = (r(VideoControl) & 0x10000) ? 8u : 4u;
-	f.width = (total - blank) * wordbytes / bytes;
-	f.height = vtotal - vblank;
+	const uint32_t width = (total - blank) * wordbytes / bytes;
+	const uint32_t height = vtotal - vblank;
 	const uint32_t stride = (r(ScreenStride) & 0x1fff) * 8;
 	const uint64_t base = uint64_t(m_active_screen_base) * 8;
-	if (!stride || !f.width || f.width > 4096 || f.height > 2048 ||
-		base + uint64_t(f.height - 1) * stride + uint64_t(f.width) * bytes >
+	if (!stride || !width || width > 4096 || height > 2048 ||
+		base + uint64_t(height - 1) * stride + uint64_t(width) * bytes >
 			VramSize)
-		return {};
+		return;
+	snapshot.m_width = width;
+	snapshot.m_height = height;
+	snapshot.m_bytes = bytes;
+	snapshot.m_dac = m_dac;
+	snapshot.m_palette = m_palette;
+	snapshot.m_pixel_mask = r(PixelMask);
+	snapshot.m_cursor = m_cursor;
+	snapshot.m_cursor_colors = m_cursor_colors;
+	snapshot.m_cursor_x = uint16_t(((r(CursorXHigh) & 255) << 8) |
+		(r(CursorXLow) & 255));
+	snapshot.m_cursor_y = uint16_t(((r(CursorYHigh) & 255) << 8) |
+		(r(CursorYLow) & 255));
+	const uint32_t row_bytes = width * bytes;
+	snapshot.m_stride = std::min(stride, row_bytes);
+	if (stride <= row_bytes)
+	{
+		// Adjacent or overlapping rows contain no invisible padding. Copy their
+		// union once, retaining overlap so even these modes fit the 8 MiB buffer.
+		std::memcpy(snapshot.m_pixels.data(), m_vram.data() + size_t(base),
+			size_t(height - 1) * stride + row_bytes);
+	}
+	else
+	{
+		// Pack only visible bytes; row padding and offscreen storage are not
+		// needed for conversion. The reusable destination never grows here.
+		for (uint32_t y = 0; y < height; ++y)
+			std::memcpy(snapshot.m_pixels.data() + size_t(y) * row_bytes,
+				m_vram.data() + size_t(base) + size_t(y) * stride, row_bytes);
+	}
+}
+
+CPermedia2::Frame CPermedia2::scanout(const Scanout& snapshot, bool include_cursor)
+{
+	Frame f;
+	f.width = snapshot.m_width;
+	f.height = snapshot.m_height;
+	if (!f.width || !f.height)
+		return f;
+	const unsigned bytes = snapshot.m_bytes;
+	const uint8_t format = snapshot.m_dac[DACColorMode] & 15;
 	f.argb.resize(size_t(f.width) * f.height);
 	for (uint32_t y = 0; y < f.height; ++y)
 		for (uint32_t x = 0; x < f.width; ++x)
-			f.argb[size_t(y) * f.width + x] = scanout_color(
-				pixel_read(
-					static_cast<int64_t>(
-						base + uint64_t(y) * stride + uint64_t(x) * bytes),
-					bytes),
-				format);
+		{
+			const uint8_t* pixel = snapshot.m_pixels.data() +
+				size_t(y) * snapshot.m_stride + size_t(x) * bytes;
+			uint32_t raw = 0;
+			for (unsigned i = 0; i < bytes; ++i)
+				raw |= uint32_t(pixel[i]) << (8 * i);
+			f.argb[size_t(y) * f.width + x] = scanout_color(raw, format,
+				snapshot.m_dac, snapshot.m_palette, snapshot.m_pixel_mask);
+		}
 	if (include_cursor)
-		composite_cursor(f);
+		composite_cursor(f, snapshot);
 	return f;
 }
 
-void CPermedia2::composite_cursor(Frame& frame) const
+CPermedia2::Frame CPermedia2::scanout(bool include_cursor) const
 {
-	const uint8_t control = m_dac[DACCursorControl];
+	Scanout snapshot;
+	capture_scanout(snapshot);
+	return scanout(snapshot, include_cursor);
+}
+
+void CPermedia2::composite_cursor(Frame& frame, const Scanout& snapshot)
+{
+	const uint8_t control = snapshot.m_dac[DACCursorControl];
 	const unsigned mode = control & 3;
 	if (mode == 0)
 		return;
@@ -3557,10 +3618,8 @@ void CPermedia2::composite_cursor(Frame& frame) const
 	const unsigned pattern_base =
 		large ? 0 : (selected & 1) * 4 + (selected >> 1) * 256;
 	// Position registers specify the selected cursor's bottom-right corner.
-	const int origin_x =
-		int(((r(CursorXHigh) & 255) << 8) | (r(CursorXLow) & 255)) - int(size);
-	const int origin_y =
-		int(((r(CursorYHigh) & 255) << 8) | (r(CursorYLow) & 255)) - int(size);
+	const int origin_x = int(snapshot.m_cursor_x) - int(size);
+	const int origin_y = int(snapshot.m_cursor_y) - int(size);
 
 	// Table 5.4 indexes the planes as (plane1 << 1) | plane0. Zero means
 	// transparent and -1 means complement; colors occupy slots1-3 (slot0 unused).
@@ -3571,9 +3630,9 @@ void CPermedia2::composite_cursor(Frame& frame) const
 	{
 		// Cursor colors are always 24-bit RGB, independent of main-palette width,
 		// PixelMask, and the framebuffer's pixel format or component ordering.
-		argb[i] = 0xff000000u | (uint32_t(m_cursor_colors[i * 3]) << 16) |
-			(uint32_t(m_cursor_colors[i * 3 + 1]) << 8) |
-			m_cursor_colors[i * 3 + 2];
+		argb[i] = 0xff000000u | (uint32_t(snapshot.m_cursor_colors[i * 3]) << 16) |
+			(uint32_t(snapshot.m_cursor_colors[i * 3 + 1]) << 8) |
+			snapshot.m_cursor_colors[i * 3 + 2];
 	}
 	for (unsigned cy = 0; cy < size; ++cy)
 	{
@@ -3587,8 +3646,8 @@ void CPermedia2::composite_cursor(Frame& frame) const
 				continue;
 			const unsigned address = pattern_base + cy * 8 + cx / 8;
 			const unsigned shift = 7 - (cx & 7);
-			const unsigned planes = ((m_cursor[address] >> shift) & 1) |
-				(((m_cursor[address + 0x200] >> shift) & 1) << 1);
+			const unsigned planes = ((snapshot.m_cursor[address] >> shift) & 1) |
+				(((snapshot.m_cursor[address + 0x200] >> shift) & 1) << 1);
 			const int color = colors[mode - 1][planes];
 			uint32_t& pixel = frame.argb[size_t(y) * frame.width + unsigned(x)];
 			if (color > 0)

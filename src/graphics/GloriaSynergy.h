@@ -34,6 +34,7 @@
 #include <array>
 #include <atomic>
 #include <fstream>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -144,6 +145,10 @@ private:
   address_map m_gc_map{256};
   address_map m_atc_map{64};
   CPermedia2 m_permedia2;
+  // Host scanout storage is shared only by the display and frame-file paths.
+  // Acquire this mutex before the device bus; native conversion releases the bus.
+  std::mutex m_frame_mutex;
+  CPermedia2::Scanout m_scanout;
   PCIConfig m_profile;
   std::vector<u8> m_rom;
   std::ofstream m_trace;

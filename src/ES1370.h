@@ -5,6 +5,9 @@
 #include "PCIDevice.h"
 
 #include <SDL3/SDL.h>
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
 /* Start blatant GPL violation */
 
 #define ES1370_REG_CONTROL        0x00
@@ -113,12 +116,13 @@ static const unsigned dac1_samplerate[] = { 5512, 11025, 22050, 44100 };
 #define ADC_CHANNEL 2
 
 
-class CES1370 : public CPCIDevice
+class CES1370 : public CPCIDevice, public CRunnable
 {
 public:
   virtual int   SaveState(FILE* f) override;
   virtual int   RestoreState(FILE* f) override;
-  virtual void  check_state() {}
+  virtual void  check_state() override;
+  void run() override;
   virtual void  init();
   virtual void  start_threads() override;
   virtual void  stop_threads() override;
@@ -154,6 +158,17 @@ private:
 
   // Protected by the system bus mutex
   bool audio_running = false;
+
+  CThread* m_audio_thread = nullptr;
+  std::atomic<bool> m_audio_stop{true}, m_audio_failed{false}, m_audio_wake{false};
+  std::atomic<bool> m_audio_enabled[NB_CHANNELS]{};
+  std::atomic<int> m_audio_target[2]{};
+  std::mutex m_audio_wait_mutex;
+  std::condition_variable m_audio_wait;
+
+  void reset_audio_request(size_t channel, bool enabled, bool clear);
+  void request_audio(size_t channel, int total_amount);
+  bool service_audio_channel(size_t channel);
 
   struct ES1370SavedState {
     uint32_t ctl, status, mempage, codec, sctl;

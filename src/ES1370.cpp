@@ -151,10 +151,53 @@ void CES1370::unbind_voices()
     SDL_UnbindAudioStream(state.dac_voice[1]);
 }
 
+// All callers acquire the bus before a stream lock. SDL callbacks acquire
+// neither the bus nor the worker's wait mutex.
+class CES1370StreamLock
+{
+public:
+    explicit CES1370StreamLock(SDL_AudioStream* stream) : m_stream(stream)
+    {
+        if (!SDL_LockAudioStream(m_stream))
+            FAILURE_1(SDL, "Unable to lock audio stream: %s", SDL_GetError());
+    }
+    ~CES1370StreamLock() { SDL_UnlockAudioStream(m_stream); }
+private:
+    SDL_AudioStream* m_stream;
+};
+
+void CES1370::reset_audio_request(size_t channel, bool enabled, bool clear)
+{
+    SDL_AudioStream* voice = channel == ADC_CHANNEL
+        ? state.adc_voice : state.dac_voice[channel];
+    CES1370StreamLock stream_lock(voice);
+    m_audio_enabled[channel].store(false);
+    if (channel != ADC_CHANNEL)
+        m_audio_target[channel].store(0);
+    if (clear && !SDL_ClearAudioStream(voice))
+        FAILURE_1(SDL, "Unable to clear audio stream: %s", SDL_GetError());
+    m_audio_enabled[channel].store(enabled);
+}
+
 void CES1370::stop_threads()
 {
+    m_audio_stop.store(true);
+    m_audio_wait.notify_one();
+    {
+        std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
+        audio_running = false;
+        for (size_t i = 0; i < NB_CHANNELS; ++i)
+            reset_audio_request(i, false, false);
+    }
+    // The worker never waits for the bus, including when our caller already
+    // owns it. Joining here therefore cannot leave it blocked behind us.
+    if (m_audio_thread)
+    {
+        m_audio_thread->join();
+        delete m_audio_thread;
+        m_audio_thread = nullptr;
+    }
     std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
-    audio_running = false;
     unbind_voices();
 }
 
@@ -164,20 +207,106 @@ void CES1370::start_threads()
     if (audio_running)
         return;
 
-    if (!SDL_ClearAudioStream(state.adc_voice) ||
-        !SDL_ClearAudioStream(state.dac_voice[0]) ||
-        !SDL_ClearAudioStream(state.dac_voice[1]))
-        FAILURE_1(SDL, "Unable to clear resumed audio streams: %s", SDL_GetError());
+    for (size_t i = 0; i < NB_CHANNELS; ++i)
+        reset_audio_request(i, false, true);
+    m_audio_failed.store(false);
+    m_audio_wake.store(false);
     try
     {
         es1370_update_voices(&state, state.ctl, state.sctl, true);
+        m_audio_stop.store(false);
+        audio_running = true;
+        m_audio_thread = new CThread("es1370");
+        m_audio_thread->start(*this);
     }
     catch (...)
     {
+        audio_running = false;
+        m_audio_stop.store(true);
+        delete m_audio_thread;
+        m_audio_thread = nullptr;
+        for (size_t i = 0; i < NB_CHANNELS; ++i)
+            reset_audio_request(i, false, false);
         unbind_voices();
         throw;
     }
-    audio_running = true;
+}
+
+void CES1370::check_state()
+{
+    if (m_audio_failed.load())
+        FAILURE(Thread, "ES1370 audio refill thread failed");
+}
+
+bool CES1370::service_audio_channel(size_t channel)
+{
+    std::unique_lock<std::recursive_mutex> bus_lock(
+        cSystem->get_device_bus_mutex(), std::try_to_lock);
+    if (!bus_lock.owns_lock() || !audio_running || m_audio_stop.load())
+        return false;
+    const chan_bits& bits = es1370_chan_bits[channel];
+    if (!(state.ctl & bits.ctl_en) || (state.sctl & bits.sctl_pause))
+        return false;
+
+    SDL_AudioStream* voice = channel == ADC_CHANNEL
+        ? state.adc_voice : state.dac_voice[channel];
+    CES1370StreamLock stream_lock(voice);
+    const int queued = channel == ADC_CHANNEL
+        ? SDL_GetAudioStreamAvailable(voice) : SDL_GetAudioStreamQueued(voice);
+    if (queued < 0)
+        FAILURE_1(SDL, "Unable to query audio stream: %s", SDL_GetError());
+    const int requested = channel == ADC_CHANNEL
+        ? queued : m_audio_target[channel].load() - queued;
+    if (requested <= 0)
+        return false;
+    const int amount = (std::min)(requested, 4096);
+    es1370_run_channel(&state, channel, amount);
+    if (requested <= amount)
+        return false;
+    const int after = channel == ADC_CHANNEL
+        ? SDL_GetAudioStreamAvailable(voice) : SDL_GetAudioStreamQueued(voice);
+    if (after < 0)
+        FAILURE_1(SDL, "Unable to query audio stream: %s", SDL_GetError());
+    return after != queued;
+}
+
+void CES1370::run()
+{
+    try
+    {
+        while (!m_audio_stop.load())
+        {
+            bool more = false;
+            for (size_t i = 0; i < NB_CHANNELS; ++i)
+                more = service_audio_channel(i) || more;
+            if (more)
+            {
+                std::this_thread::yield();
+                continue;
+            }
+            std::unique_lock<std::mutex> wait_lock(m_audio_wait_mutex);
+            m_audio_wait.wait_for(wait_lock, std::chrono::milliseconds(2), [this] {
+                return m_audio_stop.load() || m_audio_wake.exchange(false);
+            });
+        }
+    }
+    catch (const CException& e)
+    {
+        printf("%s: Exception in audio refill thread: %s.\n",
+            devid_string, e.displayText().c_str());
+        m_audio_failed.store(true);
+    }
+    catch (const std::exception& e)
+    {
+        printf("%s: Exception in audio refill thread: %s.\n",
+            devid_string, e.what());
+        m_audio_failed.store(true);
+    }
+    catch (...)
+    {
+        printf("%s: Unknown exception in audio refill thread.\n", devid_string);
+        m_audio_failed.store(true);
+    }
 }
 
 static const u32 es1370_magic1 = 0x45533137;
@@ -347,6 +476,11 @@ void CES1370::es1370_update_voices(ES1370State* s, uint32_t ctl, uint32_t sctl,
 		old_fmt = (s->sctl & b->sctl_fmt) >> b->sctl_sh_fmt;
 
 		b->calc_freq(s, ctl, &old_freq, &new_freq);
+        const bool format_changed = force || old_fmt != new_fmt || old_freq != new_freq;
+        const bool changed = format_changed || ((ctl ^ s->ctl) & b->ctl_en) ||
+            ((sctl ^ s->sctl) & b->sctl_pause);
+        if (changed && (audio_running || force))
+            reset_audio_request(i, false, format_changed);
 		if (force || (old_fmt != new_fmt) || (old_freq != new_freq)) {
 			d->shift = (new_fmt & 1) + (new_fmt >> 1);
 			if (new_freq && (audio_running || force)) {
@@ -385,6 +519,9 @@ void CES1370::es1370_update_voices(ES1370State* s, uint32_t ctl, uint32_t sctl,
 				}
 			}
 		}
+        if (changed && (audio_running || force))
+            reset_audio_request(i,
+                (ctl & b->ctl_en) && !(sctl & b->sctl_pause), format_changed);
 	}
 
     s->ctl = ctl;
@@ -693,39 +830,33 @@ void CES1370::es1370_run_channel(ES1370State* s, size_t chan, int free_or_avail)
     }
 }
 
-// SDL holds the stream lock during these callbacks, so we should never wait for the 
-// bus gate here. 
-// Deferring a callback leaves DMA state and queued capture data intact.
+// SDL holds its stream lock here. Only publish the current request; device
+// DMA, counters and IRQs belong to the refill worker, outside the callback.
+void CES1370::request_audio(size_t channel, int total_amount)
+{
+    if (!m_audio_enabled[channel].load())
+        return;
+    if (channel != ADC_CHANNEL)
+        m_audio_target[channel].store((std::max)(0, (std::min)(total_amount, 65536)));
+    m_audio_wake.store(true);
+    m_audio_wait.notify_one();
+}
+
 void CES1370::es1370_dac_callback_dac1(void* userdata, SDL_AudioStream* stream, int additional_amount, int total_amount)
 {
     CES1370* dev = (CES1370*)userdata;
-    std::unique_lock<std::recursive_mutex> bus_lock(
-        dev->cSystem->get_device_bus_mutex(), std::try_to_lock);
-    if (!bus_lock.owns_lock() || !dev->audio_running)
-        return;
-    ES1370State* s = &dev->state;
-    dev->es1370_run_channel(s, 0, additional_amount);
+    dev->request_audio(DAC1_CHANNEL, total_amount);
 }
 
 void CES1370::es1370_dac_callback_dac2(void* userdata, SDL_AudioStream* stream, int additional_amount, int total_amount)
 {
     CES1370* dev = (CES1370*)userdata;
-    std::unique_lock<std::recursive_mutex> bus_lock(
-        dev->cSystem->get_device_bus_mutex(), std::try_to_lock);
-    if (!bus_lock.owns_lock() || !dev->audio_running)
-        return;
-    ES1370State* s = &dev->state;
-    dev->es1370_run_channel(s, 1, additional_amount);
+    dev->request_audio(DAC2_CHANNEL, total_amount);
 }
 
 void CES1370::es1370_dac_callback_adc(void* userdata, SDL_AudioStream* stream, int additional_amount, int total_amount)
 {
     CES1370* dev = (CES1370*)userdata;
-    std::unique_lock<std::recursive_mutex> bus_lock(
-        dev->cSystem->get_device_bus_mutex(), std::try_to_lock);
-    if (!bus_lock.owns_lock() || !dev->audio_running)
-        return;
-    ES1370State* s = &dev->state;
-    dev->es1370_run_channel(s, 2, additional_amount);
+    dev->request_audio(ADC_CHANNEL, total_amount);
 }
 #endif /* HAVE_SDL */
