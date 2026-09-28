@@ -401,6 +401,15 @@ bool CPermedia2::register_write(uint32_t address, uint32_t value)
 		return true;
 	}
 	case TexelLUTTransfer:
+		// Count is the number of LUT entries (SLAU011A, pp. 4-60/7-146).
+		// A zero count changes no table, index or address and reads no memory.
+		// Older PM2 documentation includes bit 16 in Count; keep it unsupported.
+		if ((value & 0x1ff00u) == 0)
+		{
+			r(TexelLUTTransfer) = value;
+			return true;
+		}
+		// Fall through for unsupported nonempty transfers.
 	case TexelLUTID:
 		report("TEXTURE_LUT_TRANSFER", address, value,
 			"Texture LUT memory transfers are not implemented", true);
