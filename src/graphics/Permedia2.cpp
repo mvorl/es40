@@ -1546,8 +1546,9 @@ void CPermedia2::draw_triangle(uint32_t value)
 	const double xdom = a.x + error_y * long_slope;
 	const double xsub = first_rows ? a.x + error_y * first_slope
 		: b.x + (correction ? sample_y - b.y : 0) * second_slope;
-	const double knee_x = b.x +
-		(correction ? double(middle_y) + 0.5 - b.y : 0) * second_slope;
+	const bool split = first_rows && second_rows;
+	const double knee_x = split ? b.x +
+		(correction ? double(middle_y) + 0.5 - b.y : 0) * second_slope : 0;
 	// Pixel-center coverage uses the nearly-half bias before integer DDA
 	// extraction. Sorting is private; the reusable vertex registers are intact.
 	const auto coordinate = [](double x, int64_t& result) {
@@ -1558,13 +1559,16 @@ void CPermedia2::draw_triangle(uint32_t value)
 		result = int64_t(fixed);
 		return true;
 	};
-	int64_t start_dom, start_sub, delta_dom, delta_sub, next_sub, next_delta;
+	int64_t start_dom, start_sub, delta_dom, delta_sub;
+	int64_t next_sub = 0, next_delta = 0;
+	// A half with no scanlines generates no continuation. Its unused edge
+	// slope can exceed the DDA range even when the rendered half fits.
 	if (!coordinate(xdom, start_dom) ||
 		!coordinate(xsub, start_sub) ||
 		!coordinate(long_slope, delta_dom) ||
 		!coordinate(first_rows ? first_slope : second_slope, delta_sub) ||
-		!coordinate(knee_x, next_sub) ||
-		!coordinate(second_slope, next_delta) ||
+		(split && (!coordinate(knee_x, next_sub) ||
+			!coordinate(second_slope, next_delta))) ||
 		start_y < -2048 || last_y > 2048 ||
 		first_rows > 65535 || second_rows > 65535)
 	{
@@ -1581,23 +1585,31 @@ void CPermedia2::draw_triangle(uint32_t value)
 	};
 	if (!edge_range(start_dom, delta_dom, first_rows + second_rows) ||
 		!edge_range(start_sub, delta_sub, first_rows ? first_rows : second_rows) ||
-		(first_rows && !edge_range(next_sub, next_delta, second_rows)))
+		(split && !edge_range(next_sub, next_delta, second_rows)))
 	{
 		report("DELTA_RANGE", DrawTriangle, value,
 			"Triangle edge exceeds the modeled rasterizer range", true);
 		return;
 	}
-	// X limits are rasterizer termination controls, not a general scissor.
-	// Admit only triangles wholly enclosed by them in this setup path.
+	// X limits accelerate rasterization but are not a true scissor (SLAU011A,
+	// section 4.4.13). When the user scissor is enclosed by the limits, retain
+	// the complete edge walk and interpolants; the scissor rejects fragments
+	// before local-buffer or framebuffer writes. Other limit-crossing cases
+	// still require the rasterizer's X termination behavior.
 	if (r(RasterizerMode) & 0x40000)
 	{
 		const double left = std::min(a.x, std::min(b.x, c.x));
 		const double right = std::max(a.x, std::max(b.x, c.x));
-		if (raster_y(left) < sx(r(XLimits), 12) ||
-			raster_y(right) > sx(r(XLimits) >> 16, 12))
+		const int32_t minimum = sx(r(XLimits), 12);
+		const int32_t maximum = sx(r(XLimits) >> 16, 12);
+		const bool scissored = (r(ScissorMode) & 1) &&
+			sx(r(ScissorMin), 16) >= minimum &&
+			sx(r(ScissorMax), 16) <= maximum;
+		if (!scissored && (raster_y(left) < minimum || raster_y(right) > maximum))
 		{
 			report("DELTA_LIMITS", XLimits, r(XLimits),
-				"Triangle setup must lie inside the active rasterizer X limits",
+				"Limit-crossing triangle setup requires a user scissor inside "
+				"the active rasterizer X limits",
 				true);
 			return;
 		}
@@ -1678,7 +1690,7 @@ void CPermedia2::draw_triangle(uint32_t value)
 	}
 	r(Render) = command;
 	start_render(command, true);
-	if (m_job.active && first_rows && second_rows)
+	if (m_job.active && split)
 	{
 		m_job.knee_rows = second_rows;
 		m_job.knee_xsub = next_sub + 0x7fff;
