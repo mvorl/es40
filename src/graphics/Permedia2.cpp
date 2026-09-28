@@ -1653,7 +1653,7 @@ bool CPermedia2::validate_render(uint32_t value)
 		return false;
 	if ((r(FBReadMode) | r(FBWriteConfig)) & 0x40000)
 	{
-		// Subpatch host downloads use native 32-bit pixels and a top-left
+		// Subpatch host downloads use native 16/32-bit pixels and a top-left
 		// origin. Other patched reads, copies and render operations still need
 		// their own addressing and pipeline rules.
 		const uint32_t layout = 0x6000000u | 0x40000u | 0x10000u | 0x1ffu;
@@ -1662,10 +1662,11 @@ bool CPermedia2::validate_render(uint32_t value)
 			!(value & SyncHost) || (value & (FastFill | Texture | SyncMask)) ||
 			(r(FBReadMode) & (ReadSource | ReadDestination | Packed)) ||
 			(r(ColorDDAMode) & 1) || !(r(FBWriteMode) & 1) ||
-			render_bytes() != 4 || pitch_from_products(r(FBWriteConfig)) == 0)
+			(render_bytes() != 2 && render_bytes() != 4) ||
+			pitch_from_products(r(FBWriteConfig)) == 0)
 		{
 			report("FB_PATCH_MODE", FBWriteConfig, r(FBWriteConfig),
-				"Only top-left 32-bit Subpatch host downloads are implemented",
+				"Only top-left 16/32-bit Subpatch host downloads are implemented",
 				true);
 			return false;
 		}
@@ -2377,7 +2378,10 @@ bool CPermedia2::draw_step()
 		raw = m_job.payload_tag != Color;
 		if (bytes < 4)
 		{
-			color &= (1u << (bytes * 8)) - 1;
+			// Standard Color keeps all four components until formatting. Native
+			// downloads consume one such word per fragment (PRM 4.11.5).
+			if (raw || !(r(DitherMode) & 1) || (r(FBReadMode) & Packed))
+				color &= (1u << (bytes * 8)) - 1;
 			m_job.payload >>= bytes * 8;
 		}
 		--m_job.payload_left;
