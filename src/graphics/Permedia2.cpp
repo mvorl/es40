@@ -2659,11 +2659,12 @@ bool CPermedia2::emit_pixel(int32_t x, int32_t y, uint32_t value, bool raw)
 	}
 	if (!(m_job.command & FastFill) && (r(LogicalOpMode) & 0x20))
 	{
-		// Model the raw word on framebuffer byte lanes, consistent with the
-		// required replication of 8-bit colors across all bytes and 16-bit
-		// colors across both halfwords (SLAU011A, p. 7-81).
-		// FastFill uses FBBlockColor instead.
-		value = r(FBWriteData) >> ((uint32_t(address) & 3) * 8);
+		// Native fragments use the low pixel of FBWriteData, as with data
+		// produced by the Logic Op unit. Packed fragments select a byte lane
+		// from its complete word. FastFill uses FBBlockColor instead.
+		value = r(FBWriteData);
+		if (r(FBReadMode) & Packed)
+			value >>= (uint32_t(address) & 3) * 8;
 	}
 	else if (!raw)
 		value = format_color(value);
