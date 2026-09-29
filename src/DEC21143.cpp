@@ -1,8 +1,12 @@
 /* ES40 emulator.
  * Copyright (C) 2007-2008 by the ES40 Emulator Project
  * Copyright (C) 2020 Martin Vorländer
+ * Copyright (C) 2023, 2025-2026 by gdwnldsKSC
+ * Copyright (C) 2026 by Aleksander Czajczyński
+ * Copyright (C) 2026 by Jan-Benedict Glaw
+ * Copyright (C) 2026 by Scott Klein
  *
- * WWW    : https://github.com/gdwnldsKSC/es40
+ * WWW    : https://github.com/ES40-Emu/es40
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License

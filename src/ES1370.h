@@ -1,7 +1,11 @@
-/*
- * QEMU ES1370 emulation
+/* ES40 emulator.
+ * Copyright (C) 2026 by Cacodemon345
+ * Copyright (C) 2026 by gdwnldsKSC
+ * Copyright (c) 2005 Vassili Karpov (malc) from QEMU
  *
- * Copyright (c) 2005 Vassili Karpov (malc)
+ * WWW    : https://github.com/ES40-Emu/es40
+ *
+ * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal

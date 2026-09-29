@@ -1,5 +1,5 @@
 /* ES40 emulator.
- * Copyright (C) 2026 by the ES40 Emulator Project
+ * Copyright (C) 2026 by gdwnldsKSC
  * Copyright (C) 2010-2012 Aaron Giles from MAME
  *
  * WWW    : https://github.com/ES40-Emu/es40
