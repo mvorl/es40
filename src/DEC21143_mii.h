@@ -1,11 +1,6 @@
-/* ES40 emulator.
- * Copyright (C) 2007-2008 by the ES40 Emulator Project
- *
- * WWW    : http://sourceforge.net/projects/es40
- * E-mail : camiel@camicom.com
- *
- * This file is based upon NetBsd.
- *
+/*	$NetBSD: mii.h,v 1.28 2025/02/28 09:07:12 andvar Exp $	*/
+
+/*
  * Copyright (c) 1997 Manuel Bouyer.  All rights reserved.
  *
  * Modification to match BSD/OS 3.0 MII interface by Jason R. Thorpe,
@@ -19,11 +14,6 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 3. All advertising materials mentioning features or use of this software
- *    must display the following acknowledgement:
- *	This product includes software developed by Manuel Bouyer.
- * 4. The name of the author may not be used to endorse or promote products
- *    derived from this software without specific prior written permission.
  *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
  * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
@@ -37,175 +27,284 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
- /**
-  * \file
-  * Contains definitions for the MII physical interface layer for the
-  * emulated DEC 21143 NIC device.
-  *
-  * $Id$
-  *
-  * X-1.2        Camiel Vanderhoeven                             02-JAN-2008
-  *      Comments.
-  *
-  * X-1.1        Camiel Vanderhoeven                             14-NOV-2007
-  *      Initial version for ES40 emulator.
-  *
-  * \author Camiel Vanderhoeven (camiel@camicom.com / http://www.camicom.com)
-  **/
 #ifndef _DEV_MII_MII_H_
-#define _DEV_MII_MII_H_
+#define	_DEV_MII_MII_H_
 
-  /*
-   * Registers common to all PHYs.
-   */
-#define MII_NPHY  32            /* max # of PHYs per MII */
+/*
+ * Registers common to all PHYs.
+ */
 
-   /*
-    * MII commands, used if a device must drive the MII lines
-    * manually.
-    */
-#define MII_COMMAND_START 0x01
-#define MII_COMMAND_READ  0x02
-#define MII_COMMAND_WRITE 0x01
-#define MII_COMMAND_ACK   0x02
+#define	MII_NPHY	32	/* max # of PHYs per MII */
+#define	MII_ADDRBITS	5	/* Register address bits (0x00..0x1f) */
+#define	MII_ADDRMASK	0x1f	/* Address mask */
 
-#define MII_BMCR          0x00  /* Basic mode control register (rw) */
-#define BMCR_RESET        0x8000      /* reset */
-#define BMCR_LOOP         0x4000      /* loopback */
-#define BMCR_SPEED0       0x2000      /* speed selection (LSB) */
-#define BMCR_AUTOEN       0x1000      /* autonegotiation enable */
-#define BMCR_PDOWN        0x0800      /* power down */
-#define BMCR_ISO          0x0400      /* isolate */
-#define BMCR_STARTNEG     0x0200      /* restart autonegotiation */
-#define BMCR_FDX          0x0100      /* Set duplex mode */
-#define BMCR_CTEST        0x0080      /* collision test */
-#define BMCR_SPEED1       0x0040      /* speed selection (MSB) */
+/*
+ * MII commands, used if a device must drive the MII lines
+ * manually.
+ */
+#define	MII_COMMAND_START	0x01
+#define	MII_COMMAND_READ	0x02
+#define	MII_COMMAND_WRITE	0x01
+#define	MII_COMMAND_ACK		0x02
 
-#define BMCR_S10          0x0000      /* 10 Mb/s */
-#define BMCR_S100         BMCR_SPEED0 /* 100 Mb/s */
-#define BMCR_S1000        BMCR_SPEED1 /* 1000 Mb/s */
+#define	MII_BMCR	0x00	/* Basic mode control register (rw) */
+#define	BMCR_RESET	0x8000	/* reset */
+#define	BMCR_LOOP	0x4000	/* loopback */
+#define	BMCR_SPEED0	0x2000	/* speed selection (LSB) */
+#define	BMCR_AUTOEN	0x1000	/* autonegotiation enable */
+#define	BMCR_PDOWN	0x0800	/* power down */
+#define	BMCR_ISO	0x0400	/* isolate */
+#define	BMCR_STARTNEG	0x0200	/* restart autonegotiation */
+#define	BMCR_FDX	0x0100	/* Set duplex mode */
+#define	BMCR_CTEST	0x0080	/* collision test */
+#define	BMCR_SPEED1	0x0040	/* speed selection (MSB) */
+#define	BMCR_UNIDIR	0x0020	/* Unidirectional enable */
 
-#define BMCR_SPEED(x)     ((x) & (BMCR_SPEED0 | BMCR_SPEED1))
-#define MII_BMSR          0x01        /* Basic mode status register (ro) */
-#define BMSR_100T4        0x8000      /* 100 base T4 capable */
-#define BMSR_100TXFDX     0x4000      /* 100 base Tx full duplex capable */
-#define BMSR_100TXHDX     0x2000      /* 100 base Tx half duplex capable */
-#define BMSR_10TFDX       0x1000      /* 10 base T full duplex capable */
-#define BMSR_10THDX       0x0800      /* 10 base T half duplex capable */
-#define BMSR_100T2FDX     0x0400      /* 100 base T2 full duplex capable */
-#define BMSR_100T2HDX     0x0200      /* 100 base T2 half duplex capable */
-#define BMSR_EXTSTAT      0x0100      /* Extended status in register 15 */
-#define BMSR_MFPS         0x0040      /* MII Frame Preamble Suppression */
-#define BMSR_ACOMP        0x0020      /* Autonegotiation complete */
-#define BMSR_RFAULT       0x0010      /* Link partner fault */
-#define BMSR_ANEG         0x0008      /* Autonegotiation capable */
-#define BMSR_LINK         0x0004      /* Link status */
-#define BMSR_JABBER       0x0002      /* Jabber detected */
-#define BMSR_EXTCAP       0x0001      /* Extended capability */
+#define	BMCR_S10	0x0000		/* 10 Mb/s */
+#define	BMCR_S100	BMCR_SPEED0	/* 100 Mb/s */
+#define	BMCR_S1000	BMCR_SPEED1	/* 1000 Mb/s */
 
-    /*
-     * Note that the EXTSTAT bit indicates that there is extended status
-     * info available in register 15, but 802.3 section 22.2.4.3 also
-     * states that that all 1000 Mb/s capable PHYs will set this bit to 1.
-     */
-#define BMSR_MEDIAMASK  (BMSR_100T4 | BMSR_100TXFDX | BMSR_100TXHDX | \
-                        BMSR_10TFDX | BMSR_10THDX | BMSR_100T2FDX |   \
-                        BMSR_100T2HDX)
+#define	BMCR_SPEED(x)	((x) & (BMCR_SPEED0 | BMCR_SPEED1))
 
-     /*
-      * Convert BMSR media capabilities to ANAR bits for autonegotiation.
-      * Note the shift chopps off the BMSR_ANEG bit.
-      */
-#define BMSR_MEDIA_TO_ANAR(x) (((x) & BMSR_MEDIAMASK) >> 6)
-#define MII_PHYIDR1           0x02      /* ID register 1 (ro) */
+#define	MII_BMSR	0x01	/* Basic mode status register (ro) */
+#define	BMSR_100T4	0x8000	/* 100 base T4 capable */
+#define	BMSR_100TXFDX	0x4000	/* 100 base Tx full duplex capable */
+#define	BMSR_100TXHDX	0x2000	/* 100 base Tx half duplex capable */
+#define	BMSR_10TFDX	0x1000	/* 10 base T full duplex capable */
+#define	BMSR_10THDX	0x0800	/* 10 base T half duplex capable */
+#define	BMSR_100T2FDX	0x0400	/* 100 base T2 full duplex capable */
+#define	BMSR_100T2HDX	0x0200	/* 100 base T2 half duplex capable */
+#define	BMSR_EXTSTAT	0x0100	/* Extended status in register 15 */
+#define	BMSR_UNIDIR	0x0080	/* Unidirectional ability */
+#define	BMSR_MFPS	0x0040	/* MII Frame Preamble Suppression */
+#define	BMSR_ACOMP	0x0020	/* Autonegotiation complete */
+#define	BMSR_RFAULT	0x0010	/* Link partner fault */
+#define	BMSR_ANEG	0x0008	/* Autonegotiation capable */
+#define	BMSR_LINK	0x0004	/* Link status */
+#define	BMSR_JABBER	0x0002	/* Jabber detected */
+#define	BMSR_EXTCAP	0x0001	/* Extended capability */
 
-#define MII_PHYIDR2           0x03      /* ID register 2 (ro) */
-#define IDR2_OUILSB           0xfc00    /* OUI LSB */
-#define IDR2_MODEL            0x03f0    /* vendor model */
-#define IDR2_REV              0x000f    /* vendor revision */
+/*
+ * Note that the EXTSTAT bit indicates that there is extended status
+ * info available in register 15, but 802.3 section 22.2.4.3 also
+ * states that all 1000 Mb/s capable PHYs will set this bit to 1.
+ */
 
-#define MII_ANAR              0x04      /* Autonegotiation advertisement (rw) */
+#define	BMSR_MEDIAMASK	(BMSR_100T4 | BMSR_100TXFDX | BMSR_100TXHDX | \
+	    BMSR_10TFDX | BMSR_10THDX | BMSR_100T2FDX | BMSR_100T2HDX)
 
-      /* section 28.2.4.1 and 37.2.6.1 */
-#define ANAR_NP               0x8000    /* Next page (ro) */
-#define ANAR_ACK              0x4000    /* link partner abilities acknowledged (ro) */
-#define ANAR_RF               0x2000    /* remote fault (ro) */
-#define ANAR_FC               0x0400    /* local device supports PAUSE */
-#define ANAR_T4               0x0200    /* local device supports 100bT4 */
-#define ANAR_TX_FD            0x0100    /* local device supports 100bTx FD */
-#define ANAR_TX               0x0080    /* local device supports 100bTx */
-#define ANAR_10_FD            0x0040    /* local device supports 10bT FD */
-#define ANAR_10               0x0020    /* local device supports 10bT */
-#define ANAR_CSMA             0x0001    /* protocol selector CSMA/CD */
+/*
+ * Convert BMSR media capabilities to ANAR bits for autonegotiation.
+ * Note the shift chopps off the BMSR_ANEG bit.
+ */
+#define	BMSR_MEDIA_TO_ANAR(x)	(((x) & BMSR_MEDIAMASK) >> 6)
 
-#define ANAR_X_FD             0x0020    /* local device supports 1000BASE-X FD */
-#define ANAR_X_HD             0x0040    /* local device supports 1000BASE-X HD */
-#define ANAR_X_PAUSE_NONE     (0 << 10)
-#define ANAR_X_PAUSE_SYM      (1 << 10)
-#define ANAR_X_PAUSE_ASYM     (2 << 10)
-#define ANAR_X_PAUSE_TOWARDS  (3 << 10)
-#define MII_ANLPAR            0x05      /* Autonegotiation lnk partner abilities (rw) */
+#define	MII_PHYIDR1	0x02	/* ID register 1 (ro) */
 
-/* section 28.2.4.1 and 37.2.6.1 */
-#define ANLPAR_NP               0x8000  /* Next page (ro) */
-#define ANLPAR_ACK              0x4000  /* link partner accepted ACK (ro) */
-#define ANLPAR_RF               0x2000  /* remote fault (ro) */
-#define ANLPAR_FC               0x0400  /* link partner supports PAUSE */
-#define ANLPAR_T4               0x0200  /* link partner supports 100bT4 */
-#define ANLPAR_TX_FD            0x0100  /* link partner supports 100bTx FD */
-#define ANLPAR_TX               0x0080  /* link partner supports 100bTx */
-#define ANLPAR_10_FD            0x0040  /* link partner supports 10bT FD */
-#define ANLPAR_10               0x0020  /* link partner supports 10bT */
-#define ANLPAR_CSMA             0x0001  /* protocol selector CSMA/CD */
+#define	MII_PHYIDR2	0x03	/* ID register 2 (ro) */
+#define	IDR2_OUILSB	0xfc00	/* OUI LSB */
+#define	IDR2_MODEL	0x03f0	/* vendor model */
+#define	IDR2_REV	0x000f	/* vendor revision */
 
-#define ANLPAR_X_FD             0x0020  /* local device supports 1000BASE-X FD */
-#define ANLPAR_X_HD             0x0040  /* local device supports 1000BASE-X HD */
-#define ANLPAR_X_PAUSE_MASK     (3 << 10)
-#define ANLPAR_X_PAUSE_NONE     (0 << 10)
-#define ANLPAR_X_PAUSE_SYM      (1 << 10)
-#define ANLPAR_X_PAUSE_ASYM     (2 << 10)
-#define ANLPAR_X_PAUSE_TOWARDS  (3 << 10)
-#define MII_ANER                0x06    /* Autonegotiation expansion (ro) */
+#define	MII_ANAR	0x04	/* Autonegotiation advertisement (rw) */
+		/* section 28.2.4.1 and 37.2.6.1 */
+#define ANAR_NP		0x8000	/* Next page (ro) */
+#define	ANAR_ACK	0x4000	/* link partner abilities acknowledged (ro) */
+#define ANAR_RF		0x2000	/* remote fault (ro) */
+#define ANAR_XNP	0x1000	/* Extended Next Page */
+		/* Annex 28B.2 */
+#define	ANAR_FC		0x0400	/* local device supports PAUSE */
+#define ANAR_T4		0x0200	/* local device supports 100bT4 */
+#define ANAR_TX_FD	0x0100	/* local device supports 100bTx FD */
+#define ANAR_TX		0x0080	/* local device supports 100bTx */
+#define ANAR_10_FD	0x0040	/* local device supports 10bT FD */
+#define ANAR_10		0x0020	/* local device supports 10bT */
+#define	ANAR_CSMA	0x0001	/* protocol selector CSMA/CD */
+#define	ANAR_PAUSE_NONE		(0 << 10)
+#define	ANAR_PAUSE_SYM		(1 << 10)
+#define	ANAR_PAUSE_ASYM		(2 << 10)
+#define	ANAR_PAUSE_TOWARDS	(3 << 10)
 
-/* section 28.2.4.1 and 37.2.6.1 */
-#define ANER_MLF      0x0010            /* multiple link detection fault */
-#define ANER_LPNP     0x0008            /* link parter next page-able */
-#define ANER_NP       0x0004            /* next page-able */
-#define ANER_PAGE_RX  0x0002            /* Page received */
-#define ANER_LPAN     0x0001            /* link parter autoneg-able */
+		/* Annex 28D */
+#define	ANAR_X_FD	0x0020	/* local device supports 1000BASE-X FD */
+#define	ANAR_X_HD	0x0040	/* local device supports 1000BASE-X HD */
+#define	ANAR_X_PAUSE_NONE	(0 << 7)
+#define	ANAR_X_PAUSE_SYM	(1 << 7)
+#define	ANAR_X_PAUSE_ASYM	(2 << 7)
+#define	ANAR_X_PAUSE_TOWARDS	(3 << 7)
+	/* 37.2.1.5 Remote Fault */
+#define	ANAR_X_RF1	0x1000
+#define	ANAR_X_RF2	0x2000
+#define ANAR_X_RF_MASK		(ANAR_X_RF1 | ANAR_X_RF2)
+#define ANAR_X_RF_NONE		(0 << 12)
+#define ANAR_X_RF_OFFLINE	(1 << 12)
+#define ANAR_X_RF_LINKFAIL	(2 << 12)
+#define ANAR_X_RF_ANEGERR	(3 << 12)
 
-#define MII_ANNP      0x07        /* Autonegotiation next page */
+#define	MII_ANLPAR	0x05	/* ANEG Link Partner Base Page abilities (rw)*/
+		/* section 28.2.4.1 and 37.2.6.1 */
+#define ANLPAR_NP	0x8000	/* Next page (ro) */
+#define	ANLPAR_ACK	0x4000	/* link partner accepted ACK (ro) */
+#define ANLPAR_RF	0x2000	/* remote fault (ro) */
+#define ANLPAR_XNP	0x1000	/* Extended Next Page */
+#define	ANLPAR_FC	0x0400	/* link partner supports PAUSE */
+#define ANLPAR_T4	0x0200	/* link partner supports 100bT4 */
+#define ANLPAR_TX_FD	0x0100	/* link partner supports 100bTx FD */
+#define ANLPAR_TX	0x0080	/* link partner supports 100bTx */
+#define ANLPAR_10_FD	0x0040	/* link partner supports 10bT FD */
+#define ANLPAR_10	0x0020	/* link partner supports 10bT */
+#define	ANLPAR_CSMA	0x0001	/* protocol selector CSMA/CD */
+#define	ANLPAR_PAUSE_MASK	(3 << 10)
+#define	ANLPAR_PAUSE_NONE	(0 << 10)
+#define	ANLPAR_PAUSE_SYM	(1 << 10)
+#define	ANLPAR_PAUSE_ASYM	(2 << 10)
+#define	ANLPAR_PAUSE_TOWARDS	(3 << 10)
 
-/* section 28.2.4.1 and 37.2.6.1 */
-#define MII_ANLPRNP 0x08          /* Autonegotiation link partner rx next page */
+#define	ANLPAR_X_FD	0x0020	/* local device supports 1000BASE-X FD */
+#define	ANLPAR_X_HD	0x0040	/* local device supports 1000BASE-X HD */
+#define	ANLPAR_X_PAUSE_MASK	(3 << 7)
+#define	ANLPAR_X_PAUSE_NONE	(0 << 7)
+#define	ANLPAR_X_PAUSE_SYM	(1 << 7)
+#define	ANLPAR_X_PAUSE_ASYM	(2 << 7)
+#define	ANLPAR_X_PAUSE_TOWARDS	(3 << 7)
+	/* 37.2.1.5 Remote Fault */
+#define	ANLPAR_X_RF1	0x1000
+#define	ANLPAR_X_RF2	0x2000
+#define	ANLPAR_X_RF_MASK	(ANLPAR_X_RF1 | ANLPAR_X_RF2)
+#define ANLPAR_X_RF_NONE	(0 << 12)
+#define ANLPAR_X_RF_OFFLINE	(1 << 12)
+#define ANLPAR_X_RF_LINKFAIL	(2 << 12)
+#define ANLPAR_X_RF_ANEGERR	(3 << 12)
 
-/* section 32.5.1 and 37.2.6.1 */
+#define	MII_ANER	0x06	/* Autonegotiation expansion (ro) */
+		/* section 28.2.4.1 and 37.2.6.1 */
+#define ANER_RNPLA	0x0040	/* Receive Next Page Location Able */
+#define ANER_RNPSL	0x0020	/* Received Next Page Storage Location */
+#define ANER_MLF	0x0010	/* multiple link detection fault */
+#define ANER_LPNP	0x0008	/* link partner next page-able */
+#define ANER_NP		0x0004	/* next page-able */
+#define ANER_PAGE_RX	0x0002	/* Page received */
+#define ANER_LPAN	0x0001	/* link partner autoneg-able */
 
-/* This is also the 1000baseT control register */
-#define MII_100T2CR       0x09    /* 100base-T2 control register */
-#define GTCR_TEST_MASK    0xe000  /* see 802.3ab ss. 40.6.1.1.2 */
-#define GTCR_MAN_MS       0x1000  /* enable manual master/slave control */
-#define GTCR_ADV_MS       0x0800  /* 1 = adv. master, 0 = adv. slave */
-#define GTCR_PORT_TYPE    0x0400  /* 1 = DCE, 0 = DTE (NIC) */
-#define GTCR_ADV_1000TFDX 0x0200  /* adv. 1000baseT FDX */
-#define GTCR_ADV_1000THDX 0x0100  /* adv. 1000baseT HDX */
+#define	MII_ANNPT	0x07	/* Autonegotiation next page transmit (rw) */
+		/* section 28.2.4.1 and 37.2.6.1 */
+#define ANNPT_NP	0x8000	/* Next Page */
+#define ANNPT_MP	0x2000	/* Message Page */
+#define ANNPT_ACK2	0x1000	/* Acknowledge 2 */
+#define ANNPT_TOGGLE	0x0800	/* Toggle */
+#define ANNPT_MSGUNF_MASK 0x07ff /* Message(Annex28C)/Unformatted Code Field */
 
-/* This is also the 1000baseT status register */
-#define MII_100T2SR       0x0a    /* 100base-T2 status register */
-#define GTSR_MAN_MS_FLT   0x8000  /* master/slave config fault */
-#define GTSR_MS_RES       0x4000  /* result: 1 = master, 0 = slave */
-#define GTSR_LRS          0x2000  /* local rx status, 1 = ok */
-#define GTSR_RRS          0x1000  /* remove rx status, 1 = ok */
-#define GTSR_LP_1000TFDX  0x0800  /* link partner 1000baseT FDX capable */
-#define GTSR_LP_1000THDX  0x0400  /* link partner 1000baseT HDX capable */
-#define GTSR_LP_ASM_DIR   0x0200  /* link partner asym. pause dir. capable */
-#define GTSR_IDLE_ERR     0x00ff  /* IDLE error count */
+/* Next Page Message Code used in ANNPT and ANLPRNP */
+#define ANNP_MSG_NULL		1    /* Null Message */
+#define ANNP_MSG_1UP_TAF	2    /* 1Up w/ Tech. Ability Field follows */
+#define ANNP_MSG_2UP_TAF	3    /* 2Up w/ Tech. Ability Field follows */
+#define ANNP_MSG_1UP_BCRF	4    /* 1Up w/ Bin. coded Remote Flt follows */
+#define ANNP_MSG_OUIDTMSG	5    /* OUI tagged Message */
+#define ANNP_MSG_PHYIDTC	6    /* PHY Identifier Tag Code */
+#define ANNP_MSG_TMC_100T2	7    /* 100BASE-T2 Tech. Message Code */
+#define ANNP_MSG_TMC_1000T	8    /* 1000BASE-T Tech. Message Code */
+#define ANNP_MSG_TMC_10G1G	9    /* 10GBASE-T/1000BASE-T TMC: (XNP) */
+#define ANNP_MSG_TMC_EEE	10   /* EEE Technology Message Code */
+#define ANNP_MSG_OUIDTM_XNP	11   /* OUI tagged Message (XNP) */
 
-#define MII_EXTSR         0x0f    /* Extended status register */
-#define EXTSR_1000XFDX    0x8000  /* 1000X full-duplex capable */
-#define EXTSR_1000XHDX    0x4000  /* 1000X half-duplex capable */
-#define EXTSR_1000TFDX    0x2000  /* 1000T full-duplex capable */
-#define EXTSR_1000THDX    0x1000  /* 1000T half-duplex capable */
 
-#define EXTSR_MEDIAMASK   (EXTSR_1000XFDX | EXTSR_1000XHDX | EXTSR_1000TFDX | EXTSR_1000THDX)
+#define	MII_ANLPRNP	0x08	/* Autonegotiation link partner rx next page */
+		/* section 32.5.1 and 37.2.6.1 */
+#define ANLPRNP_NP	0x8000	/* Next Page */
+#define ANLPRNP_ACK	0x4000	/* Acknowledge */
+#define ANLPRNP_MP	0x2000	/* Message Page */
+#define ANLPRNP_ACK2	0x1000	/* Acknowledge 2 */
+#define ANLPRNP_TOGGLE	0x0800	/* Toggle */
+#define ANLPRNP_MSGUNF_MASK 0x07ff /* Message(Anx28C)/Unformatted Code Field */
+
+#define	MII_GTCR	0x09	/*
+				 * Master-Slave control register for
+				 * 100BASE-T2 and 1000BASE-T.
+				 */
+#define	MII_100T2CR	MII_GTCR /* alias */
+#define	GTCR_TEST_MASK	0xe000	/* see 802.3ab ss. 40.6.1.1.2 */
+#define	GTCR_MAN_MS	0x1000	/* enable manual master/slave control */
+#define	GTCR_ADV_MS	0x0800	/* 1 = adv. master, 0 = adv. slave */
+#define	GTCR_PORT_TYPE	0x0400	/* 1 = DCE, 0 = DTE (NIC) */
+#define	GTCR_ADV_1000TFDX 0x0200 /* adv. 1000baseT FDX */
+#define	GTCR_ADV_1000THDX 0x0100 /* adv. 1000baseT HDX */
+
+#define T2CR_TEST_NORMAL	(0 << 13) /* Normal Operation */
+#define T2CR_TEST_RX		(1 << 13) /* RX test */
+#define T2CR_TEST_TX_WAVEFORM	(1 << 14) /* Mode 1. TX waveform test */
+#define T2CR_TEST_TX_JITTER	(2 << 14) /* Mode 2. TX jitter test */
+#define T2CR_TEST_TX_IDLE	(3 << 14) /* Mode 3. TX idle test */
+
+#define GTCR_TEST_NORMAL	(0 << 13) /* Normal Operation */
+#define GTCR_TEST_TX_WAVEFORM	(1 << 13) /* Mode 1. TX waveform test */
+#define GTCR_TEST_TX_JITTER_M	(2 << 13) /* Mode 2. TX jitter test (Master) */
+#define GTCR_TEST_TX_JITTER_S	(3 << 13) /* Mode 3. TX jitter test (Slave) */
+#define GTCR_TEST_TX_DISTORTION	(4 << 13) /* Mode 4. TX distortion test */
+
+#define	MII_GTSR	0x0a	/*
+				 * Master-Slave status register for
+				 * 100BASE-T2 and 1000BASE-T.
+				 */
+#define	MII_100T2SR	MII_GTSR /* alias */
+#define	GTSR_MAN_MS_FLT	0x8000	/* master/slave config fault */
+#define	GTSR_MS_RES	0x4000	/* result: 1 = master, 0 = slave */
+#define	GTSR_LRS	0x2000	/* local rx status, 1 = ok */
+#define	GTSR_RRS	0x1000	/* remote rx status, 1 = ok */
+#define	GTSR_LP_1000TFDX 0x0800	/* link partner 1000baseT FDX capable */
+#define	GTSR_LP_1000THDX 0x0400	/* link partner 1000baseT HDX capable */
+#define	GTSR_IDLE_ERR	0x00ff	/* IDLE error count */
+
+#define	MII_PSECR	0x0b	/* PSE control register */
+#define	PSECR_DLLC	0x0020	/* Data Link Layer Classification capability */
+#define	PSECR_EPLC	0x0010	/* Enable Physical Layer Classification */
+#define	PSECR_PACTLMASK	0x000c	/* pair control mask */
+#define	PSECR_PINOUTB	0x0008	/* PSE pinout Alternative B */
+#define	PSECR_PINOUTA	0x0004	/* PSE pinout Alternative A */
+#define	PSECR_PSEENMASK	0x0003	/* PSE enable mask */
+#define	PSECR_FOPOWTST	0x0002	/* Force Power Test Mode */
+#define	PSECR_PSEEN	0x0001	/* PSE Enabled */
+#define	PSECR_PSEDIS	0x0000	/* PSE Disabled */
+
+#define	MII_PSESR	0x0c	/* PSE status register */
+#define	PSESR_PWRDENIED	0x1000	/* Power Denied */
+#define	PSESR_VALSIG	0x0800	/* Valid PD signature detected */
+#define	PSESR_INVALSIG	0x0400	/* Invalid PD signature detected */
+#define	PSESR_SHORTCIRC	0x0200	/* Short circuit condition detected */
+#define	PSESR_OVERLOAD	0x0100	/* Overload condition detected */
+#define	PSESR_MPSABSENT	0x0080	/* MPS absent condition detected */
+#define	PSESR_PDCLMASK	0x0070	/* PD Class mask */
+#define	PSESR_STATMASK	0x000e	/* PSE Status mask */
+#define	PSESR_PAIRCTABL	0x0001	/* PAIR Control Ability */
+#define	PSESR_PDCL_INVALID	(5 << 4)	/* Invalid Class */
+#define	PSESR_PDCL_4		(4 << 4)	/* Class 4 */
+#define	PSESR_PDCL_3		(3 << 4)	/* Class 3 */
+#define	PSESR_PDCL_2		(2 << 4)	/* Class 2 */
+#define	PSESR_PDCL_1		(1 << 4)	/* Class 1 */
+#define	PSESR_PDCL_0		(0 << 4)	/* Class 0 */
+#define	PSESR_STAT_ISFLT	(5 << 1)	/* Implement specific fault */
+#define	PSESR_STAT_TSTERR	(4 << 1)	/* Test Error */
+#define	PSESR_STAT_TSTMODE	(3 << 1)	/* Test Mode */
+#define	PSESR_STAT_DELVPWR	(2 << 1)	/* Delivering power */
+#define	PSESR_STAT_SEARCH	(1 << 1)	/* Searching */
+#define	PSESR_STAT_DIS		(0 << 1)	/* Disabled */
+
+#define	MII_MMDACR	0x0d	/* MMD access control register */
+#define	MMDACR_FUNCMASK	0xc000	/* function */
+#define	MMDACR_DADDRMASK 0x001f	/* device address */
+#define	MMDACR_FN_ADDRESS	(0 << 14) /* address */
+#define	MMDACR_FN_DATA		(1 << 14) /* data, no post increment */
+#define	MMDACR_FN_DATA_INC_RW	(2 << 14) /* data, post increment on r/w */
+#define	MMDACR_FN_DATA_INC_W	(3 << 14) /* data, post increment on wr only */
+
+#define	MII_MMDAADR	0x0e	/* MMD access address data register */
+
+#define	MII_EXTSR	0x0f	/* Extended status register */
+#define	EXTSR_1000XFDX	0x8000	/* 1000X full-duplex capable */
+#define	EXTSR_1000XHDX	0x4000	/* 1000X half-duplex capable */
+#define	EXTSR_1000TFDX	0x2000	/* 1000T full-duplex capable */
+#define	EXTSR_1000THDX	0x1000	/* 1000T half-duplex capable */
+
+#define	EXTSR_MEDIAMASK	(EXTSR_1000XFDX | EXTSR_1000XHDX | \
+	    EXTSR_1000TFDX | EXTSR_1000THDX)
+
 #endif /* _DEV_MII_MII_H_ */
