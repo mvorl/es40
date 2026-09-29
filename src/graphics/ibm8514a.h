@@ -1,6 +1,6 @@
 /* ES40 emulator.
  * Copyright (C) 2026 by gdwnldsKSC
- * Copyright (C) 2026 by the ES40 Emulator Project contributors
+ * Copyright (C) 2026 by WNT50
  * Copyright (C) 2012-2018 Barry Rodewald from MAME
  *
  * WWW    : https://github.com/ES40-Emu/es40
@@ -33,6 +33,8 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+// license:BSD-3-Clause
+// copyright-holders:Barry Rodewald
 
 #ifndef MAME_VIDEO_IBM8514A_H
 #define MAME_VIDEO_IBM8514A_H

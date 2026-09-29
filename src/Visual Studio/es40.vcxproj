@@ -2272,7 +2272,6 @@
     <ClInclude Include="..\banner.h" />
     <ClInclude Include="..\base\Exception.h" />
     <ClInclude Include="..\base\Mutex.h" />
-    <ClInclude Include="..\base\Platform_VMS.h" />
     <ClInclude Include="..\base\Runnable.h" />
     <ClInclude Include="..\base\RWLock.h" />
     <ClInclude Include="..\base\Semaphore.h" />

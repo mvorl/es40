@@ -1,6 +1,6 @@
 /* ES40 emulator.
  * Copyright (C) 2023-2026 by gdwnldsKSC
- * Copyright (C) 2023-2026 by the ES40 Emulator Project contributors
+ * Copyright (C) 2026 by WNT50
  * Copyright (C) 2012-2020 Barry Rodewald from MAME
  * Copyright (C) 2003-2014 Nathan Woods from MAME
  * Copyright (C) 2000 Peter Trauner from MAME

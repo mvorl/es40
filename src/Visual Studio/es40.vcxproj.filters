@@ -506,9 +506,6 @@
     <ClInclude Include="..\base\Mutex.h">
       <Filter>Header Files\base</Filter>
     </ClInclude>
-    <ClInclude Include="..\base\Platform_VMS.h">
-      <Filter>Header Files\base</Filter>
-    </ClInclude>
     <ClInclude Include="..\base\Runnable.h">
       <Filter>Header Files\base</Filter>
     </ClInclude>
