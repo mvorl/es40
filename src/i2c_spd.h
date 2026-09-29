@@ -1,5 +1,5 @@
 /* ES40 emulator.
- * Copyright (C) 2026 by the ES40 Emulator Project
+ * Copyright (C) 2025-2026 by gdwnldsKSC
  * Copyright (C) 2025 by Kisara Development LLC.
  * All rights reserved.
  *

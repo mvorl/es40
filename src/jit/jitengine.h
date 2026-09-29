@@ -1,5 +1,5 @@
 /* ES40 emulator -- JIT engine
- * Copyright (C) 2026 by the ES40 Emulator Project
+ * Copyright (C) 2026 by gdwnldsKSC
  * All rights reserved.
  *
  * WWW    : https://github.com/ES40-Emu/es40

@@ -1,7 +1,8 @@
 /* ES40 emulator.
  * Copyright (C) 2007-2008 by the ES40 Emulator Project
+ * Copyright (C) 2026 by gdwnldsKSC
  *
- * WWW    : https://github.com/gdwnldsKSC/es40/
+ * WWW    : https://github.com/ES40-Emu/es40
  *
  *  This file is based upon Bochs.
  *
