@@ -68,7 +68,7 @@
   * X-1.1        Camiel Vanderhoeven                             28-FEB-2007
   *      File created. Code was previously found in Serial.cpp and Serial.h
   *
-  * \author Camiel Vanderhoeven (camiel@camicom.com / http://www.camicom.com)
+  * \author Camiel Vanderhoeven
   **/
 #if !defined(INCLUDED_TELNET_H)
 #define INCLUDED_TELNET_H

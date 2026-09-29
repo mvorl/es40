@@ -64,7 +64,7 @@
   *      Initial version in CVS.
   *
   *
-  * \author Camiel Vanderhoeven (camiel@camicom.com / http://www.camicom.com)
+  * \author Camiel Vanderhoeven
   **/
 #if !defined(INCLUDED_FLASH_H)
 #define INCLUDED_FLASH_H

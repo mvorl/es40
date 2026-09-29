@@ -1,5 +1,6 @@
 /* ES40 Emulator.
  * Copyright (C) 2007-2008 by the ES40 Emulator Project
+ * Copyright (C) 2023-2026 by gdwnldsKSC
  *
  * WWW    : https://github.com/ES40-Emu/es40
  *
@@ -188,7 +189,7 @@
   * X-1.1        Camiel Vanderhoeven                             19-JAN-2007
   *      Initial version in CVS.
   *
-  * \author Camiel Vanderhoeven (camiel@camicom.com / http://www.camicom.com)
+  * \author Camiel Vanderhoeven
   **/
 
   // =============================================================================

@@ -194,7 +194,7 @@
   * X-1.1        Camiel Vanderhoeven                             19-JAN-2007
   *      Initial version in CVS.
   *
-  * \Initial author Camiel Vanderhoeven (camiel@camicom.com / http://www.camicom.com)
+  * \Initial author Camiel Vanderhoeven
   **/
 #include "StdAfx.h"
 #include "System.h"

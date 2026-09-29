@@ -63,7 +63,7 @@
   * X-1.1        Camiel Vanderhoeven                             18-FEB-2007
   *      File created. Contains code previously found in AlphaCPU.h
   *
-  * \author Camiel Vanderhoeven (camiel@camicom.com / http://www.camicom.com)
+  * \author Camiel Vanderhoeven
   **/
 #define DO_CMPBGE state.r[REG_3] =                                                   \
     (((u8) (state.r[REG_1] & 0xff) >= (u8) (V_2 & 0xff)) ? 1 : 0) |                  \

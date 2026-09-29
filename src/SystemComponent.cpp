@@ -63,7 +63,7 @@
   * X-1.1        Camiel Vanderhoeven                             19-JAN-2007
   *      Initial version in CVS.
   *
-  * \author Camiel Vanderhoeven (camiel@camicom.com / http://www.camicom.com)
+  * \author Camiel Vanderhoeven
   **/
 #include "StdAfx.h"
 #include "SystemComponent.h"

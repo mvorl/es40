@@ -56,7 +56,7 @@
   * X-A1-1.1     Camiel Vanderhoeven                             1-MAR-2007
   *      File created to support the Solaris/SPARC port.
   *
-  * \author Camiel Vanderhoeven (camiel@camicom.com / http://www.camicom.com)
+  * \author Camiel Vanderhoeven
   **/
 #if !defined(INCLUDED_ENDIAN_H)
 #define INCLUDED_ENDIAN_H

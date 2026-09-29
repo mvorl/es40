@@ -44,7 +44,7 @@
   * X-1.1        Camiel Vanderhoeven                             18-FEB-2007
   *      File created. Contains code previously found in AlphaCPU.h
   *
-  * \author Camiel Vanderhoeven (camiel@camicom.com / http://www.camicom.com)
+  * \author Camiel Vanderhoeven
   **/
 #if defined(_MSC_VER) && defined(_M_X64)
 #include <immintrin.h>

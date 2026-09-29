@@ -1,6 +1,7 @@
 /* ES40 Emulator.
  * Copyright (C) 2007-2008 by the ES40 Emulator Project
  * Copyright (C) 2020 Tomáš Glozar
+ * Copyright (C) 2026 by Jan-Benedict Glaw
  *
  * WWW    : https://github.com/ES40-Emu/es40
  *

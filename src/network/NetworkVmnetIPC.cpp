@@ -1,4 +1,5 @@
 /* ES40 emulator.
+ * Copyright (C) 2026 by gdwnldsKSC
  *
  * WWW    : https://github.com/ES40-Emu/es40
  *

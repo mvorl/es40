@@ -77,7 +77,7 @@
   * X-1.1        Camiel Vanderhoeven                             18-FEB-2007
   *      File created. Contains code previously found in AlphaCPU.h
   *
-  * \author Camiel Vanderhoeven (camiel@camicom.com / http://www.camicom.com)
+  * \author Camiel Vanderhoeven
   **/
 
 #ifdef DEBUG_ARITH_TRAP

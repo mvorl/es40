@@ -45,7 +45,7 @@
   * X-1.1        Camiel Vanderhoeven                             26-FEB-2008
   *      Created. Contains code previously found in AliM1543C.h
   *
-  * \author Camiel Vanderhoeven (camiel@camicom.com / http://www.camicom.com)
+  * \author Camiel Vanderhoeven
   **/
 #if !defined(INCLUDED_DMA_H)
 #define INCLUDED_DMA_H

@@ -39,7 +39,7 @@
   * X-1.1        Camiel Vanderhoeven                             28-FEB-2007
   *      Created to support lockstep mechanism.
   *
-  * \author Camiel Vanderhoeven (camiel@camicom.com / http://www.camicom.com)
+  * \author Camiel Vanderhoeven
   **/
 #include "../StdAfx.h"
 

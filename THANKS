@@ -8,7 +8,7 @@
  *
  * \section con Contributors
  * In order of appearance.
- *  - Camiel Vanderhoeven (camiel@camicom.com): main architect/developer.
+ *  - Camiel Vanderhoeven: main architect/developer.
  *  - Brian Wheeler: UNIX port, initial config file, initial VGA, new IDE, and contributions to overall quality.
  *  - Eduardo Marcelo Serrat: Major bugfixes. 
  *  - Fang Zhe: OS X port.

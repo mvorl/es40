@@ -58,7 +58,7 @@
   * X-1.1        Camiel Vanderhoeven                             26-FEB-2008
   *      Created. Contains code previously found in AliM1543C.cpp
   *
-  * \author Camiel Vanderhoeven (camiel@camicom.com / http://www.camicom.com)
+  * \author Camiel Vanderhoeven
   **/
 #include "StdAfx.h"
 #include "System.h"
