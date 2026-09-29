@@ -34,48 +34,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
- /**
-  * \file
-  * Contains the definitions for emulated S3 Trio 64 Video Card device.
-  *
-  * $Id$
-  *
-  * X-1.12       Camiel Vanderhoeven                             31-MAY-2008
-  *      Changes to include parts of Poco.
-  *
-  * X-1.11       Camiel Vanderhoeven                             13-MAR-2008
-  *      Create init() start_threads() and stop_threads() functions.
-  *
-  * X-1.10       Camiel Vanderhoeven                             05-MAR-2008
-  *      Multi-threading version.
-  *
-  * X-1.9        Camiel Vanderhoeven                             20-JAN-2008
-  *      Added X11 GUI.
-  *
-  * X-1.8        Camiel Vanderhoeven                             08-JAN-2008
-  *      Comments.
-  *
-  * X-1.7        Camiel Vanderhoeven                             02-JAN-2008
-  *      Cleanup.
-  *
-  * X-1.6        Camiel Vanderhoeven                             28-DEC-2007
-  *      Keep the compiler happy.
-  *
-  * X-1.5        Camiel Vanderhoeven                             17-DEC-2007
-  *      SaveState file format 2.1
-  *
-  * X-1.4        Brian Wheeler                                   10-DEC-2007
-  *      Added SDL.h.
-  *
-  * X-1.3        Camiel Vanderhoeven                             10-DEC-2007
-  *      Use new base class VGA.
-  *
-  * X-1.2        Camiel Vanderhoeven/Brian Wheeler               6-DEC-2007
-  *      Changed implementation (with thanks to the Bochs project!!)
-  *
-  * X-1.1        Camiel Vanderhoeven                             1-DEC-2007
-  *      Initial version in CVS.
-  **/
 #if !defined(INCLUDED_S3Trio64_H_)
 #define INCLUDED_S3Trio64_H_
 
@@ -425,10 +383,7 @@ private:
   unsigned int rom_max = 0;
   u8 option_rom[65536] = {};
 
-  void  determine_screen_dimensions(unsigned* piHeight, unsigned* piWidth);
-
-  char  bios_message[200];
-  int   bios_message_size;
+  void  get_display_size(unsigned& width, unsigned& height);
 
   inline uint32_t s3_vram_mask() const;
 
@@ -443,7 +398,6 @@ private:
   inline bool seq_extended_mem() const { return (vga.sequencer.data[4] & 0x02) != 0; }
   inline bool seq_reset1()       const { return (vga.sequencer.data[0] & 0x01) != 0; }
   inline bool seq_reset2()       const { return (vga.sequencer.data[0] & 0x02) != 0; }
-  inline bool seq_dotperchar()   const { return (vga.sequencer.data[1] & 0x01) != 0; }
   inline bool x_dotclockdiv2()   const { return (vga.sequencer.data[1] & 0x08) != 0; }
 
   // cached state for LFB

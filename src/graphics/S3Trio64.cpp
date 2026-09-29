@@ -6,7 +6,7 @@
  * Copyright (C) 2000 Peter Trauner from MAME
  * Copyright (C) 2011-2026 Angelo Salese from MAME
  *
- * WWW    : https://github.com/gdwnldsKSC/es40
+ * WWW    : https://github.com/ES40-Emu/es40
  *
  * SPDX-License-Identifier: BSD-3-Clause
  *
@@ -37,77 +37,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
- /**
-  * \file
-  * Contains the code for emulated S3 Trio 64 Video Card device.
-  *
-  * $Id$
-  *
-  * X-1.21       gdwnldsKSC                                      27-AUG-2025
-  *      Real S3 BIOS boots now! Not 100% implemented but....
-  *      Quite a lot of CRTC implementation and behavior added and fixed
-  *
-  * X-1.20       Camiel Vanderhoeven                             31-MAY-2008
-  *      Changes to include parts of Poco.
-  *
-  * X-1.19       Camiel Vanderhoeven                             13-APR-2008
-  *      Fixed Doxygen comment.
-  *
-  * X-1.18       Camiel Vanderhoeven                             25-MAR-2008
-  *      Added comments on VGA registers.
-  *
-  * X-1.17       Camiel Vanderhoeven                             16-MAR-2008
-  *      Fixed threading problems with SDL (I hope).
-  *
-  * X-1.16       Camiel Vanderhoeven                             14-MAR-2008
-  *      Formatting.
-  *
-  * X-1.15       Camiel Vanderhoeven                             14-MAR-2008
-  *   1. More meaningful exceptions replace throwing (int) 1.
-  *   2. U64 macro replaces X64 macro.
-  *
-  * X-1.14       Camiel Vanderhoeven                             13-MAR-2008
-  *      Create init(), start_threads() and stop_threads() functions.
-  *
-  * X-1.13       Camiel Vanderhoeven                             05-MAR-2008
-  *      Multi-threading version.
-  *
-  * X-1.12       Brian Wheeler                                   27-FEB-2008
-  *      Avoid compiler warnings.
-  *
-  * X-1.11       Fang Zhe                                        08-JAN-2008
-  *      Endianess.
-  *
-  * X-1.10       Camiel Vanderhoeven                             02-JAN-2008
-  *      Cleanup.
-  *
-  * X-1.9        Camiel Vanderhoeven                             30-DEC-2007
-  *      Print file id on initialization.
-  *
-  * X-1.8        Camiel Vanderhoeven                             28-DEC-2007
-  *      Throw exceptions rather than just exiting when errors occur.
-  *
-  * X-1.7        Camiel Vanderhoeven                             28-DEC-2007
-  *      Keep the compiler happy.
-  *
-  * X-1.6        Camiel Vanderhoeven                             17-DEC-2007
-  *      SaveState file format 2.1
-  *
-  * X-1.5        Brian Wheeler                                   10-DEC-2007
-  *      Made refresh function name unique.
-  *
-  * X-1.4        Camiel Vanderhoeven                             10-DEC-2007
-  *      Use new base class VGA.
-  *
-  * X-1.3        Camiel Vanderhoeven                             7-DEC-2007
-  *      Code cleanup.
-  *
-  * X-1.2        Camiel Vanderhoeven/Brian Wheeler               6-DEC-2007
-  *      Changed implementation (with thanks to the Bochs project!!)
-  *
-  * X-1.1        Camiel Vanderhoeven                             1-DEC-2007
-  *      Initial version in CVS.
-  **/
 #include "StdAfx.h"
 #include "S3Trio64.h"
 #include <cmath>
@@ -2509,13 +2438,6 @@ void CS3Trio64::init()
 	add_legacy_io(31, 0x92E8, 2); // ERR_TERM
 	add_legacy_io(33, 0x8AE8, 2); // DESTY_AXSTP
 
-
-	/* The VGA BIOS we use sends text messages to port 0x500.
-	   We listen for these messages at port 500. */
-	add_legacy_io(7, 0x500, 1);
-	bios_message_size = 0;
-	bios_message[0] = '\0';
-
 	// Legacy video address space: A0000 -> bffff
 	add_legacy_mem(4, 0xa0000, 128 * 1024);
 
@@ -3081,7 +3003,7 @@ void CS3Trio64::recompute_params_clock(int divisor, int xtal)
 	hblank_period = ((vga.crtc.horz_total + 5) * ((float)(hclock_m) / divisor));
 
 	// TODO: improve/complete clocking modes
-	pixel_clock = xtal / ((x_dotclockdiv2() >> 3) + 1);
+	pixel_clock = xtal / (((vga.sequencer.data[1]&8) >> 3) + 1);
 
 	refresh = HZ_TO_ATTOSECONDS(pixel_clock) * (hblank_period)*vblank_period;
 	//screen().configure((hblank_period), (vblank_period), visarea, refresh);
@@ -3466,22 +3388,6 @@ void CS3Trio64::WriteMem_Legacy(int index, u32 address, int dsize, u32 data)
 		// VGA Memory
 	case 4:
 		legacy_write(address, dsize, data);
-		return;
-
-		// BIOS Message IO Port (0x500)
-	case 7:
-		bios_message[bios_message_size++] = (char)data & 0xff;
-		if (((data & 0xff) == 0x0a) || ((data & 0xff) == 0x0d))
-		{
-			if (bios_message_size > 1)
-			{
-				bios_message[bios_message_size - 1] = '\0';
-				printf("%s: Option ROM: %s\n", devid_string, bios_message);
-			}
-
-			bios_message_size = 0;
-		}
-
 		return;
 
 		// IO Port 0x3d4
@@ -5053,7 +4959,7 @@ void CS3Trio64::update(void)
 	vga.crtc.start_addr = vga.crtc.start_addr_latch; // FIXME: Figure out proper handling, but makes BSD happy again....
 	vga.attribute.pel_shift = vga.attribute.pel_shift_latch;
 
-	determine_screen_dimensions(&iHeight, &iWidth);
+	get_display_size(iWidth, iHeight);
 
 	if (iWidth == 0 || iHeight == 0)
 		return;
@@ -5085,65 +4991,18 @@ void CS3Trio64::update(void)
 	state.vga_mem_updated = 0;
 }
 
-void CS3Trio64::determine_screen_dimensions(unsigned* piHeight,
-	unsigned* piWidth)
+// Active display from the display-end registers, which already carry the CR07
+// and S3 CR5D/CR5E overflow bits; char clocks scaled by the colour-mode divisor.
+void CS3Trio64::get_display_size(unsigned& width, unsigned& height)
 {
-	int ai[0x20];
-	int i;
-	int h;
-	int v;
-	for (i = 0; i < 0x20; i++)
-		ai[i] = m_crtc_map.read_byte(i);
+	width = height = 0;
+	if (!vga.crtc.horz_disp_end || !vga.crtc.vert_disp_end)
+		return;
 
-	h = (ai[1] + 1) * (seq_dotperchar() ? 8 : 9) / timing.divisor;
-	v = (ai[18] | ((ai[7] & 0x02) << 7) | ((ai[7] & 0x40) << 3)) + 1;
-	// S3 CR5D extends H* with bit8 (0x100) and CR5E extends V* with bit10 (0x400)
-	if (m_crtc_map.read_byte(0x5D) & 0x02) h |= 0x400;  // multiplied by 8/2 = 4
-	if (m_crtc_map.read_byte(0x5E) & 0x02) v |= 0x400;
-	v *= (get_interlace_mode() + 1);  // interlaced mode
-
-	if (vga.gc.shift256)
-	{
-		// was shift_reg == 2 mode 13h / 256-color byte mode
-		// chain_four vs modeX 
-		*piWidth = h;
-		*piHeight = v;
-	}
-	else if (vga.gc.shift_reg)
-	{
-		// was shift_reg == 1 CGA 4-color interleave
-		if (x_dotclockdiv2())
-			h <<= 1;
-		*piWidth = h;
-		*piHeight = v;
-	}
-	else
-	{
-		// was shift_reg == 0 standard VGA planar / EGA
-		*piWidth = 640;
-		*piHeight = 480;
-		if (m_crtc_map.read_byte(0x06) == 0xBF)
-		{
-			if (m_crtc_map.read_byte(0x17) == 0xA3 && m_crtc_map.read_byte(0x14) == 0x40
-				&& m_crtc_map.read_byte(0x09) == 0x41)
-			{
-				*piWidth = 320;
-				*piHeight = 240;
-			}
-			else
-			{
-				if (x_dotclockdiv2())
-					h <<= 1;
-				*piWidth = h;
-				*piHeight = v;
-			}
-		}
-		else if ((h >= 640) && (v >= 480))
-		{
-			*piWidth = h;
-			*piHeight = v;
-		}
-	}
+	const unsigned char_clocks = GRAPHIC_MODE ? 8 : VGA_CH_WIDTH;
+	const unsigned divisor = timing.divisor > 0 ? (unsigned)timing.divisor : 1;
+	width = (vga.crtc.horz_disp_end + 1u) * char_clocks / divisor;
+	height = LINES;
 }
 
 inline uint32_t CS3Trio64::s3_vram_mask() const
