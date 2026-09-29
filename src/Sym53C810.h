@@ -87,7 +87,7 @@ public:
   virtual int   RestoreState(FILE* f);
   virtual void  check_state();
 
-  virtual void  run();  // Poco Thread entry point
+  virtual void  run();  // Thread entry point
   virtual void  init();
   virtual void  start_threads();
   virtual void  stop_threads();

@@ -20,9 +20,6 @@
  * Although this is not required, the author would appreciate being notified of, 
  * and receiving any modifications you may make to the source code that might serve
  * the general public.
- *
- * Parts of this file based upon the Poco C++ Libraries, which is Copyright (C) 
- * 2004-2006, Applied Informatics Software Engineering GmbH. and Contributors.
  */
 
 #ifndef ES40_THREAD_H
@@ -36,6 +33,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <memory>
+#include <initializer_list>
 #include <cstdio>
 #include <stdexcept>
 
@@ -126,12 +124,12 @@ public:
         tl_currentThread = self;
 
 #if !defined(_WIN32)
-        sigset_t sset;
-        sigemptyset(&sset);
-        sigaddset(&sset, SIGQUIT);
-        sigaddset(&sset, SIGTERM);
-        sigaddset(&sset, SIGPIPE);
-        pthread_sigmask(SIG_BLOCK, &sset, 0);
+        // Termination and broken-pipe signals are handled on the main thread only.
+        sigset_t blocked;
+        sigemptyset(&blocked);
+        for (int sig : { SIGQUIT, SIGTERM, SIGPIPE })
+          sigaddset(&blocked, sig);
+        pthread_sigmask(SIG_BLOCK, &blocked, nullptr);
 #endif
 
         try
@@ -214,30 +212,23 @@ public:
 private:
   static int uniqueId()
   {
-    static std::atomic<int> counter{ 0 };
-    return ++counter;
+    static std::atomic<int> next_id{ 1 };
+    return next_id.fetch_add(1);
   }
 
   std::string makeName() const
   {
-    std::ostringstream oss;
-    oss << '#' << _id;
-    return oss.str();
+    return "#" + std::to_string(_id);
   }
 
 #if defined(_WIN32)
 
   static int mapPrioWin32(Priority prio)
   {
-    switch (prio)
-    {
-    case PRIO_LOWEST:   return THREAD_PRIORITY_LOWEST;
-    case PRIO_LOW:      return THREAD_PRIORITY_BELOW_NORMAL;
-    case PRIO_NORMAL:   return THREAD_PRIORITY_NORMAL;
-    case PRIO_HIGH:     return THREAD_PRIORITY_ABOVE_NORMAL;
-    case PRIO_HIGHEST:  return THREAD_PRIORITY_HIGHEST;
-    default:            return THREAD_PRIORITY_NORMAL;
-    }
+    static const int levels[] = { THREAD_PRIORITY_LOWEST, THREAD_PRIORITY_BELOW_NORMAL,
+      THREAD_PRIORITY_NORMAL, THREAD_PRIORITY_ABOVE_NORMAL, THREAD_PRIORITY_HIGHEST };
+    return (prio >= PRIO_LOWEST && prio <= PRIO_HIGHEST) ? levels[prio]
+      : THREAD_PRIORITY_NORMAL;
   }
 
   void applyPriority()
@@ -252,22 +243,15 @@ private:
 
   static int mapPrioPosix(Priority prio)
   {
+    // The five levels are spread evenly over the SCHED_OTHER range.
 #if defined(__VMS) || defined(__digital__)
-    static const int pmin = PRI_OTHER_MIN;
-    static const int pmax = PRI_OTHER_MAX;
+    const int lo = PRI_OTHER_MIN, hi = PRI_OTHER_MAX;
 #else
-    static const int pmin = sched_get_priority_min(SCHED_OTHER);
-    static const int pmax = sched_get_priority_max(SCHED_OTHER);
+    static const int lo = sched_get_priority_min(SCHED_OTHER);
+    static const int hi = sched_get_priority_max(SCHED_OTHER);
 #endif
-    switch (prio)
-    {
-    case PRIO_LOWEST:   return pmin;
-    case PRIO_LOW:      return pmin + (pmax - pmin) / 4;
-    case PRIO_NORMAL:   return pmin + (pmax - pmin) / 2;
-    case PRIO_HIGH:     return pmin + 3 * (pmax - pmin) / 4;
-    case PRIO_HIGHEST:  return pmax;
-    default:            return pmin + (pmax - pmin) / 2;
-    }
+    const int level = (prio >= PRIO_LOWEST && prio <= PRIO_HIGHEST) ? prio : PRIO_NORMAL;
+    return lo + (hi - lo) * level / 4;
   }
 
   void applyPriority()

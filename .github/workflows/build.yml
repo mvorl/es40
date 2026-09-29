@@ -243,6 +243,10 @@ jobs:
               cp "src/$binary" "$artifact_dir/"
             fi
           done
+          # The GPL/LGPL texts and third-party license notices required with the binaries.
+          if [[ -f "$artifact_dir/es40" ]]; then
+            cp COPYING COPYING.LGPL src/es40-NOTICES.txt "$artifact_dir/"
+          fi
 
           configuration="${{ matrix.configuration }}"
           if [[ ! "$configuration" =~ (^|[[:space:]])NS($|[[:space:]]) ]]; then
@@ -495,9 +499,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
 
           
-          # es40-cfg-tui-NOTICES.txt carries third-party license notices required with the TUI binary.
+          # COPYING (GPL), COPYING.LGPL and *-NOTICES.txt carry the license texts required with the binaries.
           Get-ChildItem -Path $configDir -File |
-            Where-Object { $_.Extension -in '.exe', '.dll', '.pdb' -or $_.Name -eq 'es40-cfg-tui-NOTICES.txt' } |
+            Where-Object { $_.Extension -in '.exe', '.dll', '.pdb' -or $_.Name -in 'COPYING', 'COPYING.LGPL', 'es40-NOTICES.txt', 'es40-cfg-tui-NOTICES.txt' } |
             Copy-Item -Destination $artifactDir -Force
 
       - name: Upload Windows artifacts
@@ -713,6 +717,10 @@ jobs:
               cp "src/$binary" "$artifact_dir/"
             fi
           done
+          # The GPL/LGPL texts and third-party license notices required with the binaries.
+          if [[ -f "$artifact_dir/es40" ]]; then
+            cp COPYING COPYING.LGPL src/es40-NOTICES.txt "$artifact_dir/"
+          fi
 
           configuration="${{ matrix.configuration }}"
           if [[ ! "$configuration" =~ (^|[[:space:]])NS($|[[:space:]]) ]]; then
@@ -865,6 +873,10 @@ jobs:
               cp "src/$binary" "$artifact_dir/"
             fi
           done
+          # The GPL/LGPL texts and third-party license notices required with the binaries.
+          if [[ -f "$artifact_dir/es40" ]]; then
+            cp COPYING COPYING.LGPL src/es40-NOTICES.txt "$artifact_dir/"
+          fi
 
           sdl_lib="$(find /usr/local/lib /opt/homebrew/lib -maxdepth 1 -type f \( -name 'libSDL3*.dylib' -o -name 'SDL3*.dylib' \) 2>/dev/null | head -n1 || true)"
           if [[ -n "$sdl_lib" ]]; then

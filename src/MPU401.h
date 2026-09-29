@@ -1,3 +1,25 @@
+/* ES40 emulator.
+ * Copyright (C) 2026 by Cacodemon345
+ * Copyright (C) 2026 by gdwnldsKSC
+ *
+ * WWW    : https://github.com/ES40-Emu/es40
+ *
+ * SPDX-License-Identifier: GPL-2.0-only
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * Derived from the formerly stubbed MPU-401 emulation of VSBHDA
+ * (https://github.com/Baron-von-Riedesel/VSBHDA), a fork of SBEMU, both
+ * distributed under the GNU General Public License version 2.
+ */
+
 #pragma once
 
 #ifdef _WIN32

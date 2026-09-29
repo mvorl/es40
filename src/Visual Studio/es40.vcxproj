@@ -2366,6 +2366,7 @@
     <None Include="..\..\autogen.sh" />
     <None Include="..\..\ChangeLog" />
     <None Include="..\..\configure.ac" />
+    <None Include="..\..\CONTRIBUTING.md" />
     <None Include="..\..\m4\ax_cxx_compile_stdcxx.m4" />
     <None Include="..\..\m4\libpcap.m4" />
     <None Include="..\..\m4\x11.m4" />
@@ -2378,6 +2379,18 @@
   <ItemGroup>
     <Text Include="..\..\CMakeLists.txt" />
     <Text Include="..\..\old_vga_docs.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The GPL/LGPL texts and third-party notices (BSD/MIT licenses) must ship with the binaries. -->
+    <CopyFileToFolders Include="..\..\COPYING">
+      <DestinationFolders>$(OutDir)</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\..\COPYING.LGPL">
+      <DestinationFolders>$(OutDir)</DestinationFolders>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="..\es40-NOTICES.txt">
+      <DestinationFolders>$(OutDir)</DestinationFolders>
+    </CopyFileToFolders>
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="asmjit.vcxproj" Condition="'$(Configuration)'=='Release JIT' Or '$(Configuration)'=='Profile JIT' Or '$(Configuration)'=='Debug JIT' Or '$(Configuration)'=='Release JIT - SSE2'">

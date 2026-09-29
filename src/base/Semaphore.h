@@ -108,7 +108,7 @@ public:
     --_n;
   }
 
-  /// Timed P – throws std::runtime_error on timeout (matches old Poco behaviour).
+  /// Timed P – throws std::runtime_error on timeout.
   void wait(long milliseconds)
   {
     std::unique_lock<std::mutex> lk(_mutex);

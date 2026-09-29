@@ -51,6 +51,9 @@ if BUILD_TUI
 bin_PROGRAMS += es40_cfg_tui
 endif
 
+# Third-party license notices required with the es40 binaries.
+dist_doc_DATA = es40-NOTICES.txt
+
 # vmnet needs root, but AppKit refuses to run in a setuid process so
 # small helper to work with vmnet directly - OS X only. 
 if HAVE_VMNET

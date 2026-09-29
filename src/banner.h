@@ -64,14 +64,13 @@ static inline void print_es40_banner(const char* title)
 	banner_line(title, true);
 	banner_line("Version " VERSION, true);
 	banner_line("", false);
-	banner_line("Copyright (C) 2007-2025 by the ES40 Emulator Project & Others", false);
+	banner_line("Copyright (C) 2007-2026 the ES40 Emulator Project contributors", false);
 	banner_line("Website: https://github.com/ES40-Emu/es40/", false);
 	banner_line("", false);
-	banner_line("", false);
-	banner_line("This program is free software; you can redistribute it and/or", false);
-	banner_line("modify it under the terms of the GNU General Public License", false);
-	banner_line("as published by the Free Software Foundation; either version 2", false);
-	banner_line("of the License, or (at your option) any later version.", false);
+	banner_line("This program is free software, distributed as a whole under the", false);
+	banner_line("GNU General Public License version 2, WITHOUT ANY WARRANTY.", false);
+	banner_line("Individual files may carry BSD, MIT or LGPL terms; see COPYING,", false);
+	banner_line("COPYING.LGPL and es40-NOTICES.txt.", false);
 	banner_border();
 	printf("\n\n");
 }

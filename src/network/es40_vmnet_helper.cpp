@@ -1,4 +1,7 @@
 /* ES40 emulator.
+ * Copyright (C) 2026 by Gary Palter
+ * Copyright (C) 2026 by Antoni Sawicki
+ * Copyright (C) 2026 by gdwnldsKSC
  *
  * WWW    : https://github.com/ES40-Emu/es40
  *
@@ -30,6 +33,7 @@
  *
  * ES40 retains configuration, adapter selection, diagnostics, filtering,
  * and process management.  This process only owns the opaque vmnet handle.
+ * Its vmnet start/stop handling is adapted from NetworkVmnet.cpp.
  **/
 
 #include <dispatch/dispatch.h>

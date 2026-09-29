@@ -583,6 +583,9 @@
     <None Include="..\config.h.cmake">
       <Filter>Resource Files</Filter>
     </None>
+    <None Include="..\..\CONTRIBUTING.md">
+      <Filter>Resource Files</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Text Include="..\..\old_vga_docs.txt">
@@ -591,5 +594,10 @@
     <Text Include="..\..\CMakeLists.txt">
       <Filter>Resource Files</Filter>
     </Text>
+  </ItemGroup>
+  <ItemGroup>
+    <CopyFileToFolders Include="..\..\COPYING" />
+    <CopyFileToFolders Include="..\..\COPYING.LGPL" />
+    <CopyFileToFolders Include="..\es40-NOTICES.txt" />
   </ItemGroup>
 </Project>

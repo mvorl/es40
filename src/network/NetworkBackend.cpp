@@ -1,4 +1,6 @@
 /* ES40 Emulator.
+ * Copyright (C) 2026 by Jan-Benedict Glaw
+ * Copyright (C) 2026 by Gary Palter
  *
  * WWW    : https://github.com/ES40-Emu/es40
  *

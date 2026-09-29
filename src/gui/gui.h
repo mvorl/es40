@@ -1,5 +1,6 @@
 /* ES40 emulator.
  * Copyright (C) 2007-2008 by the ES40 Emulator Project
+ * Copyright (C) 2026 by Antoni Sawicki
  *
  * WWW    : http://sourceforge.net/projects/es40
  * E-mail : camiel@camicom.com

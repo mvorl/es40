@@ -483,6 +483,12 @@ list(APPEND ES40_INCLUDES
     )
 
 add_executable(es40 ${ES40_SOURCES})
+# The GPL/LGPL texts and third-party license notices required with the es40 binaries.
+add_custom_command(TARGET es40 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/COPYING
+        ${CMAKE_CURRENT_SOURCE_DIR}/COPYING.LGPL
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/es40-NOTICES.txt $<TARGET_FILE_DIR:es40>)
 if (NOT ES40_DISABLE_IDB)
     add_executable(es40_idb ${ES40_SOURCES})
 endif()

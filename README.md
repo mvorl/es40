@@ -1,6 +1,6 @@
 # DEC ES40 Simulator
 
-es40 is free software. Please see the file COPYING for details.
+es40 is free software; see the License section below.
 
 For building and installation instructions please see below.
 
@@ -16,7 +16,23 @@ At minimum the version matching your build toolchain is needed.
 For outdated documentation, please see the files in the doc subdirectory.
 
 ### Please use es40-cfg to generate a config the first time you use it to ensure you do not omit any required devices from the chipset.
-### Reference src\es40.cfg for configuration values and explanations
+### Reference src\es40.cfg for configuration values and explanations  
+  
+## License  
+  
+ES40 as a whole is distributed under the GNU General Public License, version 2  
+(see COPYING), because it contains GPL-2.0 code. Files derived from Bochs are  
+under the GNU Lesser General Public License (see COPYING.LGPL).  
+
+Each source file states its own license in its header.  
+
+It is preferred that new ES40 code is BSD-1-Clause so it can be reused for 
+emulation improvement everywhere, and that code from other projects keeps its 
+original license instead of relicensing to more restrictive ones. 
+  
+The third-party notices that must accompany binaries are in src/es40-NOTICES.txt.  
+  
+Contribution licensing preferences are in CONTRIBUTING.md.  
 
 # Live shot of X11 running on emulated S3 via SDL display!
 
