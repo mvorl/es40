@@ -1,5 +1,6 @@
 /* ES40 Emulator.
  * Copyright (C) 2007-2008 by the ES40 Emulator Project
+ * Copyright (C) 2026 by Cacodemon345
  *
  * WWW    : https://github.com/ES40-Emu/es40
  *
@@ -21,6 +22,9 @@
  * and receiving any modifications you may make to the source code that might serve
  * the general public.
  *
+ * Parts of this file are based upon Bochs, which is Copyright (C) 2002
+ * MandrakeSoft S.A., originally distributed under the GNU Lesser General
+ * Public License, version 2 or later.
  */
 
  /**

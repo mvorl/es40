@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
+// Copyright (C) 2026 by gdwnldsKSC
+// Copyright (C) 2026 by the ES40 Emulator Project contributors
 // Copyright (C) 2012-2018 Barry Rodewald from MAME
 
 #include "emu.h"

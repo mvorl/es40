@@ -265,7 +265,7 @@ public:
   int           get_cpuid();
   void          flush_icache();
 
-  virtual void  run();    // Poco Thread entry point
+  virtual void  run();    // Thread entry point
   void          execute();
   void          release_threads();
 
