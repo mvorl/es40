@@ -523,6 +523,13 @@ static int wait_xfer_bytes(uint16_t cmd, uint8_t color_bpp, int width, int heigh
 	return (width * pixel_bits + bus_bits - 1) / bus_bits * height * (bus_bits / 8);
 }
 
+// CUR_X/Y and DESTX/Y are 12-bit fields (DB014-B 18-5..18-7); bit 11 is the sign, as in the Bresenham path.
+// CUR_X keeps the host's upper bits but DESTX drops them, so both ends must be decoded the same way.
+static inline int32_t coord12(int16_t v)
+{
+	return ((v & 0xfff) ^ 0x800) - 0x800;
+}
+
 // end es40 specific
 
 /*
@@ -634,7 +641,7 @@ void ibm8514a_device::ibm8514_cmd_w(uint16_t data)
 		ibm8514.gpbusy = false;
 		if (data & 0x0100)  // textured line: MAJ_AXIS_PCNT + 1 pixels, or the 2-point line's span
 			ibm8514.fifo_idx = wait_xfer_bytes(data, ibm8514.color_bpp, (data & 0x0800)
-				? std::max(std::abs(ibm8514.dest_x - ibm8514.curr_x), std::abs(ibm8514.dest_y - ibm8514.curr_y)) + 1
+				? std::max(std::abs(coord12(ibm8514.dest_x) - coord12(ibm8514.curr_x)), std::abs(coord12(ibm8514.dest_y) - coord12(ibm8514.curr_y))) + 1
 				: (ibm8514.rect_width & 0x0fff) + 1, 1);
 		if (data & 0x0008)
 		{
@@ -664,10 +671,10 @@ void ibm8514a_device::ibm8514_cmd_w(uint16_t data)
 			// Register 8EE8h = ending X coordinate (dest_x)
 			// ============================================================
 
-			int32_t x0 = (int16_t)ibm8514.curr_x;
-			int32_t y0 = (int16_t)ibm8514.curr_y;
-			int32_t x1 = (int16_t)ibm8514.dest_x;
-			int32_t y1 = (int16_t)ibm8514.dest_y;
+			int32_t x0 = coord12(ibm8514.curr_x);
+			int32_t y0 = coord12(ibm8514.curr_y);
+			int32_t x1 = coord12(ibm8514.dest_x);
+			int32_t y1 = coord12(ibm8514.dest_y);
 
 			int32_t dx = (x1 > x0) ? (x1 - x0) : (x0 - x1);
 			int32_t dy = (y1 > y0) ? (y1 - y0) : (y0 - y1);
