@@ -43,6 +43,9 @@
 #include "address_map.h"
 #include "coretmpl.h"
 #include "ibm8514a.h"
+#include <set>
+#include <string>
+#include <tuple>
 
 using offs_t = uint32_t;
 
@@ -104,6 +107,15 @@ protected:
   screen_device m_screen_shim;
   screen_device& screen() { return m_screen_shim; }
   bitmap_rgb32 m_render_bitmap;
+
+  // Reports an unimplemented register or port once per card: printed (up to
+  // a limit) and passed to trace_unimplemented().
+  void report_unimplemented(const char* what, u32 index, u32 value, bool write);
+  // Catch-all for indices no entry claims; install before the real entries.
+  void unimplemented_map(address_map& map, const char* what);
+  virtual void trace_unimplemented(const std::string&) {}
+  std::set<std::tuple<std::string, u32, bool>> m_unimplemented_seen;
+  unsigned m_unimplemented_printed = 0;
 
   // end es40 specific
   enum

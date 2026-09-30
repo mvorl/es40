@@ -1105,6 +1105,41 @@ void CVGA::mem_linear_w(offs_t offset, uint8_t data)
 	vga.memory[offset % vga.svga_intf.vram_size] = data;
 }
 
+// es40 specific: unimplemented register reporting
+
+void CVGA::report_unimplemented(const char* what, u32 index, u32 value, bool write)
+{
+	if (!m_unimplemented_seen.emplace(what, index, write).second)
+		return;
+	char text[192];
+	if (write)
+		snprintf(text, sizeof text, "Unimplemented %s write at 0x%x (value 0x%x)",
+			what, index, value);
+	else
+		snprintf(text, sizeof text, "Unimplemented %s read at 0x%x", what, index);
+	// Bounded so an unmodeled aperture cannot flood the console.
+	if (m_unimplemented_printed < 256)
+		printf("%s: %s.\n", devid_string, text);
+	else if (m_unimplemented_printed == 256)
+		printf("%s: Further unimplemented accesses are not printed.\n", devid_string);
+	if (m_unimplemented_printed <= 256)
+		++m_unimplemented_printed;
+	trace_unimplemented(text);
+}
+
+void CVGA::unimplemented_map(address_map& map, const char* what)
+{
+	map.unmap_value_high();
+	map(0, map.size() - 1).lrw8(
+		NAME([=](offs_t index) -> u8 {
+			report_unimplemented(what, index, 0, false);
+			return 0xff;
+			}),
+		NAME([=](offs_t index, u8 data) {
+			report_unimplemented(what, index, data, true);
+			}));
+}
+
 /**
  * Variable pointer to the one and only VGA card.
  **/
