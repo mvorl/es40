@@ -1561,9 +1561,7 @@ int CPowerStorm3xx::RestoreState(FILE* f)
 			return -1;
 		const u32 lo = powerstorm_read_u32(f), hi = powerstorm_read_u32(f),
 				  n = powerstorm_read_u32(f);
-		if (n < CRealImage2100::VGAMemorySize ||
-			n > CRealImage2100::VGAMemorySize +
-					CRealImage2100::DACRegisterCount + 8192)
+		if (n < CRealImage2100::MinStateSize || n > CRealImage2100::MaxStateSize)
 			return -1;
 		std::string bytes(n, '\0');
 		if (fread(&bytes[0], 1, n, f) != n)

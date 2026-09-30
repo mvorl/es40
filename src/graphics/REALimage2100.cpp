@@ -75,6 +75,24 @@ void CRealImage2100::dac_port_map(address_map& map)
 			}));
 }
 
+// Nothing modeled depends on these yet; their values read back as written.
+uint32_t* CRealImage2100::native_register(uint32_t a)
+{
+	switch (a)
+	{
+	case UnitReset:
+		return &m_unit_reset;
+	case InterruptEnable:
+		return &m_interrupt_enable;
+	case VGAControl:
+		return &m_vga_control;
+	case DisplayControl:
+		return &m_display_control;
+	default:
+		return nullptr;
+	}
+}
+
 uint32_t CRealImage2100::ReadMem(uint32_t a, int bits)
 {
 	if (!valid_width(bits) || (a & (unsigned(bits) / 8 - 1)))
@@ -87,6 +105,8 @@ uint32_t CRealImage2100::ReadMem(uint32_t a, int bits)
 	if (bits == 8 && a >= 0x838000 && a < 0x838020 &&
 		m_dac_ports.has_handler(a - 0x838000))
 		return m_dac_ports.read_byte(a - 0x838000);
+	if (const uint32_t* reg = native_register(a & ~3u))
+		return (*reg >> ((a & 3) * 8)) & width_mask(bits);
 	const auto it = m_shadow.find(a & ~3u);
 	const uint32_t value = it == m_shadow.end() ? 0 : it->second;
 	// Reads return the stored value; readback is modeled, not measured.
@@ -107,10 +127,16 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 		m_dac_ports.write_byte(a - 0x838000, u8(v));
 		return;
 	}
-	// BIOS POST writes 0x80041c, 0x800424, 0x840000 and 0x800430 (ROM
-	// 0x36b3..0x36d6, 0x3618) and never reads them back.
 	const uint32_t key = a & ~3u, shift = (a & 3) * 8,
 				   lanes = width_mask(bits) << shift;
+	if (uint32_t* reg = native_register(key))
+	{
+		*reg = (*reg & ~lanes) | ((v << shift) & lanes);
+		// Only the VGA side is displayed; say so when the driver leaves it.
+		if (key == VGAControl && native_display())
+			unimplemented("REALimage native display", key, *reg, true);
+		return;
+	}
 	auto it = m_shadow.find(key);
 	if (it == m_shadow.end())
 	{
@@ -197,6 +223,9 @@ void CRealImage2100::reset(bool clear)
 	m_shadow.clear();
 	m_warned.clear();
 	m_aperture_warned = m_shadow_full_warned = false;
+	// Power-on values are undocumented; the card presents VGA before POST.
+	m_unit_reset = m_interrupt_enable = m_display_control = 0;
+	m_vga_control = VGAControlVGA;
 	m_io_index = 0;
 	m_dac_index = 0;
 	m_palette_read = m_palette_write = 0;
@@ -273,9 +302,8 @@ static uint32_t crc32(const std::string& bytes)
 	return ~crc;
 }
 
-// Selectors, palette, DAC registers, shadow count and VGA memory.
-static constexpr uint32_t FixedPayload = 16 + 256 * 4 +
-	CRealImage2100::DACRegisterCount + 4 + CRealImage2100::VGAMemorySize;
+// Selectors, native registers, palette, DAC registers, shadow count, VGA memory.
+static constexpr uint32_t FixedPayload = CRealImage2100::MinStateSize - 16;
 
 void CRealImage2100::SaveState(std::ostream& out) const
 {
@@ -284,6 +312,10 @@ void CRealImage2100::SaveState(std::ostream& out) const
 	put32(p, m_dac_index);
 	put32(p, m_palette_read);
 	put32(p, m_palette_write);
+	put32(p, m_unit_reset);
+	put32(p, m_interrupt_enable);
+	put32(p, m_vga_control);
+	put32(p, m_display_control);
 	for (const uint32_t c : m_palette)
 		put32(p, c);
 	p.write(reinterpret_cast<const char*>(m_dac_regs.data()), DACRegisterCount);
@@ -296,7 +328,7 @@ void CRealImage2100::SaveState(std::ostream& out) const
 	p.write(reinterpret_cast<const char*>(m_vga_memory.data()), VGAMemorySize);
 	const auto bytes = p.str();
 	put32(out, 0x30324952); // RI20
-	put32(out, 2);
+	put32(out, 3);
 	put32(out, uint32_t(bytes.size()));
 	put32(out, crc32(bytes));
 	out.write(bytes.data(), bytes.size());
@@ -306,10 +338,10 @@ void CRealImage2100::SaveState(std::ostream& out) const
 
 void CRealImage2100::RestoreState(std::istream& in)
 {
-	if (get32(in) != 0x30324952 || get32(in) != 2)
+	if (get32(in) != 0x30324952 || get32(in) != 3)
 		throw std::runtime_error("Wrong REALimage snapshot version");
 	const auto size = get32(in), crc = get32(in);
-	if (size < FixedPayload || size > FixedPayload + MaxShadowRegisters * 8)
+	if (size < FixedPayload || size > MaxStateSize - 16)
 		throw std::runtime_error("Invalid REALimage snapshot length");
 	std::string bytes(size, '\0');
 	in.read(&bytes[0], size);
@@ -319,6 +351,8 @@ void CRealImage2100::RestoreState(std::istream& in)
 	const auto index = get32(p), dac = get32(p), rd = get32(p), wr = get32(p);
 	if (dac > 65535 || rd > 255 || wr > 255)
 		throw std::runtime_error("Invalid REALimage snapshot selectors");
+	const auto unit_reset = get32(p), interrupt_enable = get32(p),
+			   vga_control = get32(p), display_control = get32(p);
 	std::array<uint32_t, 256> pal{};
 	for (auto& c : pal)
 	{
@@ -350,6 +384,10 @@ void CRealImage2100::RestoreState(std::istream& in)
 	m_shadow.swap(shadow);
 	m_warned.clear();
 	m_aperture_warned = m_shadow_full_warned = false;
+	m_unit_reset = unit_reset;
+	m_interrupt_enable = interrupt_enable;
+	m_vga_control = vga_control;
+	m_display_control = display_control;
 	m_io_index = index;
 	m_dac_index = uint16_t(dac);
 	m_palette_read = uint8_t(rd);

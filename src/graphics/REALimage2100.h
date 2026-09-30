@@ -64,8 +64,23 @@ public:
   static constexpr uint32_t DACIndexLow = 0x00838010, DACIndexHigh = 0x00838014,
                             DACIndexedData = 0x00838018;
   static constexpr uint32_t DACRegisterCount = 0x10000;
+  // Native registers as BAR0 offsets (BAR2 indexes the same space); the NT
+  // miniports map BAR0+0x800000 as their register base.
+  // Active-low per-unit resets: drivers write 0 (or clear one bit), then ones.
+  static constexpr uint32_t UnitReset = 0x0080041c;
+  // Only ever written 0; no NT miniport installs an ISR (inferred enable mask).
+  static constexpr uint32_t InterruptEnable = 0x00800424;
+  // BIOS and miniport exit write VGAControlVGA; miniport entry writes Native.
+  static constexpr uint32_t VGAControl = 0x00800430, VGAControlVGA = 0x000a0000,
+                            VGAControlNative = 0x00100000;
+  // Read back by the miniport: clock/memory configuration and monitor pins.
+  static constexpr uint32_t DisplayControl = 0x00840000;
   // Bounds shadow storage; BAR0 decodes far more than any register file.
   static constexpr uint32_t MaxShadowRegisters = 4096;
+  // Serialized SaveState() size, header included.
+  static constexpr uint32_t MinStateSize =
+    16 + 32 + 256 * 4 + DACRegisterCount + 4 + VGAMemorySize;
+  static constexpr uint32_t MaxStateSize = MinStateSize + MaxShadowRegisters * 8;
 
   using DiagnosticCallback = std::function<void(const Diagnostic&)>;
   using UnimplementedCallback = std::function<void(
@@ -88,6 +103,10 @@ public:
   uint32_t io_index() const { return m_io_index; }
 
   uint16_t dac_index() const { return m_dac_index; }
+
+  uint32_t vga_control() const { return m_vga_control; }
+
+  bool native_display() const { return m_vga_control & VGAControlNative; }
 
   void set_diagnostic_callback(DiagnosticCallback fn)
   {
@@ -126,6 +145,7 @@ public:
 
 private:
   void dac_port_map(address_map& map);
+  uint32_t* native_register(uint32_t dword_address);
   void report(
     const char* code, uint32_t address, uint32_t value, const char* message,
     bool fatal = false);
@@ -142,6 +162,8 @@ private:
   std::map<uint32_t, uint32_t> m_shadow;
   std::set<uint32_t> m_warned;
   bool m_aperture_warned = false, m_shadow_full_warned = false;
+  uint32_t m_unit_reset = 0, m_interrupt_enable = 0,
+           m_vga_control = VGAControlVGA, m_display_control = 0;
   uint32_t m_io_index = 0;
   uint16_t m_dac_index = 0;
   uint8_t m_palette_read = 0, m_palette_write = 0;
