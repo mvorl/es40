@@ -93,6 +93,20 @@ uint32_t* CRealImage2100::native_register(uint32_t a)
 	}
 }
 
+// No engine is modeled, so busy bits read 0. Retrace sits inside blank near
+// the end of each virtual frame, so both set-then-clear waits finish.
+uint32_t CRealImage2100::status_read()
+{
+	const uint32_t phase = m_status_phase;
+	m_status_phase = (phase + 1) % StatusFrameReads;
+	uint32_t v = 0;
+	if (phase >= StatusFrameReads - 8)
+		v |= StatusVBlank;
+	if (phase >= StatusFrameReads - 6 && phase < StatusFrameReads - 2)
+		v |= StatusVRetrace;
+	return v;
+}
+
 uint32_t CRealImage2100::ReadMem(uint32_t a, int bits)
 {
 	if (!valid_width(bits) || (a & (unsigned(bits) / 8 - 1)))
@@ -107,6 +121,8 @@ uint32_t CRealImage2100::ReadMem(uint32_t a, int bits)
 		return m_dac_ports.read_byte(a - 0x838000);
 	if (const uint32_t* reg = native_register(a & ~3u))
 		return (*reg >> ((a & 3) * 8)) & width_mask(bits);
+	if ((a & ~3u) == Status)
+		return (status_read() >> ((a & 3) * 8)) & width_mask(bits);
 	const auto it = m_shadow.find(a & ~3u);
 	const uint32_t value = it == m_shadow.end() ? 0 : it->second;
 	// Reads return the stored value; readback is modeled, not measured.
@@ -135,6 +151,11 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 		// Only the VGA side is displayed; say so when the driver leaves it.
 		if (key == VGAControl && native_display())
 			unimplemented("REALimage native display", key, *reg, true);
+		return;
+	}
+	if (key == Status)
+	{
+		unimplemented_once("REALimage status register", a, v, true);
 		return;
 	}
 	auto it = m_shadow.find(key);
@@ -226,6 +247,7 @@ void CRealImage2100::reset(bool clear)
 	// Power-on values are undocumented; the card presents VGA before POST.
 	m_unit_reset = m_interrupt_enable = m_display_control = 0;
 	m_vga_control = VGAControlVGA;
+	m_status_phase = 0;
 	m_io_index = 0;
 	m_dac_index = 0;
 	m_palette_read = m_palette_write = 0;
@@ -316,6 +338,7 @@ void CRealImage2100::SaveState(std::ostream& out) const
 	put32(p, m_interrupt_enable);
 	put32(p, m_vga_control);
 	put32(p, m_display_control);
+	put32(p, m_status_phase);
 	for (const uint32_t c : m_palette)
 		put32(p, c);
 	p.write(reinterpret_cast<const char*>(m_dac_regs.data()), DACRegisterCount);
@@ -352,7 +375,10 @@ void CRealImage2100::RestoreState(std::istream& in)
 	if (dac > 65535 || rd > 255 || wr > 255)
 		throw std::runtime_error("Invalid REALimage snapshot selectors");
 	const auto unit_reset = get32(p), interrupt_enable = get32(p),
-			   vga_control = get32(p), display_control = get32(p);
+			   vga_control = get32(p), display_control = get32(p),
+			   status_phase = get32(p);
+	if (status_phase >= StatusFrameReads)
+		throw std::runtime_error("Invalid REALimage status phase");
 	std::array<uint32_t, 256> pal{};
 	for (auto& c : pal)
 	{
@@ -388,6 +414,7 @@ void CRealImage2100::RestoreState(std::istream& in)
 	m_interrupt_enable = interrupt_enable;
 	m_vga_control = vga_control;
 	m_display_control = display_control;
+	m_status_phase = status_phase;
 	m_io_index = index;
 	m_dac_index = uint16_t(dac);
 	m_palette_read = uint8_t(rd);

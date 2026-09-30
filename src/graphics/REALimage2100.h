@@ -68,6 +68,12 @@ public:
   // miniports map BAR0+0x800000 as their register base.
   // Active-low per-unit resets: drivers write 0 (or clear one bit), then ones.
   static constexpr uint32_t UnitReset = 0x0080041c;
+  // Read-only. Drivers spin until busy bits (0, 3, 25-31) clear, and until each
+  // timing flag sets then clears; the bit 23/24 roles are inferred.
+  static constexpr uint32_t Status = 0x00800420, StatusVBlank = 1u << 23,
+                            StatusVRetrace = 1u << 24;
+  // Status reads per virtual frame; the timing flags need no host clock.
+  static constexpr uint32_t StatusFrameReads = 64;
   // Only ever written 0; no NT miniport installs an ISR (inferred enable mask).
   static constexpr uint32_t InterruptEnable = 0x00800424;
   // BIOS and miniport exit write VGAControlVGA; miniport entry writes Native.
@@ -79,7 +85,7 @@ public:
   static constexpr uint32_t MaxShadowRegisters = 4096;
   // Serialized SaveState() size, header included.
   static constexpr uint32_t MinStateSize =
-    16 + 32 + 256 * 4 + DACRegisterCount + 4 + VGAMemorySize;
+    16 + 36 + 256 * 4 + DACRegisterCount + 4 + VGAMemorySize;
   static constexpr uint32_t MaxStateSize = MinStateSize + MaxShadowRegisters * 8;
 
   using DiagnosticCallback = std::function<void(const Diagnostic&)>;
@@ -146,6 +152,7 @@ public:
 private:
   void dac_port_map(address_map& map);
   uint32_t* native_register(uint32_t dword_address);
+  uint32_t status_read();
   void report(
     const char* code, uint32_t address, uint32_t value, const char* message,
     bool fatal = false);
@@ -164,6 +171,7 @@ private:
   bool m_aperture_warned = false, m_shadow_full_warned = false;
   uint32_t m_unit_reset = 0, m_interrupt_enable = 0,
            m_vga_control = VGAControlVGA, m_display_control = 0;
+  uint32_t m_status_phase = 0;
   uint32_t m_io_index = 0;
   uint16_t m_dac_index = 0;
   uint8_t m_palette_read = 0, m_palette_write = 0;
