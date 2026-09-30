@@ -138,6 +138,7 @@ private:
   CPermedia2::Frame render_frame();
   void trace(char op, int bar, u32 address, int bits, u32 value);
   void publish_frame();
+  void trace_unimplemented(const std::string& text) override;
 
   CDisplayOutput m_output;
   address_map m_crtc_map{256};

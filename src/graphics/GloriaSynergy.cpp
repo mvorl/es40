@@ -142,7 +142,7 @@ static bool gloria_vga_window_offset(u32& address, unsigned selection)
 // region-zero VGA aliases. Display invalidation is handled by the card worker.
 void CGloriaSynergy::crtc_map(address_map& map)
 {
-	map.unmap_value_high();
+	unimplemented_map(map, "VGA CRTC register");
 	map(0x00, 0x00)
 		.lrw8(
 			NAME([this](offs_t) {
@@ -430,7 +430,7 @@ void CGloriaSynergy::crtc_map(address_map& map)
 
 void CGloriaSynergy::sequencer_map(address_map& map)
 {
-	map.unmap_value_high();
+	unimplemented_map(map, "VGA sequencer register");
 	map(0x00, 0x05).lr8(NAME([this](offs_t offset) {
 		return vga.sequencer.data[offset];
 	}));
@@ -467,7 +467,7 @@ void CGloriaSynergy::sequencer_map(address_map& map)
 
 void CGloriaSynergy::gc_map(address_map& map)
 {
-	map.unmap_value_high();
+	unimplemented_map(map, "VGA graphics controller register");
 	map(0x00, 0x00)
 		.lrw8(
 			NAME([this](offs_t) {
@@ -569,7 +569,7 @@ void CGloriaSynergy::gc_map(address_map& map)
 void CGloriaSynergy::attribute_map(address_map& map)
 {
 	map.global_mask(0x3f);
-	map.unmap_value_high();
+	unimplemented_map(map, "VGA attribute register");
 	map(0x00, 0x0f)
 		.lrw8(
 			NAME([this](offs_t offset) {
@@ -579,9 +579,12 @@ void CGloriaSynergy::attribute_map(address_map& map)
 				vga.attribute.data[offset] = data & 0x3f;
 			}));
 	// PAS (index bit 5) disables palette writes; control registers remain mapped.
-	map(0x20, 0x2f).lr8(NAME([this](offs_t offset) {
-		return vga.attribute.data[offset];
-	}));
+	map(0x20, 0x2f)
+		.lrw8(
+			NAME([this](offs_t offset) {
+				return vga.attribute.data[offset];
+			}),
+			NAME([](offs_t, u8) {}));
 	map(0x10, 0x10)
 		.mirror(0x20)
 		.lrw8(
@@ -1117,6 +1120,10 @@ try
 			m_trace.flush();
 		}
 	});
+	m_permedia2.set_unimplemented_callback(
+		[this](const char* what, uint32_t address, uint32_t value, bool write) {
+			report_unimplemented(what, address, value, write);
+		});
 	m_permedia2.set_dma_reader(
 		[this](uint32_t address, uint8_t* dst, size_t count) {
 			// Fetch input commands through the shared PCI/IOMMU path, with the same
@@ -1792,6 +1799,7 @@ u8 CGloriaSynergy::io_read_b(u32 port)
 	case 0x3cf:
 		return gc_data_r(0);
 	default:
+		report_unimplemented("VGA port", port, 0, false);
 		return 0xff;
 	}
 }
@@ -1848,6 +1856,7 @@ void CGloriaSynergy::io_write_b(u32 port, u8 data)
 		gc_data_w(0, data);
 		break;
 	default:
+		report_unimplemented("VGA port", port, data, true);
 		break;
 	}
 }
@@ -1881,6 +1890,15 @@ void CGloriaSynergy::trace(char op, int bar, u32 a, int bits, u32 value)
 	else if (bar == 6)
 		m_trace << "# ROM " << op << ' ' << std::hex << a << ' ' << bits << ' '
 				<< value << std::dec << '\n';
+}
+
+void CGloriaSynergy::trace_unimplemented(const std::string& text)
+{
+	if (m_trace)
+	{
+		m_trace << "# " << devid_string << ": " << text << '\n';
+		m_trace.flush();
+	}
 }
 
 void CGloriaSynergy::publish_frame()

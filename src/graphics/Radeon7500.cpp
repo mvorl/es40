@@ -134,7 +134,7 @@ static bool radeon_vga_window_offset(u32& address, unsigned selection)
 // aliases and MM_INDEX/MM_DATA. Only the standard VGA registers are mapped.
 void CRadeon7500::crtc_map(address_map& map)
 {
-	map.unmap_value_high();
+	unimplemented_map(map, "VGA CRTC register");
 	map(0x00, 0x00)
 		.lrw8(
 			NAME([this](offs_t) {
@@ -422,7 +422,7 @@ void CRadeon7500::crtc_map(address_map& map)
 
 void CRadeon7500::sequencer_map(address_map& map)
 {
-	map.unmap_value_high();
+	unimplemented_map(map, "VGA sequencer register");
 	map(0x00, 0x04).lr8(NAME([this](offs_t offset) {
 		return vga.sequencer.data[offset];
 	}));
@@ -452,7 +452,7 @@ void CRadeon7500::sequencer_map(address_map& map)
 
 void CRadeon7500::gc_map(address_map& map)
 {
-	map.unmap_value_high();
+	unimplemented_map(map, "VGA graphics controller register");
 	map(0x00, 0x00)
 		.lrw8(
 			NAME([this](offs_t) {
@@ -542,7 +542,7 @@ void CRadeon7500::gc_map(address_map& map)
 void CRadeon7500::attribute_map(address_map& map)
 {
 	map.global_mask(0x3f);
-	map.unmap_value_high();
+	unimplemented_map(map, "VGA attribute register");
 	map(0x00, 0x0f)
 		.lrw8(
 			NAME([this](offs_t offset) {
@@ -552,9 +552,12 @@ void CRadeon7500::attribute_map(address_map& map)
 				vga.attribute.data[offset] = data & 0x3f;
 			}));
 	// PAS (index bit 5) disables palette writes; control registers remain mapped.
-	map(0x20, 0x2f).lr8(NAME([this](offs_t offset) {
-		return vga.attribute.data[offset];
-	}));
+	map(0x20, 0x2f)
+		.lrw8(
+			NAME([this](offs_t offset) {
+				return vga.attribute.data[offset];
+			}),
+			NAME([](offs_t, u8) {}));
 	map(0x10, 0x10)
 		.mirror(0x20)
 		.lrw8(
@@ -1021,6 +1024,10 @@ try
 		if (!m_replaying_pci)
 			do_pci_interrupt(0, level);
 	});
+	m_rv200.set_unimplemented_callback(
+		[this](const char* what, uint32_t address, uint32_t value, bool write) {
+			report_unimplemented(what, address, value, write);
+		});
 	m_rv200.set_diagnostic_callback(
 		[this](const std::string& message, bool fatal) {
 			// Hardware faults remain visible even when VGA debugging is disabled.
@@ -1737,6 +1744,7 @@ u8 CRadeon7500::io_read_b(u32 port)
 	case 0x3cf:
 		return gc_data_r(0);
 	default:
+		report_unimplemented("VGA port", port, 0, false);
 		return 0xff;
 	}
 }
@@ -1825,6 +1833,7 @@ void CRadeon7500::io_write_b(u32 port, u8 data)
 		gc_data_w(0, data);
 		break;
 	default:
+		report_unimplemented("VGA port", port, data, true);
 		break;
 	}
 }
@@ -1848,6 +1857,15 @@ void CRadeon7500::trace(
 		return;
 	m_trace << op << ' ' << bar << " 0x" << std::hex << address << std::dec
 			<< ' ' << bits << " 0x" << std::hex << value << std::dec << '\n';
+}
+
+void CRadeon7500::trace_unimplemented(const std::string& text)
+{
+	if (m_trace)
+	{
+		m_trace << "# " << devid_string << ": " << text << '\n';
+		m_trace.flush();
+	}
 }
 
 void CRadeon7500::publish_frame()

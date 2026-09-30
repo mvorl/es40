@@ -131,6 +131,8 @@ public:
   using IRQCallback = std::function<void(bool)>;
   using DiagnosticCallback =
     std::function<void(const std::string& message, bool fatal)>;
+  using UnimplementedCallback = std::function<void(
+    const char* what, uint32_t address, uint32_t value, bool write)>;
   using VGAReader = std::function<uint8_t(uint32_t)>;
   using VGAWriter = std::function<void(uint32_t, uint8_t)>;
   using PaletteIndexCallback = std::function<void()>;
@@ -203,6 +205,11 @@ public:
     m_diagnostic = std::move(fn);
   }
 
+  void set_unimplemented_callback(UnimplementedCallback fn)
+  {
+    m_unimplemented = std::move(fn);
+  }
+
   // PCI BAR placement, readable through the CONFIG_APER registers.
   void set_aperture_bases(uint32_t fb, uint32_t mmio);
   Frame scanout(std::string* error = nullptr) const;
@@ -241,6 +248,7 @@ private:
   ConfigReader m_config_read;
   IRQCallback m_irq_callback;
   DiagnosticCallback m_diagnostic;
+  UnimplementedCallback m_unimplemented;
 
   uint32_t r(uint32_t a) const { return m_regs[a / 4]; }
 

@@ -570,10 +570,12 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 	}
 	r(a) = v;
 	m_counters.shadow_writes++;
+	// Stored without a modeled effect: report the register once.
 	if (!m_warned[a / 4])
 	{
 		m_warned[a / 4] = true;
-		note("shadow-only register " + hex(a));
+		if (m_unimplemented)
+			m_unimplemented("RV200 register", a, v, true);
 	}
 }
 

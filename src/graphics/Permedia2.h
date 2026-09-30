@@ -177,6 +177,8 @@ public:
   using DMAWriter = std::function<bool(uint32_t, const uint8_t*, size_t)>;
   using IRQCallback = std::function<void(bool)>;
   using DiagnosticCallback = std::function<void(const Diagnostic&)>;
+  using UnimplementedCallback = std::function<void(
+    const char* what, uint32_t address, uint32_t value, bool write)>;
   CPermedia2();
   explicit CPermedia2(const Options& options);
   CPermedia2(const CPermedia2&) = delete;
@@ -224,6 +226,11 @@ public:
   void set_diagnostic_callback(DiagnosticCallback fn)
   {
     m_diagnostic = std::move(fn);
+  }
+
+  void set_unimplemented_callback(UnimplementedCallback fn)
+  {
+    m_unimplemented = std::move(fn);
   }
 
   Frame scanout(bool include_cursor = true) const;
@@ -293,6 +300,8 @@ private:
   DMAWriter m_dma_writer;
   IRQCallback m_irq_callback;
   DiagnosticCallback m_diagnostic;
+  UnimplementedCallback m_unimplemented;
+  std::array<bool, 8192> m_unknown_reported{};
   std::array<bool, 8192> m_warned{};
   address_map m_dac_map{256};
 
@@ -349,6 +358,7 @@ private:
   uint32_t register_read(uint32_t address);
   bool register_write(uint32_t address, uint32_t value);
   void dac_map(address_map& map);
+  void unknown_register(uint32_t address, uint32_t value, bool write);
 };
 
 #endif // INCLUDED_Permedia2_H_

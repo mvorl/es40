@@ -171,6 +171,7 @@ uint32_t CPermedia2::register_read(uint32_t address)
 		return value;
 	}
 	default:
+		unknown_register(address, 0, false);
 		return r(address);
 	}
 }
@@ -496,6 +497,7 @@ bool CPermedia2::register_write(uint32_t address, uint32_t value)
 			(m_dac[DACCursorControl] & ~12u) | ((m_cursor_pos >> 6) & 12));
 		return true;
 	default:
+		unknown_register(address, value, true);
 		r(address) = value;
 		return true;
 	}
@@ -532,6 +534,16 @@ void CPermedia2::dac_map(address_map& map)
 	map(DACMemoryClockStatus, DACMemoryClockStatus)
 		.lw8(NAME([](offs_t, uint8_t) {
 		}));
+}
+
+// Registers absent from register_name() have no modeled behavior.
+void CPermedia2::unknown_register(uint32_t a, uint32_t value, bool write)
+{
+	if (m_unknown_reported[a / 8] || std::strcmp(register_name(a), "REGISTER"))
+		return;
+	m_unknown_reported[a / 8] = true;
+	if (m_unimplemented)
+		m_unimplemented("Permedia2 register", a, value, write);
 }
 
 const char* CPermedia2::register_name(uint32_t a)
@@ -3727,6 +3739,7 @@ void CPermedia2::reset(bool clear_vram)
 	m_decoder = {};
 	m_job = {};
 	m_warned.fill(false);
+	m_unknown_reported.fill(false);
 	m_palette_w = m_palette_r = m_cursor_color_pos = m_cursor_pos = 0;
 	m_active_screen_base = m_dma_cursor = m_out_dma_cursor = 0;
 	m_relative_offset = 0;
