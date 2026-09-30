@@ -99,6 +99,8 @@ uint32_t CRealImage2100::status_read()
 {
 	const uint32_t phase = m_status_phase;
 	m_status_phase = (phase + 1) % StatusFrameReads;
+	if (m_status_phase == 0)
+		advance_frame();
 	uint32_t v = 0;
 	if (phase >= StatusFrameReads - 8)
 		v |= StatusVBlank;
@@ -109,12 +111,20 @@ uint32_t CRealImage2100::status_read()
 
 uint32_t CRealImage2100::ReadMem(uint32_t a, int bits)
 {
-	if (!valid_width(bits) || (a & (unsigned(bits) / 8 - 1)))
+	if (!valid_width(bits))
 	{
-		report(
-			"ACCESS_WIDTH", a, uint32_t(bits),
-			"Invalid native width or alignment");
+		report("ACCESS_WIDTH", a, uint32_t(bits), "Invalid native width");
 		return 0xffffffffu;
+	}
+	if (a & (unsigned(bits) / 8 - 1))
+	{
+		// The ES40 CPU completes unaligned loads in place; a real Alpha traps and
+		// NT rebuilds them from aligned loads, so return the same bytes.
+		const uint32_t base = a & ~3u;
+		uint64_t v = ReadMem(base, 32);
+		if ((a & 3) + unsigned(bits) / 8 > 4)
+			v |= uint64_t(ReadMem(base + 4, 32)) << 32;
+		return uint32_t(v >> ((a & 3) * 8)) & width_mask(bits);
 	}
 	if (bits == 8 && a >= 0x838000 && a < 0x838020 &&
 		m_dac_ports.has_handler(a - 0x838000))
@@ -123,6 +133,17 @@ uint32_t CRealImage2100::ReadMem(uint32_t a, int bits)
 		return (*reg >> ((a & 3) * 8)) & width_mask(bits);
 	if ((a & ~3u) == Status)
 		return (status_read() >> ((a & 3) * 8)) & width_mask(bits);
+	if ((a & ~3u) == BoardStatus)
+	{
+		const uint32_t v = m_frame_counter | (uint32_t(BoardStraps) << 16) |
+			(uint32_t(m_board_control) << 24);
+		return (v >> ((a & 3) * 8)) & width_mask(bits);
+	}
+	if ((a & ~3u) == BoardIO)
+	{
+		const uint32_t v = m_board_io | (uint32_t(BoardIDPCGA3) << 24);
+		return (v >> ((a & 3) * 8)) & width_mask(bits);
+	}
 	const auto it = m_shadow.find(a & ~3u);
 	const uint32_t value = it == m_shadow.end() ? 0 : it->second;
 	// Reads return the stored value; readback is modeled, not measured.
@@ -156,6 +177,22 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 	if (key == Status)
 	{
 		unimplemented_once("REALimage status register", a, v, true);
+		return;
+	}
+	// The Alpha miniport rewrites the whole longword from its byte copy;
+	// counter and strap bytes ignore it.
+	if (key == BoardStatus)
+	{
+		if (lanes & 0xff000000u)
+			m_board_control = uint8_t(((v << shift) & lanes) >> 24);
+		return;
+	}
+	if (key == BoardIO)
+	{
+		m_board_io = (m_board_io & ~lanes & 0x00ffffffu) |
+			((v << shift) & lanes & 0x00ffffffu);
+		if (lanes & 0xff000000u)
+			m_board_timing = uint8_t(((v << shift) & lanes) >> 24);
 		return;
 	}
 	auto it = m_shadow.find(key);
@@ -248,6 +285,9 @@ void CRealImage2100::reset(bool clear)
 	m_unit_reset = m_interrupt_enable = m_display_control = 0;
 	m_vga_control = VGAControlVGA;
 	m_status_phase = 0;
+	m_frame_counter = 0;
+	m_board_control = m_board_timing = 0;
+	m_board_io = 0;
 	m_io_index = 0;
 	m_dac_index = 0;
 	m_palette_read = m_palette_write = 0;
@@ -339,6 +379,10 @@ void CRealImage2100::SaveState(std::ostream& out) const
 	put32(p, m_vga_control);
 	put32(p, m_display_control);
 	put32(p, m_status_phase);
+	put32(p, m_frame_counter);
+	put32(p, m_board_control);
+	put32(p, m_board_io);
+	put32(p, m_board_timing);
 	for (const uint32_t c : m_palette)
 		put32(p, c);
 	p.write(reinterpret_cast<const char*>(m_dac_regs.data()), DACRegisterCount);
@@ -351,7 +395,7 @@ void CRealImage2100::SaveState(std::ostream& out) const
 	p.write(reinterpret_cast<const char*>(m_vga_memory.data()), VGAMemorySize);
 	const auto bytes = p.str();
 	put32(out, 0x30324952); // RI20
-	put32(out, 3);
+	put32(out, 4);
 	put32(out, uint32_t(bytes.size()));
 	put32(out, crc32(bytes));
 	out.write(bytes.data(), bytes.size());
@@ -361,7 +405,7 @@ void CRealImage2100::SaveState(std::ostream& out) const
 
 void CRealImage2100::RestoreState(std::istream& in)
 {
-	if (get32(in) != 0x30324952 || get32(in) != 3)
+	if (get32(in) != 0x30324952 || get32(in) != 4)
 		throw std::runtime_error("Wrong REALimage snapshot version");
 	const auto size = get32(in), crc = get32(in);
 	if (size < FixedPayload || size > MaxStateSize - 16)
@@ -376,9 +420,12 @@ void CRealImage2100::RestoreState(std::istream& in)
 		throw std::runtime_error("Invalid REALimage snapshot selectors");
 	const auto unit_reset = get32(p), interrupt_enable = get32(p),
 			   vga_control = get32(p), display_control = get32(p),
-			   status_phase = get32(p);
-	if (status_phase >= StatusFrameReads)
-		throw std::runtime_error("Invalid REALimage status phase");
+			   status_phase = get32(p), frame_counter = get32(p),
+			   board_control = get32(p), board_io = get32(p),
+			   board_timing = get32(p);
+	if (status_phase >= StatusFrameReads || frame_counter > 0xffff ||
+		board_control > 0xff || board_io > 0xffffff || board_timing > 0xff)
+		throw std::runtime_error("Invalid REALimage status state");
 	std::array<uint32_t, 256> pal{};
 	for (auto& c : pal)
 	{
@@ -415,6 +462,10 @@ void CRealImage2100::RestoreState(std::istream& in)
 	m_vga_control = vga_control;
 	m_display_control = display_control;
 	m_status_phase = status_phase;
+	m_frame_counter = uint16_t(frame_counter);
+	m_board_control = uint8_t(board_control);
+	m_board_io = board_io;
+	m_board_timing = uint8_t(board_timing);
 	m_io_index = index;
 	m_dac_index = uint16_t(dac);
 	m_palette_read = uint8_t(rd);

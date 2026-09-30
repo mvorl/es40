@@ -2585,7 +2585,8 @@ void edit_pci_vga_powerstorm(const char *title)
          "pad_ff pads a smaller image with 0xFF.",
          validation_powerstorm_rom_layout},
         {"model", "300", "model",
-         "PowerStorm 300 or 350. Both currently share one board profile.",
+         "PowerStorm 300 (Compaq, subsystem 0E11:4D31) or 350 (Digital,\n"
+         "1011:4D35). The model sets the PCI subsystem ID the drivers check.",
          validation_powerstorm_model}};
     const int num_entries = ARRAY_SIZE(entry);
     FormValues_t preset = (FormValues_t)calloc(num_entries, sizeof(char *));

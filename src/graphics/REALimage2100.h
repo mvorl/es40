@@ -74,6 +74,17 @@ public:
                             StatusVRetrace = 1u << 24;
   // Status reads per virtual frame; the timing flags need no host clock.
   static constexpr uint32_t StatusFrameReads = 64;
+  // Bytes 0-1: counter, one step per virtual frame.
+  // Byte 2: straps, bits 2:0 = 3D-RAM chip code. 
+  // Byte 3: control, strobed before the board-ID read; the only writable byte.
+  static constexpr uint32_t BoardStatus = 0x008380bc;
+  // Code 0 = 12 3D-RAM chips (15 MB), the PowerStorm 300 complement.
+  static constexpr uint8_t BoardStraps = 0;
+  // Bytes 0-2 read back as written (1-2 are GPIO). Byte 3 reads the board ID;
+  // mode sets write timing there, which must not change later ID reads.
+  static constexpr uint32_t BoardIO = 0x008380b0;
+  // PCGA3, which the Compaq PowerStorm 300 driver reports as "PC3".
+  static constexpr uint8_t BoardIDPCGA3 = 0xfe;
   // Only ever written 0; no NT miniport installs an ISR (inferred enable mask).
   static constexpr uint32_t InterruptEnable = 0x00800424;
   // BIOS and miniport exit write VGAControlVGA; miniport entry writes Native.
@@ -85,7 +96,7 @@ public:
   static constexpr uint32_t MaxShadowRegisters = 4096;
   // Serialized SaveState() size, header included.
   static constexpr uint32_t MinStateSize =
-    16 + 36 + 256 * 4 + DACRegisterCount + 4 + VGAMemorySize;
+    16 + 52 + 256 * 4 + DACRegisterCount + 4 + VGAMemorySize;
   static constexpr uint32_t MaxStateSize = MinStateSize + MaxShadowRegisters * 8;
 
   using DiagnosticCallback = std::function<void(const Diagnostic&)>;
@@ -113,6 +124,11 @@ public:
   uint32_t vga_control() const { return m_vga_control; }
 
   bool native_display() const { return m_vga_control & VGAControlNative; }
+
+  uint16_t frame_counter() const { return m_frame_counter; }
+
+  // One virtual frame of time from the board's periodic service.
+  void advance_frame() { ++m_frame_counter; }
 
   void set_diagnostic_callback(DiagnosticCallback fn)
   {
@@ -172,6 +188,9 @@ private:
   uint32_t m_unit_reset = 0, m_interrupt_enable = 0,
            m_vga_control = VGAControlVGA, m_display_control = 0;
   uint32_t m_status_phase = 0;
+  uint16_t m_frame_counter = 0;
+  uint8_t m_board_control = 0, m_board_timing = 0;
+  uint32_t m_board_io = 0;
   uint32_t m_io_index = 0;
   uint16_t m_dac_index = 0;
   uint8_t m_palette_read = 0, m_palette_write = 0;

@@ -937,10 +937,13 @@ try
 	m_board_vga_enabled = cfg->get_bool_value("vga_enabled", true);
 	m_trace_apertures = cfg->get_bool_value("trace_apertures", false);
 	m_profile.revision = u8(powerstorm_setting(cfg, "revision", 0, 255));
-	m_profile.subsystem_vendor =
-		u16(powerstorm_setting(cfg, "subsystem_vendor", 0, 65535));
-	m_profile.subsystem_device =
-		u16(powerstorm_setting(cfg, "subsystem_device", 0, 65535));
+	// SRM's probe table (PROBE_IO.C) names the boards by subsystem ID, and the
+	// NT miniport treats 4D35 differently from the 300.
+	const bool compaq = m_model == 300;
+	m_profile.subsystem_vendor = u16(powerstorm_setting(
+		cfg, "subsystem_vendor", compaq ? 0x0e11 : 0x1011, 65535));
+	m_profile.subsystem_device = u16(powerstorm_setting(
+		cfg, "subsystem_device", compaq ? 0x4d31 : 0x4d35, 65535));
 	m_profile.bar0_size =
 		powerstorm_setting(cfg, "bar0_size", 0x2000000, 0x8000000);
 	m_profile.bar1_size =
@@ -1015,8 +1018,9 @@ try
 	m_initialized = true;
 	ResetPCI();
 	printf(
-		"%s: Digital PowerStorm %u, REALimage 2100, standard VGA only.\n",
+		"%s: %s PowerStorm %u, REALimage 2100, standard VGA only.\n",
 		devid_string,
+		m_model == 300 ? "Compaq" : "Digital",
 		m_model);
 }
 catch (const CException&)
@@ -1327,6 +1331,7 @@ void CPowerStorm3xx::check_state()
 		std::lock_guard<std::recursive_mutex> guard(
 			cSystem->get_device_bus_mutex());
 		advance_vga_scanlines(u32(vga.crtc.vert_total) + 2);
+		m_realimage.advance_frame();
 		if (m_trace)
 			m_trace.flush();
 	}
