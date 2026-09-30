@@ -253,6 +253,7 @@ class CJitEngine;   // JIT block-cache engine (ES40_JIT builds)
  **/
 class CAlphaCPU : public CSystemComponent, public CRunnable
 {
+  friend class AlphaCPUAlignmentTest;
 public:
   void          flush_icache_asm();
   virtual int   SaveState(FILE* f);

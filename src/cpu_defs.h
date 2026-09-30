@@ -654,16 +654,14 @@ inline u64 fsqrt64(u64 asig, s32 exp)
 #define TB_INDEX_ITB                  1
 
 #if defined(DEBUG_UNALIGN)
-// pc/opcode identify the guest instruction; n counts them (rare + one PC = ordinary guest
-// code). "IN-PAGE!" flags an over-trap: same 8KB page both ends means keep_mask, not the guest.
+// pc/opcode identify the guest instruction; n counts alignment faults.
 #define TRACE_UNALIGN(flags, align)                                              \
   do { static u64 _ua_n = 0;                                                     \
     printf("unaligned access %d, %d -> trap! exc_sum=0x%04" PRIx64               \
       ", fault_va=0x%016" PRIx64 ", mm_stat=0x%03" PRIx64                        \
-      ", pc=0x%016" PRIx64 ", op=0x%02x, n=%" PRIu64 "%s\n",                     \
+      ", pc=0x%016" PRIx64 ", op=0x%02x, n=%" PRIu64 "\n",                       \
       (flags), (align), state.exc_sum, state.fault_va, state.mm_stat,            \
-      state.pc, (unsigned) I_GETOP(ins), ++_ua_n,                                \
-      (((a1 ^ a2) & ~ALPHA_BASE_PAGE_MASK) ? "" : "  IN-PAGE!"));                \
+      state.current_pc, (unsigned) I_GETOP(ins), ++_ua_n);                        \
   } while (0)
 #else
 #define TRACE_UNALIGN(flags, align)
@@ -671,45 +669,25 @@ inline u64 fsqrt64(u64 asig, s32 exp)
 
 #define DATA_PHYS(addr, flags, align)                                            \
   if((addr) & (align))                                                           \
-  {                                                                              \
-    u64 a1 = (addr);                                                             \
-    u64 a2 = (addr) + (align);                                                   \
-    if((a1 ^ a2) & ~ALPHA_BASE_PAGE_MASK)                                        \
-    {                                                                            \
-      /*                                                                         \
-       * Trap on unaligned access only when crossing the effective page boundary.\
-       * Use TB keep_mask when available (captures current page granularity),    \
-       * otherwise fall back to 8KB base page behavior.                          \
-      */                                                                         \
-      u64 page_mask = ALPHA_BASE_PAGE_MASK;                                      \
-      int tb_i = FindTBEntry(addr, flags);                                       \
-      int tb_t = TB_INDEX_DATA; /* DATA_PHYS is used for D-stream accesses only. */ \
-      if (tb_i >= 0)                                                             \
-        page_mask = state.tb[tb_t][tb_i].keep_mask;                              \
-      if((a1 ^ a2) & ~page_mask)                                                 \
-      {                                                                          \
-        u32 _ua_opcode = I_GETOP(ins);                                           \
-        state.fault_va = (addr);                                                 \
-        state.va_form_va = (addr);                                               \
-        state.exc_sum = ((REG_1 & 0x1f) << 8);                                   \
-        state.mm_stat =                                                          \
-          ((_ua_opcode == 0x1b || _ua_opcode == 0x1f) ? _ua_opcode - 0x18        \
-                                                      : _ua_opcode) << 4         \
-          | ((flags & ACCESS_WRITE) ? 1 : 0)                                     \
-          | 2;  /* ACV (matches brokenpipe AlphaFault_Alignment -> accvio) */    \
-        TRACE_UNALIGN(flags, align);                                             \
-        GO_PAL(UNALIGN);                                                         \
-        ES40_EXECUTE_END();                                                      \
-      }                                                                          \
-    }                                                                            \
-  }                                                                              \
-  DATA_PHYS_NT(addr, flags) // use the define above instead of duplicating                     
+  {                                                                             \
+    /* HRM 6.8.2: UNALIGN is a fault regardless of translation page size.       \
+     * Enter PAL before translation or any memory/device side effect.          \
+     * HW_LD/HW_ST use DATA_PHYS_NT; LDQ_U/STQ_U already align their address. */ \
+    state.fault_va = (addr);                                                    \
+    state.va_form_va = (addr);                                                  \
+    state.exc_sum = ((REG_1 & 0x1f) << 8);                                      \
+    /* HRM 5.3.8: pure misalignment is not an access violation (ACV). */        \
+    state.mm_stat = (I_GETOP(ins) << 4) | ((flags & ACCESS_WRITE) ? 1 : 0);      \
+    TRACE_UNALIGN(flags, align);                                                \
+    GO_PAL(UNALIGN);                                                            \
+    ES40_EXECUTE_END();                                                         \
+  }                                                                             \
+  DATA_PHYS_NT(addr, flags)
 
 /**
  * Normal variant of read action
- * In reality, these would generate an alignment trap, and the exception
- * handler would put things straight. Instead, to speed things up, we'll
- * just perform the read as requested using the unaligned address.
+ * DATA_PHYS faults on misalignment before the read. Guest PALcode or the
+ * operating system decides whether to emulate the faulting instruction.
  **/
 #if defined(IDB)
 #define LLR last_read_loc = phys_address
@@ -787,9 +765,8 @@ inline u64 fsqrt64(u64 asig, s32 exp)
 
  /**
   * Normal variant of write action
-  * In reality, these would generate an alignment trap, and the exception
-  * handler would put things straight. Instead, to speed things up, we'll
-  * just perform the write as requested using the unaligned address.
+  * DATA_PHYS faults on misalignment before the write. Guest PALcode or the
+  * operating system decides whether to emulate the faulting instruction.
   **/
 #define WRITE_PHYS(data, size)                         \
   if (phys_address < dram_size)                        \

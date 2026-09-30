@@ -111,20 +111,12 @@ uint32_t CRealImage2100::status_read()
 
 uint32_t CRealImage2100::ReadMem(uint32_t a, int bits)
 {
-	if (!valid_width(bits))
+	if (!valid_width(bits) || (a & (unsigned(bits) / 8 - 1)))
 	{
-		report("ACCESS_WIDTH", a, uint32_t(bits), "Invalid native width");
+		report(
+			"ACCESS_WIDTH", a, uint32_t(bits),
+			"Invalid native width or alignment");
 		return 0xffffffffu;
-	}
-	if (a & (unsigned(bits) / 8 - 1))
-	{
-		// The ES40 CPU completes unaligned loads in place; a real Alpha traps and
-		// NT rebuilds them from aligned loads, so return the same bytes.
-		const uint32_t base = a & ~3u;
-		uint64_t v = ReadMem(base, 32);
-		if ((a & 3) + unsigned(bits) / 8 > 4)
-			v |= uint64_t(ReadMem(base + 4, 32)) << 32;
-		return uint32_t(v >> ((a & 3) * 8)) & width_mask(bits);
 	}
 	if (bits == 8 && a >= 0x838000 && a < 0x838020 &&
 		m_dac_ports.has_handler(a - 0x838000))

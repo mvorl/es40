@@ -1696,8 +1696,8 @@ int CAlphaCPU::jit_read(CAlphaCPU* cpu, u64 va, u64 descr, u64* out)
 	const int size_bits = (int)(descr & 0xff);
 	const u32 ins = (u32)(descr >> 32);
 	const u64 amask = (u64)(size_bits / 8) - 1;
-	// The interp handles an unaligned access in place unless it crosses the effective translation page.
-	if ((va & amask) && ((va & U64(0x1fff)) + amask > U64(0x1fff))) return 1;
+	// Retry in the interpreter so it enters UNALIGN before any memory access.
+	if (va & amask) return 1;
 
 	u64 phys;
 	const u64 vp = va & ~U64(0x1FFF);
@@ -1945,7 +1945,7 @@ int CAlphaCPU::jit_read_locked(CAlphaCPU* cpu, u64 va, u64 descr, u64* out)
 	const int size_bits = (int)(descr & 0xff);
 	const u32 ins = (u32)(descr >> 32);
 	const u64 amask = (u64)(size_bits / 8) - 1;
-	if ((va & amask) && ((va & U64(0x1fff)) + amask > U64(0x1fff))) return 1;
+	if (va & amask) return 1;                 // interpreter raises UNALIGN before setting the lock
 
 	u64 phys;
 	const u64 vp = va & ~U64(0x1FFF);
@@ -2142,7 +2142,7 @@ int CAlphaCPU::jit_write(CAlphaCPU* cpu, u64 va, u64 descr, u64 value)
 	const int size_bits = (int)(descr & 0xff);
 	const u32 ins = (u32)(descr >> 32);
 	const u64 amask = (u64)(size_bits / 8) - 1;
-	if ((va & amask) && ((va & U64(0x1fff)) + amask > U64(0x1fff))) return 1;
+	if (va & amask) return 1;                 // interpreter raises UNALIGN before writing memory
 
 	// Verify: the interpreter pass already performed (and recorded) this store. Compare
 	// rather than write -- stores change memory, not GPRs, so the differential GPR check

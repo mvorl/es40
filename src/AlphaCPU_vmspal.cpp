@@ -644,10 +644,10 @@ void CAlphaCPU::vmspal_call_mtpr_datfx()
 
 	u64 u;
 	hw_ldq(p21 + 0x10, t);
-	hw_ldq(t, u);
-	u |= U64(0x1) << 0x3f;
-	u &= ~(r16 << 0x3f);
-	hw_stq(t, u);
+	// ARM 13.3.4: DAT is R16<0> in HWPCB[56]<63>, not the saved KSP.
+	hw_ldq(t + 0x38, u);
+	u = (u & ~(U64(1) << 63)) | ((r16 & 1) << 63);
+	hw_stq(t + 0x38, u);
 }
 
 /**
