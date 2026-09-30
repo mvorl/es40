@@ -126,6 +126,10 @@ es40_SOURCES = AliM1543C.cpp \
        graphics/Radeon7500.h \
        graphics/RV200.cpp \
        graphics/RV200.h \
+       graphics/PowerStorm3xx.cpp \
+       graphics/PowerStorm3xx.h \
+       graphics/REALimage2100.cpp \
+       graphics/REALimage2100.h \
        SCSIBus.cpp \
        SCSIDevice.cpp \
        Serial.cpp \

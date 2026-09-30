@@ -2246,6 +2246,8 @@
     <ClCompile Include="..\graphics\Permedia2.cpp" />
     <ClCompile Include="..\graphics\Radeon7500.cpp" />
     <ClCompile Include="..\graphics\RV200.cpp" />
+    <ClCompile Include="..\graphics\PowerStorm3xx.cpp" />
+    <ClCompile Include="..\graphics\REALimage2100.cpp" />
     <ClCompile Include="..\gui\scancodes.cpp" />
     <ClCompile Include="..\SCSIBus.cpp" />
     <ClCompile Include="..\SCSIDevice.cpp" />
@@ -2343,6 +2345,8 @@
     <ClInclude Include="..\graphics\Permedia2.h" />
     <ClInclude Include="..\graphics\Radeon7500.h" />
     <ClInclude Include="..\graphics\RV200.h" />
+    <ClInclude Include="..\graphics\PowerStorm3xx.h" />
+    <ClInclude Include="..\graphics\REALimage2100.h" />
     <ClInclude Include="..\gui\scancodes.h" />
     <ClInclude Include="..\SCSIBus.h" />
     <ClInclude Include="..\SCSIDevice.h" />

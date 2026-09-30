@@ -139,14 +139,19 @@ Zenity is unavailable.
   
 ## Status  
 
-## 9/29/2026 - ATI Radeon 7500 (experimental)
-Experimental ATI Radeon 7500 (RV200) graphics are available as the `radeon`
-device: standard VGA plus native 2D by PIO. No 3D, command processor or DMA.
-Firmware POST and guest drivers are untested.
+## 9/30/2026 - Digital PowerStorm 300/350 (experimental)  
+Experimental PowerStorm 300/350 (REALimage 2100) is available as  
+the `powerstorm` device. Almost certianly completely broken, but with the  
+300 VGA BIOS (I haven't found a 350 image yet) achieves SRM.    
 
-## 9/27/2026 - ELSA GLoria Synergy (experimental)
-Experimental ELSA GLoria Synergy (Permedia 2) graphics are available as the
-`gloria` device. Unfinished, many parts don't work/exist. 
+## 9/29/2026 - ATI Radeon 7500 (experimental)  
+Experimental ATI Radeon 7500 (RV200) graphics are available as the `radeon`  
+device: standard VGA plus native 2D by PIO. No 3D, command processor or DMA.  
+Firmware POST and guest drivers are untested.  
+  
+## 9/27/2026 - ELSA GLoria Synergy (experimental)  
+Experimental ELSA GLoria Synergy (Permedia 2) graphics are available as the  
+`gloria` device. Unfinished, many parts don't work/exist.  
   
 ## 9/15/26 - Saved-state compatibility  
   

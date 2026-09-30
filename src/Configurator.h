@@ -111,6 +111,7 @@ typedef enum
   c_gloria,
   c_cirrus,
   c_radeon,
+  c_powerstorm,
   c_dec21143,
   c_lsi53c1020,
   c_sym53c895,

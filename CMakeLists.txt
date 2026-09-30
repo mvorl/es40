@@ -405,7 +405,9 @@ list(APPEND ES40_SOURCES
     src/PCIDevice.cpp
     src/graphics/Permedia2.cpp
     src/Port80.cpp
+    src/graphics/PowerStorm3xx.cpp
     src/graphics/Radeon7500.cpp
+    src/graphics/REALimage2100.cpp
     src/graphics/RV200.cpp
     src/graphics/S3Trio64.cpp
     src/SCSIBus.cpp

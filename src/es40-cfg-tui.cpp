@@ -2536,6 +2536,87 @@ void edit_pci_vga_radeon(const char *title)
     free(slot);
 }
 
+bool check_pci_vga_powerstorm(FormEntry_t entry[], int num_entries, FormValues_t values)
+{
+    if (!strcmp(values[fentry_index(entry, num_entries, "rom file")], ""))
+        return false;
+    CConfigurator *occupant = get_pcislot(values[fentry_index(entry, num_entries, "PCI slot")]);
+    if (occupant && occupant != sys0->find_child_myValue("powerstorm"))
+    {
+        show_text("Error", "That PCI slot belongs to another device. Choose a free slot.");
+        return false;
+    }
+    return true;
+}
+
+void validation_powerstorm_rom_layout(FIELD *field)
+{
+    const char *choices[] = {"exact", "pad_ff", NULL};
+    set_field_type(field, TYPE_ENUM, choices, FALSE, TRUE);
+}
+
+void validation_powerstorm_model(FIELD *field)
+{
+    const char *choices[] = {"300", "350", NULL};
+    set_field_type(field, TYPE_ENUM, choices, FALSE, TRUE);
+}
+
+// Preserve advanced board settings when editing the basic display/ROM options.
+void edit_pci_vga_powerstorm(const char *title)
+{
+    CConfigurator *c = sys0->find_child_myValue("powerstorm");
+    char *slot = c ? strdup(c->get_myName() + strlen("pci")) : find_first_free_pcislot();
+    if (slot == NULL)
+    {
+        show_text(title, "No free PCI slots");
+        return;
+    }
+
+    FormEntry_t entry[] = {
+        {"PCI slot", slot, NULL,
+         "Which PCI slot should the PowerStorm card be on?\n"
+         "Use bus 0 for a firmware graphics console.", validation_pcislot},
+        {"rom file", "rom/BIOS.BIN", "rom",
+         "Path to the PowerStorm 300/350 (10BA:0304) option ROM.\n"
+         "Only standard VGA is implemented.",
+         validation_file},
+        {"ROM layout", "exact", "rom_layout",
+         "exact requires a power-of-two ROM dump, such as the 64 KiB BIOS.\n"
+         "pad_ff pads a smaller image with 0xFF.",
+         validation_powerstorm_rom_layout},
+        {"model", "300", "model",
+         "PowerStorm 300 or 350. Both currently share one board profile.",
+         validation_powerstorm_model}};
+    const int num_entries = ARRAY_SIZE(entry);
+    FormValues_t preset = (FormValues_t)calloc(num_entries, sizeof(char *));
+    for (int i = 0; i < num_entries; ++i)
+    {
+        char *p = c && entry[i].name ? c->get_text_value(entry[i].name) : NULL;
+        preset[i] = p ? p : (char *)entry[i].preset;
+    }
+
+    FormValues_t values = show_form(title, entry, preset, num_entries, check_pci_vga_powerstorm);
+    if (values != NULL)
+    {
+        const int slot_index = fentry_index(entry, num_entries, "PCI slot");
+        const string name = string("pci") + values[slot_index];
+        if (c)
+            c->set_myName((char *)name.c_str());
+        else
+            c = new CConfigurator(sys0, (char *)name.c_str(), (char *)"powerstorm");
+
+        for (int i = 0; i < num_entries; ++i)
+            if (entry[i].name)
+                c->set_value(strdup(entry[i].name), strdup(values[i]));
+
+        for (int i = 0; i < num_entries; ++i)
+            free(values[i]);
+        free(values);
+    }
+    free(preset);
+    free(slot);
+}
+
 // Form for VGA PCI card
 void edit_pci_vga(const char *title)
 {
@@ -2543,7 +2624,8 @@ void edit_pci_vga(const char *title)
         {"none", "No graphics card", NULL},
         {"s3", "S3 Trio 64", edit_pci_vga_s3},
         {"gloria", "ELSA GLoria Synergy (Permedia 2)", edit_pci_vga_gloria},
-        {"radeon", "ATI Radeon 7500 (RV200)", edit_pci_vga_radeon}
+        {"radeon", "ATI Radeon 7500 (RV200)", edit_pci_vga_radeon},
+        {"powerstorm", "Digital PowerStorm 300/350 (REALimage 2100)", edit_pci_vga_powerstorm}
 #if 0 && defined(HAVE_CIRRUS)
         ,
         {"cirrus", "Cirrus CL-GD542x", edit_pci_vga_cirrus}
@@ -3575,6 +3657,8 @@ bool main_menu(void)
                 vgacard = sys0->find_child_myValue("gloria");
             if (vgacard == nullptr)
                 vgacard = sys0->find_child_myValue("radeon");
+            if (vgacard == nullptr)
+                vgacard = sys0->find_child_myValue("powerstorm");
 #if defined(HAVE_CIRRUS)
             if (vgacard == nullptr)
                 vgacard = sys0->find_child_myValue("cirrus");

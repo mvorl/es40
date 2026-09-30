@@ -171,6 +171,12 @@
     <ClCompile Include="..\graphics\RV200.cpp">
       <Filter>Source Files\graphics</Filter>
     </ClCompile>
+    <ClCompile Include="..\graphics\PowerStorm3xx.cpp">
+      <Filter>Source Files\graphics</Filter>
+    </ClCompile>
+    <ClCompile Include="..\graphics\REALimage2100.cpp">
+      <Filter>Source Files\graphics</Filter>
+    </ClCompile>
     <ClCompile Include="..\SCSIBus.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -417,6 +423,12 @@
       <Filter>Header Files\graphics</Filter>
     </ClInclude>
     <ClInclude Include="..\graphics\RV200.h">
+      <Filter>Header Files\graphics</Filter>
+    </ClInclude>
+    <ClInclude Include="..\graphics\PowerStorm3xx.h">
+      <Filter>Header Files\graphics</Filter>
+    </ClInclude>
+    <ClInclude Include="..\graphics\REALimage2100.h">
       <Filter>Header Files\graphics</Filter>
     </ClInclude>
     <ClInclude Include="..\SCSIBus.h">

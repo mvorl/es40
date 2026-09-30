@@ -981,6 +981,7 @@ int main(int argc, char* argv[])
 		vga_q.addAnswer("S3", "s3", "S3 Trio 64");
 		vga_q.addAnswer("Gloria", "gloria", "ELSA GLoria Synergy (Permedia 2)");
 		vga_q.addAnswer("Radeon", "radeon", "ATI Radeon 7500 (RV200)");
+		vga_q.addAnswer("PowerStorm", "powerstorm", "Digital PowerStorm 300/350 (REALimage 2100)");
 
 		vga_q.ask();
 	}
@@ -1315,10 +1316,6 @@ int main(int argc, char* argv[])
 	vgacons_q.addAnswer("serial", "false", "Console on serial port 0");
 	vgacons_q.addAnswer("graphics", "true", "Console on graphics controller");
 	vgacons_q.setDefault("graphics");
-	if (vga_q.getAnswer() == "gloria" || vga_q.getAnswer() == "radeon")
-	{
-		vgacons_q.setDefault("serial");
-	}
 
 	if (vga_q.getAnswer() != "")
 	{
