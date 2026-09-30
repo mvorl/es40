@@ -591,10 +591,11 @@ private:
   void jit_run(int budget);    // drives the ES40_JIT lane via the interpreter
   void jit_flush_blocks();     // invalidate all discovered JIT blocks
   void jit_flush_blocks_asm(); // invalidate only !asm_global blocks (preserve global PAL across ASN flush)
-  // Compiled-block memory helpers. descr[7:0] is the transfer size; production integer
+  // Compiled-block memory helpers. descr[7:0] is the transfer size; production
   // memops also put the instruction word in descr[63:32], allowing the helper to deliver
-  // a translation fault once. Return 0 on success, 1 to retry in the interpreter, or 2
+  // an alignment/translation fault once. Return 0 on success, 1 to retry in the interpreter, or 2
   // when the architectural fault was already delivered and state.pc is its PAL entry.
+  int jit_unalign(u64 va, u32 ins, int flags, int align);
   static int jit_read(CAlphaCPU* cpu, u64 va, u64 descr, u64* out);
   static int jit_read_phys(CAlphaCPU* cpu, u64 phys, int size_bits, u64* out);  // HW_LD physical: no translation
   static int jit_read_locked(CAlphaCPU* cpu, u64 va, u64 descr, u64* out);  // LDx_L: load + establish LL/SC lock
@@ -602,9 +603,10 @@ private:
   static int jit_read_wchk(CAlphaCPU* cpu, u64 va, int size_bits, u64* out);    // HW_LD func 0xa: longword virtual + WrChk
   static int jit_write(CAlphaCPU* cpu, u64 va, u64 descr, u64 value);
   static int jit_write_phys(CAlphaCPU* cpu, u64 phys, int size_bits, u64 value);  // HW_ST physical: no translation
-  static int jit_fp_read(CAlphaCPU* cpu, u64 va, u32 fa, u32 descr);   // LDS/LDT: f[fa] = convert(MEM[va])
-  static int jit_fp_write(CAlphaCPU* cpu, u64 va, u32 fa, u32 descr);  // STS/STT: MEM[va] = convert(f[fa])
-  static u64 jit_stc(CAlphaCPU* cpu, u64 va, int size_bits, u64 value);           // STx_C: store-conditional
+  static int jit_fp_read(CAlphaCPU* cpu, u64 va, u32 fa, u64 descr);   // FP format in descr[17:16]
+  static int jit_fp_write(CAlphaCPU* cpu, u64 va, u32 fa, u64 descr);
+  // STx_C: 0/1 is the store result; 0x100 retries, 0x200 means PAL already selected.
+  static u64 jit_stc(CAlphaCPU* cpu, u64 va, u64 descr, u64 value);
   // CALL_PAL OPCDEC trap (privileged func in user mode): GO_PAL(OPCDEC) incl. cpu_clear_lock.
   static void jit_opcdec(CAlphaCPU* cpu, u64 cpc);
   // HW_MFPR (PALmode): return the IPR named in ins; the caller (compiled codegen) writes Ra.

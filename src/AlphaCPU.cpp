@@ -1688,16 +1688,29 @@ void CAlphaCPU::jit_run(int budget)
 	}
 }
 
-// JIT load helper (static). descr[7:0] is size_bits; production integer loads also
-// carry the instruction in descr[63:32]. That lets a cold translation path enter PAL
+// The emitted slow path installs the faulting current_pc; its exit commits earlier
+// guest registers before PAL dispatch. Match DATA_PHYS before any memory side effect.
+int CAlphaCPU::jit_unalign(u64 va, u32 ins, int flags, int align)
+{
+	if (!ins || m_jit_vreplay) return 1;
+	state.fault_va = va;
+	state.va_form_va = va;
+	state.exc_sum = (u64)I_GETRA(ins) << 8;
+	state.mm_stat = (I_GETOP(ins) << 4) | ((flags & ACCESS_WRITE) ? 1 : 0);
+	TRACE_UNALIGN(flags, align);
+	GO_PAL(UNALIGN);
+	return 2;
+}
+
+// JIT load helper (static). descr[7:0] is size_bits; production loads also
+// carry the instruction in descr[63:32]. That lets alignment/translation faults enter PAL
 // exactly once instead of returning to execute() to repeat the faulting instruction.
 int CAlphaCPU::jit_read(CAlphaCPU* cpu, u64 va, u64 descr, u64* out)
 {
 	const int size_bits = (int)(descr & 0xff);
 	const u32 ins = (u32)(descr >> 32);
 	const u64 amask = (u64)(size_bits / 8) - 1;
-	// Retry in the interpreter so it enters UNALIGN before any memory access.
-	if (va & amask) return 1;
+	if (va & amask) return cpu->jit_unalign(va, ins, ACCESS_READ, (int)amask);
 
 	u64 phys;
 	const u64 vp = va & ~U64(0x1FFF);
@@ -1716,7 +1729,7 @@ int CAlphaCPU::jit_read(CAlphaCPU* cpu, u64 va, u64 descr, u64* out)
 		}
 		else
 		{
-			// Verify/FP callers do not carry an instruction word and retain the old
+			// Verify/legacy callers do not carry an instruction word and retain the old
 			// side-effect-free retry contract.
 			const int i = cpu->FindTBEntry(va, ACCESS_READ);
 			if (i < 0) return 1;
@@ -1760,15 +1773,18 @@ int CAlphaCPU::jit_read(CAlphaCPU* cpu, u64 va, u64 descr, u64* out)
 	return 0;
 }
 
-// JIT FP load helper (static). LDS/LDT: f[fa] = convert(MEM[va]) per DO_LDS/DO_LDT. descr packs
-// size (low 16) and fmt (1=S/ieee_lds, 0=T/raw, high bits). FPSTART (fpen -> FEN bail; exc_sum=0).
-// Production reuses jit_read's side-effect-free cache read; verify replays the interp's CONVERTED
+// JIT FP load helper (static). descr packs size[7:0], format[17:16], instruction[63:32].
+// FPSTART (fpen -> FEN bail; exc_sum=0) precedes the discarded-f31 and alignment checks.
+// Production reuses jit_read's cache read/direct PAL faults; verify replays the interp's CONVERTED
 // f-value (FP loads join the load log), so it consumes m_jit_vlog like an integer load.
-int CAlphaCPU::jit_fp_read(CAlphaCPU* cpu, u64 va, u32 fa, u32 descr)
+int CAlphaCPU::jit_fp_read(CAlphaCPU* cpu, u64 va, u32 fa, u64 descr)
 {
 	if (cpu->state.fpen == 0) return 1;       // FEN trap (FPSTART)
 	cpu->state.exc_sum = 0;
 	if (fa == 31) return 0;                    // f31 dest: interp skips the read
+	const u64 amask = ((descr & 0xff) / 8) - 1;
+	if (va & amask)
+		return cpu->jit_unalign(va, (u32)(descr >> 32), ACCESS_READ, (int)amask);
 	if (cpu->m_jit_vreplay)
 	{
 		const u32 i = cpu->m_jit_vlog_i++;
@@ -1783,8 +1799,9 @@ int CAlphaCPU::jit_fp_read(CAlphaCPU* cpu, u64 va, u32 fa, u32 descr)
 		return 0;
 	}
 	u64 raw;
-	if (jit_read(cpu, va, (int)(descr & 0xffff), &raw)) return 1;   // production cache read
-	switch (descr >> 16)   // fmt: 0=T raw, 1=S ieee, 2=F vax, 3=G vax
+	const int result = jit_read(cpu, va, descr, &raw);
+	if (result) return result;   // retain the distinction between retry and entered PAL
+	switch ((descr >> 16) & 3)   // fmt: 0=T raw, 1=S ieee, 2=F vax, 3=G vax
 	{
 	case 1:  cpu->state.f[fa] = cpu->ieee_lds((u32)raw); break;   // LDS
 	case 2:  cpu->state.f[fa] = cpu->vax_ldf((u32)raw); break;    // LDF
@@ -1796,19 +1813,19 @@ int CAlphaCPU::jit_fp_read(CAlphaCPU* cpu, u64 va, u32 fa, u32 descr)
 
 // JIT FP store helper (static). STS/STT: MEM[va] = convert(f[fa]) per DO_STS/DO_STT. Routes through
 // jit_write so verify compares vs the store log (FP stores join it) and production writes.
-int CAlphaCPU::jit_fp_write(CAlphaCPU* cpu, u64 va, u32 fa, u32 descr)
+int CAlphaCPU::jit_fp_write(CAlphaCPU* cpu, u64 va, u32 fa, u64 descr)
 {
 	if (cpu->state.fpen == 0) return 1;       // FEN trap (FPSTART)
 	cpu->state.exc_sum = 0;
 	u64 value;
-	switch (descr >> 16)   // fmt: 0=T raw, 1=S ieee, 2=F vax, 3=G vax
+	switch ((descr >> 16) & 3)   // fmt: 0=T raw, 1=S ieee, 2=F vax, 3=G vax
 	{
 	case 1:  value = (u64)cpu->ieee_sts(cpu->state.f[fa]); break;   // STS
 	case 2:  value = (u64)cpu->vax_stf(cpu->state.f[fa]); break;    // STF
 	case 3:  value = cpu->vax_stg(cpu->state.f[fa]);       break;    // STG
 	default: value = cpu->state.f[fa];                     break;    // STT raw
 	}
-	return jit_write(cpu, va, (int)(descr & 0xffff), value);
+	return jit_write(cpu, va, descr, value);
 }
 
 // JIT MISC read helper (static). RPCC (sel 0): the wall-clock-pinned cycle counter (DO_RPCC, JIT
@@ -1945,7 +1962,7 @@ int CAlphaCPU::jit_read_locked(CAlphaCPU* cpu, u64 va, u64 descr, u64* out)
 	const int size_bits = (int)(descr & 0xff);
 	const u32 ins = (u32)(descr >> 32);
 	const u64 amask = (u64)(size_bits / 8) - 1;
-	if (va & amask) return 1;                 // interpreter raises UNALIGN before setting the lock
+	if (va & amask) return cpu->jit_unalign(va, ins, ACCESS_READ, (int)amask);
 
 	u64 phys;
 	const u64 vp = va & ~U64(0x1FFF);
@@ -2142,7 +2159,7 @@ int CAlphaCPU::jit_write(CAlphaCPU* cpu, u64 va, u64 descr, u64 value)
 	const int size_bits = (int)(descr & 0xff);
 	const u32 ins = (u32)(descr >> 32);
 	const u64 amask = (u64)(size_bits / 8) - 1;
-	if (va & amask) return 1;                 // interpreter raises UNALIGN before writing memory
+	if (va & amask) return cpu->jit_unalign(va, ins, ACCESS_WRITE, (int)amask);
 
 	// Verify: the interpreter pass already performed (and recorded) this store. Compare
 	// rather than write -- stores change memory, not GPRs, so the differential GPR check
@@ -2228,8 +2245,12 @@ int CAlphaCPU::jit_write_phys(CAlphaCPU* cpu, u64 phys, int size_bits, u64 value
 // JIT store-conditional helper (static). Same-address STx_C uses the emulator's
 // CAS-backed MP model; different-address same-line STx_C stores without comparing
 // against the LDx_L datum.
-u64 CAlphaCPU::jit_stc(CAlphaCPU* cpu, u64 va, int size_bits, u64 value)
+u64 CAlphaCPU::jit_stc(CAlphaCPU* cpu, u64 va, u64 descr, u64 value)
 {
+	const int size_bits = (int)(descr & 0xff);
+	const u64 amask = (u64)(size_bits / 8) - 1;
+	if (va & amask)
+		return (u64)cpu->jit_unalign(va, (u32)(descr >> 32), ACCESS_WRITE, (int)amask) << 8;
 	if (cpu->m_jit_vreplay)
 	{
 		const u32 i = cpu->m_jit_slog_i++;
@@ -2244,9 +2265,6 @@ u64 CAlphaCPU::jit_stc(CAlphaCPU* cpu, u64 va, int size_bits, u64 value)
 		}
 		return success;
 	}
-
-	const u64 amask = (u64)(size_bits / 8) - 1;
-	if (va & amask) return U64(0x100);        // unaligned (also a page-cross): the interpreter handles it
 
 	// Side-effect-free write-path translation (mirror jit_write); bail to the interpreter on a TB
 	// miss / protection / fault-on-write so it does the side-effecting translation.

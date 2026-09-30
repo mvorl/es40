@@ -573,7 +573,7 @@ struct ColdMemStub {
   int           vol_bind2 = -1;
   int           vol_host2 = -1;
   int           size_bits;  // LOAD/STORE operand size
-  uint32_t      ins;        // LOAD/STORE instruction word (fault metadata)
+  uint32_t      ins;        // instruction word (fault metadata)
   uint32_t      descr;      // FPMEM only: (fmt<<16)|size
   int           ra;         // LOAD dest / STORE value guest reg
   int           pin;        // host reg id bound to `ra`, or -1 = the regs[] memory slot
@@ -595,11 +595,10 @@ static void emit_cold_mem_stub(asmjit::x86::Assembler& a, const uint8_t* gpa,
   // the store value from regs[] when it IS that reg (placement overwrites it). restore after.
   if (s.vol_bind >= 0)  a.mov(x86::qword_ptr(x86::rbx, s.vol_bind * 8),  x86::gpq((uint32_t) s.vol_host));
   if (s.vol_bind2 >= 0) a.mov(x86::qword_ptr(x86::rbx, s.vol_bind2 * 8), x86::gpq((uint32_t) s.vol_host2));
-  if (s.kind != ColdMemStub::FPMEM) {
+  if (s.kind != ColdMemStub::FPMEM)
     a.mov(x86::qword_ptr(x86::rsp, 48), x86::rdx); // preserve VA for DPC reuse
-    a.mov(x86::r10, imm(s.fault_pc));
-    a.mov(x86::qword_ptr(x86::rbp, off.state_current_pc), x86::r10);
-  }
+  a.mov(x86::r10, imm(s.fault_pc));
+  a.mov(x86::qword_ptr(x86::rbp, off.state_current_pc), x86::r10);
   const bool val_in_vol = (s.vol_bind >= 0 && s.pin == s.vol_host)
                        || (s.vol_bind2 >= 0 && s.pin == s.vol_host2);
   a.mov(aq(0), x86::rbp);                                       // cpu
@@ -617,7 +616,7 @@ static void emit_cold_mem_stub(asmjit::x86::Assembler& a, const uint8_t* gpa,
       break;
     case ColdMemStub::FPMEM:                                    // jit_fp_read/write(cpu, va, fa, descr)
       a.mov(ad(2), imm((uint32_t) s.ra));
-      a.mov(ad(3), imm(s.descr));
+      a.mov(aq(3), imm(((uint64_t)s.ins << 32) | s.descr));
       break;
   }
   if (s.hidx >= 0 && off.helpers)
@@ -628,21 +627,17 @@ static void emit_cold_mem_stub(asmjit::x86::Assembler& a, const uint8_t* gpa,
   Label ok = a.new_label(), trapped = a.new_label();
   a.test(x86::eax, x86::eax);
   a.jz(ok);
-  if (s.kind != ColdMemStub::FPMEM) {
-    a.cmp(x86::eax, imm(2));
-    a.je(trapped);
-  }
+  a.cmp(x86::eax, imm(2));
+  a.je(trapped);
   a.mov(x86::r10, imm(s.fault_pc));                             // fault: resume at this op
   a.mov(x86::qword_ptr(x86::rbp, off.state_pc), x86::r10);
   a.mov(x86::eax, imm(s.i));                                    // this iteration: i instrs done
   a.add(x86::eax, x86::r13d);                                   // + earlier chained iterations
   a.jmp(s.done);
-  if (s.kind != ColdMemStub::FPMEM) {
-    a.bind(trapped);                                             // fault delivered: keep PAL entry PC
-    a.mov(x86::eax, imm(s.i + 1));                               // count the faulting instruction once
-    a.add(x86::eax, x86::r13d);
-    a.jmp(s.done);
-  }
+  a.bind(trapped);                                             // fault delivered: keep PAL entry PC
+  a.mov(x86::eax, imm(s.i + 1));                               // count the faulting instruction once
+  a.add(x86::eax, x86::r13d);
+  a.jmp(s.done);
   a.bind(ok);
   if (s.kind != ColdMemStub::FPMEM) {
     // Recreate the hot path's {VA, slot, host bias} contract before joining the next
@@ -1185,15 +1180,34 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
 #endif
 
             auto emit_helper = [&]() {
+#ifndef JIT_VERIFY
+                a.mov(x86::r10, imm(b->tag + 4 * (uint64_t)i));
+                a.mov(x86::qword_ptr(x86::rbp, m_off.state_current_pc), x86::r10);
                 emit_call(isload ? fp_read_helper : fp_write_helper,
-                    { {JA_CPU, 0}, {JA_VA, 0}, {JA_I32, (uint64_t)fa}, {JA_I32, (uint64_t)descr} });  // jit_fp_read/write -> 0/1
+                    { {JA_CPU, 0}, {JA_VA, 0}, {JA_I32, (uint64_t)fa},
+                      {JA_I64, ((uint64_t)ins << 32) | descr} });
+#else
+                emit_call(isload ? fp_read_helper : fp_write_helper,
+                    { {JA_CPU, 0}, {JA_VA, 0}, {JA_I32, (uint64_t)fa}, {JA_I32, (uint64_t)descr} });
+#endif
                 Label ok = a.new_label();
                 a.test(x86::eax, x86::eax);
                 a.jz(ok);
+#ifndef JIT_VERIFY
+                Label trapped = a.new_label();
+                a.cmp(x86::eax, imm(2));
+                a.je(trapped);
+#endif
                 set_pc(b->tag + 4 * (uint64_t)i);                            // resume at the faulting FP mem op
                 a.mov(x86::eax, imm(i));
                 a.add(x86::eax, x86::r13d);
                 a.jmp(done);
+#ifndef JIT_VERIFY
+                a.bind(trapped);                                          // keep PAL PC and leave Fa unchanged
+                a.mov(x86::eax, imm(i + 1));
+                a.add(x86::eax, x86::r13d);
+                a.jmp(done);
+#endif
                 a.bind(ok);
                 };
 
@@ -1229,7 +1243,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 s.kind = ColdMemStub::FPMEM;  s.slow = slow;  s.join = fdone;  s.done = done;
                 s.helper = isload ? fp_read_helper : fp_write_helper;
                 s.hidx = helper_index(hs, s.helper);
-                s.descr = descr;  s.ra = fa;  s.pin = -1;  s.slot = 0;   // helper owns the f[] access
+                s.ins = ins;  s.descr = descr;  s.ra = fa;  s.pin = -1;  s.slot = 0;   // helper owns the f[] access
                 s.i = i;          s.fault_pc = b->tag + 4 * (uint64_t) i;
                 s.vol_bind = regalloc.vol_bind; s.vol_host = (s.vol_bind >= 0) ? regalloc.host[s.vol_bind] : -1;
                 s.vol_bind2 = regalloc.vol_bind2; s.vol_host2 = (s.vol_bind2 >= 0) ? regalloc.host[s.vol_bind2] : -1;
@@ -1246,14 +1260,32 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             const int disp = (int)(int16_t)(ins & 0xFFFF);
             const int size_bits = (op == OP_STQ_C) ? 64 : 32;
             emit_address(disp);                                              // va -> RDX
-            emit_call(stc_helper, { {JA_CPU, 0}, {JA_VA, 0}, {JA_I32, (uint64_t)size_bits}, {JA_GP, (uint64_t)ra} });  // jit_stc(cpu, va, size, value)
+#ifndef JIT_VERIFY
+            a.mov(x86::r10, imm(b->tag + 4 * (uint64_t)i));
+            a.mov(x86::qword_ptr(x86::rbp, m_off.state_current_pc), x86::r10);
+            emit_call(stc_helper, { {JA_CPU, 0}, {JA_VA, 0},
+                {JA_I64, ((uint64_t)ins << 32) | (uint32_t)size_bits}, {JA_GP, (uint64_t)ra} });
+#else
+            emit_call(stc_helper, { {JA_CPU, 0}, {JA_VA, 0}, {JA_I32, (uint64_t)size_bits}, {JA_GP, (uint64_t)ra} });
+#endif
             Label nobail = a.new_label();
-            a.test(x86::eax, imm(0x100));                                   // 0x100 = translation-fault bail
+            a.test(x86::eax, imm(0x300));                                   // 0x100 = retry; 0x200 = PAL entered
             a.jz(nobail);
+#ifndef JIT_VERIFY
+            Label trapped = a.new_label();
+            a.cmp(x86::eax, imm(0x200));
+            a.je(trapped);
+#endif
             set_pc(b->tag + 4 * (uint64_t)i);                              // resume at the faulting STx_C
             a.mov(x86::eax, imm(i));
             a.add(x86::eax, x86::r13d);
             a.jmp(done);
+#ifndef JIT_VERIFY
+            a.bind(trapped);                                              // keep PAL PC; Ra remains the store value
+            a.mov(x86::eax, imm(i + 1));
+            a.add(x86::eax, x86::r13d);
+            a.jmp(done);
+#endif
             a.bind(nobail);
             mov_to_reg(ra, x86::rax);                                      // Ra = success(1) / fail(0)
             continue;

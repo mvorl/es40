@@ -3986,15 +3986,37 @@ static A64OpEmitReceipt emit_a64_store_cond(A64EmitContext& context,
   Error err = emit_a64_mem_va(context, op, false);
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
 
+#ifndef JIT_VERIFY
+  err = emit_a64_mov_u64(a, RA::kScratch0,
+                         a64_advance_pc(context.start_pc, index));
+  if (err == Error::kOk)
+    err = emit_a64_store_cpu_u64(a, RA::kScratch0,
+                                 context.offsets.state_current_pc);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+  const uint64_t descr = (static_cast<uint64_t>(op.ins) << 32)
+                       | static_cast<uint32_t>(size_bits);
+#else
+  const uint64_t descr = static_cast<uint32_t>(size_bits);
+#endif
   err = emit_a64_helper_call(a, context.offsets, context.helpers, context.regs,
       context.pal_shadow, context.helpers.stc_helper,
       {{A64CallArgKind::kCpu, 0},
        {A64CallArgKind::kHost, RA::kScratch4.id()},
-       {A64CallArgKind::kImm32, static_cast<uint32_t>(size_bits)},
+       {A64CallArgKind::kImm64, descr},
        {A64CallArgKind::kGuest, op.ra}});
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
 
   const Label nobail = a.new_label();
+#ifndef JIT_VERIFY
+  const Label retry = a.new_label();
+  err = a.cmp(a64::x0, imm(0x200));
+  if (err == Error::kOk) err = a.b_ne(retry);
+  if (err == Error::kOk)
+    err = a.add(RA::kChainCount, RA::kChainCount, imm(index + 1));
+  if (err == Error::kOk) err = a.b(context.done);
+  if (err == Error::kOk) err = a.bind(retry);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+#endif
   err = a.tst(a64::x0, imm(0x100));
   if (err == Error::kOk) err = a.b_eq(nobail);
   if (err == Error::kOk)
@@ -4438,7 +4460,8 @@ static asmjit::Error emit_a64_load_f_bits(A64EmitContext& c,
 static asmjit::Error emit_a64_store_f_bits(A64EmitContext& c,
                                            const asmjit::a64::Gp& x, uint32_t freg);
 
-// FP-memory helper sequence: jit_fp_read/jit_fp_write(cpu, va, fa, (fmt<<16)|size)
+// FP-memory helper sequence. Production carries the instruction in descr[63:32]
+// so a fault can enter PAL without retrying the instruction in the interpreter.
 static asmjit::Error emit_a64_fp_mem_helper_seq(A64EmitContext& context,
     const A64DecodedOp& op, uint32_t index)
 {
@@ -4450,29 +4473,28 @@ static asmjit::Error emit_a64_fp_mem_helper_seq(A64EmitContext& context,
   const uint32_t fmt = (op.opcode == 0x22 || op.opcode == 0x26) ? 1u
                      : (op.opcode == 0x20 || op.opcode == 0x24) ? 2u
                      : (op.opcode == 0x21 || op.opcode == 0x25) ? 3u : 0u;
-  const uint32_t descr = (fmt << 16)
-                       | static_cast<uint32_t>((fmt == 1 || fmt == 2) ? 32 : 64);
-  Error err = emit_a64_helper_call(a, context.offsets, context.helpers,
+  uint64_t descr = (fmt << 16)
+                 | static_cast<uint32_t>((fmt == 1 || fmt == 2) ? 32 : 64);
+  Error err = Error::kOk;
+#ifndef JIT_VERIFY
+  descr |= static_cast<uint64_t>(op.ins) << 32;
+  err = emit_a64_mov_u64(a, RA::kScratch0,
+                         a64_advance_pc(context.start_pc, index));
+  if (err == Error::kOk)
+    err = emit_a64_store_cpu_u64(a, RA::kScratch0,
+                                 context.offsets.state_current_pc);
+  if (err != Error::kOk) return err;
+#endif
+  err = emit_a64_helper_call(a, context.offsets, context.helpers,
       context.regs, context.pal_shadow,
       isload ? context.helpers.fp_read_helper : context.helpers.fp_write_helper,
       {{A64CallArgKind::kCpu, 0},
        {A64CallArgKind::kHost, RA::kScratch4.id()},
        {A64CallArgKind::kImm32, op.ra},
-       {A64CallArgKind::kImm32, descr}});
+       {A64CallArgKind::kImm64, descr}});
   if (err != Error::kOk) return err;
 
-  const Label ok = a.new_label();
-  err = a.cbz(a64::w0, ok);
-  if (err == Error::kOk)
-    err = emit_a64_mov_u64(a, RA::kScratch0,
-                           a64_advance_pc(context.start_pc, index));
-  if (err == Error::kOk)
-    err = emit_a64_store_cpu_u64(a, RA::kScratch0, context.offsets.state_pc);
-  if (err == Error::kOk && index != 0)
-    err = a.add(RA::kChainCount, RA::kChainCount, imm(index));
-  if (err == Error::kOk) err = a.b(context.done);
-  if (err == Error::kOk) err = a.bind(ok);
-  return err;
+  return emit_a64_mem_result_bail(context, index);
 }
 
 // FP memory. LDT/STT (raw T-format) get the DPC fast path
