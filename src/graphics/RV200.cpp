@@ -434,7 +434,8 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 		a == BUS_CNTL || a == HOST_PATH_CNTL || a == CRTC_H_TOTAL_DISP ||
 		a == CRTC_V_TOTAL_DISP || a == CRTC_GEN_CNTL || a == CRTC_EXT_CNTL ||
 		a == CRTC_OFFSET || a == CRTC_OFFSET_CNTL || a == CRTC_PITCH ||
-		a == DP_WRITE_MSK || a == DP_CNTL || a == DEFAULT_PITCH_OFFSET ||
+		(a >= CUR_OFFSET && a <= CUR_CLR1) || a == DP_WRITE_MSK ||
+		a == DP_CNTL || a == DEFAULT_PITCH_OFFSET ||
 		a == DEFAULT_SC_BOTTOM_RIGHT || a == SC_TOP_LEFT ||
 		a == SC_BOTTOM_RIGHT || a == SRC_SC_BOTTOM_RIGHT || a == DP_DATATYPE ||
 		a == CLR_CMP_CLR_SRC || a == CLR_CMP_CLR_DST || a == CLR_CMP_MASK ||
@@ -1126,7 +1127,54 @@ CRV200::Frame CRV200::scanout(std::string* error) const
 			f.argb[size_t(y) * w + x] =
 				0xff000000u | (rr << 16) | (gg << 8) | bb;
 		}
+	composite_cursor(f);
 	return f;
+}
+
+// 64x64 cursor at CUR_OFFSET. Mono rows: 8 AND then 8 XOR bytes, MSB first
+// (XFree86 R128/Radeon); ARGB rows: 64 premultiplied pixels. HORZ_VERT_OFF
+// skips left columns and shortens the top.
+void CRV200::composite_cursor(Frame& f) const
+{
+	const uint32_t gen = r(CRTC_GEN_CNTL), mode = (gen >> 20) & 7;
+	if (!(gen & CRTC_CUR_EN) || (mode != 0 && mode != 2))
+		return;
+	const uint32_t posn = r(CUR_HORZ_VERT_POSN), off = r(CUR_HORZ_VERT_OFF);
+	const uint32_t px = (posn >> 16) & 0x3fff, py = posn & 0x3fff;
+	const uint32_t xoff = (off >> 16) & 0x3f, yoff = off & 0x3f;
+	const uint32_t stride = mode ? 256 : 16;
+	const uint32_t clr0 = r(CUR_CLR0) & 0xffffff, clr1 = r(CUR_CLR1) & 0xffffff;
+	for (uint32_t row = 0; row < 64 - yoff && py + row < f.height; ++row)
+	{
+		size_t line = 0;
+		if (!translate(
+				uint64_t(r(CUR_OFFSET)) + uint64_t(row) * stride, stride, line))
+			return;
+		for (uint32_t col = xoff; col < 64 && px + col - xoff < f.width; ++col)
+		{
+			uint32_t& d = f.argb[size_t(py + row) * f.width + px + col - xoff];
+			if (!mode)
+			{
+				const unsigned bit = 7 - (col & 7);
+				const bool and_bit = (m_vram[line + col / 8] >> bit) & 1;
+				const bool xor_bit = (m_vram[line + 8 + col / 8] >> bit) & 1;
+				if (!and_bit)
+					d = 0xff000000u | (xor_bit ? clr1 : clr0);
+				else if (xor_bit)
+					d ^= 0x00ffffffu;
+				continue;
+			}
+			const uint32_t c = pixel_read(line + col * 4, 4), a = c >> 24;
+			uint32_t out = 0xff000000u;
+			for (unsigned shift = 0; shift < 24; shift += 8)
+			{
+				const uint32_t v = ((c >> shift) & 255) +
+					(((d >> shift) & 255) * (255 - a) + 127) / 255;
+				out |= std::min(v, 255u) << shift;
+			}
+			d = out;
+		}
+	}
 }
 
 void CRV200::write_ppm(std::ostream& out, const Frame& f)
