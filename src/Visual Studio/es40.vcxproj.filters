@@ -165,6 +165,12 @@
     <ClCompile Include="..\graphics\Permedia2.cpp">
       <Filter>Source Files\graphics</Filter>
     </ClCompile>
+    <ClCompile Include="..\graphics\Radeon7500.cpp">
+      <Filter>Source Files\graphics</Filter>
+    </ClCompile>
+    <ClCompile Include="..\graphics\RV200.cpp">
+      <Filter>Source Files\graphics</Filter>
+    </ClCompile>
     <ClCompile Include="..\SCSIBus.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -405,6 +411,12 @@
       <Filter>Header Files\graphics</Filter>
     </ClInclude>
     <ClInclude Include="..\graphics\Permedia2.h">
+      <Filter>Header Files\graphics</Filter>
+    </ClInclude>
+    <ClInclude Include="..\graphics\Radeon7500.h">
+      <Filter>Header Files\graphics</Filter>
+    </ClInclude>
+    <ClInclude Include="..\graphics\RV200.h">
       <Filter>Header Files\graphics</Filter>
     </ClInclude>
     <ClInclude Include="..\SCSIBus.h">

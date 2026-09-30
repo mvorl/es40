@@ -122,6 +122,10 @@ es40_SOURCES = AliM1543C.cpp \
        graphics/GloriaSynergy.h \
        graphics/Permedia2.cpp \
        graphics/Permedia2.h \
+       graphics/Radeon7500.cpp \
+       graphics/Radeon7500.h \
+       graphics/RV200.cpp \
+       graphics/RV200.h \
        SCSIBus.cpp \
        SCSIDevice.cpp \
        Serial.cpp \

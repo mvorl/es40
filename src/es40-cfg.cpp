@@ -980,16 +980,7 @@ int main(int argc, char* argv[])
 		//vga_q.addAnswer("Cirrus", "cirrus", "Cirrus CL-GD something");
 		vga_q.addAnswer("S3", "s3", "S3 Trio 64");
 		vga_q.addAnswer("Gloria", "gloria", "ELSA GLoria Synergy (Permedia 2)");
-#if defined(HAVE_RADEON)
-		/* Radeon support is optional, and currently
-		 * unreleased, because the specs are only
-		 * available under an NDA with AMD. Once AMD
-		 * has publicly released the Radeon 7500 (RV200)
-		 * specs, the emulated Radeon card will be
-		 * released.
-		 */
-		vga_q.addAnswer("Radeon", "radeon", "Radeon 7500");
-#endif
+		vga_q.addAnswer("Radeon", "radeon", "ATI Radeon 7500 (RV200)");
 
 		vga_q.ask();
 	}
@@ -1023,6 +1014,16 @@ int main(int argc, char* argv[])
 			layout_q.setDefault("exact");
 			os << "    rom_layout = \"" << layout_q.ask() << "\";\n";
 			os << "    allow_dma = true;\n";
+		}
+		else if (vga_q.getAnswer() == "radeon")
+		{
+			MultipleChoiceQuestion layout_q;
+			layout_q.setQuestion("How should the Radeon option ROM fill its ROM aperture?");
+			layout_q.setExplanation("48 KiB PCI images need pad_ff; the aperture is rounded up to a power of two.");
+			layout_q.addAnswer("exact", "exact", "Use a power-of-two ROM dump as is");
+			layout_q.addAnswer("pad_ff", "pad_ff", "Pad the image to a power of two with 0xFF");
+			layout_q.setDefault("pad_ff");
+			os << "    rom_layout = \"" << layout_q.ask() << "\";\n";
 		}
 		os << "  }\n\n";
 	}
@@ -1314,7 +1315,7 @@ int main(int argc, char* argv[])
 	vgacons_q.addAnswer("serial", "false", "Console on serial port 0");
 	vgacons_q.addAnswer("graphics", "true", "Console on graphics controller");
 	vgacons_q.setDefault("graphics");
-	if (vga_q.getAnswer() == "gloria")
+	if (vga_q.getAnswer() == "gloria" || vga_q.getAnswer() == "radeon")
 	{
 		vgacons_q.setDefault("serial");
 	}

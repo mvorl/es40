@@ -139,6 +139,11 @@ Zenity is unavailable.
   
 ## Status  
 
+## 9/29/2026 - ATI Radeon 7500 (experimental)
+Experimental ATI Radeon 7500 (RV200) graphics are available as the `radeon`
+device: standard VGA plus native 2D by PIO. No 3D, command processor or DMA.
+Firmware POST and guest drivers are untested.
+
 ## 9/27/2026 - ELSA GLoria Synergy (experimental)
 Experimental ELSA GLoria Synergy (Permedia 2) graphics are available as the
 `gloria` device. Unfinished, many parts don't work/exist. 

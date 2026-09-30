@@ -148,6 +148,7 @@
 #include "Port80.h"
 #include "graphics/S3Trio64.h"
 #include "graphics/GloriaSynergy.h"
+#include "graphics/Radeon7500.h"
 #ifdef HAVE_CIRRUS
 #include "graphics/Cirrus.h" // to be re-added and fixed in the future
 #endif
@@ -742,6 +743,10 @@ static const char* const kv_gloria[] = {
   "subsystem_vendor", "subsystem_device", "chip_config", "mem_control",
   "mem_config", "fifo_entries", "service_budget", "scanline_access_divisor",
   "allow_dma", "trace", "trace_apertures", "frame_file", 0 };
+static const char* const kv_radeon[] = {
+  "rom", "rom_layout", "vram", "revision", "subsystem_vendor",
+  "subsystem_device", "strict_mmio", "scanline_access_divisor", "trace",
+  "trace_apertures", "frame_file", 0 };
 static const char* const kv_lsi53c1020[] = { "flash", "rom", "firmware", 0 };
 static const char* const kv_dec21143[] = {
   "adapter", "mac", "queue", "crc", "trace_packets",
@@ -775,6 +780,7 @@ classinfo classes[] = {
   {"serial", c_serial, ON_CS, kv_serial},
   {"s3", c_s3, IS_PCI | ON_GUI, kv_vga},
   {"gloria", c_gloria, IS_PCI | ON_GUI, kv_gloria},
+  {"radeon", c_radeon, IS_PCI | ON_GUI, kv_radeon},
   //{"cirrus", c_cirrus, IS_PCI | ON_GUI, kv_vga},
   {"dec21143", c_dec21143, IS_PCI | IS_NIC, kv_dec21143},
   {"lsi53c1020", c_lsi53c1020, IS_PCI | HAS_DISK, kv_lsi53c1020},
@@ -1029,6 +1035,11 @@ void CConfigurator::initialize()
 
 	case c_gloria:
 		myDevice = new CGloriaSynergy(this, (CSystem*)pParent->get_device(), pcibus,
+			pcidev, bx_gui->display_for_output(get_device_path(), 0));
+		break;
+
+	case c_radeon:
+		myDevice = new CRadeon7500(this, (CSystem*)pParent->get_device(), pcibus,
 			pcidev, bx_gui->display_for_output(get_device_path(), 0));
 		break;
 
