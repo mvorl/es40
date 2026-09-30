@@ -204,6 +204,12 @@ void CSystem::pio_write(u64 a, int dsize, u64 data, CSystemComponent* source)
 		if (io_port == U64(0x405) && dsize == 8 && (data & 0xff) == 0)
 			return;
 
+		// VGA BIOS second-adapter probe: cursor-location writes to the CRTC
+		// block its own card is not using; the M1543C sends them to an empty ISA bus.
+		if ((io_port == U64(0x3b4) || io_port == U64(0x3d4)) &&
+			(dsize == 8 || dsize == 16) && ((data & 0xfe) == 0x0e))
+			return;
+
 		// Unused PCI I/O space
 		if (source)
 			printf("Write to unknown IO port %" PRIx64 " (dsize=%d data=%" PRIx64 ") on PCI 0 from %s\n",
