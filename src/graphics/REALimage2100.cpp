@@ -950,7 +950,47 @@ CRealImage2100::Frame CRealImage2100::scanout(std::string* error) const
 			frame.argb[size_t(y) * width + x] =
 				0xff000000 | m_color[size_t(y) * ColorWidth + x];
 		}
+	composite_cursor(frame);
 	return frame;
+}
+
+void CRealImage2100::composite_cursor(Frame& frame) const
+{
+	// NT uses the RGB640 64x64 Windows cursor mode.
+	if (m_dac_regs[0x4b] != 0x0a)
+		return;
+	// Position uses twelve data bits and bit 15 as the sign.
+	const int origin_x = int(m_dac_regs[0x40] | ((m_dac_regs[0x41] & 15) << 8)) -
+		((m_dac_regs[0x41] & 0x80) ? 4096 : 0) - (m_dac_regs[0x44] & 63);
+	const int origin_y = int(m_dac_regs[0x42] | ((m_dac_regs[0x43] & 15) << 8)) -
+		((m_dac_regs[0x43] & 0x80) ? 4096 : 0) - (m_dac_regs[0x45] & 63);
+	uint32_t colors[2];
+	for (unsigned i = 0; i < 2; ++i)
+	{
+		const unsigned address = 0x4800 + 3 * (i + 1);
+		colors[i] = 0xff000000u | (uint32_t(m_dac_regs[address]) << 16) |
+			(uint32_t(m_dac_regs[address + 1]) << 8) | m_dac_regs[address + 2];
+	}
+	for (int cy = 0; cy < 64; ++cy)
+	{
+		const int y = origin_y + cy;
+		if (y < 0 || uint32_t(y) >= frame.height)
+			continue;
+		for (int cx = 0; cx < 64; ++cx)
+		{
+			const int x = origin_x + cx;
+			if (x < 0 || uint32_t(x) >= frame.width)
+				continue;
+			// Four pixels per byte, low pair first: colors 1/2, transparent, highlight.
+			const unsigned code = (m_dac_regs[0x1000 + cy * 16 + cx / 4] >>
+				(2 * (cx & 3))) & 3;
+			uint32_t& pixel = frame.argb[size_t(y) * frame.width + unsigned(x)];
+			if (code < 2)
+				pixel = colors[code];
+			else if (code == 3)
+				pixel ^= 0x00808080u;
+		}
+	}
 }
 
 // BAR2 index/data pair: dword index at +0, width-aware data at +4.

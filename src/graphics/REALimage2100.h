@@ -253,6 +253,7 @@ private:
   uint32_t readback_pixel(uint32_t word) const;
   void dma_command(uint32_t value);
   void color_write(uint32_t x, uint32_t y, uint32_t color, uint32_t banks);
+  void composite_cursor(Frame& frame) const;
   void report(
     const char* code, uint32_t address, uint32_t value, const char* message,
     bool fatal = false);
