@@ -1608,23 +1608,28 @@ int CSystem::LoadROM()
 			myCfg->get_text_value("rom.srm", "cl67srmrom.exe"));
 		for (i = 0; i < 0x240; i++)
 		{
-			if (feof(f))
-				break;
 			auto r = fread(&scratch, 1, 1, f);
 			if (r != 1)
-				FAILURE_1(IO, "%s: unexpected end of file!\n", "ROM file");
+			{
+				const bool read_error = ferror(f) != 0;
+				fclose(f);
+				if (read_error)
+					FAILURE(IO, "Error reading SRM ROM image");
+				FAILURE(Runtime, "File is too short to be a SRM ROM image");
+			}
 		}
 
-		if (feof(f))
-			FAILURE(Runtime, "File is too short to be a SRM ROM image");
 		buffer = PtrToMem(0x900000);
-		while (!feof(f))
-		{
-			auto r = fread(buffer++, 1, 1, f);
-			if (r != 1)
-				FAILURE_1(IO, "%s: unexpected end of file!\n", "ROM file");
-		}
+		const char* payload_start = buffer;
+		// EOF terminates the variable-length payload; only a read error is fatal.
+		while (fread(buffer, 1, 1, f) == 1)
+			++buffer;
+		const bool read_error = ferror(f) != 0;
 		fclose(f);
+		if (read_error)
+			FAILURE(IO, "Error reading SRM ROM image");
+		if (buffer == payload_start)
+			FAILURE(Runtime, "File is too short to be a SRM ROM image");
 
 		printf("%%SYS-I-DECOMP: Decompressing ROM image.\n0%%");
 		acCPUs[0]->set_pc(0x900001);
