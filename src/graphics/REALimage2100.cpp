@@ -708,8 +708,8 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 	const bool upload = a == HostCommand && v == 0x01000032;
 	const bool fast_copy = a == HostCommand &&
 		(v == 0x00200062 || v == 0x00200072 || v == 0x01200062);
-	const bool copy = (a == HostCommand && (v == 0x01000062 || v == 0x00000062)) ||
-		fast_copy || cross_copy;
+	const bool copy = (a == HostCommand &&
+		(v == 0x01000062 || v == 0x00000062 || v == 0x01000072)) || fast_copy || cross_copy;
 	const bool fill = a == FillCommand && v == 0x09000832;
 	const bool transparent = a == HostCommand && v == 0x01000872;
 	// Explicit eight-pixel width, source bit offset zero.
