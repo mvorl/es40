@@ -684,7 +684,7 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 {
 	const bool readback = a == HostCommand && v == 0x01000052;
 	const bool cross_copy = a == HostCommand &&
-		(v == 0x01008072 || v == 0x00008062 || v == 0x00008072);
+		(v == 0x01008072 || v == 0x00008062 || v == 0x00008072 || v == 0x01008062);
 	const uint32_t selected = (peek(DrawControl) >> 12) & 3;
 	// Cross-bank copies read the selected bank and write the opposite bank.
 	const uint32_t destination_banks = cross_copy ?
