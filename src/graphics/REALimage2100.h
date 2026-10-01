@@ -239,6 +239,7 @@ private:
   bool plane_profile(unsigned bank, uint32_t format = 0x100) const;
   bool native_copy_control_profile() const;
   bool copy_profile() const;
+  bool fast_copy_profile() const;
   void start_command(uint32_t address, uint32_t value);
   void block_command(uint32_t value);
   void host_data(uint32_t value);

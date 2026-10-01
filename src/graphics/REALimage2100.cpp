@@ -434,6 +434,31 @@ bool CRealImage2100::copy_profile() const
 		peek(PixelControl) == 0x42722060 && native_copy_control_profile();
 }
 
+bool CRealImage2100::fast_copy_profile() const
+{
+	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
+	if ((control & ~0xf000u) != 0x21000702 || (banks != 1 && banks != 2) ||
+		peek(MemoryControl) != 0x0c008000 || peek(PixelControl) != 0x42722060 ||
+		!native_copy_control_profile())
+		return false;
+	const unsigned bank = banks == 2 ? 1 : 0;
+	if ((plane_value(bank, 0, 0xffffffff) & 0xffffff) != 0xffffff ||
+		plane_value(bank, 1, 0) != 0 || plane_value(bank, 2, 0) != 0 ||
+		plane_value(bank, 3, 0) != 0 ||
+		plane_value(bank, 4, 0x03030303) != 0x05050505 ||
+		plane_value(bank, 5, 0x0a000000) != 0 || plane_value(bank, 6, 0) != 1 ||
+		plane_value(bank, 8, 0) != 0 || plane_value(bank, 9, 0) != 0 ||
+		plane_value(bank, 10, 0) != 0 ||
+		plane_value(bank, 11, 0x33300000) != 0x33300000 ||
+		plane_value(bank, 14, 0x100) != 0x100 || plane_value(bank, 15, 0) != 0 ||
+		m_planes[bank].unknown_masks)
+		return false;
+	for (unsigned i = 24; i < 28; ++i)
+		if (plane_value(bank, i, 0xffffffff) != 0xffffffff)
+			return false;
+	return true;
+}
+
 void CRealImage2100::color_write(
 	uint32_t x, uint32_t y, uint32_t color, uint32_t banks)
 {
@@ -653,15 +678,17 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 	if (!v)
 		return;
 	const bool upload = a == HostCommand && v == 0x01000032;
-	const bool copy = a == HostCommand && v == 0x01000062;
+	const bool fast_copy = a == HostCommand && v == 0x00200062;
+	const bool copy = (a == HostCommand && v == 0x01000062) || fast_copy;
 	const bool fill = a == FillCommand && v == 0x09000832;
 	const bool transparent = a == HostCommand && v == 0x01000872;
 	const bool mono = v == 0x010008f2 || transparent;
 	const uint32_t selected = (peek(DrawControl) >> 12) & 3;
-	if ((!upload && !copy && !fill && !mono) || !copy_profile() ||
-		(copy && selected != 1 && selected != 2) ||
-		((selected & 1) && !plane_profile(0)) ||
-		((selected & 2) && !plane_profile(1)))
+	const bool profile = fast_copy ? fast_copy_profile() :
+		copy_profile() && (!(selected & 1) || plane_profile(0)) &&
+		(!(selected & 2) || plane_profile(1));
+	if ((!upload && !copy && !fill && !mono) || !profile ||
+		(copy && selected != 1 && selected != 2))
 	{
 		unimplemented_once("REALimage 2D command/profile", a, v, true);
 		return;
@@ -684,9 +711,14 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 	if (copy)
 	{
 		const uint32_t source = peek(BlockSource), bank = selected == 2 ? 1 : 0;
+		if (fast_copy && ((source ^ origin) & 3))
+		{
+			unimplemented_once("REALimage fast-copy alignment", a, v, true);
+			return;
+		}
 		const int32_t sx = int16_t(source & 0xffff), sy = int16_t(source >> 16),
-			left = std::max(x, int32_t(0)),
-			right = std::min(x + int32_t(width), int32_t(ColorWidth)),
+			left = std::max(fast_copy ? x - int32_t(width) + 1 : x, int32_t(0)),
+			right = std::min(x + (fast_copy ? 1 : int32_t(width)), int32_t(ColorWidth)),
 			top = std::max(y - int32_t(height) + 1, int32_t(0)),
 			bottom = std::min(y, int32_t(ColorHeight) - 1);
 		if (left >= right || top > bottom)
@@ -697,13 +729,20 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 			unimplemented_once("REALimage copy source bounds", a, v, true);
 			return;
 		}
-		// This opcode starts at the lower left and copies rightward, then upward.
+		// Both copy upward; the optimized opcode starts at the right edge.
+		const int32_t first = fast_copy ? right - 1 : left,
+			end = fast_copy ? left - 1 : right, step = fast_copy ? -1 : 1;
 		for (int32_t row = bottom; row >= top; --row)
-			for (int32_t col = left; col < right; ++col)
+			for (int32_t col = first; col != end; col += step)
 			{
 				const size_t offset = size_t(bank) * ColorPixels +
 					size_t(sy + row - y) * ColorWidth + size_t(sx + col - x);
-				color_write(uint32_t(col), uint32_t(row), m_color[offset], banks);
+				if (fast_copy)
+					// The optimized RAM-copy profile bypasses its programmed ROP 5.
+					m_color[size_t(bank) * ColorPixels + size_t(row) * ColorWidth + col] =
+						m_color[offset] & 0xffffff;
+				else
+					color_write(uint32_t(col), uint32_t(row), m_color[offset], banks);
 			}
 		return;
 	}
