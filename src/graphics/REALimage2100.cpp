@@ -679,15 +679,17 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		return;
 	const bool upload = a == HostCommand && v == 0x01000032;
 	const bool fast_copy = a == HostCommand && v == 0x00200062;
+	const bool cross_copy = a == HostCommand && v == 0x01008072;
 	const bool copy = (a == HostCommand && (v == 0x01000062 || v == 0x00000062)) ||
-		fast_copy;
+		fast_copy || cross_copy;
 	const bool fill = a == FillCommand && v == 0x09000832;
 	const bool transparent = a == HostCommand && v == 0x01000872;
 	const bool mono = v == 0x010008f2 || transparent;
 	const uint32_t selected = (peek(DrawControl) >> 12) & 3;
 	const bool profile = fast_copy ? fast_copy_profile() :
 		copy_profile() && (!(selected & 1) || plane_profile(0)) &&
-		(!(selected & 2) || plane_profile(1));
+		(!(selected & 2) || plane_profile(1)) &&
+		(!cross_copy || plane_profile(selected == 2 ? 0 : 1));
 	if ((!upload && !copy && !fill && !mono) || !profile ||
 		(copy && selected != 1 && selected != 2))
 	{
@@ -711,8 +713,9 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 	}
 	if (copy)
 	{
-		const uint32_t source = peek(BlockSource), bank = selected == 2 ? 1 : 0;
-		const bool right_to_left = !(v & 0x01000000);
+		const uint32_t source = peek(BlockSource), bank = selected == 2 ? 1 : 0,
+			source_bank = cross_copy ? bank ^ 1u : bank;
+		const bool right_to_left = !(v & 0x01000000), bottom_to_top = !(v & 0x10);
 		if (fast_copy && ((source ^ origin) & 3))
 		{
 			unimplemented_once("REALimage fast-copy alignment", a, v, true);
@@ -721,8 +724,9 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		const int32_t sx = int16_t(source & 0xffff), sy = int16_t(source >> 16),
 			left = std::max(right_to_left ? x - int32_t(width) + 1 : x, int32_t(0)),
 			right = std::min(x + (right_to_left ? 1 : int32_t(width)), int32_t(ColorWidth)),
-			top = std::max(y - int32_t(height) + 1, int32_t(0)),
-			bottom = std::min(y, int32_t(ColorHeight) - 1);
+			top = std::max(bottom_to_top ? y - int32_t(height) + 1 : y, int32_t(0)),
+			bottom = std::min(y + (bottom_to_top ? 0 : int32_t(height) - 1),
+				int32_t(ColorHeight) - 1);
 		if (left >= right || top > bottom)
 			return;
 		if (sx + left - x < 0 || sx + right - x > int32_t(ColorWidth) ||
@@ -731,13 +735,16 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 			unimplemented_once("REALimage copy source bounds", a, v, true);
 			return;
 		}
-		// These copies run upward; bit 24 selects increasing X.
+		// Bits 24 and 4 select increasing X and Y.
 		const int32_t first = right_to_left ? right - 1 : left,
-			end = right_to_left ? left - 1 : right, step = right_to_left ? -1 : 1;
-		for (int32_t row = bottom; row >= top; --row)
+			end = right_to_left ? left - 1 : right, step = right_to_left ? -1 : 1,
+			first_row = bottom_to_top ? bottom : top,
+			end_row = bottom_to_top ? top - 1 : bottom + 1,
+			row_step = bottom_to_top ? -1 : 1;
+		for (int32_t row = first_row; row != end_row; row += row_step)
 			for (int32_t col = first; col != end; col += step)
 			{
-				const size_t offset = size_t(bank) * ColorPixels +
+				const size_t offset = size_t(source_bank) * ColorPixels +
 					size_t(sy + row - y) * ColorWidth + size_t(sx + col - x);
 				if (fast_copy)
 					// The optimized RAM-copy profile bypasses its programmed ROP 5.
