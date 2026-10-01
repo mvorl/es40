@@ -706,7 +706,7 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 	if (!v)
 		return;
 	const bool upload = a == HostCommand && v == 0x01000032;
-	const bool fast_copy = a == HostCommand && v == 0x00200062;
+	const bool fast_copy = a == HostCommand && (v == 0x00200062 || v == 0x00200072);
 	const bool copy = (a == HostCommand && (v == 0x01000062 || v == 0x00000062)) ||
 		fast_copy || cross_copy;
 	const bool fill = a == FillCommand && v == 0x09000832;
@@ -871,7 +871,8 @@ void CRealImage2100::dma_command(uint32_t v)
 	bool neutral = true;
 	for (unsigned i : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 10u, 11u, 13u, 15u, 16u, 17u, 18u})
 		neutral &= m_dma_regs[i] == 0;
-	if ((v != 0xc4800020 && v != 0xc4800040 && v != 0xc4800100 && v != 0xc4800400) ||
+	if ((v != 0xc4800010 && v != 0xc4800020 && v != 0xc4800040 &&
+		v != 0xc4800100 && v != 0xc4800400) ||
 		!neutral || m_dma_regs[14] != 8 ||
 		!m_readback.width ||
 		uint64_t(m_readback.width) * m_readback.height - m_readback.word < words ||
