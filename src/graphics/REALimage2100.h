@@ -39,7 +39,7 @@
 #include <vector>
 
 /** REALimage 2100 native transport, VGA storage and a limited native 2D path.
- * The NT 24-bit copy profile is modeled; no 3D engine or BAR1 layout yet.
+ * The NT 24-bit copy profile and texture aperture are modeled; no 3D engine.
  * Unknown native registers are shadowed with a one-time diagnostic, as in
  * CPermedia2.
  */
@@ -87,6 +87,8 @@ public:
   static constexpr uint8_t BoardIDPCGA3 = 0xfe;
   // Only ever written 0; no NT miniport installs an ISR (inferred enable mask).
   static constexpr uint32_t InterruptEnable = 0x00800424;
+  static constexpr uint32_t SyncCommand = 0x0080042c;
+  static constexpr uint32_t DisplaySelect = 0x008380a8;
   // BIOS and miniport exit write VGAControlVGA; miniport entry writes Native.
   static constexpr uint32_t VGAControl = 0x00800430, VGAControlVGA = 0x000a0000,
                             VGAControlNative = 0x00100000;
@@ -102,6 +104,7 @@ public:
                             HostOrigin = 0x00800628,
                             HostExtent = 0x0080062c,
                             HostCommand = 0x00800630,
+                            ContextControl = 0x00800634,
                             FillOrigin = 0x00800644,
                             FillExtent = 0x00800648,
                             FillCommand = 0x0080064c;
@@ -109,13 +112,18 @@ public:
   // Bounded logical color banks; physical 3D-RAM layout is not modeled.
   static constexpr uint32_t ColorWidth = 1280, ColorHeight = 1024,
                             ColorPixels = ColorWidth * ColorHeight;
+  static constexpr uint32_t DMABase = 0x00801000, DMARegisterCount = 19,
+                            DMACommand = 0x0080101c, DMAReset = 0x0080103c;
+  static constexpr uint32_t MinTextureSize = 16u * 1024 * 1024,
+                            MaxTextureSize = 32u * 1024 * 1024;
   // Bounds shadow storage; BAR0 decodes far more than any register file.
   static constexpr uint32_t MaxShadowRegisters = 4096;
   // Serialized SaveState() size, header included.
   static constexpr uint32_t MinStateSize =
     16 + 52 + 4 + 24 + 256 * 4 + DACRegisterCount + 4 + VGAMemorySize +
-    ColorPixels * 2 * 4;
-  static constexpr uint32_t MaxStateSize = MinStateSize + MaxShadowRegisters * 8;
+    ColorPixels * 2 * 4 + 4 + DMARegisterCount * 4 + MinTextureSize;
+  static constexpr uint32_t MaxStateSize = MinStateSize + MaxShadowRegisters * 8 +
+    MaxTextureSize - MinTextureSize;
 
   using DiagnosticCallback = std::function<void(const Diagnostic&)>;
   using UnimplementedCallback = std::function<void(
@@ -131,7 +139,8 @@ public:
   // BAR2 index/data pair.
   uint32_t io_read(uint32_t offset, int dsize);
   void io_write(uint32_t offset, int dsize, uint32_t data);
-  // BAR1 aperture; its native memory layout is not modeled.
+  void configure_texture_memory(uint32_t bytes);
+  // BAR1 texture memory, using the driver's 16 KiB row pitch.
   uint32_t mem_read(uint32_t address, int dsize);
   void mem_write(uint32_t address, int dsize, uint32_t data);
 
@@ -192,6 +201,7 @@ private:
   uint8_t dac_data_read();
   void dac_data_write(uint8_t value);
   uint32_t* native_register(uint32_t dword_address);
+  uint32_t texture_offset(uint32_t address) const;
   uint32_t status_read();
   uint32_t peek(uint32_t address) const;
   bool native_storage_register(uint32_t address) const;
@@ -212,6 +222,8 @@ private:
   // RGB640 byte registers and flattened native table/color streams.
   std::vector<uint8_t> m_dac_regs;
   std::vector<uint32_t> m_color;
+  std::vector<uint8_t> m_texture;
+  std::array<uint32_t, DMARegisterCount> m_dma_regs{};
   // Host data is a stream of RGB dwords, not a framebuffer address.
   struct Pending
   {

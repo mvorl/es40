@@ -119,6 +119,8 @@ void CRealImage2100::dac_data_write(uint8_t value)
 // Readback latches, display selection and unit reset.
 uint32_t* CRealImage2100::native_register(uint32_t a)
 {
+	if (a >= DMABase && a < DMABase + DMARegisterCount * 4)
+		return &m_dma_regs[(a - DMABase) / 4];
 	switch (a)
 	{
 	case UnitReset:
@@ -205,6 +207,17 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 		// Unit resets cancel an in-flight host transfer, not color storage.
 		if (key == UnitReset && !(*reg & (1u << 26)))
 			m_pending = {};
+		if (key == DMAReset && (*reg & 1))
+			m_dma_regs[(DMACommand - DMABase) / 4] = 0;
+		if (key == DMACommand && (lanes & 0xc0000000) &&
+			(*reg & 0xc0000000))
+		{
+			if (m_dma_regs[(DMAReset - DMABase) / 4] & 1)
+				*reg = 0;
+			else
+				// No completion write until the card-side stream is implemented.
+				unimplemented("REALimage DMA transfer", key, *reg, true);
+		}
 		return;
 	}
 	if (key == Status)
@@ -262,6 +275,18 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 		else
 			unimplemented_once("REALimage command width", a, v, true);
 	}
+	else if (key == SyncCommand)
+	{
+		// Idle startup synchronization does not cancel an unfinished upload.
+		if (bits != 32 || (it->second && it->second != 0x80000000u) ||
+			m_pending.width)
+			unimplemented_once("REALimage synchronization command", a, v, true);
+	}
+	else if (key == DisplaySelect)
+	{
+		if (it->second)
+			unimplemented_once("REALimage display selector", a, v, true);
+	}
 	else if (!native_storage_register(key))
 		unimplemented_once("REALimage register", a, v, true);
 }
@@ -280,6 +305,7 @@ bool CRealImage2100::native_storage_register(uint32_t a) const
 		a == Foreground || a == Background || a == HostOrigin ||
 		a == HostExtent || a == FillOrigin || a == FillExtent ||
 		a == HostCommand || a == FillCommand ||
+		a == ContextControl || a == DisplaySelect ||
 		(a >= TimingBase && a <= TimingBase + 0x1c);
 }
 
@@ -437,29 +463,59 @@ void CRealImage2100::io_write(uint32_t a, int bits, uint32_t v)
 
 uint32_t CRealImage2100::mem_read(uint32_t a, int bits)
 {
-	if (!m_aperture_warned)
+	if (!valid_width(bits) || (a & (unsigned(bits) / 8 - 1)))
 	{
-		m_aperture_warned = true;
-		unimplemented("REALimage BAR1 aperture", a, 0, false);
+		report("ACCESS_WIDTH", a, uint32_t(bits), "Invalid BAR1 width or alignment");
+		return 0xffffffffu;
 	}
-	return width_mask(valid_width(bits) ? bits : 32);
+	const uint32_t offset = texture_offset(a);
+	if (offset == 0xffffffffu)
+		return width_mask(bits);
+	uint32_t value = 0;
+	for (unsigned i = 0; i < unsigned(bits) / 8; ++i)
+		value |= uint32_t(m_texture[offset + i]) << (i * 8);
+	return value;
 }
 
 void CRealImage2100::mem_write(uint32_t a, int bits, uint32_t v)
 {
-	(void)bits;
-	if (!m_aperture_warned)
+	if (!valid_width(bits) || (a & (unsigned(bits) / 8 - 1)))
 	{
-		m_aperture_warned = true;
-		unimplemented("REALimage BAR1 aperture", a, v, true);
+		report("ACCESS_WIDTH", a, v, "Invalid BAR1 width or alignment");
+		return;
 	}
+	const uint32_t offset = texture_offset(a);
+	if (offset == 0xffffffffu)
+		return;
+	for (unsigned i = 0; i < unsigned(bits) / 8; ++i)
+		m_texture[offset + i] = uint8_t(v >> (i * 8));
+}
+
+uint32_t CRealImage2100::texture_offset(uint32_t a) const
+{
+	if (a >= MaxTextureSize)
+		return 0xffffffffu;
+	if (m_texture.size() == MaxTextureSize)
+		return a;
+	// The 300 populates two of four 4 KiB tiles per aperture row.
+	if (a & 0x2000)
+		return 0xffffffffu;
+	return (a & 0x1fff) | ((a >> 14) << 13);
+}
+
+void CRealImage2100::configure_texture_memory(uint32_t bytes)
+{
+	if (bytes != MinTextureSize && bytes != MaxTextureSize)
+		throw std::invalid_argument("Invalid PowerStorm texture memory size");
+	if (m_texture.size() != bytes)
+		m_texture.assign(bytes, 0);
 }
 
 // Device lifecycle and diagnostics
 
 CRealImage2100::CRealImage2100()
 	: m_vga_memory(VGAMemorySize), m_dac_regs(DACRegisterCount),
-	  m_color(ColorPixels * 2)
+	  m_color(ColorPixels * 2), m_texture(MinTextureSize)
 {
 	dac_port_map(m_dac_ports);
 	reset();
@@ -472,7 +528,9 @@ void CRealImage2100::reset(bool clear)
 	{
 		std::fill(m_vga_memory.begin(), m_vga_memory.end(), uint8_t(0));
 		std::fill(m_color.begin(), m_color.end(), uint32_t(0));
+		std::fill(m_texture.begin(), m_texture.end(), uint8_t(0));
 	}
+	m_dma_regs.fill(0);
 	m_pending = {};
 	m_palette.fill(0);
 	std::fill(m_dac_regs.begin(), m_dac_regs.end(), uint8_t(0));
@@ -589,6 +647,9 @@ void CRealImage2100::SaveState(std::ostream& out) const
 	put32(p, m_pending.height);
 	put32(p, m_pending.word);
 	put32(p, m_pending.banks);
+	put32(p, uint32_t(m_texture.size()));
+	for (const uint32_t reg : m_dma_regs)
+		put32(p, reg);
 	for (const uint32_t c : m_palette)
 		put32(p, c);
 	p.write(reinterpret_cast<const char*>(m_dac_regs.data()), DACRegisterCount);
@@ -601,9 +662,10 @@ void CRealImage2100::SaveState(std::ostream& out) const
 	p.write(reinterpret_cast<const char*>(m_vga_memory.data()), VGAMemorySize);
 	for (const uint32_t c : m_color)
 		put32(p, c);
+	p.write(reinterpret_cast<const char*>(m_texture.data()), m_texture.size());
 	const auto bytes = p.str();
 	put32(out, 0x30324952); // RI20
-	put32(out, 5);
+	put32(out, 6);
 	put32(out, uint32_t(bytes.size()));
 	put32(out, crc32(bytes));
 	out.write(bytes.data(), bytes.size());
@@ -613,7 +675,7 @@ void CRealImage2100::SaveState(std::ostream& out) const
 
 void CRealImage2100::RestoreState(std::istream& in)
 {
-	if (get32(in) != 0x30324952 || get32(in) != 5)
+	if (get32(in) != 0x30324952 || get32(in) != 6)
 		throw std::runtime_error("Wrong REALimage snapshot version");
 	const auto size = get32(in), crc = get32(in);
 	if (size < FixedPayload || size > MaxStateSize - 16)
@@ -650,6 +712,12 @@ void CRealImage2100::RestoreState(std::istream& in)
 		(!pending.width && (pending.x || pending.y || pending.height ||
 			pending.word || pending.banks)))
 		throw std::runtime_error("Invalid REALimage native transfer state");
+	const uint32_t texture_size = get32(p);
+	if (texture_size != MinTextureSize && texture_size != MaxTextureSize)
+		throw std::runtime_error("Invalid REALimage texture memory size");
+	std::array<uint32_t, DMARegisterCount> dma_regs{};
+	for (uint32_t& reg : dma_regs)
+		reg = get32(p);
 	std::array<uint32_t, 256> pal{};
 	for (auto& c : pal)
 	{
@@ -661,7 +729,7 @@ void CRealImage2100::RestoreState(std::istream& in)
 	p.read(reinterpret_cast<char*>(dac_regs.data()), dac_regs.size());
 	const uint32_t count = get32(p);
 	if (count > MaxShadowRegisters ||
-		FixedPayload + uint64_t(count) * 8 != size)
+		FixedPayload + uint64_t(count) * 8 + texture_size - MinTextureSize != size)
 		throw std::runtime_error("Invalid REALimage shadow register count");
 	std::map<uint32_t, uint32_t> shadow;
 	for (uint32_t i = 0; i < count; ++i)
@@ -679,6 +747,8 @@ void CRealImage2100::RestoreState(std::istream& in)
 		if (c & 0xff000000)
 			throw std::runtime_error("Invalid REALimage color buffer");
 	}
+	std::vector<uint8_t> texture(texture_size);
+	p.read(reinterpret_cast<char*>(texture.data()), texture.size());
 	if (!p || p.peek() != std::char_traits<char>::eof())
 		throw std::runtime_error("Invalid REALimage snapshot payload");
 	// Commit only after validation; keep the storage CVGA borrows in place.
@@ -687,6 +757,8 @@ void CRealImage2100::RestoreState(std::istream& in)
 	m_dac_regs.swap(dac_regs);
 	m_shadow.swap(shadow);
 	m_color.swap(color);
+	m_texture.swap(texture);
+	m_dma_regs = dma_regs;
 	m_pending = pending;
 	m_warned.clear();
 	m_aperture_warned = m_shadow_full_warned = false;
