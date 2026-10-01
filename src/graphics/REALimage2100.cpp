@@ -679,7 +679,8 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		return;
 	const bool upload = a == HostCommand && v == 0x01000032;
 	const bool fast_copy = a == HostCommand && v == 0x00200062;
-	const bool copy = (a == HostCommand && v == 0x01000062) || fast_copy;
+	const bool copy = (a == HostCommand && (v == 0x01000062 || v == 0x00000062)) ||
+		fast_copy;
 	const bool fill = a == FillCommand && v == 0x09000832;
 	const bool transparent = a == HostCommand && v == 0x01000872;
 	const bool mono = v == 0x010008f2 || transparent;
@@ -711,14 +712,15 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 	if (copy)
 	{
 		const uint32_t source = peek(BlockSource), bank = selected == 2 ? 1 : 0;
+		const bool right_to_left = !(v & 0x01000000);
 		if (fast_copy && ((source ^ origin) & 3))
 		{
 			unimplemented_once("REALimage fast-copy alignment", a, v, true);
 			return;
 		}
 		const int32_t sx = int16_t(source & 0xffff), sy = int16_t(source >> 16),
-			left = std::max(fast_copy ? x - int32_t(width) + 1 : x, int32_t(0)),
-			right = std::min(x + (fast_copy ? 1 : int32_t(width)), int32_t(ColorWidth)),
+			left = std::max(right_to_left ? x - int32_t(width) + 1 : x, int32_t(0)),
+			right = std::min(x + (right_to_left ? 1 : int32_t(width)), int32_t(ColorWidth)),
 			top = std::max(y - int32_t(height) + 1, int32_t(0)),
 			bottom = std::min(y, int32_t(ColorHeight) - 1);
 		if (left >= right || top > bottom)
@@ -729,9 +731,9 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 			unimplemented_once("REALimage copy source bounds", a, v, true);
 			return;
 		}
-		// Both copy upward; the optimized opcode starts at the right edge.
-		const int32_t first = fast_copy ? right - 1 : left,
-			end = fast_copy ? left - 1 : right, step = fast_copy ? -1 : 1;
+		// These copies run upward; bit 24 selects increasing X.
+		const int32_t first = right_to_left ? right - 1 : left,
+			end = right_to_left ? left - 1 : right, step = right_to_left ? -1 : 1;
 		for (int32_t row = bottom; row >= top; --row)
 			for (int32_t col = first; col != end; col += step)
 			{
