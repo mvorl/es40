@@ -38,8 +38,8 @@
 #include <utility>
 #include <vector>
 
-/** REALimage 2100 native transport and legacy VGA storage.
- * No native command processor, framebuffer layout or accelerator is modeled.
+/** REALimage 2100 native transport, VGA storage and a limited native 2D path.
+ * The NT 24-bit copy profile is modeled; no 3D engine or BAR1 layout yet.
  * Unknown native registers are shadowed with a one-time diagnostic, as in
  * CPermedia2.
  */
@@ -92,11 +92,29 @@ public:
                             VGAControlNative = 0x00100000;
   // Read back by the miniport: clock/memory configuration and monitor pins.
   static constexpr uint32_t DisplayControl = 0x00840000;
+  // NT miniport timing bytes and 2D command ports, as BAR0 offsets.
+  static constexpr uint32_t TimingBase = 0x00838080;
+  static constexpr uint32_t DrawControl = 0x00800600,
+                            MemoryControl = 0x00800604,
+                            PixelControl = 0x00800608,
+                            Foreground = 0x00800610,
+                            Background = 0x00800614,
+                            HostOrigin = 0x00800628,
+                            HostExtent = 0x0080062c,
+                            HostCommand = 0x00800630,
+                            FillOrigin = 0x00800644,
+                            FillExtent = 0x00800648,
+                            FillCommand = 0x0080064c;
+  static constexpr uint32_t HostData = 0x00c00000, HostDataSize = 0x2000;
+  // Bounded logical color banks; physical 3D-RAM layout is not modeled.
+  static constexpr uint32_t ColorWidth = 1280, ColorHeight = 1024,
+                            ColorPixels = ColorWidth * ColorHeight;
   // Bounds shadow storage; BAR0 decodes far more than any register file.
   static constexpr uint32_t MaxShadowRegisters = 4096;
   // Serialized SaveState() size, header included.
   static constexpr uint32_t MinStateSize =
-    16 + 52 + 256 * 4 + DACRegisterCount + 4 + VGAMemorySize;
+    16 + 52 + 4 + 24 + 256 * 4 + DACRegisterCount + 4 + VGAMemorySize +
+    ColorPixels * 2 * 4;
   static constexpr uint32_t MaxStateSize = MinStateSize + MaxShadowRegisters * 8;
 
   using DiagnosticCallback = std::function<void(const Diagnostic&)>;
@@ -129,6 +147,8 @@ public:
 
   // One virtual frame of time from the board's periodic service.
   void advance_frame() { ++m_frame_counter; }
+
+  Frame scanout(std::string* error = nullptr) const;
 
   void set_diagnostic_callback(DiagnosticCallback fn)
   {
@@ -167,8 +187,18 @@ public:
 
 private:
   void dac_port_map(address_map& map);
+  uint32_t dac_data_offset() const;
+  void advance_dac_data();
+  uint8_t dac_data_read();
+  void dac_data_write(uint8_t value);
   uint32_t* native_register(uint32_t dword_address);
   uint32_t status_read();
+  uint32_t peek(uint32_t address) const;
+  bool native_storage_register(uint32_t address) const;
+  bool copy_profile() const;
+  void start_command(uint32_t address, uint32_t value);
+  void host_data(uint32_t value);
+  void color_write(uint32_t x, uint32_t y, uint32_t color, uint32_t banks);
   void report(
     const char* code, uint32_t address, uint32_t value, const char* message,
     bool fatal = false);
@@ -179,8 +209,14 @@ private:
   address_map m_dac_ports{0x20};
   std::vector<uint8_t> m_vga_memory;
   std::array<uint32_t, 256> m_palette{};
-  // IBM RAMDAC indexed registers. Storage only: the BIOS writes but never reads.
+  // RGB640 byte registers and flattened native table/color streams.
   std::vector<uint8_t> m_dac_regs;
+  std::vector<uint32_t> m_color;
+  // Host data is a stream of RGB dwords, not a framebuffer address.
+  struct Pending
+  {
+    uint32_t x = 0, y = 0, width = 0, height = 0, word = 0, banks = 0;
+  } m_pending;
   // Unknown native registers, keyed by dword-aligned address.
   std::map<uint32_t, uint32_t> m_shadow;
   std::set<uint32_t> m_warned;
@@ -193,6 +229,7 @@ private:
   uint32_t m_board_io = 0;
   uint32_t m_io_index = 0;
   uint16_t m_dac_index = 0;
+  uint8_t m_dac_component = 0; // RGB byte within a streamed color entry.
   uint8_t m_palette_read = 0, m_palette_write = 0;
   DiagnosticCallback m_diagnostic;
   UnimplementedCallback m_unimplemented;

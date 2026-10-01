@@ -38,8 +38,8 @@
 #include <vector>
 
 /** Digital PowerStorm 300/350 PCI video card with a REALimage 2100.
- * Only standard VGA is implemented; model=350 is a label, not a measured
- * 350 board profile.
+ * Standard VGA and a limited native 24-bit 2D path are implemented.
+ * Model 350 uses the same native core; its board profile is not measured.
  */
 class CPowerStorm3xx :
   public CVGA,

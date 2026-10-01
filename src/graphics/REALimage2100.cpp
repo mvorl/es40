@@ -53,6 +53,7 @@ void CRealImage2100::dac_port_map(address_map& map)
 			}),
 			NAME([this](offs_t, u8 v) {
 				m_dac_index = uint16_t((m_dac_index & 0xff00) | v);
+				m_dac_component = 0;
 			}));
 	map(0x14, 0x14)
 		.lrw8(
@@ -62,20 +63,60 @@ void CRealImage2100::dac_port_map(address_map& map)
 			NAME([this](offs_t, u8 v) {
 				m_dac_index =
 					uint16_t((m_dac_index & 255) | (uint16_t(v) << 8));
+				m_dac_component = 0;
 			}));
-	// The ROM proves only the transport; clock, mux and cursor semantics of the
-	// individual indexed registers are not modeled.
+	// RGB640 byte registers and the streamed tables used by the NT miniport.
 	map(0x18, 0x18)
 		.lrw8(
 			NAME([this](offs_t) {
-				return m_dac_regs[m_dac_index];
+				return dac_data_read();
 			}),
 			NAME([this](offs_t, u8 v) {
-				m_dac_regs[m_dac_index] = v;
+				dac_data_write(v);
 			}));
 }
 
-// Nothing modeled depends on these yet; their values read back as written.
+// RGB indices select triples; WAT and cursor RAM are byte addressed.
+uint32_t CRealImage2100::dac_data_offset() const
+{
+	if (m_dac_index >= 0x4300 && m_dac_index < 0x4400)
+		return 0x4300 + 3u * (m_dac_index - 0x4300) + m_dac_component;
+	if (m_dac_index >= 0x4800 && m_dac_index < 0x4808)
+		return 0x4800 + 3u * (m_dac_index - 0x4800) + m_dac_component;
+	return m_dac_index;
+}
+
+void CRealImage2100::advance_dac_data()
+{
+	if ((m_dac_index >= 0x4300 && m_dac_index < 0x4400) ||
+		(m_dac_index >= 0x4800 && m_dac_index < 0x4808))
+	{
+		if (++m_dac_component == 3)
+		{
+			m_dac_component = 0;
+			++m_dac_index;
+		}
+	}
+	else if ((m_dac_index >= 0x0100 && m_dac_index < 0x0140) ||
+		(m_dac_index >= 0x0200 && m_dac_index < 0x0240) ||
+		(m_dac_index >= 0x1000 && m_dac_index < 0x1400))
+		++m_dac_index;
+}
+
+uint8_t CRealImage2100::dac_data_read()
+{
+	const uint8_t value = m_dac_regs[dac_data_offset()];
+	advance_dac_data();
+	return value;
+}
+
+void CRealImage2100::dac_data_write(uint8_t value)
+{
+	m_dac_regs[dac_data_offset()] = value;
+	advance_dac_data();
+}
+
+// Readback latches, display selection and unit reset.
 uint32_t* CRealImage2100::native_register(uint32_t a)
 {
 	switch (a)
@@ -93,8 +134,7 @@ uint32_t* CRealImage2100::native_register(uint32_t a)
 	}
 }
 
-// No engine is modeled, so busy bits read 0. Retrace sits inside blank near
-// the end of each virtual frame, so both set-then-clear waits finish.
+// Drawing is synchronous. Synthetic retrace sits inside vertical blank.
 uint32_t CRealImage2100::status_read()
 {
 	const uint32_t phase = m_status_phase;
@@ -118,7 +158,7 @@ uint32_t CRealImage2100::ReadMem(uint32_t a, int bits)
 			"Invalid native width or alignment");
 		return 0xffffffffu;
 	}
-	if (bits == 8 && a >= 0x838000 && a < 0x838020 &&
+	if (a >= 0x838000 && a < 0x838020 &&
 		m_dac_ports.has_handler(a - 0x838000))
 		return m_dac_ports.read_byte(a - 0x838000);
 	if (const uint32_t* reg = native_register(a & ~3u))
@@ -139,7 +179,8 @@ uint32_t CRealImage2100::ReadMem(uint32_t a, int bits)
 	const auto it = m_shadow.find(a & ~3u);
 	const uint32_t value = it == m_shadow.end() ? 0 : it->second;
 	// Reads return the stored value; readback is modeled, not measured.
-	unimplemented_once("REALimage register", a, value, false);
+	if (!native_storage_register(a & ~3u))
+		unimplemented_once("REALimage register", a, value, false);
 	return (value >> ((a & 3) * 8)) & width_mask(bits);
 }
 
@@ -150,7 +191,7 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 		report("ACCESS_WIDTH", a, v, "Invalid native width or alignment");
 		return;
 	}
-	if (bits == 8 && a >= 0x838000 && a < 0x838020 &&
+	if (a >= 0x838000 && a < 0x838020 &&
 		m_dac_ports.has_handler(a - 0x838000))
 	{
 		m_dac_ports.write_byte(a - 0x838000, u8(v));
@@ -161,9 +202,9 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 	if (uint32_t* reg = native_register(key))
 	{
 		*reg = (*reg & ~lanes) | ((v << shift) & lanes);
-		// Only the VGA side is displayed; say so when the driver leaves it.
-		if (key == VGAControl && native_display())
-			unimplemented("REALimage native display", key, *reg, true);
+		// Unit resets cancel an in-flight host transfer, not color storage.
+		if (key == UnitReset && !(*reg & (1u << 26)))
+			m_pending = {};
 		return;
 	}
 	if (key == Status)
@@ -187,6 +228,14 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 			m_board_timing = uint8_t(((v << shift) & lanes) >> 24);
 		return;
 	}
+	if (a >= HostData && a < HostData + HostDataSize)
+	{
+		if (bits == 32)
+			host_data(v);
+		else
+			unimplemented_once("REALimage host-data width", a, v, true);
+		return;
+	}
 	auto it = m_shadow.find(key);
 	if (it == m_shadow.end())
 	{
@@ -205,7 +254,159 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 		it = m_shadow.emplace(key, 0).first;
 	}
 	it->second = (it->second & ~lanes) | ((v << shift) & lanes);
-	unimplemented_once("REALimage register", a, v, true);
+	if (key == HostCommand || key == FillCommand)
+	{
+		// Only longword command launches have been established by the driver.
+		if (bits == 32)
+			start_command(key, it->second);
+		else
+			unimplemented_once("REALimage command width", a, v, true);
+	}
+	else if (!native_storage_register(key))
+		unimplemented_once("REALimage register", a, v, true);
+}
+
+// NT 2D subset, decoded from pbxgdac.dll and the startup trace.
+
+uint32_t CRealImage2100::peek(uint32_t a) const
+{
+	const auto it = m_shadow.find(a & ~3u);
+	return it == m_shadow.end() ? 0 : it->second;
+}
+
+bool CRealImage2100::native_storage_register(uint32_t a) const
+{
+	return a == DrawControl || a == MemoryControl || a == PixelControl ||
+		a == Foreground || a == Background || a == HostOrigin ||
+		a == HostExtent || a == FillOrigin || a == FillExtent ||
+		a == HostCommand || a == FillCommand ||
+		(a >= TimingBase && a <= TimingBase + 0x1c);
+}
+
+bool CRealImage2100::copy_profile() const
+{
+	// Only the observed RGB copy profile; bits 12..15 select banks.
+	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
+	return (control & ~0xf000u) == 0x81000702 && banks && !(banks & ~3u) &&
+		peek(MemoryControl) == 0x0c008000 &&
+		peek(PixelControl) == 0x42722060;
+}
+
+void CRealImage2100::color_write(
+	uint32_t x, uint32_t y, uint32_t color, uint32_t banks)
+{
+	if (x >= ColorWidth || y >= ColorHeight)
+		return;
+	const uint32_t offset = y * ColorWidth + x;
+	for (uint32_t bank = 0; bank < 2; ++bank)
+		if (banks & (1u << bank))
+			m_color[bank * ColorPixels + offset] = color & 0xffffff;
+}
+
+void CRealImage2100::start_command(uint32_t a, uint32_t v)
+{
+	// A new launch cannot inherit the tail of an earlier host upload.
+	if (m_pending.width)
+		report("HOST_INTERRUPTED", a, v, "Incomplete native host upload replaced");
+	m_pending = {};
+	if (!v)
+		return;
+	const bool upload = a == HostCommand && v == 0x01000032;
+	const bool fill = a == FillCommand && v == 0x09000832;
+	if ((!upload && !fill) || !copy_profile())
+	{
+		unimplemented_once("REALimage 2D command/profile", a, v, true);
+		return;
+	}
+	const uint32_t origin = peek(upload ? HostOrigin : FillOrigin),
+		extent = peek(upload ? HostExtent : FillExtent),
+		width = (extent & 0xffff) + 1, height = (extent >> 16) + 1,
+		banks = (peek(DrawControl) >> 12) & 3;
+	const int32_t x = int16_t(origin & 0xffff), y = int16_t(origin >> 16);
+	if (upload)
+	{
+		if (uint64_t(width) * height > 0xffffffffu)
+		{
+			report("HOST_BOUNDS", a, v, "Native host extent exceeds model limit");
+			return;
+		}
+		m_pending = {origin & 0xffff, origin >> 16, width, height, 0, banks};
+		return;
+	}
+	// Clip before iterating so malformed extents cannot cause unbounded work.
+	const int32_t left = std::max(x, int32_t(0)),
+		top = std::max(y, int32_t(0)),
+		right = std::min(x + int32_t(width), int32_t(ColorWidth)),
+		bottom = std::min(y + int32_t(height), int32_t(ColorHeight));
+	const uint32_t color = peek(Foreground);
+	for (int32_t row = top; row < bottom; ++row)
+		for (int32_t col = left; col < right; ++col)
+			color_write(uint32_t(col), uint32_t(row), color, banks);
+}
+
+void CRealImage2100::host_data(uint32_t v)
+{
+	if (!m_pending.width)
+	{
+		unimplemented_once("REALimage host data without upload", HostData, v, true);
+		return;
+	}
+	const int32_t x = int16_t(m_pending.x) +
+		int32_t(m_pending.word % m_pending.width);
+	const int32_t y = int16_t(m_pending.y) +
+		int32_t(m_pending.word / m_pending.width);
+	color_write(uint32_t(x), uint32_t(y), v, m_pending.banks);
+	if (++m_pending.word == uint64_t(m_pending.width) * m_pending.height)
+		m_pending = {};
+}
+
+CRealImage2100::Frame CRealImage2100::scanout(std::string* error) const
+{
+	auto reject = [&](const char* text) {
+		if (error)
+			*error = text;
+		return Frame{};
+	};
+	if (error)
+		error->clear();
+	if (!native_display() || (m_board_io & 0x80))
+		return reject("Native display disabled/blanked");
+	if (peek(MemoryControl) != 0x0c008000 ||
+		peek(PixelControl) != 0x42722060)
+		return reject("Native pixel layout unsupported");
+	if (!(m_dac_regs[0x0b] & 1) || !(m_dac_regs[0x0d] & 4))
+		return reject("Native DAC disabled");
+	// Only the captured RGB640 window format is decoded.
+	for (uint32_t i = 0; i < 16; ++i)
+	{
+		const uint32_t fb = 0x100 + i * 4, overlay = 0x200 + i * 4;
+		if (m_dac_regs[fb] != 8 || m_dac_regs[fb + 1] != 12 ||
+			m_dac_regs[fb + 2] || m_dac_regs[fb + 3] ||
+			m_dac_regs[overlay] != 4 || m_dac_regs[overlay + 1] ||
+			m_dac_regs[overlay + 2] || m_dac_regs[overlay + 3] != 0x48)
+			return reject("Native DAC window format unsupported");
+	}
+	// Unlike VGA, vertical display is a count, not a last-line index.
+	const uint32_t horizontal = peek(TimingBase),
+		overflow = peek(TimingBase + 4) >> 24,
+		vertical = peek(TimingBase + 0x10);
+	const uint32_t width = (((horizontal >> 8) & 255) + 1) * 8,
+		height = ((vertical >> 16) & 255) |
+			((overflow & 2) << 7) | ((overflow & 0x40) << 3);
+	// Extended vertical timing and other serializer modes are not established.
+	if ((peek(TimingBase + 0x1c) & 0x00ff0000) || !height ||
+		width > ColorWidth || height > ColorHeight)
+		return reject("Native timing unsupported");
+	Frame frame;
+	frame.width = width;
+	frame.height = height;
+	frame.argb.resize(size_t(width) * height);
+	// This profile displays bank 1; page flips and overlays are unmodeled.
+	for (uint32_t y = 0; y < height; ++y)
+		for (uint32_t x = 0; x < width; ++x)
+			frame.argb[size_t(y) * width + x] =
+				0xff000000 | m_color[size_t(y) * ColorWidth + x];
+	return frame;
 }
 
 // BAR2 index/data pair: dword index at +0, width-aware data at +4.
@@ -257,7 +458,8 @@ void CRealImage2100::mem_write(uint32_t a, int bits, uint32_t v)
 // Device lifecycle and diagnostics
 
 CRealImage2100::CRealImage2100()
-	: m_vga_memory(VGAMemorySize), m_dac_regs(DACRegisterCount)
+	: m_vga_memory(VGAMemorySize), m_dac_regs(DACRegisterCount),
+	  m_color(ColorPixels * 2)
 {
 	dac_port_map(m_dac_ports);
 	reset();
@@ -267,7 +469,11 @@ void CRealImage2100::reset(bool clear)
 {
 	// PCI configuration belongs to the board wrapper and is NOT reset here.
 	if (clear)
+	{
 		std::fill(m_vga_memory.begin(), m_vga_memory.end(), uint8_t(0));
+		std::fill(m_color.begin(), m_color.end(), uint32_t(0));
+	}
+	m_pending = {};
 	m_palette.fill(0);
 	std::fill(m_dac_regs.begin(), m_dac_regs.end(), uint8_t(0));
 	m_shadow.clear();
@@ -282,6 +488,7 @@ void CRealImage2100::reset(bool clear)
 	m_board_io = 0;
 	m_io_index = 0;
 	m_dac_index = 0;
+	m_dac_component = 0;
 	m_palette_read = m_palette_write = 0;
 }
 
@@ -356,7 +563,7 @@ static uint32_t crc32(const std::string& bytes)
 	return ~crc;
 }
 
-// Selectors, native registers, palette, DAC registers, shadow count, VGA memory.
+// Selectors, latches, upload, palette/DAC, shadow, VGA and color banks.
 static constexpr uint32_t FixedPayload = CRealImage2100::MinStateSize - 16;
 
 void CRealImage2100::SaveState(std::ostream& out) const
@@ -375,6 +582,13 @@ void CRealImage2100::SaveState(std::ostream& out) const
 	put32(p, m_board_control);
 	put32(p, m_board_io);
 	put32(p, m_board_timing);
+	put32(p, m_dac_component);
+	put32(p, m_pending.x);
+	put32(p, m_pending.y);
+	put32(p, m_pending.width);
+	put32(p, m_pending.height);
+	put32(p, m_pending.word);
+	put32(p, m_pending.banks);
 	for (const uint32_t c : m_palette)
 		put32(p, c);
 	p.write(reinterpret_cast<const char*>(m_dac_regs.data()), DACRegisterCount);
@@ -385,9 +599,11 @@ void CRealImage2100::SaveState(std::ostream& out) const
 		put32(p, reg.second);
 	}
 	p.write(reinterpret_cast<const char*>(m_vga_memory.data()), VGAMemorySize);
+	for (const uint32_t c : m_color)
+		put32(p, c);
 	const auto bytes = p.str();
 	put32(out, 0x30324952); // RI20
-	put32(out, 4);
+	put32(out, 5);
 	put32(out, uint32_t(bytes.size()));
 	put32(out, crc32(bytes));
 	out.write(bytes.data(), bytes.size());
@@ -397,7 +613,7 @@ void CRealImage2100::SaveState(std::ostream& out) const
 
 void CRealImage2100::RestoreState(std::istream& in)
 {
-	if (get32(in) != 0x30324952 || get32(in) != 4)
+	if (get32(in) != 0x30324952 || get32(in) != 5)
 		throw std::runtime_error("Wrong REALimage snapshot version");
 	const auto size = get32(in), crc = get32(in);
 	if (size < FixedPayload || size > MaxStateSize - 16)
@@ -418,6 +634,22 @@ void CRealImage2100::RestoreState(std::istream& in)
 	if (status_phase >= StatusFrameReads || frame_counter > 0xffff ||
 		board_control > 0xff || board_io > 0xffffff || board_timing > 0xff)
 		throw std::runtime_error("Invalid REALimage status state");
+	const uint32_t dac_component = get32(p);
+	Pending pending;
+	pending.x = get32(p);
+	pending.y = get32(p);
+	pending.width = get32(p);
+	pending.height = get32(p);
+	pending.word = get32(p);
+	pending.banks = get32(p);
+	const uint64_t words = uint64_t(pending.width) * pending.height;
+	if (dac_component > 2 || pending.x > 65535 || pending.y > 65535 ||
+		pending.width > 65536 || pending.height > 65536 ||
+		(pending.width && (!pending.height || words > 0xffffffffu ||
+			pending.word >= words || !pending.banks || (pending.banks & ~3u))) ||
+		(!pending.width && (pending.x || pending.y || pending.height ||
+			pending.word || pending.banks)))
+		throw std::runtime_error("Invalid REALimage native transfer state");
 	std::array<uint32_t, 256> pal{};
 	for (auto& c : pal)
 	{
@@ -440,6 +672,13 @@ void CRealImage2100::RestoreState(std::istream& in)
 	}
 	std::vector<uint8_t> memory(VGAMemorySize);
 	p.read(reinterpret_cast<char*>(memory.data()), memory.size());
+	std::vector<uint32_t> color(ColorPixels * 2);
+	for (uint32_t& c : color)
+	{
+		c = get32(p);
+		if (c & 0xff000000)
+			throw std::runtime_error("Invalid REALimage color buffer");
+	}
 	if (!p || p.peek() != std::char_traits<char>::eof())
 		throw std::runtime_error("Invalid REALimage snapshot payload");
 	// Commit only after validation; keep the storage CVGA borrows in place.
@@ -447,6 +686,8 @@ void CRealImage2100::RestoreState(std::istream& in)
 	m_palette = pal;
 	m_dac_regs.swap(dac_regs);
 	m_shadow.swap(shadow);
+	m_color.swap(color);
+	m_pending = pending;
 	m_warned.clear();
 	m_aperture_warned = m_shadow_full_warned = false;
 	m_unit_reset = unit_reset;
@@ -460,6 +701,7 @@ void CRealImage2100::RestoreState(std::istream& in)
 	m_board_timing = uint8_t(board_timing);
 	m_io_index = index;
 	m_dac_index = uint16_t(dac);
+	m_dac_component = uint8_t(dac_component);
 	m_palette_read = uint8_t(rd);
 	m_palette_write = uint8_t(wr);
 }

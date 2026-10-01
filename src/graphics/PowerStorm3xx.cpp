@@ -711,8 +711,12 @@ CRealImage2100::Frame CPowerStorm3xx::render_frame()
 {
 	std::lock_guard<std::recursive_mutex> guard(
 		cSystem->get_device_bus_mutex());
-	// Native scanout is not modeled; only the VGA frontend presents frames.
-	if (m_pause.load() || !m_board_vga_enabled || !m_vga_enable ||
+	if (m_pause.load())
+		return {};
+	// The native display path remains active when the driver blanks legacy VGA.
+	if (m_realimage.native_display())
+		return m_realimage.scanout();
+	if (!m_board_vga_enabled || !m_vga_enable ||
 		!vga.crtc.sync_en || (vga.sequencer.data[0] & 3) != 3 ||
 		(vga.sequencer.data[1] & 0x20) || !(vga.attribute.index & 0x20) ||
 		!vga.crtc.maximum_scan_line)
@@ -1018,7 +1022,8 @@ try
 	m_initialized = true;
 	ResetPCI();
 	printf(
-		"%s: %s PowerStorm %u, REALimage 2100, standard VGA only.\n",
+		"%s: %s PowerStorm %u, REALimage 2100, standard VGA and limited "
+		"native 24-bit 2D.\n",
 		devid_string,
 		m_model == 300 ? "Compaq" : "Digital",
 		m_model);
