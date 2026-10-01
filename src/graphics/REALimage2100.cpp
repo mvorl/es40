@@ -653,11 +653,13 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 	if (!v)
 		return;
 	const bool upload = a == HostCommand && v == 0x01000032;
+	const bool copy = a == HostCommand && v == 0x01000062;
 	const bool fill = a == FillCommand && v == 0x09000832;
 	const bool transparent = a == HostCommand && v == 0x01000872;
 	const bool mono = v == 0x010008f2 || transparent;
 	const uint32_t selected = (peek(DrawControl) >> 12) & 3;
-	if ((!upload && !fill && !mono) || !copy_profile() ||
+	if ((!upload && !copy && !fill && !mono) || !copy_profile() ||
+		(copy && selected != 1 && selected != 2) ||
 		((selected & 1) && !plane_profile(0)) ||
 		((selected & 2) && !plane_profile(1)))
 	{
@@ -677,6 +679,32 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 			return;
 		}
 		m_pending = {origin & 0xffff, origin >> 16, width, height, 0, banks};
+		return;
+	}
+	if (copy)
+	{
+		const uint32_t source = peek(BlockSource), bank = selected == 2 ? 1 : 0;
+		const int32_t sx = int16_t(source & 0xffff), sy = int16_t(source >> 16),
+			left = std::max(x, int32_t(0)),
+			right = std::min(x + int32_t(width), int32_t(ColorWidth)),
+			top = std::max(y - int32_t(height) + 1, int32_t(0)),
+			bottom = std::min(y, int32_t(ColorHeight) - 1);
+		if (left >= right || top > bottom)
+			return;
+		if (sx + left - x < 0 || sx + right - x > int32_t(ColorWidth) ||
+			sy + top - y < 0 || sy + bottom - y >= int32_t(ColorHeight))
+		{
+			unimplemented_once("REALimage copy source bounds", a, v, true);
+			return;
+		}
+		// This opcode starts at the lower left and copies rightward, then upward.
+		for (int32_t row = bottom; row >= top; --row)
+			for (int32_t col = left; col < right; ++col)
+			{
+				const size_t offset = size_t(bank) * ColorPixels +
+					size_t(sy + row - y) * ColorWidth + size_t(sx + col - x);
+				color_write(uint32_t(col), uint32_t(row), m_color[offset], banks);
+			}
 		return;
 	}
 	const uint32_t pattern[] = {peek(MonoPattern0), peek(MonoPattern1),
