@@ -683,9 +683,15 @@ void CRealImage2100::block_command(uint32_t v)
 void CRealImage2100::start_command(uint32_t a, uint32_t v)
 {
 	const bool readback = a == HostCommand && v == 0x01000052;
+	const bool cross_copy = a == HostCommand &&
+		(v == 0x01008072 || v == 0x00008062 || v == 0x00008072);
+	const uint32_t selected = (peek(DrawControl) >> 12) & 3;
+	// Cross-bank copies read the selected bank and write the opposite bank.
+	const uint32_t destination_banks = cross_copy ?
+		((selected >> 1) | (selected << 1)) & 3 : selected;
 	if (!readback)
 		for (unsigned bank = 0; bank < 2; ++bank)
-			if (peek(DrawControl) & (0x1000u << bank))
+			if (destination_banks & (1u << bank))
 				m_clear_cache[bank] = {};
 	// A new launch cannot inherit the tail of an earlier host upload.
 	if (m_pending.width)
@@ -698,8 +704,6 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		return;
 	const bool upload = a == HostCommand && v == 0x01000032;
 	const bool fast_copy = a == HostCommand && v == 0x00200062;
-	const bool cross_copy = a == HostCommand &&
-		(v == 0x01008072 || v == 0x00008062 || v == 0x00008072);
 	const bool copy = (a == HostCommand && (v == 0x01000062 || v == 0x00000062)) ||
 		fast_copy || cross_copy;
 	const bool fill = a == FillCommand && v == 0x09000832;
@@ -707,7 +711,6 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 	// Explicit eight-pixel width, source bit offset zero.
 	const bool width8_mono = a == HostCommand && v == 0x010078f2;
 	const bool mono = v == 0x010008f2 || transparent || width8_mono;
-	const uint32_t selected = (peek(DrawControl) >> 12) & 3;
 	const bool profile = fast_copy ? fast_copy_profile() :
 		copy_profile() && (!(selected & 1) || plane_profile(0)) &&
 		(!(selected & 2) || plane_profile(1)) &&
@@ -748,8 +751,8 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 	}
 	if (copy)
 	{
-		const uint32_t source = peek(BlockSource), bank = selected == 2 ? 1 : 0,
-			source_bank = cross_copy ? bank ^ 1u : bank;
+		const uint32_t source = peek(BlockSource), source_bank = selected == 2 ? 1 : 0,
+			bank = cross_copy ? source_bank ^ 1u : source_bank;
 		const bool right_to_left = !(v & 0x01000000), bottom_to_top = !(v & 0x10);
 		if (fast_copy && ((source ^ origin) & 3))
 		{
@@ -786,7 +789,7 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 					m_color[size_t(bank) * ColorPixels + size_t(row) * ColorWidth + col] =
 						m_color[offset] & 0xffffff;
 				else
-					color_write(uint32_t(col), uint32_t(row), m_color[offset], banks);
+					color_write(uint32_t(col), uint32_t(row), m_color[offset], destination_banks);
 			}
 		return;
 	}
