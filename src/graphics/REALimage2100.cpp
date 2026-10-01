@@ -224,8 +224,9 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 		{
 			if (m_dma_regs[(DMAReset - DMABase) / 4] & 1)
 				*reg = 0;
+			else if (bits == 32)
+				dma_command(*reg);
 			else
-				// No completion write until the card-side stream is implemented.
 				unimplemented("REALimage DMA transfer", key, *reg, true);
 		}
 		return;
@@ -694,7 +695,8 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		return;
 	const bool upload = a == HostCommand && v == 0x01000032;
 	const bool fast_copy = a == HostCommand && v == 0x00200062;
-	const bool cross_copy = a == HostCommand && v == 0x01008072;
+	const bool cross_copy = a == HostCommand &&
+		(v == 0x01008072 || v == 0x00008062);
 	const bool copy = (a == HostCommand && (v == 0x01000062 || v == 0x00000062)) ||
 		fast_copy || cross_copy;
 	const bool fill = a == FillCommand && v == 0x09000832;
@@ -838,14 +840,57 @@ void CRealImage2100::host_data(uint32_t v)
 
 uint32_t CRealImage2100::host_read()
 {
-	const uint32_t bank = m_readback.banks == 2 ? 1 : 0,
-		x = m_readback.x + m_readback.word % m_readback.width,
-		y = m_readback.y + m_readback.word / m_readback.width;
 	// Readback returns RGB directly, without destination ROP or write masks.
-	const uint32_t value = m_color[size_t(bank) * ColorPixels + y * ColorWidth + x];
+	const uint32_t value = readback_pixel(m_readback.word);
 	if (++m_readback.word == m_readback.width * m_readback.height)
 		m_readback = {};
 	return value;
+}
+
+uint32_t CRealImage2100::readback_pixel(uint32_t word) const
+{
+	const uint32_t bank = m_readback.banks == 2 ? 1 : 0,
+		x = m_readback.x + word % m_readback.width,
+		y = m_readback.y + word / m_readback.width;
+	return m_color[size_t(bank) * ColorPixels + y * ColorWidth + x];
+}
+
+void CRealImage2100::dma_command(uint32_t v)
+{
+	const uint32_t destination = m_dma_regs[8], source = m_dma_regs[9],
+		completion = m_dma_regs[12], words = 64, bytes = words * 4;
+	bool neutral = true;
+	for (unsigned i : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 10u, 11u, 13u, 15u, 16u, 17u, 18u})
+		neutral &= m_dma_regs[i] == 0;
+	if (v != 0xc4800040 || !neutral || m_dma_regs[14] != 8 ||
+		!m_readback.width ||
+		uint64_t(m_readback.width) * m_readback.height - m_readback.word < words ||
+		((destination | source | completion) & 3) ||
+		source < HostData || source > HostData + HostReadSize - bytes ||
+		uint64_t(destination) + bytes > 0x100000000ull ||
+		uint64_t(completion) + 4 > 0x100000000ull ||
+		(uint64_t(completion) < uint64_t(destination) + bytes &&
+			uint64_t(completion) + 4 > destination))
+	{
+		unimplemented("REALimage DMA transfer", DMACommand, v, true);
+		return;
+	}
+	std::array<uint8_t, bytes> data{};
+	for (uint32_t word = 0; word < words; ++word)
+	{
+		const uint32_t pixel = readback_pixel(m_readback.word + word);
+		for (unsigned lane = 0; lane < 4; ++lane)
+			data[word * 4 + lane] = uint8_t(pixel >> (lane * 8));
+	}
+	// Commit FIFO progress only after payload and completion writes succeed.
+	if (!m_dma_writer || !m_dma_writer(destination, data.data(), data.size(), completion))
+	{
+		report("DMA_WRITE", destination, bytes, "PCI DMA write unavailable or rejected");
+		return;
+	}
+	m_readback.word += words;
+	if (m_readback.word == m_readback.width * m_readback.height)
+		m_readback = {};
 }
 
 CRealImage2100::Frame CRealImage2100::scanout(std::string* error) const

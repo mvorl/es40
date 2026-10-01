@@ -1021,6 +1021,10 @@ try
 		[this](const char* what, uint32_t address, uint32_t value, bool write) {
 			report_unimplemented(what, address, value, write);
 		});
+	m_realimage.set_dma_writer(
+		[this](uint32_t address, const uint8_t* source, size_t count, uint32_t completion) {
+			return dma_write(address, source, count, completion);
+		});
 	m_initialized = true;
 	ResetPCI();
 	printf(
@@ -1271,6 +1275,36 @@ void CPowerStorm3xx::WriteMem_Bar(
 		break;
 		// ROM writes intentionally discarded: no flash programming model.
 	}
+}
+
+bool CPowerStorm3xx::dma_write(
+	u32 address, const uint8_t* source, size_t count, u32 completion)
+{
+	if (!(config_read(0, 4, 16) & 4))
+		return false;
+	auto ram_range = [&](u32 start, size_t length) {
+		if (length > 0x100000000ull - start)
+			return false;
+		for (size_t done = 0; done < length;)
+		{
+			const u64 physical = cSystem->PCI_Phys(myPCIBus, start + u32(done));
+			const size_t chunk = std::min(length - done, size_t(8192 - (physical & 8191)));
+			if (!cSystem->PtrToMem(physical) || !cSystem->PtrToMem(physical + chunk - 1))
+				return false;
+			done += chunk;
+		}
+		return true;
+	};
+	if (!ram_range(address, count) || !ram_range(completion, 4))
+		return false;
+	if (m_trace)
+		m_trace << "# DMA write " << std::hex << address << " bytes=" << count
+			<< " completion=" << completion << std::dec << '\n';
+	do_pci_write(address, const_cast<uint8_t*>(source), 1, count);
+	// The driver accepts any completion word other than 0xffffffff.
+	uint8_t done[4]{};
+	do_pci_write(completion, done, 1, sizeof(done));
+	return true;
 }
 
 u64 CPowerStorm3xx::ReadMem(int index, u64 address, int dsize)

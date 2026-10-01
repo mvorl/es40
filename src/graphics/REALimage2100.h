@@ -157,6 +157,8 @@ public:
   using DiagnosticCallback = std::function<void(const Diagnostic&)>;
   using UnimplementedCallback = std::function<void(
     const char* what, uint32_t address, uint32_t value, bool write)>;
+  // Write payload, then zero to the completion address.
+  using DMAWriter = std::function<bool(uint32_t, const uint8_t*, size_t, uint32_t)>;
 
   CRealImage2100();
   CRealImage2100(const CRealImage2100&) = delete;
@@ -197,6 +199,8 @@ public:
   {
     m_unimplemented = std::move(fn);
   }
+
+  void set_dma_writer(DMAWriter fn) { m_dma_writer = std::move(fn); }
 
   // Borrowed by CVGA. No claim that native BAR1 aliases this storage.
   uint8_t* vram_data() { return m_vga_memory.data(); }
@@ -245,6 +249,8 @@ private:
   void block_command(uint32_t value);
   void host_data(uint32_t value);
   uint32_t host_read();
+  uint32_t readback_pixel(uint32_t word) const;
+  void dma_command(uint32_t value);
   void color_write(uint32_t x, uint32_t y, uint32_t color, uint32_t banks);
   void report(
     const char* code, uint32_t address, uint32_t value, const char* message,
@@ -296,6 +302,7 @@ private:
   uint8_t m_palette_read = 0, m_palette_write = 0;
   DiagnosticCallback m_diagnostic;
   UnimplementedCallback m_unimplemented;
+  DMAWriter m_dma_writer;
 };
 
 #endif // INCLUDED_REALimage2100_H_
