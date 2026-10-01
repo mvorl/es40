@@ -372,9 +372,9 @@ uint32_t CRealImage2100::plane_value(
 	return plane.written & (1u << index) ? plane.regs[index] : fallback;
 }
 
-bool CRealImage2100::plane_profile(unsigned bank) const
+bool CRealImage2100::plane_profile(unsigned bank, uint32_t format) const
 {
-	// Only the driver's ordinary RGB profile; comparison/blending stay guarded.
+	// Only the driver's neutral profile; comparison/blending stay guarded.
 	const uint32_t compare_mask = plane_value(bank, 10, 0);
 	return plane_value(bank, 1, 0) == 0 && plane_value(bank, 2, 0) == 0 &&
 		plane_value(bank, 3, 0) == 0 &&
@@ -384,7 +384,7 @@ bool CRealImage2100::plane_profile(unsigned bank) const
 		plane_value(bank, 9, 0) == 0 &&
 		(compare_mask == 0 || compare_mask == 0x00ff0000) &&
 		plane_value(bank, 11, 0x33300000) == 0x33300000 &&
-		plane_value(bank, 14, 0x100) == 0x100 &&
+		plane_value(bank, 14, 0x100) == format &&
 		plane_value(bank, 15, 0) == 0;
 }
 
@@ -465,6 +465,7 @@ void CRealImage2100::block_command(uint32_t v)
 		source = peek(BlockSource), destination = peek(BlockDestination),
 		extent = peek(BlockExtent);
 	const bool copy = (v & 0x20000) != 0, configuration = (control & 0x04000000) != 0;
+	const bool window_clear = v == 0x000d0000 && banks == 4 && configuration;
 	const uint32_t dx = destination & 0x7ff, dy = destination >> 16,
 		width = (extent & 0x7ff) + 1, height = (extent >> 16) + 1,
 		scale_x = copy ? 80 : 8, scale_y = copy ? 16 : 4,
@@ -493,12 +494,56 @@ void CRealImage2100::block_command(uint32_t v)
 		!native_copy_control_profile() || m_pending.width ||
 		((source | destination | extent) & ~0x07ff07ffu) ||
 		(!copy && source) || (copy && !configuration) ||
-		((banks & 4) && plane_value(2, 0, 0xffffffff)))
+		((banks & 4) && plane_value(2, 0, 0xffffffff) && !window_clear))
 	{
 		reject();
 		return;
 	}
 	geometry_known = true;
+	if (window_clear)
+	{
+		// Plane 4 packs WID in bits 12..15, between the two depth fields.
+		const uint32_t mask = plane_value(2, 0, 0xffffffff),
+			value = plane_value(2, 16, 0);
+		if ((mask & ~0x0000f000u) || !plane_profile(2, 0) ||
+			plane_value(2, 4, 0x03030303) != 0x03030303 ||
+			plane_value(2, 10, 0) != 0 ||
+			m_planes[2].unknown_masks ||
+			(m_planes[2].written & 0x00ff0000) != 0x00ff0000)
+		{
+			reject();
+			return;
+		}
+		for (unsigned i = 17; i < 24; ++i)
+			if ((plane_value(2, i, 0) ^ value) & mask)
+			{
+				reject();
+				return;
+			}
+		for (unsigned i = 24; i < 28; ++i)
+		{
+			const uint32_t bits = plane_value(2, i, 0xffffffff);
+			if (bits != (bits & 255) * 0x01010101u)
+			{
+				reject();
+				return;
+			}
+		}
+		const uint8_t nibble_mask = uint8_t(mask >> 12),
+			window_id = uint8_t((value & mask) >> 12);
+		for (uint32_t row = y; row < std::min(bottom, ColorHeight); ++row)
+			for (uint32_t col = x; col < std::min(right, ColorWidth); ++col)
+			{
+				const uint32_t bits = plane_value(2, 24 + (col & 3), 0xffffffff),
+					bit = 2 * (row & 3) + ((col >> 2) & 1);
+				if (bits & (1u << bit))
+				{
+					auto& pixel = m_window_id[size_t(row) * ColorWidth + col];
+					pixel = uint8_t((pixel & ~nibble_mask) | window_id);
+				}
+			}
+		return;
+	}
 	// The driver seeds 21x9 small blocks for its repeated 2x2-tile source.
 	const bool seed = !configuration && !copy;
 	if (seed && (extent != 0x00080014 || dx % 10 || dy % 4 ||
@@ -607,16 +652,17 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		return;
 	const bool upload = a == HostCommand && v == 0x01000032;
 	const bool fill = a == FillCommand && v == 0x09000832;
+	const bool mono = v == 0x010008f2;
 	const uint32_t selected = (peek(DrawControl) >> 12) & 3;
-	if ((!upload && !fill) || !copy_profile() ||
+	if ((!upload && !fill && !mono) || !copy_profile() ||
 		((selected & 1) && !plane_profile(0)) ||
 		((selected & 2) && !plane_profile(1)))
 	{
 		unimplemented_once("REALimage 2D command/profile", a, v, true);
 		return;
 	}
-	const uint32_t origin = peek(upload ? HostOrigin : FillOrigin),
-		extent = peek(upload ? HostExtent : FillExtent),
+	const uint32_t origin = peek(a == HostCommand ? HostOrigin : FillOrigin),
+		extent = peek(a == HostCommand ? HostExtent : FillExtent),
 		width = (extent & 0xffff) + 1, height = (extent >> 16) + 1,
 		banks = (peek(DrawControl) >> 12) & 3;
 	const int32_t x = int16_t(origin & 0xffff), y = int16_t(origin >> 16);
@@ -630,15 +676,34 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		m_pending = {origin & 0xffff, origin >> 16, width, height, 0, banks};
 		return;
 	}
+	const uint32_t pattern[] = {peek(MonoPattern0), peek(MonoPattern1),
+		peek(MonoPattern2), peek(MonoPattern3)};
+	if (mono && ((a == HostCommand && (width > 8 || height > 16)) ||
+		(a == FillCommand && (pattern[0] != pattern[2] || pattern[1] != pattern[3]))))
+	{
+		unimplemented_once("REALimage monochrome layout", a, v, true);
+		return;
+	}
 	// Clip before iterating so malformed extents cannot cause unbounded work.
 	const int32_t left = std::max(x, int32_t(0)),
 		top = std::max(y, int32_t(0)),
 		right = std::min(x + int32_t(width), int32_t(ColorWidth)),
 		bottom = std::min(y + int32_t(height), int32_t(ColorHeight));
-	const uint32_t color = peek(Foreground);
+	const uint32_t foreground = peek(Foreground), background = peek(Background);
 	for (int32_t row = top; row < bottom; ++row)
 		for (int32_t col = left; col < right; ++col)
+		{
+			uint32_t color = foreground;
+			if (mono)
+			{
+				// Local origin, MSB first; brush fills duplicate their eight rows.
+				const uint32_t px = uint32_t(col - x) & 7,
+					py = uint32_t(row - y) & 15;
+				if (!(pattern[3 - py / 4] & (1u << (31 - 8 * (py & 3) - px))))
+					color = background;
+			}
 			color_write(uint32_t(col), uint32_t(row), color, banks);
+		}
 }
 
 void CRealImage2100::host_data(uint32_t v)
@@ -673,15 +738,15 @@ CRealImage2100::Frame CRealImage2100::scanout(std::string* error) const
 		return reject("Native pixel layout unsupported");
 	if (!(m_dac_regs[0x0b] & 1) || !(m_dac_regs[0x0d] & 4))
 		return reject("Native DAC disabled");
-	// Only the captured RGB640 window format is decoded.
+	// Each pixel's WID selects an RGB640 window attribute entry.
+	std::array<bool, 16> supported_windows{};
 	for (uint32_t i = 0; i < 16; ++i)
 	{
 		const uint32_t fb = 0x100 + i * 4, overlay = 0x200 + i * 4;
-		if (m_dac_regs[fb] != 8 || m_dac_regs[fb + 1] != 12 ||
-			m_dac_regs[fb + 2] || m_dac_regs[fb + 3] ||
-			m_dac_regs[overlay] != 4 || m_dac_regs[overlay + 1] ||
-			m_dac_regs[overlay + 2] || m_dac_regs[overlay + 3] != 0x48)
-			return reject("Native DAC window format unsupported");
+		supported_windows[i] = m_dac_regs[fb] == 8 && m_dac_regs[fb + 1] == 12 &&
+			!m_dac_regs[fb + 2] && !m_dac_regs[fb + 3] &&
+			m_dac_regs[overlay] == 4 && !m_dac_regs[overlay + 1] &&
+			!m_dac_regs[overlay + 2] && m_dac_regs[overlay + 3] == 0x48;
 	}
 	// Unlike VGA, vertical display is a count, not a last-line index.
 	const uint32_t horizontal = peek(TimingBase),
@@ -701,8 +766,12 @@ CRealImage2100::Frame CRealImage2100::scanout(std::string* error) const
 	// This profile displays bank 1; page flips and overlays are unmodeled.
 	for (uint32_t y = 0; y < height; ++y)
 		for (uint32_t x = 0; x < width; ++x)
+		{
+			if (!supported_windows[m_window_id[size_t(y) * ColorWidth + x]])
+				return reject("Native DAC window format unsupported");
 			frame.argb[size_t(y) * width + x] =
 				0xff000000 | m_color[size_t(y) * ColorWidth + x];
+		}
 	return frame;
 }
 
@@ -786,7 +855,7 @@ void CRealImage2100::configure_texture_memory(uint32_t bytes)
 
 CRealImage2100::CRealImage2100()
 	: m_vga_memory(VGAMemorySize), m_dac_regs(DACRegisterCount),
-	  m_color(ColorPixels * 2), m_texture(MinTextureSize)
+	  m_color(ColorPixels * 2), m_window_id(ColorPixels), m_texture(MinTextureSize)
 {
 	dac_port_map(m_dac_ports);
 	reset();
@@ -799,6 +868,7 @@ void CRealImage2100::reset(bool clear)
 	{
 		std::fill(m_vga_memory.begin(), m_vga_memory.end(), uint8_t(0));
 		std::fill(m_color.begin(), m_color.end(), uint32_t(0));
+		std::fill(m_window_id.begin(), m_window_id.end(), uint8_t(0));
 		std::fill(m_texture.begin(), m_texture.end(), uint8_t(0));
 	}
 	m_dma_regs.fill(0);
@@ -948,10 +1018,11 @@ void CRealImage2100::SaveState(std::ostream& out) const
 	p.write(reinterpret_cast<const char*>(m_vga_memory.data()), VGAMemorySize);
 	for (const uint32_t c : m_color)
 		put32(p, c);
+	p.write(reinterpret_cast<const char*>(m_window_id.data()), m_window_id.size());
 	p.write(reinterpret_cast<const char*>(m_texture.data()), m_texture.size());
 	const auto bytes = p.str();
 	put32(out, 0x30324952); // RI20
-	put32(out, 8);
+	put32(out, 9);
 	put32(out, uint32_t(bytes.size()));
 	put32(out, crc32(bytes));
 	out.write(bytes.data(), bytes.size());
@@ -961,7 +1032,7 @@ void CRealImage2100::SaveState(std::ostream& out) const
 
 void CRealImage2100::RestoreState(std::istream& in)
 {
-	if (get32(in) != 0x30324952 || get32(in) != 8)
+	if (get32(in) != 0x30324952 || get32(in) != 9)
 		throw std::runtime_error("Wrong REALimage snapshot version");
 	const auto size = get32(in), crc = get32(in);
 	if (size < FixedPayload || size > MaxStateSize - 16)
@@ -1057,6 +1128,10 @@ void CRealImage2100::RestoreState(std::istream& in)
 		if (c & 0xff000000)
 			throw std::runtime_error("Invalid REALimage color buffer");
 	}
+	std::vector<uint8_t> window_id(ColorPixels);
+	p.read(reinterpret_cast<char*>(window_id.data()), window_id.size());
+	if (std::any_of(window_id.begin(), window_id.end(), [](uint8_t id) { return id > 15; }))
+		throw std::runtime_error("Invalid REALimage window ID buffer");
 	std::vector<uint8_t> texture(texture_size);
 	p.read(reinterpret_cast<char*>(texture.data()), texture.size());
 	if (!p || p.peek() != std::char_traits<char>::eof())
@@ -1067,6 +1142,7 @@ void CRealImage2100::RestoreState(std::istream& in)
 	m_dac_regs.swap(dac_regs);
 	m_shadow.swap(shadow);
 	m_color.swap(color);
+	m_window_id.swap(window_id);
 	m_texture.swap(texture);
 	m_dma_regs = dma_regs;
 	m_planes = planes;

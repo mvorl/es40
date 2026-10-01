@@ -146,7 +146,7 @@ public:
   // Serialized SaveState() size, header included.
   static constexpr uint32_t MinStateSize =
     16 + 52 + 4 + 24 + 256 * 4 + DACRegisterCount + 4 + VGAMemorySize +
-    ColorPixels * 2 * 4 + 4 + DMARegisterCount * 4 + MinTextureSize +
+    ColorPixels * (2 * 4 + 1) + 4 + DMARegisterCount * 4 + MinTextureSize +
     PlaneCount * (PlaneRegisterCount + 2) * 4 + 2 * 3 * 4;
   static constexpr uint32_t MaxStateSize = MinStateSize + MaxShadowRegisters * 8 +
     MaxTextureSize - MinTextureSize;
@@ -234,7 +234,7 @@ private:
   static int plane_register(uint32_t address);
   bool plane_write(uint32_t address, uint32_t lanes, uint32_t value);
   uint32_t plane_value(unsigned bank, unsigned index, uint32_t fallback) const;
-  bool plane_profile(unsigned bank) const;
+  bool plane_profile(unsigned bank, uint32_t format = 0x100) const;
   bool native_copy_control_profile() const;
   bool copy_profile() const;
   void start_command(uint32_t address, uint32_t value);
@@ -254,6 +254,7 @@ private:
   // RGB640 byte registers and flattened native table/color streams.
   std::vector<uint8_t> m_dac_regs;
   std::vector<uint32_t> m_color;
+  std::vector<uint8_t> m_window_id;
   std::vector<uint8_t> m_texture;
   std::array<uint32_t, DMARegisterCount> m_dma_regs{};
   struct PlaneState
