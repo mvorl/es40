@@ -858,11 +858,11 @@ uint32_t CRealImage2100::readback_pixel(uint32_t word) const
 void CRealImage2100::dma_command(uint32_t v)
 {
 	const uint32_t destination = m_dma_regs[8], source = m_dma_regs[9],
-		completion = m_dma_regs[12], words = 64, bytes = words * 4;
+		completion = m_dma_regs[12], words = v & 0xffff, bytes = words * 4;
 	bool neutral = true;
 	for (unsigned i : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 10u, 11u, 13u, 15u, 16u, 17u, 18u})
 		neutral &= m_dma_regs[i] == 0;
-	if (v != 0xc4800040 || !neutral || m_dma_regs[14] != 8 ||
+	if ((v != 0xc4800040 && v != 0xc4800400) || !neutral || m_dma_regs[14] != 8 ||
 		!m_readback.width ||
 		uint64_t(m_readback.width) * m_readback.height - m_readback.word < words ||
 		((destination | source | completion) & 3) ||
@@ -875,7 +875,7 @@ void CRealImage2100::dma_command(uint32_t v)
 		unimplemented("REALimage DMA transfer", DMACommand, v, true);
 		return;
 	}
-	std::array<uint8_t, bytes> data{};
+	std::array<uint8_t, 4096> data{};
 	for (uint32_t word = 0; word < words; ++word)
 	{
 		const uint32_t pixel = readback_pixel(m_readback.word + word);
@@ -883,7 +883,7 @@ void CRealImage2100::dma_command(uint32_t v)
 			data[word * 4 + lane] = uint8_t(pixel >> (lane * 8));
 	}
 	// Commit FIFO progress only after payload and completion writes succeed.
-	if (!m_dma_writer || !m_dma_writer(destination, data.data(), data.size(), completion))
+	if (!m_dma_writer || !m_dma_writer(destination, data.data(), bytes, completion))
 	{
 		report("DMA_WRITE", destination, bytes, "PCI DMA write unavailable or rejected");
 		return;
