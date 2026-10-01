@@ -178,6 +178,13 @@ uint32_t CRealImage2100::ReadMem(uint32_t a, int bits)
 		const uint32_t v = m_board_io | (uint32_t(BoardIDPCGA3) << 24);
 		return (v >> ((a & 3) * 8)) & width_mask(bits);
 	}
+	if (m_readback.width && a >= HostData && a < HostData + HostReadSize)
+	{
+		if (bits == 32)
+			return host_read();
+		unimplemented_once("REALimage host readback", a, 0, false);
+		return 0;
+	}
 	const auto it = m_shadow.find(a & ~3u);
 	const uint32_t value = it == m_shadow.end() ? 0 : it->second;
 	// Reads return the stored value; readback is modeled, not measured.
@@ -206,7 +213,10 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 		*reg = (*reg & ~lanes) | ((v << shift) & lanes);
 		// Unit resets cancel an in-flight host transfer, not color storage.
 		if (key == UnitReset && !(*reg & (1u << 26)))
+		{
 			m_pending = {};
+			m_readback = {};
+		}
 		if (key == DMAReset && (*reg & 1))
 			m_dma_regs[(DMACommand - DMABase) / 4] = 0;
 		if (key == DMACommand && (lanes & 0xc0000000) &&
@@ -286,7 +296,7 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 	{
 		// Idle startup synchronization does not cancel an unfinished upload.
 		if (bits != 32 || (it->second && it->second != 0x80000000u) ||
-			m_pending.width)
+			m_pending.width || m_readback.width)
 			unimplemented_once("REALimage synchronization command", a, v, true);
 	}
 	else if (key == DisplaySelect)
@@ -518,7 +528,7 @@ void CRealImage2100::block_command(uint32_t v)
 	if ((control & ~0x0400f000u) != 0x81000702 || !banks || (banks & ~7u) ||
 		v != (((banks ^ 7u) << 18) | (copy ? 0x30000u : 0x10000u)) ||
 		peek(MemoryControl) != 0x0c008000 || peek(PixelControl) != 0x42722060 ||
-		!native_copy_control_profile() || m_pending.width ||
+		!native_copy_control_profile() || m_pending.width || m_readback.width ||
 		((source | destination | extent) & ~0x07ff07ffu) ||
 		(!copy && source) || (copy && !configuration) ||
 		((banks & 4) && plane_value(2, 0, 0xffffffff) && !window_clear))
@@ -668,13 +678,18 @@ void CRealImage2100::block_command(uint32_t v)
 
 void CRealImage2100::start_command(uint32_t a, uint32_t v)
 {
-	for (unsigned bank = 0; bank < 2; ++bank)
-		if (peek(DrawControl) & (0x1000u << bank))
-			m_clear_cache[bank] = {};
+	const bool readback = a == HostCommand && v == 0x01000052;
+	if (!readback)
+		for (unsigned bank = 0; bank < 2; ++bank)
+			if (peek(DrawControl) & (0x1000u << bank))
+				m_clear_cache[bank] = {};
 	// A new launch cannot inherit the tail of an earlier host upload.
 	if (m_pending.width)
 		report("HOST_INTERRUPTED", a, v, "Incomplete native host upload replaced");
+	if (m_readback.width)
+		report("READBACK_INTERRUPTED", a, v, "Incomplete native host readback replaced");
 	m_pending = {};
+	m_readback = {};
 	if (!v)
 		return;
 	const bool upload = a == HostCommand && v == 0x01000032;
@@ -692,8 +707,8 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		copy_profile() && (!(selected & 1) || plane_profile(0)) &&
 		(!(selected & 2) || plane_profile(1)) &&
 		(!cross_copy || plane_profile(selected == 2 ? 0 : 1));
-	if ((!upload && !copy && !fill && !mono) || !profile ||
-		(copy && selected != 1 && selected != 2))
+	if ((!upload && !copy && !fill && !mono && !readback) || !profile ||
+		((copy || readback) && selected != 1 && selected != 2))
 	{
 		unimplemented_once("REALimage 2D command/profile", a, v, true);
 		return;
@@ -703,6 +718,19 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		width = (extent & 0xffff) + 1, height = (extent >> 16) + 1,
 		banks = (peek(DrawControl) >> 12) & 3;
 	const int32_t x = int16_t(origin & 0xffff), y = int16_t(origin >> 16);
+	if (readback)
+	{
+		const uint32_t source = peek(BlockSource), sx = source & 0xffff,
+			sy = source >> 16;
+		if (sx >= ColorWidth || sy >= ColorHeight ||
+			width > ColorWidth - sx || height > ColorHeight - sy)
+		{
+			unimplemented_once("REALimage readback source bounds", a, v, true);
+			return;
+		}
+		m_readback = {sx, sy, width, height, 0, selected};
+		return;
+	}
 	if (upload)
 	{
 		if (uint64_t(width) * height > 0xffffffffu)
@@ -806,6 +834,18 @@ void CRealImage2100::host_data(uint32_t v)
 	color_write(uint32_t(x), uint32_t(y), v, m_pending.banks);
 	if (++m_pending.word == uint64_t(m_pending.width) * m_pending.height)
 		m_pending = {};
+}
+
+uint32_t CRealImage2100::host_read()
+{
+	const uint32_t bank = m_readback.banks == 2 ? 1 : 0,
+		x = m_readback.x + m_readback.word % m_readback.width,
+		y = m_readback.y + m_readback.word / m_readback.width;
+	// Readback returns RGB directly, without destination ROP or write masks.
+	const uint32_t value = m_color[size_t(bank) * ColorPixels + y * ColorWidth + x];
+	if (++m_readback.word == m_readback.width * m_readback.height)
+		m_readback = {};
+	return value;
 }
 
 CRealImage2100::Frame CRealImage2100::scanout(std::string* error) const
@@ -961,6 +1001,7 @@ void CRealImage2100::reset(bool clear)
 	m_planes = {};
 	m_clear_cache = {};
 	m_pending = {};
+	m_readback = {};
 	m_palette.fill(0);
 	std::fill(m_dac_regs.begin(), m_dac_regs.end(), uint8_t(0));
 	m_shadow.clear();
@@ -1050,7 +1091,7 @@ static uint32_t crc32(const std::string& bytes)
 	return ~crc;
 }
 
-// Selectors, latches, upload, palette/DAC, shadow, VGA and color banks.
+// Selectors, latches, transfers, palette/DAC, shadow, VGA and color banks.
 static constexpr uint32_t FixedPayload = CRealImage2100::MinStateSize - 16;
 
 void CRealImage2100::SaveState(std::ostream& out) const
@@ -1092,6 +1133,12 @@ void CRealImage2100::SaveState(std::ostream& out) const
 		put32(p, cache.color);
 		put32(p, cache.known);
 	}
+	put32(p, m_readback.x);
+	put32(p, m_readback.y);
+	put32(p, m_readback.width);
+	put32(p, m_readback.height);
+	put32(p, m_readback.word);
+	put32(p, m_readback.banks);
 	for (const uint32_t c : m_palette)
 		put32(p, c);
 	p.write(reinterpret_cast<const char*>(m_dac_regs.data()), DACRegisterCount);
@@ -1108,7 +1155,7 @@ void CRealImage2100::SaveState(std::ostream& out) const
 	p.write(reinterpret_cast<const char*>(m_texture.data()), m_texture.size());
 	const auto bytes = p.str();
 	put32(out, 0x30324952); // RI20
-	put32(out, 9);
+	put32(out, 10);
 	put32(out, uint32_t(bytes.size()));
 	put32(out, crc32(bytes));
 	out.write(bytes.data(), bytes.size());
@@ -1118,10 +1165,12 @@ void CRealImage2100::SaveState(std::ostream& out) const
 
 void CRealImage2100::RestoreState(std::istream& in)
 {
-	if (get32(in) != 0x30324952 || get32(in) != 9)
+	const auto magic = get32(in), version = get32(in);
+	if (magic != 0x30324952 || (version != 9 && version != 10))
 		throw std::runtime_error("Wrong REALimage snapshot version");
+	const uint32_t fixed_payload = FixedPayload + (version == 10 ? 24 : 0);
 	const auto size = get32(in), crc = get32(in);
-	if (size < FixedPayload || size > MaxStateSize - 16)
+	if (size < fixed_payload || size > MaxStateSize - 16)
 		throw std::runtime_error("Invalid REALimage snapshot length");
 	std::string bytes(size, '\0');
 	in.read(&bytes[0], size);
@@ -1185,6 +1234,25 @@ void CRealImage2100::RestoreState(std::istream& in)
 			(cache.color & ~cache.known) || (!cache.known && cache.source))
 			throw std::runtime_error("Invalid REALimage clear cache");
 	}
+	Pending readback;
+	if (version == 10)
+	{
+		readback.x = get32(p);
+		readback.y = get32(p);
+		readback.width = get32(p);
+		readback.height = get32(p);
+		readback.word = get32(p);
+		readback.banks = get32(p);
+		if ((readback.width && (pending.width || !readback.height ||
+			readback.x >= ColorWidth || readback.y >= ColorHeight ||
+			readback.width > ColorWidth - readback.x ||
+			readback.height > ColorHeight - readback.y ||
+			readback.word >= uint64_t(readback.width) * readback.height ||
+			(readback.banks != 1 && readback.banks != 2))) ||
+			(!readback.width && (readback.x || readback.y || readback.height ||
+				readback.word || readback.banks)))
+			throw std::runtime_error("Invalid REALimage readback state");
+	}
 	std::array<uint32_t, 256> pal{};
 	for (auto& c : pal)
 	{
@@ -1196,7 +1264,7 @@ void CRealImage2100::RestoreState(std::istream& in)
 	p.read(reinterpret_cast<char*>(dac_regs.data()), dac_regs.size());
 	const uint32_t count = get32(p);
 	if (count > MaxShadowRegisters ||
-		FixedPayload + uint64_t(count) * 8 + texture_size - MinTextureSize != size)
+		fixed_payload + uint64_t(count) * 8 + texture_size - MinTextureSize != size)
 		throw std::runtime_error("Invalid REALimage shadow register count");
 	std::map<uint32_t, uint32_t> shadow;
 	for (uint32_t i = 0; i < count; ++i)
@@ -1234,6 +1302,7 @@ void CRealImage2100::RestoreState(std::istream& in)
 	m_planes = planes;
 	m_clear_cache = clear_cache;
 	m_pending = pending;
+	m_readback = readback;
 	m_warned.clear();
 	m_aperture_warned = m_shadow_full_warned = false;
 	m_unit_reset = unit_reset;

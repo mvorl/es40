@@ -129,6 +129,7 @@ public:
                             BlockExtent = 0x00800688,
                             BlockCommand = 0x0080068c;
   static constexpr uint32_t HostData = 0x00c00000, HostDataSize = 0x2000;
+  static constexpr uint32_t HostReadSize = 0x400000;
   // Bounded logical color banks; physical 3D-RAM layout is not modeled.
   static constexpr uint32_t ColorWidth = 1280, ColorHeight = 1024,
                             ColorPixels = ColorWidth * ColorHeight;
@@ -145,12 +146,12 @@ public:
                             MaxTextureSize = 32u * 1024 * 1024;
   // Bounds shadow storage; BAR0 decodes far more than any register file.
   static constexpr uint32_t MaxShadowRegisters = 4096;
-  // Serialized SaveState() size, header included.
+  // Bounds for supported snapshot versions, header included.
   static constexpr uint32_t MinStateSize =
     16 + 52 + 4 + 24 + 256 * 4 + DACRegisterCount + 4 + VGAMemorySize +
     ColorPixels * (2 * 4 + 1) + 4 + DMARegisterCount * 4 + MinTextureSize +
     PlaneCount * (PlaneRegisterCount + 2) * 4 + 2 * 3 * 4;
-  static constexpr uint32_t MaxStateSize = MinStateSize + MaxShadowRegisters * 8 +
+  static constexpr uint32_t MaxStateSize = MinStateSize + 24 + MaxShadowRegisters * 8 +
     MaxTextureSize - MinTextureSize;
 
   using DiagnosticCallback = std::function<void(const Diagnostic&)>;
@@ -243,6 +244,7 @@ private:
   void start_command(uint32_t address, uint32_t value);
   void block_command(uint32_t value);
   void host_data(uint32_t value);
+  uint32_t host_read();
   void color_write(uint32_t x, uint32_t y, uint32_t color, uint32_t banks);
   void report(
     const char* code, uint32_t address, uint32_t value, const char* message,
@@ -277,7 +279,7 @@ private:
   struct Pending
   {
     uint32_t x = 0, y = 0, width = 0, height = 0, word = 0, banks = 0;
-  } m_pending;
+  } m_pending, m_readback;
   // Unknown native registers, keyed by dword-aligned address.
   std::map<uint32_t, uint32_t> m_shadow;
   std::set<uint32_t> m_warned;
