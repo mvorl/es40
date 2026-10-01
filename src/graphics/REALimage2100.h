@@ -95,7 +95,18 @@ public:
   // Read back by the miniport: clock/memory configuration and monitor pins.
   static constexpr uint32_t DisplayControl = 0x00840000;
   // NT miniport timing bytes and 2D command ports, as BAR0 offsets.
-  static constexpr uint32_t TimingBase = 0x00838080;
+  static constexpr uint32_t TimingBase = 0x00838080,
+                            BoardTiming = 0x008380b4,
+                            WindowMask = 0x008380b8;
+  static constexpr uint32_t ClipXMax = 0x00800400, ClipYMax = 0x00800404,
+                            ClipXMin = 0x00800408, ClipYMin = 0x0080040c,
+                            GlobalControl0 = 0x00800410,
+                            GlobalControl1 = 0x00800414,
+                            GlobalControl2 = 0x00800418;
+  static constexpr uint32_t PipelineControl0 = 0x008005c0,
+                            PipelineControl1 = 0x008005c4,
+                            PipelineControl2 = 0x008005c8,
+                            PipelineControl3 = 0x008005d8;
   static constexpr uint32_t DrawControl = 0x00800600,
                             MemoryControl = 0x00800604,
                             PixelControl = 0x00800608,
@@ -112,6 +123,9 @@ public:
   // Bounded logical color banks; physical 3D-RAM layout is not modeled.
   static constexpr uint32_t ColorWidth = 1280, ColorHeight = 1024,
                             ColorPixels = ColorWidth * ColorHeight;
+  static constexpr uint32_t PlaneStateBase = 0x00ffe700,
+                            PlaneClearColor = 0x00ffe100,
+                            PlaneCount = 4, PlaneRegisterCount = 17;
   static constexpr uint32_t DMABase = 0x00801000, DMARegisterCount = 19,
                             DMACommand = 0x0080101c, DMAReset = 0x0080103c;
   static constexpr uint32_t MinTextureSize = 16u * 1024 * 1024,
@@ -121,7 +135,8 @@ public:
   // Serialized SaveState() size, header included.
   static constexpr uint32_t MinStateSize =
     16 + 52 + 4 + 24 + 256 * 4 + DACRegisterCount + 4 + VGAMemorySize +
-    ColorPixels * 2 * 4 + 4 + DMARegisterCount * 4 + MinTextureSize;
+    ColorPixels * 2 * 4 + 4 + DMARegisterCount * 4 + MinTextureSize +
+    PlaneCount * (PlaneRegisterCount + 1) * 4;
   static constexpr uint32_t MaxStateSize = MinStateSize + MaxShadowRegisters * 8 +
     MaxTextureSize - MinTextureSize;
 
@@ -205,6 +220,11 @@ private:
   uint32_t status_read();
   uint32_t peek(uint32_t address) const;
   bool native_storage_register(uint32_t address) const;
+  static int plane_register(uint32_t address);
+  bool plane_write(uint32_t address, uint32_t lanes, uint32_t value);
+  uint32_t plane_value(unsigned bank, unsigned index, uint32_t fallback) const;
+  bool plane_profile(unsigned bank) const;
+  bool native_copy_control_profile() const;
   bool copy_profile() const;
   void start_command(uint32_t address, uint32_t value);
   void host_data(uint32_t value);
@@ -224,6 +244,12 @@ private:
   std::vector<uint32_t> m_color;
   std::vector<uint8_t> m_texture;
   std::array<uint32_t, DMARegisterCount> m_dma_regs{};
+  struct PlaneState
+  {
+    uint32_t written = 0;
+    std::array<uint32_t, PlaneRegisterCount> regs{};
+  };
+  std::array<PlaneState, PlaneCount> m_planes{};
   // Host data is a stream of RGB dwords, not a framebuffer address.
   struct Pending
   {
