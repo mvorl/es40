@@ -684,7 +684,9 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		fast_copy || cross_copy;
 	const bool fill = a == FillCommand && v == 0x09000832;
 	const bool transparent = a == HostCommand && v == 0x01000872;
-	const bool mono = v == 0x010008f2 || transparent;
+	// Explicit eight-pixel width, source bit offset zero.
+	const bool width8_mono = a == HostCommand && v == 0x010078f2;
+	const bool mono = v == 0x010008f2 || transparent || width8_mono;
 	const uint32_t selected = (peek(DrawControl) >> 12) & 3;
 	const bool profile = fast_copy ? fast_copy_profile() :
 		copy_profile() && (!(selected & 1) || plane_profile(0)) &&
@@ -757,7 +759,8 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 	}
 	const uint32_t pattern[] = {peek(MonoPattern0), peek(MonoPattern1),
 		peek(MonoPattern2), peek(MonoPattern3)};
-	if (mono && ((a == HostCommand && (width > 8 || height > 16)) ||
+	if (mono && ((width8_mono && width != 8) ||
+		(a == HostCommand && (width > 8 || height > 16)) ||
 		(a == FillCommand && (pattern[0] != pattern[2] || pattern[1] != pattern[3]))))
 	{
 		unimplemented_once("REALimage monochrome layout", a, v, true);
