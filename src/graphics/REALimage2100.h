@@ -107,6 +107,11 @@ public:
                             PipelineControl1 = 0x008005c4,
                             PipelineControl2 = 0x008005c8,
                             PipelineControl3 = 0x008005d8;
+  // Four source bitmap words; the driver launches a separate drawing command.
+  static constexpr uint32_t MonoPattern0 = 0x00800618,
+                            MonoPattern1 = 0x0080061c,
+                            MonoPattern2 = 0x00800620,
+                            MonoPattern3 = 0x00800624;
   static constexpr uint32_t DrawControl = 0x00800600,
                             MemoryControl = 0x00800604,
                             PixelControl = 0x00800608,
@@ -119,13 +124,19 @@ public:
                             FillOrigin = 0x00800644,
                             FillExtent = 0x00800648,
                             FillCommand = 0x0080064c;
+  static constexpr uint32_t BlockSource = 0x00800680,
+                            BlockDestination = 0x00800684,
+                            BlockExtent = 0x00800688,
+                            BlockCommand = 0x0080068c;
   static constexpr uint32_t HostData = 0x00c00000, HostDataSize = 0x2000;
   // Bounded logical color banks; physical 3D-RAM layout is not modeled.
   static constexpr uint32_t ColorWidth = 1280, ColorHeight = 1024,
                             ColorPixels = ColorWidth * ColorHeight;
   static constexpr uint32_t PlaneStateBase = 0x00ffe700,
                             PlaneClearColor = 0x00ffe100,
-                            PlaneCount = 4, PlaneRegisterCount = 17;
+                            PlanePixelMask = 0x00ffe400,
+                            PlanePixelMask0 = 0x00c02400,
+                            PlaneCount = 4, PlaneRegisterCount = 28;
   static constexpr uint32_t DMABase = 0x00801000, DMARegisterCount = 19,
                             DMACommand = 0x0080101c, DMAReset = 0x0080103c;
   static constexpr uint32_t MinTextureSize = 16u * 1024 * 1024,
@@ -136,7 +147,7 @@ public:
   static constexpr uint32_t MinStateSize =
     16 + 52 + 4 + 24 + 256 * 4 + DACRegisterCount + 4 + VGAMemorySize +
     ColorPixels * 2 * 4 + 4 + DMARegisterCount * 4 + MinTextureSize +
-    PlaneCount * (PlaneRegisterCount + 1) * 4;
+    PlaneCount * (PlaneRegisterCount + 2) * 4 + 2 * 3 * 4;
   static constexpr uint32_t MaxStateSize = MinStateSize + MaxShadowRegisters * 8 +
     MaxTextureSize - MinTextureSize;
 
@@ -227,6 +238,7 @@ private:
   bool native_copy_control_profile() const;
   bool copy_profile() const;
   void start_command(uint32_t address, uint32_t value);
+  void block_command(uint32_t value);
   void host_data(uint32_t value);
   void color_write(uint32_t x, uint32_t y, uint32_t color, uint32_t banks);
   void report(
@@ -247,9 +259,16 @@ private:
   struct PlaneState
   {
     uint32_t written = 0;
+    uint32_t unknown_masks = 0;
     std::array<uint32_t, PlaneRegisterCount> regs{};
   };
   std::array<PlaneState, PlaneCount> m_planes{};
+  // Uniform offscreen sources seeded by the driver's block-clear path.
+  struct ClearCache
+  {
+    uint32_t source = 0, color = 0, known = 0;
+  };
+  std::array<ClearCache, 2> m_clear_cache{};
   // Host data is a stream of RGB dwords, not a framebuffer address.
   struct Pending
   {

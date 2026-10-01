@@ -269,11 +269,16 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 	it->second = (it->second & ~lanes) | ((v << shift) & lanes);
 	if (plane_write(key, lanes, (v << shift) & lanes))
 		return;
-	if (key == HostCommand || key == FillCommand)
+	if (key == HostCommand || key == FillCommand || key == BlockCommand)
 	{
 		// Only longword command launches have been established by the driver.
 		if (bits == 32)
-			start_command(key, it->second);
+		{
+			if (key == BlockCommand)
+				block_command(it->second);
+			else
+				start_command(key, it->second);
+		}
 		else
 			unimplemented_once("REALimage command width", a, v, true);
 	}
@@ -290,7 +295,15 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 			unimplemented_once("REALimage display selector", a, v, true);
 	}
 	else if (!native_storage_register(key))
+	{
+		// Unmodeled mask aliases must not leave a stale block mask usable.
+		if ((key & ~0x1e000u) == HostData + 0x400 &&
+			(peek(DrawControl) & (1u << 26)))
+			for (unsigned bank = 0; bank < PlaneCount; ++bank)
+				if (peek(DrawControl) & (0x1000u << bank))
+					m_planes[bank].unknown_masks |= (key >> 13) & 15;
 		unimplemented_once("REALimage register", a, v, true);
+	}
 }
 
 // NT 2D subset, decoded from pbxgdac.dll and the startup trace.
@@ -303,8 +316,10 @@ uint32_t CRealImage2100::peek(uint32_t a) const
 
 int CRealImage2100::plane_register(uint32_t a)
 {
-	if (a == PlaneClearColor)
-		return 16;
+	if (a >= PlaneClearColor && a < PlaneClearColor + 32)
+		return 16 + int((a - PlaneClearColor) / 4);
+	if (a == PlanePixelMask || a == PlanePixelMask0)
+		return 24;
 	switch (a)
 	{
 	case PlaneStateBase + 0x00: case PlaneStateBase + 0x04:
@@ -336,8 +351,16 @@ bool CRealImage2100::plane_write(uint32_t a, uint32_t lanes, uint32_t value)
 		if (banks & (1u << bank))
 		{
 			auto& plane = m_planes[bank];
-			plane.regs[index] = (plane.regs[index] & ~lanes) | value;
-			plane.written |= 1u << index;
+			if (a == PlanePixelMask && lanes == 0xffffffffu)
+				plane.unknown_masks = 0;
+			else if (a == PlanePixelMask0 && lanes == 0xffffffffu)
+				plane.unknown_masks &= ~1u;
+			const int end = index + (a == PlanePixelMask ? 4 : 1);
+			for (int i = index; i < end; ++i)
+			{
+				plane.regs[i] = (plane.regs[i] & ~lanes) | value;
+				plane.written |= 1u << i;
+			}
 		}
 	return true;
 }
@@ -369,8 +392,12 @@ bool CRealImage2100::native_storage_register(uint32_t a) const
 {
 	return a == DrawControl || a == MemoryControl || a == PixelControl ||
 		a == Foreground || a == Background || a == HostOrigin ||
+		a == MonoPattern0 || a == MonoPattern1 ||
+		a == MonoPattern2 || a == MonoPattern3 ||
 		a == HostExtent || a == FillOrigin || a == FillExtent ||
 		a == HostCommand || a == FillCommand ||
+		a == BlockSource || a == BlockDestination || a == BlockExtent ||
+		a == BlockCommand ||
 		a == ContextControl || a == DisplaySelect ||
 		a == BoardTiming || a == WindowMask ||
 		a == ClipXMax || a == ClipYMax || a == ClipXMin || a == ClipYMin ||
@@ -432,8 +459,146 @@ void CRealImage2100::color_write(
 		}
 }
 
+void CRealImage2100::block_command(uint32_t v)
+{
+	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
+		source = peek(BlockSource), destination = peek(BlockDestination),
+		extent = peek(BlockExtent);
+	const bool copy = (v & 0x20000) != 0, configuration = (control & 0x04000000) != 0;
+	const uint32_t dx = destination & 0x7ff, dy = destination >> 16,
+		width = (extent & 0x7ff) + 1, height = (extent >> 16) + 1,
+		scale_x = copy ? 80 : 8, scale_y = copy ? 16 : 4,
+		x = dx * scale_x, y = dy * scale_y,
+		right = x + width * scale_x, bottom = y + height * scale_y;
+	bool geometry_known = false;
+	auto invalidate_cache = [&]() {
+		for (unsigned bank = 0; bank < 2; ++bank)
+			if (banks & (1u << bank))
+			{
+				auto& cache = m_clear_cache[bank];
+				const uint32_t cx = (cache.source & 0xffff) * 80,
+					cy = (cache.source >> 16) * 16;
+				if (!geometry_known ||
+					(x < cx + 168 && right > cx && y < cy + 36 && bottom > cy))
+					cache = {};
+			}
+	};
+	auto reject = [&]() {
+		invalidate_cache();
+		unimplemented_once("REALimage block command/profile", BlockCommand, v, true);
+	};
+	if ((control & ~0x0400f000u) != 0x81000702 || !banks || (banks & ~7u) ||
+		v != (((banks ^ 7u) << 18) | (copy ? 0x30000u : 0x10000u)) ||
+		peek(MemoryControl) != 0x0c008000 || peek(PixelControl) != 0x42722060 ||
+		!native_copy_control_profile() || m_pending.width ||
+		((source | destination | extent) & ~0x07ff07ffu) ||
+		(!copy && source) || (copy && !configuration) ||
+		((banks & 4) && plane_value(2, 0, 0xffffffff)))
+	{
+		reject();
+		return;
+	}
+	geometry_known = true;
+	// The driver seeds 21x9 small blocks for its repeated 2x2-tile source.
+	const bool seed = !configuration && !copy;
+	if (seed && (extent != 0x00080014 || dx % 10 || dy % 4 ||
+		(dx * 8 < ColorWidth && dy * 4 < ColorHeight)))
+	{
+		reject();
+		return;
+	}
+	std::array<uint32_t, 2> colors{};
+	for (unsigned bank = 0; bank < 2; ++bank)
+	{
+		const uint32_t mask = plane_value(bank, 0, 0xffffffff) & 0xffffff;
+		if (!(banks & (1u << bank)) || !mask)
+			continue;
+		if (!plane_profile(bank) || m_planes[bank].unknown_masks)
+		{
+			reject();
+			return;
+		}
+		if (copy)
+		{
+			const auto& cache = m_clear_cache[bank];
+			if (cache.source != source || (cache.known & mask) != mask)
+			{
+				reject();
+				return;
+			}
+			colors[bank] = cache.color;
+		}
+		else
+		{
+			colors[bank] = plane_value(bank, 16, 0) & 0xffffff;
+			if ((m_planes[bank].written & 0x00ff0000) != 0x00ff0000)
+			{
+				reject();
+				return;
+			}
+			for (unsigned i = 17; i < 24; ++i)
+				if ((plane_value(bank, i, 0) ^ colors[bank]) & mask)
+				{
+					reject();
+					return;
+				}
+		}
+		// Accept only cases where block ROP application and bypass agree.
+		const uint32_t rops = plane_value(bank, 4, 0x03030303);
+		for (unsigned shift = 0; shift < 24; shift += 8)
+			if ((mask & (0xffu << shift)) && ((rops >> shift) & 15) != 3 &&
+				(((rops >> shift) & 15) != 0 ||
+					(colors[bank] & mask & (0xffu << shift))))
+			{
+				reject();
+				return;
+			}
+		for (unsigned i = 24; i < 28; ++i)
+		{
+			const uint32_t bits = plane_value(bank, i, 0xffffffff);
+			if (bits != (bits & 255) * 0x01010101u || (seed && bits != 0xffffffffu))
+			{
+				reject();
+				return;
+			}
+		}
+	}
+	if (seed)
+	{
+		const uint32_t key = ((dy / 4) << 16) | (dx / 10);
+		for (unsigned bank = 0; bank < 2; ++bank)
+			if (banks & (1u << bank))
+			{
+				const uint32_t mask = plane_value(bank, 0, 0xffffffff) & 0xffffff;
+				if (!mask)
+					continue;
+				auto& cache = m_clear_cache[bank];
+				if (cache.source != key)
+					cache = {};
+				cache.source = key;
+				cache.color = (cache.color & ~mask) | (colors[bank] & mask);
+				cache.known |= mask;
+			}
+		return;
+	}
+	invalidate_cache();
+	for (uint32_t row = y; row < std::min(bottom, ColorHeight); ++row)
+		for (uint32_t col = x; col < std::min(right, ColorWidth); ++col)
+			for (unsigned bank = 0; bank < 2; ++bank)
+				if (banks & (1u << bank))
+				{
+					const uint32_t bits = plane_value(bank, 24 + (col & 3), 0xffffffff),
+						bit = 2 * (row & 3) + ((col >> 2) & 1);
+					if (bits & (1u << bit))
+						color_write(col, row, colors[bank], 1u << bank);
+				}
+}
+
 void CRealImage2100::start_command(uint32_t a, uint32_t v)
 {
+	for (unsigned bank = 0; bank < 2; ++bank)
+		if (peek(DrawControl) & (0x1000u << bank))
+			m_clear_cache[bank] = {};
 	// A new launch cannot inherit the tail of an earlier host upload.
 	if (m_pending.width)
 		report("HOST_INTERRUPTED", a, v, "Incomplete native host upload replaced");
@@ -638,6 +803,7 @@ void CRealImage2100::reset(bool clear)
 	}
 	m_dma_regs.fill(0);
 	m_planes = {};
+	m_clear_cache = {};
 	m_pending = {};
 	m_palette.fill(0);
 	std::fill(m_dac_regs.begin(), m_dac_regs.end(), uint8_t(0));
@@ -760,8 +926,15 @@ void CRealImage2100::SaveState(std::ostream& out) const
 	for (const auto& plane : m_planes)
 	{
 		put32(p, plane.written);
+		put32(p, plane.unknown_masks);
 		for (const uint32_t reg : plane.regs)
 			put32(p, reg);
+	}
+	for (const auto& cache : m_clear_cache)
+	{
+		put32(p, cache.source);
+		put32(p, cache.color);
+		put32(p, cache.known);
 	}
 	for (const uint32_t c : m_palette)
 		put32(p, c);
@@ -778,7 +951,7 @@ void CRealImage2100::SaveState(std::ostream& out) const
 	p.write(reinterpret_cast<const char*>(m_texture.data()), m_texture.size());
 	const auto bytes = p.str();
 	put32(out, 0x30324952); // RI20
-	put32(out, 7);
+	put32(out, 8);
 	put32(out, uint32_t(bytes.size()));
 	put32(out, crc32(bytes));
 	out.write(bytes.data(), bytes.size());
@@ -788,7 +961,7 @@ void CRealImage2100::SaveState(std::ostream& out) const
 
 void CRealImage2100::RestoreState(std::istream& in)
 {
-	if (get32(in) != 0x30324952 || get32(in) != 7)
+	if (get32(in) != 0x30324952 || get32(in) != 8)
 		throw std::runtime_error("Wrong REALimage snapshot version");
 	const auto size = get32(in), crc = get32(in);
 	if (size < FixedPayload || size > MaxStateSize - 16)
@@ -835,7 +1008,8 @@ void CRealImage2100::RestoreState(std::istream& in)
 	for (auto& plane : planes)
 	{
 		plane.written = get32(p);
-		if (plane.written & ~0x1cf7fu)
+		plane.unknown_masks = get32(p);
+		if ((plane.written & ~0x0fffcf7fu) || plane.unknown_masks > 15)
 			throw std::runtime_error("Invalid REALimage plane register mask");
 		for (unsigned i = 0; i < PlaneRegisterCount; ++i)
 		{
@@ -843,6 +1017,16 @@ void CRealImage2100::RestoreState(std::istream& in)
 			if (!(plane.written & (1u << i)) && plane.regs[i])
 				throw std::runtime_error("Invalid REALimage plane register state");
 		}
+	}
+	std::array<ClearCache, 2> clear_cache{};
+	for (auto& cache : clear_cache)
+	{
+		cache.source = get32(p);
+		cache.color = get32(p);
+		cache.known = get32(p);
+		if ((cache.source & ~0x07ff07ffu) || (cache.known & 0xff000000) ||
+			(cache.color & ~cache.known) || (!cache.known && cache.source))
+			throw std::runtime_error("Invalid REALimage clear cache");
 	}
 	std::array<uint32_t, 256> pal{};
 	for (auto& c : pal)
@@ -886,6 +1070,7 @@ void CRealImage2100::RestoreState(std::istream& in)
 	m_texture.swap(texture);
 	m_dma_regs = dma_regs;
 	m_planes = planes;
+	m_clear_cache = clear_cache;
 	m_pending = pending;
 	m_warned.clear();
 	m_aperture_warned = m_shadow_full_warned = false;
