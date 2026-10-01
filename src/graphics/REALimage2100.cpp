@@ -318,8 +318,10 @@ int CRealImage2100::plane_register(uint32_t a)
 {
 	if (a >= PlaneClearColor && a < PlaneClearColor + 32)
 		return 16 + int((a - PlaneClearColor) / 4);
-	if (a == PlanePixelMask || a == PlanePixelMask0)
+	if (a == PlanePixelMask || a == PlanePixelMask0 || a == PlanePixelMask01)
 		return 24;
+	if (a == PlanePixelMask23)
+		return 26;
 	switch (a)
 	{
 	case PlaneStateBase + 0x00: case PlaneStateBase + 0x04:
@@ -351,11 +353,11 @@ bool CRealImage2100::plane_write(uint32_t a, uint32_t lanes, uint32_t value)
 		if (banks & (1u << bank))
 		{
 			auto& plane = m_planes[bank];
-			if (a == PlanePixelMask && lanes == 0xffffffffu)
-				plane.unknown_masks = 0;
-			else if (a == PlanePixelMask0 && lanes == 0xffffffffu)
-				plane.unknown_masks &= ~1u;
-			const int end = index + (a == PlanePixelMask ? 4 : 1);
+			const int count = a == PlanePixelMask ? 4 :
+				(a == PlanePixelMask01 || a == PlanePixelMask23 ? 2 : 1);
+			if (index >= 24 && lanes == 0xffffffffu)
+				plane.unknown_masks &= ~(((1u << count) - 1) << (index - 24));
+			const int end = index + count;
 			for (int i = index; i < end; ++i)
 			{
 				plane.regs[i] = (plane.regs[i] & ~lanes) | value;
@@ -652,7 +654,8 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		return;
 	const bool upload = a == HostCommand && v == 0x01000032;
 	const bool fill = a == FillCommand && v == 0x09000832;
-	const bool mono = v == 0x010008f2;
+	const bool transparent = a == HostCommand && v == 0x01000872;
+	const bool mono = v == 0x010008f2 || transparent;
 	const uint32_t selected = (peek(DrawControl) >> 12) & 3;
 	if ((!upload && !fill && !mono) || !copy_profile() ||
 		((selected & 1) && !plane_profile(0)) ||
@@ -700,7 +703,11 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 				const uint32_t px = uint32_t(col - x) & 7,
 					py = uint32_t(row - y) & 15;
 				if (!(pattern[3 - py / 4] & (1u << (31 - 8 * (py & 3) - px))))
+				{
+					if (transparent)
+						continue;
 					color = background;
+				}
 			}
 			color_write(uint32_t(col), uint32_t(row), color, banks);
 		}
