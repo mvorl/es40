@@ -227,7 +227,9 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 			else if (bits == 32)
 				dma_command(*reg);
 			else
-				unimplemented("REALimage DMA transfer", key, *reg, true);
+				unimplemented(
+					"REALimage DMA transfer (rejected; completion not written)",
+					key, *reg, true);
 		}
 		return;
 	}
@@ -291,14 +293,14 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 				start_command(key, it->second);
 		}
 		else
-			unimplemented_once("REALimage command width", a, v, true);
+			unimplemented_once("REALimage command width (command rejected)", a, v, true);
 	}
 	else if (key == SyncCommand)
 	{
 		// Idle startup synchronization does not cancel an unfinished upload.
 		if (bits != 32 || (it->second && it->second != 0x80000000u) ||
 			m_pending.width || m_readback.width)
-			unimplemented_once("REALimage synchronization command", a, v, true);
+			unimplemented_once("REALimage synchronization command (command rejected)", a, v, true);
 	}
 	else if (key == DisplaySelect)
 	{
@@ -527,7 +529,8 @@ void CRealImage2100::block_command(uint32_t v)
 	};
 	auto reject = [&]() {
 		invalidate_cache();
-		unimplemented_once("REALimage block command/profile", BlockCommand, v, true);
+		unimplemented_once(
+			"REALimage block command/profile (command rejected)", BlockCommand, v, true);
 	};
 	if ((control & ~0x0400f000u) != 0x81000702 || !banks || (banks & ~7u) ||
 		v != (((banks ^ 7u) << 18) | (copy ? 0x30000u : 0x10000u)) ||
@@ -718,7 +721,7 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 	if ((!upload && !copy && !fill && !mono && !readback) || !profile ||
 		((copy || readback) && selected != 1 && selected != 2))
 	{
-		unimplemented_once("REALimage 2D command/profile", a, v, true);
+		unimplemented_once("REALimage 2D command/profile (command rejected)", a, v, true);
 		return;
 	}
 	const uint32_t origin = peek(a == HostCommand ? HostOrigin : FillOrigin),
@@ -733,7 +736,7 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		if (sx >= ColorWidth || sy >= ColorHeight ||
 			width > ColorWidth - sx || height > ColorHeight - sy)
 		{
-			unimplemented_once("REALimage readback source bounds", a, v, true);
+			unimplemented_once("REALimage readback source bounds (command rejected)", a, v, true);
 			return;
 		}
 		m_readback = {sx, sy, width, height, 0, selected};
@@ -756,7 +759,7 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		const bool right_to_left = !(v & 0x01000000), bottom_to_top = !(v & 0x10);
 		if (fast_copy && ((source ^ origin) & 3))
 		{
-			unimplemented_once("REALimage fast-copy alignment", a, v, true);
+			unimplemented_once("REALimage fast-copy alignment (command rejected)", a, v, true);
 			return;
 		}
 		const int32_t sx = int16_t(source & 0xffff), sy = int16_t(source >> 16),
@@ -770,7 +773,7 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		if (sx + left - x < 0 || sx + right - x > int32_t(ColorWidth) ||
 			sy + top - y < 0 || sy + bottom - y >= int32_t(ColorHeight))
 		{
-			unimplemented_once("REALimage copy source bounds", a, v, true);
+			unimplemented_once("REALimage copy source bounds (command rejected)", a, v, true);
 			return;
 		}
 		// Bits 24 and 4 select increasing X and Y.
@@ -799,7 +802,7 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		(a == HostCommand && (width > 8 || height > 16)) ||
 		(a == FillCommand && (pattern[0] != pattern[2] || pattern[1] != pattern[3]))))
 	{
-		unimplemented_once("REALimage monochrome layout", a, v, true);
+		unimplemented_once("REALimage monochrome layout (command rejected)", a, v, true);
 		return;
 	}
 	// Clip before iterating so malformed extents cannot cause unbounded work.
@@ -868,7 +871,7 @@ void CRealImage2100::dma_command(uint32_t v)
 	bool neutral = true;
 	for (unsigned i : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 10u, 11u, 13u, 15u, 16u, 17u, 18u})
 		neutral &= m_dma_regs[i] == 0;
-	if ((v != 0xc4800020 && v != 0xc4800040 && v != 0xc4800400) ||
+	if ((v != 0xc4800020 && v != 0xc4800040 && v != 0xc4800100 && v != 0xc4800400) ||
 		!neutral || m_dma_regs[14] != 8 ||
 		!m_readback.width ||
 		uint64_t(m_readback.width) * m_readback.height - m_readback.word < words ||
@@ -879,7 +882,8 @@ void CRealImage2100::dma_command(uint32_t v)
 		(uint64_t(completion) < uint64_t(destination) + bytes &&
 			uint64_t(completion) + 4 > destination))
 	{
-		unimplemented("REALimage DMA transfer", DMACommand, v, true);
+		unimplemented(
+			"REALimage DMA transfer (rejected; completion not written)", DMACommand, v, true);
 		return;
 	}
 	std::array<uint8_t, 4096> data{};
