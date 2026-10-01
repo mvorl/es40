@@ -203,7 +203,7 @@ enum class A64OpKind : uint8_t {
   kValidationProbe,
   kIntlLogical,   // INTL (0x11) AND/BIS/XOR/BIC/ORNOT/EQV: 1:1 A64 register ops
   kBranchInt,     // BR/BSR + conditional integer branches (0x30/0x34/0x38-0x3f)
-  kHwMfpr,        // HW_MFPR (0x19), PALmode: Ra = IPR[fn] via the jit_hw_mfpr helper
+  kHwMfpr,        // HW_MFPR (0x19), PALmode: plain IPR fields inline, others via helper
   kIntsShift,     // INTS (0x12) SLL/SRL/SRA: LSLV/LSRV/ASRV share Alpha's mod-64 count
   kLoadAddress,   // LDA/LDAH (0x08/0x09): Ra = Rb + sext(disp16) (<<16) -- pure ALU
   kIntsZap,       // INTS (0x12) ZAP/ZAPNOT: Rc = Ra & byte-expanded keep-mask
@@ -221,8 +221,8 @@ enum class A64OpKind : uint8_t {
   kMisc,          // MISC (0x18): barriers -> dmb ish, hints -> nothing, RPCC/RC/RS helper
   kCallPal,       // CALL_PAL (0x00): OPCDEC gate, exc_addr, R23/R55 link, vector terminator
   kHwMtpr,        // HW_MTPR (0x1d): jit_hw_mtpr / no-op IPRs; I_CTL is the redispatch term
-  kHwLd,          // HW_LD (0x1b): physical via jit_read_phys, virtual via jit_read_vpte
-  kHwSt,          // HW_ST (0x1f): physical via jit_write_phys
+  kHwLd,          // HW_LD (0x1b): physical DRAM inline, virtual via jit_read_vpte
+  kHwSt,          // HW_ST (0x1f): physical DRAM inline, MMIO/verify via jit_write_phys
   kIntm,          // INTM (0x13) MULQ/MULL/UMULH -> mul / mul+sxtw / umulh
   kFpMem,         // FP memory (0x20-0x27): f[Fa] <-> MEM via jit_fp_read/jit_fp_write
   kFltl,          // FLTL (0x17) non-arithmetic via jit_fltl (0/1 = FEN retry)
@@ -4294,6 +4294,39 @@ static A64OpEmitReceipt emit_a64_hw_ld(A64EmitContext& context,
   Error err = emit_a64_mem_va(context, op, false, true);
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
 
+#ifndef JIT_VERIFY
+  Label physical_done;
+  if (!virt) {
+    const A64GprRoute wa =
+        a64_guest_gpr_write_route(context.regs, op.ra, context.pal_shadow);
+    if (wa.kind != A64GprRouteKind::kPinned && wa.kind != A64GprRouteKind::kMemory)
+      return {Error::kInvalidArgument, op.kind};
+    const a64::Gp dst = wa.kind == A64GprRouteKind::kPinned
+        ? a64::x(static_cast<uint32_t>(wa.host)) : RA::kScratch2;
+    const Label physical_slow = a.new_label();
+    physical_done = a.new_label();
+    // Check the original PA unsigned before rounding down. Page-aligned DRAM
+    // contains the whole aligned access; MMIO keeps its original helper input.
+    err = emit_a64_load_cpu_u64(a, RA::kScratch0, context.offsets.dram_size);
+    if (err == Error::kOk) err = a.cmp(RA::kScratch4, RA::kScratch0);
+    if (err == Error::kOk) err = a.b_hs(physical_slow);
+    if (err == Error::kOk)
+      err = a.and_(RA::kScratch4, RA::kScratch4,
+                    imm(~(static_cast<uint64_t>(size_bits / 8) - 1)));
+    if (err == Error::kOk)
+      err = emit_a64_load_cpu_u64(a, RA::kScratch3, context.offsets.dram_ptr);
+    if (err == Error::kOk)
+      err = size_bits == 32 ? a.ldrsw(dst, a64::ptr(RA::kScratch3, RA::kScratch4))
+                            : a.ldr(dst, a64::ptr(RA::kScratch3, RA::kScratch4));
+    if (err == Error::kOk && wa.kind == A64GprRouteKind::kMemory)
+      err = a.str(dst, a64::ptr(RA::kRegs,
+                  static_cast<int32_t>(wa.slot * sizeof(uint64_t))));
+    if (err == Error::kOk) err = a.b(physical_done);
+    if (err == Error::kOk) err = a.bind(physical_slow);
+    if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+  }
+#endif
+
   if (virt) {
     err = emit_a64_mov_u64(a, RA::kScratch0,
                            a64_advance_pc(context.start_pc, index));
@@ -4355,10 +4388,13 @@ static A64OpEmitReceipt emit_a64_hw_ld(A64EmitContext& context,
       err = a.str(dst, a64::ptr(RA::kRegs,
                   static_cast<int32_t>(wa.slot * sizeof(uint64_t))));
   }
+#ifndef JIT_VERIFY
+  if (err == Error::kOk && !virt) err = a.bind(physical_done);
+#endif
   return a64_completed_op_receipt(op, err);
 }
 
-// HW_ST physical: jit_write_phys(cpu, phys, size, Ra)
+// HW_ST physical: inline DRAM, helper for MMIO retry and verification replay.
 static A64OpEmitReceipt emit_a64_hw_st(A64EmitContext& context,
                                        const A64DecodedOp& op, uint32_t index)
 {
@@ -4369,6 +4405,39 @@ static A64OpEmitReceipt emit_a64_hw_st(A64EmitContext& context,
   const int size_bits = (((op.ins >> 12) & 0xfu) & 1u) ? 64 : 32;
   Error err = emit_a64_mem_va(context, op, false, true);
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+#ifndef JIT_VERIFY
+  const Label physical_slow = a.new_label(), physical_done = a.new_label();
+  err = emit_a64_load_cpu_u64(a, RA::kScratch0, context.offsets.dram_size);
+  if (err == Error::kOk) err = a.cmp(RA::kScratch4, RA::kScratch0);
+  if (err == Error::kOk) err = a.b_hs(physical_slow);
+  if (err == Error::kOk)
+    err = a.and_(RA::kScratch4, RA::kScratch4,
+                  imm(~(static_cast<uint64_t>(size_bits / 8) - 1)));
+  if (err == Error::kOk)
+    err = emit_a64_load_cpu_u64(a, RA::kScratch3, context.offsets.dram_ptr);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  const A64GprRoute ra =
+      a64_guest_gpr_read_route(context.regs, op.ra, context.pal_shadow);
+  a64::Gp value = RA::kScratch2;
+  switch (ra.kind) {
+    case A64GprRouteKind::kZero:   value = a64::xzr; break;
+    case A64GprRouteKind::kPinned: value = a64::x(static_cast<uint32_t>(ra.host)); break;
+    case A64GprRouteKind::kMemory:
+      err = a.ldr(value, a64::ptr(RA::kRegs,
+                  static_cast<int32_t>(ra.slot * sizeof(uint64_t))));
+      break;
+    default:
+      return {Error::kInvalidArgument, op.kind};
+  }
+  if (err == Error::kOk)
+    err = size_bits == 32 ? a.str(value.w(), a64::ptr(RA::kScratch3, RA::kScratch4))
+                          : a.str(value, a64::ptr(RA::kScratch3, RA::kScratch4));
+  if (err == Error::kOk) err = a.b(physical_done);
+  if (err == Error::kOk) err = a.bind(physical_slow);
+  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+#endif
 
   err = emit_a64_helper_call(a, context.offsets, context.helpers, context.regs,
       context.pal_shadow, context.helpers.hw_st_helper,
@@ -4389,6 +4458,9 @@ static A64OpEmitReceipt emit_a64_hw_st(A64EmitContext& context,
     err = a.add(RA::kChainCount, RA::kChainCount, imm(index));
   if (err == Error::kOk) err = a.b(context.done);
   if (err == Error::kOk) err = a.bind(ok);
+#ifndef JIT_VERIFY
+  if (err == Error::kOk) err = a.bind(physical_done);
+#endif
   return a64_completed_op_receipt(op, err);
 }
 
@@ -5087,7 +5159,7 @@ static A64OpEmitReceipt emit_a64_fsqrt(A64EmitContext& context,
   return a64_completed_op_receipt(op, err);
 }
 
-// HW_MFPR: jit_hw_mfpr(cpu, ins, cur)
+// HW_MFPR: live plain fields inline; derived/asynchronous IPRs and verify use helper.
 static A64OpEmitReceipt emit_a64_hw_mfpr(A64EmitContext& context,
                                          const A64DecodedOp& op)
 {
@@ -5102,6 +5174,29 @@ static A64OpEmitReceipt emit_a64_hw_mfpr(A64EmitContext& context,
     return a64_completed_op_receipt(op);
 
   a64::Assembler& a = context.assembler;
+#ifndef JIT_VERIFY
+  uint32_t field_offset = 0;
+  bool direct_field = true;
+  switch ((op.ins >> 8) & 0xffu) {
+    case 0x06: field_offset = context.offsets.exc_addr; break;
+    case 0x0f: field_offset = context.offsets.exc_sum; break;
+    case 0x10: field_offset = context.offsets.pal_base; break;
+    case 0x27: field_offset = context.offsets.mm_stat; break;
+    case 0xc2: field_offset = context.offsets.fault_va; break;
+    default: direct_field = false; break;
+  }
+  if (direct_field) {
+    Error err = emit_a64_load_cpu_u64(a, RA::kScratch2, field_offset);
+    if (err == Error::kOk) {
+      if (wa.kind == A64GprRouteKind::kPinned)
+        err = a.mov(a64::x(static_cast<uint32_t>(wa.host)), RA::kScratch2);
+      else
+        err = a.str(RA::kScratch2, a64::ptr(RA::kRegs,
+                    static_cast<int32_t>(wa.slot * sizeof(uint64_t))));
+    }
+    return a64_completed_op_receipt(op, err);
+  }
+#endif
   Error err = emit_a64_helper_call(a, context.offsets, context.helpers,
       context.regs, context.pal_shadow, context.helpers.hw_mfpr_helper,
       {{A64CallArgKind::kCpu, 0},

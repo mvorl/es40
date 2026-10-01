@@ -610,6 +610,8 @@ void CAlphaCPU::init()
 		o.exc_addr = (uint32_t)((char*)&state.exc_addr - (char*)this);
 		o.pal_base = (uint32_t)((char*)&state.pal_base - (char*)this);
 		o.sde = (uint32_t)((char*)&state.sde - (char*)this);
+		o.mm_stat = (uint32_t)((char*)&state.mm_stat - (char*)this);
+		o.fault_va = (uint32_t)((char*)&state.fault_va - (char*)this);
 		// CPU-resident helper table:
 		{
 			const CJitEngine::HelperSet ht = {

@@ -1778,7 +1778,8 @@ void CSystem::stop_threads()
 static const u32 system_state_magic = 0xa1fae540;
 // 2.7 requires writable M7101 docking selectors and removes the CF8/CFC latch.
 // 2.8 preserves the Trio64 scan-counter phase.
-static const u32 system_state_version = 0x00020008;
+// 2.9 uses the EV68 128-entry instruction and data translation buffers.
+static const u32 system_state_version = 0x00020009;
 static const u32 snapshot_identity_limit = 65536;
 
 void CSystem::flush_storage()
@@ -1882,7 +1883,7 @@ bool CSystem::RestoreState(const char* fn)
 	if (version != system_state_version)
 	{
 		printf("%%SYS-I-VERSION: State file %s is incompatible; "
-			"version 2.8 is required.\n", fn);
+			"version 2.9 is required.\n", fn);
 		return false;
 	}
 	if (fread(&memory_size, sizeof(memory_size), 1, f) != 1 ||

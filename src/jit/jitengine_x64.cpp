@@ -1291,7 +1291,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             continue;
         }
 
-        // HW_LD (PALmode): physical func 0/1 uses jit_read_phys; virtual funcs 4/5 and 8-15
+        // HW_LD (PALmode): physical func 0/1 reads DRAM inline; virtual funcs 4/5 and 8-15
         // use jit_read_vpte with their VPTE/ALT/WrChk flags. disp is a 12-bit displacement.
         if (op == OP_HW_LDL || op == OP_HW_LDQ || op == OP_HW_LD_VIRT) {
             if (ra == 31 && op != OP_HW_LD_VIRT) continue;            // virtual R31 forms are fault probes
@@ -1303,6 +1303,24 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             if (hwf >= 12) descr |= 0x200;                  // ALT: DTB alternate mode
             if (hwf == 10 || hwf == 11 || hwf == 14 || hwf == 15) descr |= 0x400; // WrChk
             emit_address(disp);                             // physical or virtual address -> RDX
+#ifndef JIT_VERIFY
+            Label physical_done;
+            if (op != OP_HW_LD_VIRT) {
+                const Label physical_slow = a.new_label();
+                physical_done = a.new_label();
+                // DRAM is page-aligned. Test the original address so MMIO reaches
+                // the helper unchanged; HW_LD rounds down without alignment faults.
+                a.cmp(x86::rdx, x86::qword_ptr(x86::rbp, m_off.dram_size));
+                a.jae(physical_slow);
+                a.and_(x86::rdx, imm(-(size_bits / 8)));
+                a.mov(x86::r10, x86::qword_ptr(x86::rbp, m_off.dram_ptr));
+                if (size_bits == 32) a.movsxd(x86::rax, x86::dword_ptr(x86::r10, x86::rdx));
+                else                 a.mov(x86::rax, x86::qword_ptr(x86::r10, x86::rdx));
+                mov_to_reg(ra, x86::rax);
+                a.jmp(physical_done);
+                a.bind(physical_slow);
+            }
+#endif
             if (op == OP_HW_LD_VIRT) {
                 a.mov(x86::r10, imm(b->tag + 4 * (uint64_t)i));
                 a.mov(x86::qword_ptr(x86::rbp, m_off.state_current_pc), x86::r10);
@@ -1337,6 +1355,9 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 else                 a.mov(x86::rax, x86::qword_ptr(x86::rsp, 32));
                 mov_to_reg(ra, x86::rax);
             }
+#ifndef JIT_VERIFY
+            if (op != OP_HW_LD_VIRT) a.bind(physical_done);
+#endif
             continue;
         }
 
@@ -1388,13 +1409,30 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             continue;
         }
 
-        // HW_ST physical (PALmode func 0/1): phys[Rb + disp12] = Ra, no translation. jit_write_phys
-        // does the aligned DRAM write (or compares the logged store in verify, bails on MMIO). disp is
-        // 12-bit here, not the 16-bit memory-format displacement.
+        // HW_ST physical (PALmode func 0/1): phys[Rb + disp12] = Ra, no translation.
+        // DRAM writes inline; the helper retains verification replay and MMIO retry.
         if (op == OP_HW_STL || op == OP_HW_STQ) {
             const int disp = (int)((int32_t)(ins << 20) >> 20);    // sign-extend 12-bit displacement
             const int size_bits = (op == OP_HW_STQ) ? 64 : 32;
             emit_address(disp);                                      // phys addr -> RDX
+#ifndef JIT_VERIFY
+            const Label physical_slow = a.new_label(), physical_done = a.new_label();
+            a.cmp(x86::rdx, x86::qword_ptr(x86::rbp, m_off.dram_size));
+            a.jae(physical_slow);
+            a.and_(x86::rdx, imm(-(size_bits / 8)));
+            a.mov(x86::r10, x86::qword_ptr(x86::rbp, m_off.dram_ptr));
+            const int sp = (ra == 31) ? -1 : pin_id(ra);
+            if (sp >= 0) {
+                if (size_bits == 32) a.mov(x86::dword_ptr(x86::r10, x86::rdx), x86::gpd((uint32_t)sp));
+                else                 a.mov(x86::qword_ptr(x86::r10, x86::rdx), x86::gpq((uint32_t)sp));
+            } else {
+                if (ra == 31) a.xor_(x86::eax, x86::eax); else mov_from_reg(x86::rax, ra);
+                if (size_bits == 32) a.mov(x86::dword_ptr(x86::r10, x86::rdx), x86::eax);
+                else                 a.mov(x86::qword_ptr(x86::r10, x86::rdx), x86::rax);
+            }
+            a.jmp(physical_done);
+            a.bind(physical_slow);
+#endif
             emit_call(hw_st_helper, { {JA_CPU, 0}, {JA_VA, 0}, {JA_I32, (uint64_t)size_bits}, {JA_GPZ, (uint64_t)ra} });  // jit_write_phys(cpu, phys, size, value)
             Label ok = a.new_label();
             a.test(x86::eax, x86::eax);
@@ -1404,6 +1442,9 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             a.add(x86::eax, x86::r13d);
             a.jmp(done);
             a.bind(ok);
+#ifndef JIT_VERIFY
+            a.bind(physical_done);
+#endif
             continue;
         }
 
@@ -1433,14 +1474,27 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             continue;
         }
 
-        // HW_MFPR (0x19, PALmode): read the IPR named by (ins>>8)&0xff into Ra. The helper is an
-        // independent reimplementation of DO_HW_MFPR that RETURNS the value (it reads state only, never
-        // writes it). pass the current Ra as `cur` so an unknown IPR returns it unchanged (matching interp),
-        // and write reg(ra) here so the value lands in whichever regs[] array we hold. Every MFPR IPR is
-        // a pure read
+        // HW_MFPR (0x19, PALmode): read the IPR named by (ins>>8)&0xff into Ra.
+        // Plain fault-reporting fields read inline; derived/asynchronous registers
+        // and verification retain the helper. Destination routing honors PALshadow.
         if (op == OP_HW_MFPR) {
             if (ra != 31) {                                  // MFPR R31 discards the value (R31 is hardwired 0)
-                emit_call(hw_mfpr_helper, { {JA_CPU, 0}, {JA_I32, (uint64_t)ins}, {JA_GP, (uint64_t)ra} });  // -> RAX = IPR value
+#ifndef JIT_VERIFY
+                uint32_t field_offset = 0;
+                bool direct_field = true;
+                switch ((ins >> 8) & 0xff) {
+                case 0x06: field_offset = m_off.exc_addr; break;
+                case 0x0f: field_offset = m_off.exc_sum; break;
+                case 0x10: field_offset = m_off.pal_base; break;
+                case 0x27: field_offset = m_off.mm_stat; break;
+                case 0xc2: field_offset = m_off.fault_va; break;
+                default: direct_field = false; break;
+                }
+                if (direct_field)
+                    a.mov(x86::rax, x86::qword_ptr(x86::rbp, field_offset));
+                else
+#endif
+                    emit_call(hw_mfpr_helper, { {JA_CPU, 0}, {JA_I32, (uint64_t)ins}, {JA_GP, (uint64_t)ra} });  // -> RAX = IPR value
                 mov_to_reg(ra, x86::rax);                      // Ra = value (reg() applies the PALshadow remap)
             }
             continue;

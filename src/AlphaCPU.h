@@ -237,8 +237,8 @@ class CJitEngine;   // JIT block-cache engine (ES40_JIT builds)
 #define ICACHE_INDEX_MASK (u64) (ICACHE_LINE_SIZE - U64(0x1))
 /// Byte numer of an address in an ICache entry.
 #define ICACHE_BYTE_MASK  (u64) (ICACHE_INDEX_MASK << 2)
-/// Number of entries in each Translation Buffer
-#define TB_ENTRIES        16 // real EV68 has 128
+/// EV68CB/EV68DC HRM 2.1.1.3 and 2.1.6.4: 128 entries in each ITB/DTB.
+#define TB_ENTRIES        128
 
 /**
  * \brief Emulated CPU.
