@@ -331,6 +331,8 @@ int CRealImage2100::plane_register(uint32_t a)
 		return 16 + int((a - PlaneClearColor) / 4);
 	if (a == PlanePixelMask || a == PlanePixelMask0 || a == PlanePixelMask01)
 		return 24;
+	if (a == PlanePixelMask123)
+		return 25;
 	if (a == PlanePixelMask23)
 		return 26;
 	switch (a)
@@ -365,6 +367,7 @@ bool CRealImage2100::plane_write(uint32_t a, uint32_t lanes, uint32_t value)
 		{
 			auto& plane = m_planes[bank];
 			const int count = a == PlanePixelMask ? 4 :
+				a == PlanePixelMask123 ? 3 :
 				(a == PlanePixelMask01 || a == PlanePixelMask23 ? 2 : 1);
 			if (index >= 24 && lanes == 0xffffffffu)
 				plane.unknown_masks &= ~(((1u << count) - 1) << (index - 24));

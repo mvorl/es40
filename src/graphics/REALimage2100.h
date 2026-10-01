@@ -139,6 +139,7 @@ public:
                             PlanePixelMask0 = 0x00c02400,
                             PlanePixelMask01 = 0x00c06400,
                             PlanePixelMask23 = 0x00c18400,
+                            PlanePixelMask123 = 0x00c1c400,
                             PlaneCount = 4, PlaneRegisterCount = 28;
   static constexpr uint32_t DMABase = 0x00801000, DMARegisterCount = 19,
                             DMACommand = 0x0080101c, DMAReset = 0x0080103c;
