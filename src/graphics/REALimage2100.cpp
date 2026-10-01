@@ -337,6 +337,8 @@ int CRealImage2100::plane_register(uint32_t a)
 		return 25;
 	if (a == PlanePixelMask23)
 		return 26;
+	if (a == PlanePixelMask3)
+		return 27;
 	switch (a)
 	{
 	case PlaneStateBase + 0x00: case PlaneStateBase + 0x04:
