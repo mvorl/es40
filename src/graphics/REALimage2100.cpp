@@ -169,7 +169,7 @@ uint32_t CRealImage2100::ReadMem(uint32_t a, int bits)
 		return (status_read() >> ((a & 3) * 8)) & width_mask(bits);
 	if ((a & ~3u) == BoardStatus)
 	{
-		const uint32_t v = m_frame_counter | (uint32_t(BoardStraps) << 16) |
+		const uint32_t v = m_frame_counter | (uint32_t(m_board_straps) << 16) |
 			(uint32_t(m_board_control) << 24);
 		return (v >> ((a & 3) * 8)) & width_mask(bits);
 	}
@@ -282,7 +282,11 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 		}
 		it = m_shadow.emplace(key, 0).first;
 	}
-	it->second = (it->second & ~lanes) | ((v << shift) & lanes);
+	const uint32_t old_value = it->second;
+	it->second = (old_value & ~lanes) | ((v << shift) & lanes);
+	if ((key == DrawControl && ((old_value ^ it->second) & 0x00000f01u)) ||
+		(key == MemoryControl && old_value != it->second))
+		m_clear_cache = {};
 	if (plane_write(key, lanes, (v << shift) & lanes))
 		return;
 	if (key == HostCommand || key == FillCommand || key == BlockCommand)
@@ -313,11 +317,12 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 	else if (!native_storage_register(key))
 	{
 		// Unmodeled mask aliases must not leave a stale block mask usable.
-		if ((key & ~0x1e000u) == HostData + 0x400 &&
+		if ((key & ~0x1fe000u) == HostData + 0x400 &&
 			(peek(DrawControl) & (1u << 26)))
 			for (unsigned bank = 0; bank < PlaneCount; ++bank)
 				if (peek(DrawControl) & (0x1000u << bank))
-					m_planes[bank].unknown_masks |= (key >> 13) & 15;
+					m_planes[bank].unknown_masks |= (key >> 13) &
+						(m_color_width == MaxColorWidth ? 255u : 15u);
 		unimplemented_once("REALimage register", a, v, true);
 	}
 }
@@ -334,15 +339,9 @@ int CRealImage2100::plane_register(uint32_t a)
 {
 	if (a >= PlaneClearColor && a < PlaneClearColor + 32)
 		return 16 + int((a - PlaneClearColor) / 4);
-	if (a == PlanePixelMask || a == PlanePixelMask0 || a == PlanePixelMask01 ||
-		a == PlanePixelMask012 || a == PlanePixelMask0123)
+	if (a == PlanePixelMask ||
+		((a & ~0x1fe000u) == HostData + 0x400 && (a & 0x1fe000u)))
 		return 24;
-	if (a == PlanePixelMask123)
-		return 25;
-	if (a == PlanePixelMask23)
-		return 26;
-	if (a == PlanePixelMask3)
-		return 27;
 	switch (a)
 	{
 	case PlaneStateBase + 0x00: case PlaneStateBase + 0x04:
@@ -369,19 +368,28 @@ bool CRealImage2100::plane_write(uint32_t a, uint32_t lanes, uint32_t value)
 		unimplemented_once("REALimage plane access", a, value, true);
 		return true;
 	}
+	const uint32_t available = m_color_width == MaxColorWidth ? 255u : 15u,
+		groups = a == PlanePixelMask ? available : (a >> 13) & 255;
+	if (index == 24 && (groups & ~available))
+	{
+		for (unsigned bank = 0; bank < PlaneCount; ++bank)
+			if (banks & (1u << bank))
+				m_planes[bank].unknown_masks |= groups & available;
+		unimplemented_once("REALimage plane mask", a, value, true);
+		return true;
+	}
 	// Configuration writes broadcast to the selected 3D-RAM planes.
 	for (unsigned bank = 0; bank < PlaneCount; ++bank)
 		if (banks & (1u << bank))
 		{
 			auto& plane = m_planes[bank];
-			const int count = (a == PlanePixelMask || a == PlanePixelMask0123) ? 4 :
-				(a == PlanePixelMask012 || a == PlanePixelMask123) ? 3 :
-				(a == PlanePixelMask01 || a == PlanePixelMask23 ? 2 : 1);
-			if (index >= 24 && lanes == 0xffffffffu)
-				plane.unknown_masks &= ~(((1u << count) - 1) << (index - 24));
-			const int end = index + count;
-			for (int i = index; i < end; ++i)
+			if (index == 24 && lanes == 0xffffffffu)
+				plane.unknown_masks &= ~groups;
+			const unsigned end = index == 24 ? PlaneRegisterCount : index + 1;
+			for (unsigned i = unsigned(index); i < end; ++i)
 			{
+				if (index == 24 && !(groups & (1u << (i - 24))))
+					continue;
 				plane.regs[i] = (plane.regs[i] & ~lanes) | value;
 				plane.written |= 1u << i;
 			}
@@ -434,16 +442,23 @@ bool CRealImage2100::native_storage_register(uint32_t a) const
 bool CRealImage2100::native_pixel_profile() const
 {
 	const uint32_t memory = peek(MemoryControl);
-	return (memory == 0x0c008000 || memory == 0x0f008000) &&
-		peek(PixelControl) == 0x42722060;
+	return (memory & 0x00ffffff) == 0x8000 &&
+		peek(PixelControl) == (m_color_width == MaxColorWidth ? 0x62722060u : 0x42722060u);
+}
+
+uint32_t CRealImage2100::block_width() const
+{
+	const uint32_t format = peek(DrawControl) & 255;
+	return format == 2 ? 8 : format == 3 && m_color_width == MaxColorWidth ? 16 : 0;
 }
 
 bool CRealImage2100::native_copy_control_profile() const
 {
-	// DrawControl bits 8..11 count 160-pixel page columns.
-	const uint32_t columns = (peek(DrawControl) >> 8) & 15;
-	if (!native_pixel_profile() ||
-		columns != (peek(MemoryControl) == 0x0c008000 ? 7u : 8u))
+	const uint32_t width = block_width(), columns = (peek(DrawControl) >> 8) & 15,
+		copy_columns = ((peek(MemoryControl) >> 24) & 63) + 1;
+	// Each page column spans two copy blocks; the top two bits control timing.
+	if (!native_pixel_profile() || !width || columns != (copy_columns + 1) / 2 ||
+		copy_columns > (m_color_width + 10 * width - 1) / (10 * width))
 		return false;
 	// Other programmed pipeline modes have not been decoded.
 	const std::pair<uint32_t, uint32_t> profile[] = {
@@ -463,14 +478,14 @@ bool CRealImage2100::copy_profile() const
 {
 	// Only the observed RGB copy profile; bits 12..15 select banks.
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
-	return (control & ~0xff00u) == 0x81000002 && banks && !(banks & ~3u) &&
+	return (control & ~0xff01u) == 0x81000002 && banks && !(banks & ~3u) &&
 		native_copy_control_profile();
 }
 
 bool CRealImage2100::fast_copy_profile() const
 {
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
-	if ((control & ~0xff00u) != 0x21000002 || (banks != 1 && banks != 2) ||
+	if ((control & ~0xff01u) != 0x21000002 || (banks != 1 && banks != 2) ||
 		!native_copy_control_profile())
 		return false;
 	const unsigned bank = banks == 2 ? 1 : 0;
@@ -485,7 +500,7 @@ bool CRealImage2100::fast_copy_profile() const
 		plane_value(bank, 14, 0x100) != 0x100 || plane_value(bank, 15, 0) != 0 ||
 		m_planes[bank].unknown_masks)
 		return false;
-	for (unsigned i = 24; i < 28; ++i)
+	for (unsigned i = 24; i < 24 + block_width() / 2; ++i)
 		if (plane_value(bank, i, 0xffffffff) != 0xffffffff)
 			return false;
 	return true;
@@ -494,13 +509,13 @@ bool CRealImage2100::fast_copy_profile() const
 void CRealImage2100::color_write(
 	uint32_t x, uint32_t y, uint32_t color, uint32_t banks)
 {
-	if (x >= ColorWidth || y >= ColorHeight)
+	if (x >= m_color_width || y >= m_color_height)
 		return;
-	const uint32_t offset = y * ColorWidth + x;
+	const uint32_t offset = y * m_color_width + x;
 	for (uint32_t bank = 0; bank < 2; ++bank)
 		if (banks & (1u << bank))
 		{
-			uint32_t& destination = m_color[bank * ColorPixels + offset];
+			uint32_t& destination = m_color[bank * m_color_pixels + offset];
 			const uint32_t mask = plane_value(bank, 0, 0xffffffff) & 0xffffff,
 				rops = plane_value(bank, 4, 0x03030303);
 			uint32_t result = 0;
@@ -525,9 +540,10 @@ void CRealImage2100::block_command(uint32_t v)
 		extent = peek(BlockExtent);
 	const bool copy = (v & 0x20000) != 0, configuration = (control & 0x04000000) != 0;
 	const bool window_clear = v == 0x000d0000 && banks == 4 && configuration;
-	const uint32_t dx = destination & 0x7ff, dy = destination >> 16,
+	const uint32_t clear_width = block_width(), groups = clear_width / 2,
+		dx = destination & 0x7ff, dy = destination >> 16,
 		width = (extent & 0x7ff) + 1, height = (extent >> 16) + 1,
-		scale_x = copy ? 80 : 8, scale_y = copy ? 16 : 4,
+		scale_x = copy ? 10 * clear_width : clear_width, scale_y = copy ? 16 : 4,
 		x = dx * scale_x, y = dy * scale_y,
 		right = x + width * scale_x, bottom = y + height * scale_y;
 	bool geometry_known = false;
@@ -536,10 +552,10 @@ void CRealImage2100::block_command(uint32_t v)
 			if (banks & (1u << bank))
 			{
 				auto& cache = m_clear_cache[bank];
-				const uint32_t cx = (cache.source & 0xffff) * 80,
+				const uint32_t cx = (cache.source & 0xffff) * 10 * clear_width,
 					cy = (cache.source >> 16) * 16;
 				if (!geometry_known ||
-					(x < cx + 168 && right > cx && y < cy + 36 && bottom > cy))
+					(x < cx + 21 * clear_width && right > cx && y < cy + 36 && bottom > cy))
 					cache = {};
 			}
 	};
@@ -548,7 +564,7 @@ void CRealImage2100::block_command(uint32_t v)
 		unimplemented_once(
 			"REALimage block command/profile (command rejected)", BlockCommand, v, true);
 	};
-	if ((control & ~0x0400ff00u) != 0x81000002 || !banks || (banks & ~7u) ||
+	if ((control & ~0x0400ff01u) != 0x81000002 || !banks || (banks & ~7u) ||
 		v != (((banks ^ 7u) << 18) | (copy ? 0x30000u : 0x10000u)) ||
 		!native_copy_control_profile() || m_pending.width || m_readback.width ||
 		((source | destination | extent) & ~0x07ff07ffu) ||
@@ -579,7 +595,7 @@ void CRealImage2100::block_command(uint32_t v)
 				reject();
 				return;
 			}
-		for (unsigned i = 24; i < 28; ++i)
+		for (unsigned i = 24; i < 24 + groups; ++i)
 		{
 			const uint32_t bits = plane_value(2, i, 0xffffffff);
 			if (bits != (bits & 255) * 0x01010101u)
@@ -590,14 +606,14 @@ void CRealImage2100::block_command(uint32_t v)
 		}
 		const uint8_t nibble_mask = uint8_t(mask >> 12),
 			window_id = uint8_t((value & mask) >> 12);
-		for (uint32_t row = y; row < std::min(bottom, ColorHeight); ++row)
-			for (uint32_t col = x; col < std::min(right, ColorWidth); ++col)
+		for (uint32_t row = y; row < std::min(bottom, m_color_height); ++row)
+			for (uint32_t col = x; col < std::min(right, m_color_width); ++col)
 			{
-				const uint32_t bits = plane_value(2, 24 + (col & 3), 0xffffffff),
-					bit = 2 * (row & 3) + ((col >> 2) & 1);
+				const uint32_t bits = plane_value(2, 24 + col % groups, 0xffffffff),
+					bit = 2 * (row & 3) + ((col / groups) & 1);
 				if (bits & (1u << bit))
 				{
-					auto& pixel = m_window_id[size_t(row) * ColorWidth + col];
+					auto& pixel = m_window_id[size_t(row) * m_color_width + col];
 					pixel = uint8_t((pixel & ~nibble_mask) | window_id);
 				}
 			}
@@ -606,7 +622,7 @@ void CRealImage2100::block_command(uint32_t v)
 	// The driver seeds 21x9 small blocks for its repeated 2x2-tile source.
 	const bool seed = !configuration && !copy;
 	if (seed && (extent != 0x00080014 || dx % 10 || dy % 4 ||
-		(dx * 8 < ColorWidth && dy * 4 < ColorHeight)))
+		(dx * clear_width < m_color_width && dy * 4 < m_color_height)))
 	{
 		reject();
 		return;
@@ -657,7 +673,7 @@ void CRealImage2100::block_command(uint32_t v)
 				reject();
 				return;
 			}
-		for (unsigned i = 24; i < 28; ++i)
+		for (unsigned i = 24; i < 24 + groups; ++i)
 		{
 			const uint32_t bits = plane_value(bank, i, 0xffffffff);
 			if (bits != (bits & 255) * 0x01010101u || (seed && bits != 0xffffffffu))
@@ -686,13 +702,13 @@ void CRealImage2100::block_command(uint32_t v)
 		return;
 	}
 	invalidate_cache();
-	for (uint32_t row = y; row < std::min(bottom, ColorHeight); ++row)
-		for (uint32_t col = x; col < std::min(right, ColorWidth); ++col)
+	for (uint32_t row = y; row < std::min(bottom, m_color_height); ++row)
+		for (uint32_t col = x; col < std::min(right, m_color_width); ++col)
 			for (unsigned bank = 0; bank < 2; ++bank)
 				if (banks & (1u << bank))
 				{
-					const uint32_t bits = plane_value(bank, 24 + (col & 3), 0xffffffff),
-						bit = 2 * (row & 3) + ((col >> 2) & 1);
+					const uint32_t bits = plane_value(bank, 24 + col % groups, 0xffffffff),
+						bit = 2 * (row & 3) + ((col / groups) & 1);
 					if (bits & (1u << bit))
 						color_write(col, row, colors[bank], 1u << bank);
 				}
@@ -752,8 +768,8 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 	{
 		const uint32_t source = peek(BlockSource), sx = source & 0xffff,
 			sy = source >> 16;
-		if (sx >= ColorWidth || sy >= ColorHeight ||
-			width > ColorWidth - sx || height > ColorHeight - sy)
+		if (sx >= m_color_width || sy >= m_color_height ||
+			width > m_color_width - sx || height > m_color_height - sy)
 		{
 			unimplemented_once("REALimage readback source bounds (command rejected)", a, v, true);
 			return;
@@ -776,21 +792,21 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		const uint32_t source = peek(BlockSource), source_bank = selected == 2 ? 1 : 0,
 			bank = cross_copy ? source_bank ^ 1u : source_bank;
 		const bool right_to_left = !(v & 0x01000000), bottom_to_top = !(v & 0x10);
-		if (fast_copy && ((source ^ origin) & 3))
+		if (fast_copy && ((source ^ origin) & (block_width() / 2 - 1)))
 		{
 			unimplemented_once("REALimage fast-copy alignment (command rejected)", a, v, true);
 			return;
 		}
 		const int32_t sx = int16_t(source & 0xffff), sy = int16_t(source >> 16),
 			left = std::max(right_to_left ? x - int32_t(width) + 1 : x, int32_t(0)),
-			right = std::min(x + (right_to_left ? 1 : int32_t(width)), int32_t(ColorWidth)),
+			right = std::min(x + (right_to_left ? 1 : int32_t(width)), int32_t(m_color_width)),
 			top = std::max(bottom_to_top ? y - int32_t(height) + 1 : y, int32_t(0)),
 			bottom = std::min(y + (bottom_to_top ? 0 : int32_t(height) - 1),
-				int32_t(ColorHeight) - 1);
+				int32_t(m_color_height) - 1);
 		if (left >= right || top > bottom)
 			return;
-		if (sx + left - x < 0 || sx + right - x > int32_t(ColorWidth) ||
-			sy + top - y < 0 || sy + bottom - y >= int32_t(ColorHeight))
+		if (sx + left - x < 0 || sx + right - x > int32_t(m_color_width) ||
+			sy + top - y < 0 || sy + bottom - y >= int32_t(m_color_height))
 		{
 			unimplemented_once("REALimage copy source bounds (command rejected)", a, v, true);
 			return;
@@ -804,11 +820,11 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		for (int32_t row = first_row; row != end_row; row += row_step)
 			for (int32_t col = first; col != end; col += step)
 			{
-				const size_t offset = size_t(source_bank) * ColorPixels +
-					size_t(sy + row - y) * ColorWidth + size_t(sx + col - x);
+				const size_t offset = size_t(source_bank) * m_color_pixels +
+					size_t(sy + row - y) * m_color_width + size_t(sx + col - x);
 				if (fast_copy)
 					// The optimized RAM-copy profile bypasses its programmed ROP 5.
-					m_color[size_t(bank) * ColorPixels + size_t(row) * ColorWidth + col] =
+					m_color[size_t(bank) * m_color_pixels + size_t(row) * m_color_width + col] =
 						m_color[offset] & 0xffffff;
 				else
 					color_write(uint32_t(col), uint32_t(row), m_color[offset], destination_banks);
@@ -827,8 +843,8 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 	// Clip before iterating so malformed extents cannot cause unbounded work.
 	const int32_t left = std::max(x, int32_t(0)),
 		top = std::max(y, int32_t(0)),
-		right = std::min(x + int32_t(width), int32_t(ColorWidth)),
-		bottom = std::min(y + int32_t(height), int32_t(ColorHeight));
+		right = std::min(x + int32_t(width), int32_t(m_color_width)),
+		bottom = std::min(y + int32_t(height), int32_t(m_color_height));
 	const uint32_t foreground = peek(Foreground), background = peek(Background);
 	for (int32_t row = top; row < bottom; ++row)
 		for (int32_t col = left; col < right; ++col)
@@ -880,7 +896,7 @@ uint32_t CRealImage2100::readback_pixel(uint32_t word) const
 	const uint32_t bank = m_readback.banks == 2 ? 1 : 0,
 		x = m_readback.x + word % m_readback.width,
 		y = m_readback.y + word / m_readback.width;
-	return m_color[size_t(bank) * ColorPixels + y * ColorWidth + x];
+	return m_color[size_t(bank) * m_color_pixels + y * m_color_width + x];
 }
 
 void CRealImage2100::dma_command(uint32_t v)
@@ -955,14 +971,19 @@ CRealImage2100::Frame CRealImage2100::scanout(std::string* error) const
 		overflow = peek(TimingBase + 4) >> 24,
 		vertical = peek(TimingBase + 0x10),
 		extension = (peek(TimingBase + 0x1c) >> 16) & 255;
-	const uint32_t width = (((horizontal >> 8) & 255) + 1) * 8;
-	// Both drivers use extension 0x0d for their 1280x1024 timings.
-	const bool extended_1024 = width == 1280 && extension == 0x0d;
+	// RGB640 register 08 selects the driver's horizontal timing unit.
+	const uint32_t horizontal_unit = m_dac_regs[0x08] == 0 ? 8 :
+		m_dac_regs[0x08] == 1 && m_color_width == MaxColorWidth ? 16 : 0;
+	const uint32_t width = ((((horizontal >> 8) & 255) |
+		((extension & 0x40) << 2)) + 1) * horizontal_unit,
+		vertical_extension = extension & 0x3f;
+	// Whole extension patterns are established by both drivers' mode tables.
 	const uint32_t height = ((vertical >> 16) & 255) |
 		((overflow & 2) << 7) | ((overflow & 0x40) << 3) |
-		(extended_1024 ? 1024u : 0u);
-	if ((extension && !extended_1024) || !height ||
-		width > ColorWidth || height > ColorHeight)
+		(vertical_extension == 0x0d ? 1024u : 0u);
+	if ((vertical_extension != 0 && vertical_extension != 8 && vertical_extension != 0x0d) ||
+		!width || !height ||
+		width > m_color_width || height > m_color_height)
 		return reject("Native timing unsupported");
 	Frame frame;
 	frame.width = width;
@@ -972,10 +993,10 @@ CRealImage2100::Frame CRealImage2100::scanout(std::string* error) const
 	for (uint32_t y = 0; y < height; ++y)
 		for (uint32_t x = 0; x < width; ++x)
 		{
-			if (!supported_windows[m_window_id[size_t(y) * ColorWidth + x]])
+			if (!supported_windows[m_window_id[size_t(y) * m_color_width + x]])
 				return reject("Native DAC window format unsupported");
 			frame.argb[size_t(y) * width + x] =
-				0xff000000 | m_color[size_t(y) * ColorWidth + x];
+				0xff000000 | m_color[size_t(y) * m_color_width + x];
 		}
 	composite_cursor(frame);
 	return frame;
@@ -1088,6 +1109,28 @@ uint32_t CRealImage2100::texture_offset(uint32_t a) const
 	return (a & 0x1fff) | ((a >> 14) << 13);
 }
 
+void CRealImage2100::configure_framebuffer(uint32_t ram_chips)
+{
+	if (ram_chips != 12 && ram_chips != 24)
+		throw std::invalid_argument("Invalid REALimage framebuffer population");
+	const uint32_t width = ram_chips == 24 ? MaxColorWidth : ColorWidth,
+		height = ram_chips == 24 ? MaxColorHeight : ColorHeight;
+	if (width == m_color_width && height == m_color_height)
+		return;
+	std::vector<uint32_t> color(size_t(width) * height * 2);
+	std::vector<uint8_t> window_id(size_t(width) * height);
+	m_color.swap(color);
+	m_window_id.swap(window_id);
+	m_color_width = width;
+	m_color_height = height;
+	m_color_pixels = width * height;
+	m_board_straps = ram_chips == 24 ? 3 : 0;
+	m_planes = {};
+	m_clear_cache = {};
+	m_pending = {};
+	m_readback = {};
+}
+
 void CRealImage2100::configure_texture_memory(uint32_t bytes)
 {
 	if (bytes != MinTextureSize && bytes != MaxTextureSize)
@@ -1100,7 +1143,7 @@ void CRealImage2100::configure_texture_memory(uint32_t bytes)
 
 CRealImage2100::CRealImage2100()
 	: m_vga_memory(VGAMemorySize), m_dac_regs(DACRegisterCount),
-	  m_color(ColorPixels * 2), m_window_id(ColorPixels), m_texture(MinTextureSize)
+	  m_color(m_color_pixels * 2), m_window_id(m_color_pixels), m_texture(MinTextureSize)
 {
 	dac_port_map(m_dac_ports);
 	reset();
@@ -1243,8 +1286,10 @@ void CRealImage2100::SaveState(std::ostream& out) const
 	{
 		put32(p, plane.written);
 		put32(p, plane.unknown_masks);
-		for (const uint32_t reg : plane.regs)
-			put32(p, reg);
+		const unsigned count = m_color_width == MaxColorWidth ?
+			PlaneRegisterCount : LegacyPlaneRegisterCount;
+		for (unsigned i = 0; i < count; ++i)
+			put32(p, plane.regs[i]);
 	}
 	for (const auto& cache : m_clear_cache)
 	{
@@ -1274,7 +1319,7 @@ void CRealImage2100::SaveState(std::ostream& out) const
 	p.write(reinterpret_cast<const char*>(m_texture.data()), m_texture.size());
 	const auto bytes = p.str();
 	put32(out, 0x30324952); // RI20
-	put32(out, 10);
+	put32(out, m_color_width == MaxColorWidth ? 11 : 10);
 	put32(out, uint32_t(bytes.size()));
 	put32(out, crc32(bytes));
 	out.write(bytes.data(), bytes.size());
@@ -1285,9 +1330,14 @@ void CRealImage2100::SaveState(std::ostream& out) const
 void CRealImage2100::RestoreState(std::istream& in)
 {
 	const auto magic = get32(in), version = get32(in);
-	if (magic != 0x30324952 || (version != 9 && version != 10))
+	if (magic != 0x30324952 || (version != 9 && version != 10 && version != 11))
 		throw std::runtime_error("Wrong REALimage snapshot version");
-	const uint32_t fixed_payload = FixedPayload + (version == 10 ? 24 : 0);
+	// Version 11 carries the larger 24-chip color/WID banks.
+	if ((version == 11) != (m_color_width == MaxColorWidth))
+		throw std::runtime_error("REALimage snapshot framebuffer mismatch");
+	const uint32_t fixed_payload = FixedPayload + (version >= 10 ? 24 : 0) +
+		(version == 11 ? (MaxColorPixels - ColorPixels) * 9 +
+			PlaneCount * (PlaneRegisterCount - LegacyPlaneRegisterCount) * 4 : 0);
 	const auto size = get32(in), crc = get32(in);
 	if (size < fixed_payload || size > MaxStateSize - 16)
 		throw std::runtime_error("Invalid REALimage snapshot length");
@@ -1334,9 +1384,11 @@ void CRealImage2100::RestoreState(std::istream& in)
 	{
 		plane.written = get32(p);
 		plane.unknown_masks = get32(p);
-		if ((plane.written & ~0x0fffcf7fu) || plane.unknown_masks > 15)
+		if ((plane.written & ~(version == 11 ? 0xffffcf7fu : 0x0fffcf7fu)) ||
+			plane.unknown_masks > (version == 11 ? 255u : 15u))
 			throw std::runtime_error("Invalid REALimage plane register mask");
-		for (unsigned i = 0; i < PlaneRegisterCount; ++i)
+		const unsigned registers = version == 11 ? PlaneRegisterCount : LegacyPlaneRegisterCount;
+		for (unsigned i = 0; i < registers; ++i)
 		{
 			plane.regs[i] = get32(p);
 			if (!(plane.written & (1u << i)) && plane.regs[i])
@@ -1354,7 +1406,7 @@ void CRealImage2100::RestoreState(std::istream& in)
 			throw std::runtime_error("Invalid REALimage clear cache");
 	}
 	Pending readback;
-	if (version == 10)
+	if (version >= 10)
 	{
 		readback.x = get32(p);
 		readback.y = get32(p);
@@ -1363,9 +1415,9 @@ void CRealImage2100::RestoreState(std::istream& in)
 		readback.word = get32(p);
 		readback.banks = get32(p);
 		if ((readback.width && (pending.width || !readback.height ||
-			readback.x >= ColorWidth || readback.y >= ColorHeight ||
-			readback.width > ColorWidth - readback.x ||
-			readback.height > ColorHeight - readback.y ||
+			readback.x >= m_color_width || readback.y >= m_color_height ||
+			readback.width > m_color_width - readback.x ||
+			readback.height > m_color_height - readback.y ||
 			readback.word >= uint64_t(readback.width) * readback.height ||
 			(readback.banks != 1 && readback.banks != 2))) ||
 			(!readback.width && (readback.x || readback.y || readback.height ||
@@ -1394,14 +1446,14 @@ void CRealImage2100::RestoreState(std::istream& in)
 	}
 	std::vector<uint8_t> memory(VGAMemorySize);
 	p.read(reinterpret_cast<char*>(memory.data()), memory.size());
-	std::vector<uint32_t> color(ColorPixels * 2);
+	std::vector<uint32_t> color(m_color_pixels * 2);
 	for (uint32_t& c : color)
 	{
 		c = get32(p);
 		if (c & 0xff000000)
 			throw std::runtime_error("Invalid REALimage color buffer");
 	}
-	std::vector<uint8_t> window_id(ColorPixels);
+	std::vector<uint8_t> window_id(m_color_pixels);
 	p.read(reinterpret_cast<char*>(window_id.data()), window_id.size());
 	if (std::any_of(window_id.begin(), window_id.end(), [](uint8_t id) { return id > 15; }))
 		throw std::runtime_error("Invalid REALimage window ID buffer");

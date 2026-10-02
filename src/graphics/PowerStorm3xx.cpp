@@ -938,6 +938,7 @@ try
 	m_model = powerstorm_setting(cfg, "model", 300, 350);
 	if (m_model != 300 && m_model != 350)
 		throw std::runtime_error("powerstorm model must be 300 or 350");
+	m_realimage.configure_framebuffer(m_model == 350 ? 24u : 12u);
 	m_realimage.configure_texture_memory(m_model == 350 ?
 		CRealImage2100::MaxTextureSize : CRealImage2100::MinTextureSize);
 	m_board_vga_enabled = cfg->get_bool_value("vga_enabled", true);

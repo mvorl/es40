@@ -39,7 +39,6 @@
 
 /** Digital PowerStorm 300/350 PCI video card with a REALimage 2100.
  * Standard VGA and a limited native 24-bit 2D path are implemented.
- * Model 350 uses the same native core; its board profile is not measured.
  */
 class CPowerStorm3xx :
   public CVGA,

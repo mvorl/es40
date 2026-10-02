@@ -2579,15 +2579,16 @@ void edit_pci_vga_powerstorm(const char *title)
          "Use bus 0 for a firmware graphics console.", validation_pcislot},
         {"rom file", "rom/BIOS.BIN", "rom",
          "Path to the PowerStorm 300/350 (10BA:0304) option ROM.\n"
-         "Only standard VGA is implemented.",
+         "Standard VGA and native 24-bit 2D are supported.",
          validation_file},
         {"ROM layout", "exact", "rom_layout",
          "exact requires a power-of-two ROM dump, such as the 64 KiB BIOS.\n"
          "pad_ff pads a smaller image with 0xFF.",
          validation_powerstorm_rom_layout},
         {"model", "300", "model",
-         "PowerStorm 300 (Compaq, subsystem 0E11:4D31) or 350 (Digital,\n"
-         "1011:4D35). The model sets the PCI subsystem ID the drivers check.",
+         "300: subsystem 0E11:4D31, 15 MiB framebuffer, 16 MiB texture.\n"
+         "350: subsystem 1011:4D35, 30 MiB framebuffer, 32 MiB texture.\n"
+         "Memory population and board straps follow the selected model.",
          validation_powerstorm_model}};
     const int num_entries = ARRAY_SIZE(entry);
     FormValues_t preset = (FormValues_t)calloc(num_entries, sizeof(char *));

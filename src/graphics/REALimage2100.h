@@ -133,6 +133,8 @@ public:
   // Bounded logical color banks; physical 3D-RAM layout is not modeled.
   static constexpr uint32_t ColorWidth = 1280, ColorHeight = 1024,
                             ColorPixels = ColorWidth * ColorHeight;
+  static constexpr uint32_t MaxColorWidth = 1920, MaxColorHeight = 1200,
+                            MaxColorPixels = MaxColorWidth * MaxColorHeight;
   static constexpr uint32_t PlaneStateBase = 0x00ffe700,
                             PlaneClearColor = 0x00ffe100,
                             PlanePixelMask = 0x00ffe400,
@@ -143,7 +145,8 @@ public:
                             PlanePixelMask3 = 0x00c10400,
                             PlanePixelMask23 = 0x00c18400,
                             PlanePixelMask123 = 0x00c1c400,
-                            PlaneCount = 4, PlaneRegisterCount = 28;
+                            PlaneCount = 4, LegacyPlaneRegisterCount = 28,
+                            PlaneRegisterCount = 32;
   static constexpr uint32_t DMABase = 0x00801000, DMARegisterCount = 19,
                             DMACommand = 0x0080101c, DMAReset = 0x0080103c;
   static constexpr uint32_t MinTextureSize = 16u * 1024 * 1024,
@@ -154,9 +157,10 @@ public:
   static constexpr uint32_t MinStateSize =
     16 + 52 + 4 + 24 + 256 * 4 + DACRegisterCount + 4 + VGAMemorySize +
     ColorPixels * (2 * 4 + 1) + 4 + DMARegisterCount * 4 + MinTextureSize +
-    PlaneCount * (PlaneRegisterCount + 2) * 4 + 2 * 3 * 4;
+    PlaneCount * (LegacyPlaneRegisterCount + 2) * 4 + 2 * 3 * 4;
   static constexpr uint32_t MaxStateSize = MinStateSize + 24 + MaxShadowRegisters * 8 +
-    MaxTextureSize - MinTextureSize;
+    MaxTextureSize - MinTextureSize + (MaxColorPixels - ColorPixels) * 9 +
+    PlaneCount * (PlaneRegisterCount - LegacyPlaneRegisterCount) * 4;
 
   using DiagnosticCallback = std::function<void(const Diagnostic&)>;
   using UnimplementedCallback = std::function<void(
@@ -174,7 +178,12 @@ public:
   // BAR2 index/data pair.
   uint32_t io_read(uint32_t offset, int dsize);
   void io_write(uint32_t offset, int dsize, uint32_t data);
+  void configure_framebuffer(uint32_t ram_chips);
   void configure_texture_memory(uint32_t bytes);
+  uint8_t board_straps() const { return m_board_straps; }
+  uint32_t color_width() const { return m_color_width; }
+  uint32_t color_height() const { return m_color_height; }
+  uint32_t color_pixels() const { return m_color_pixels; }
   // BAR1 texture memory, using the driver's 16 KiB row pitch.
   uint32_t mem_read(uint32_t address, int dsize);
   void mem_write(uint32_t address, int dsize, uint32_t data);
@@ -247,6 +256,7 @@ private:
   uint32_t plane_value(unsigned bank, unsigned index, uint32_t fallback) const;
   bool plane_profile(unsigned bank, uint32_t format = 0x100) const;
   bool native_pixel_profile() const;
+  uint32_t block_width() const;
   bool native_copy_control_profile() const;
   bool copy_profile() const;
   bool fast_copy_profile() const;
@@ -270,6 +280,9 @@ private:
   std::array<uint32_t, 256> m_palette{};
   // RGB640 byte registers and flattened native table/color streams.
   std::vector<uint8_t> m_dac_regs;
+  uint32_t m_color_width = ColorWidth, m_color_height = ColorHeight,
+           m_color_pixels = ColorPixels;
+  uint8_t m_board_straps = BoardStraps;
   std::vector<uint32_t> m_color;
   std::vector<uint8_t> m_window_id;
   std::vector<uint8_t> m_texture;
