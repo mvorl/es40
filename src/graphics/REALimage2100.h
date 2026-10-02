@@ -129,7 +129,7 @@ public:
                             BlockExtent = 0x00800688,
                             BlockCommand = 0x0080068c;
   static constexpr uint32_t HostData = 0x00c00000, HostDataSize = 0x2000;
-  static constexpr uint32_t HostReadSize = 0x400000;
+  static constexpr uint32_t HostReadSize = 0x400000, HostUploadSize = 0x400000;
   // Bounded logical color banks; physical 3D-RAM layout is not modeled.
   static constexpr uint32_t ColorWidth = 1280, ColorHeight = 1024,
                             ColorPixels = ColorWidth * ColorHeight;

@@ -254,7 +254,10 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 			m_board_timing = uint8_t(((v << shift) & lanes) >> 24);
 		return;
 	}
-	if (a >= HostData && a < HostData + HostDataSize)
+	// Configuration accesses must not consume a pending pixel upload.
+	if (a >= HostData && (a < HostData + HostDataSize ||
+		(m_pending.width && !(peek(DrawControl) & 0x04000000u) &&
+			a < HostData + HostUploadSize)))
 	{
 		if (bits == 32)
 			host_data(v);
