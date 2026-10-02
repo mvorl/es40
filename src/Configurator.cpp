@@ -161,8 +161,8 @@
 #include "LSI53C1020.h"
 #include "Sym53C895.h"
 #include "Sym53C810.h"
-#include "ES1370.h"
-#include "MPU401.h"
+#include "audio/ES1370.h"
+#include "audio/MPU401.h"
 
 #endif // !CONFIGURATION_ONLY
 

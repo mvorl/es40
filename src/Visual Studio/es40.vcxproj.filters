@@ -61,6 +61,12 @@
     <Filter Include="Header Files\graphics">
       <UniqueIdentifier>{26e6ce89-351d-4e12-b425-99458488a6ea}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\audio">
+      <UniqueIdentifier>{b2566241-ee20-40d0-b1d4-42fc49d093d4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\audio">
+      <UniqueIdentifier>{afaad88e-def1-4a16-b595-470c04cde112}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\AliM1543C.cpp">
@@ -252,11 +258,11 @@
     <ClCompile Include="..\base\ThreadTLS.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\MPU401.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\audio\MPU401.cpp">
+      <Filter>Source Files\audio</Filter>
     </ClCompile>
-    <ClCompile Include="..\ES1370.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\audio\ES1370.cpp">
+      <Filter>Source Files\audio</Filter>
     </ClCompile>
     <ClCompile Include="..\CPU\jit\jitengine.cpp">
       <Filter>Source Files\CPU\jit</Filter>
@@ -551,11 +557,11 @@
     <ClInclude Include="..\base\Thread.h">
       <Filter>Header Files\base</Filter>
     </ClInclude>
-    <ClInclude Include="..\MPU401.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\audio\MPU401.h">
+      <Filter>Header Files\audio</Filter>
     </ClInclude>
-    <ClInclude Include="..\ES1370.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\audio\ES1370.h">
+      <Filter>Header Files\audio</Filter>
     </ClInclude>
     <ClInclude Include="..\CPU\jit\jitengine.h">
       <Filter>Header Files\CPU\jit</Filter>

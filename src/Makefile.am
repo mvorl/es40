@@ -96,6 +96,8 @@ noinst_HEADERS = CPU/AlphaCPU.h \
        CPU/jit/jitengine.h \
        CPU/jit/jitengine_internal.h
 
+noinst_HEADERS += audio/ES1370.h audio/MPU401.h
+
 es40_LDADD = $(ASMJIT_LDADD) $(ES40_LIBS)
 es40_cfg_LDADD = $(ES40_LIBS)
 es40_idb_LDADD = $(ASMJIT_LDADD) $(ES40_LIBS)
@@ -124,7 +126,7 @@ es40_SOURCES = AliM1543C.cpp \
        DMA.cpp \
        DPR.cpp \
        es40_debug.cpp \
-       ES1370.cpp \
+       audio/ES1370.cpp \
        network/Ethernet.cpp \
        Flash.cpp \
        FloppyController.cpp \

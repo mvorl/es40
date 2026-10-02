@@ -387,7 +387,7 @@ list(APPEND ES40_SOURCES
     src/dox.cpp
     src/DPR.cpp
     src/es40_debug.cpp
-    src/ES1370.cpp
+    src/audio/ES1370.cpp
     src/network/Ethernet.cpp
     src/Flash.cpp
     src/FloppyController.cpp
@@ -396,7 +396,7 @@ list(APPEND ES40_SOURCES
     src/graphics/ibm8514a.cpp
     src/Keyboard.cpp
     src/network/lockstep.cpp
-    src/MPU401.cpp
+    src/audio/MPU401.cpp
     src/network/NetworkBackend.cpp
     src/network/NetworkPcap.cpp
     src/network/NetworkTap.cpp

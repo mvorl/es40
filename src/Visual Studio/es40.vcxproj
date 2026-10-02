@@ -2202,8 +2202,8 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release - SSE2|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release JIT - SSE2|x64'">true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="..\ES1370.cpp" />
-    <ClCompile Include="..\MPU401.cpp" />
+    <ClCompile Include="..\audio\ES1370.cpp" />
+    <ClCompile Include="..\audio\MPU401.cpp" />
     <ClCompile Include="..\Configurator.cpp" />
     <ClCompile Include="..\DEC21143.cpp" />
     <ClCompile Include="..\network\NetworkBackend.cpp" />
@@ -2314,7 +2314,7 @@
     <ClInclude Include="..\DMA.h" />
     <ClInclude Include="..\DPR.h" />
     <ClInclude Include="..\emu\emu.h" />
-    <ClInclude Include="..\ES1370.h" />
+    <ClInclude Include="..\audio\ES1370.h" />
     <ClInclude Include="..\es40_debug.h" />
     <ClInclude Include="..\es40_endian.h" />
     <ClInclude Include="..\network\Ethernet.h" />
@@ -2336,7 +2336,7 @@
     <ClInclude Include="..\network\lockstep.h" />
     <ClInclude Include="..\logmacro.h" />
     <ClInclude Include="..\mame_shims.h" />
-    <ClInclude Include="..\MPU401.h" />
+    <ClInclude Include="..\audio\MPU401.h" />
     <ClInclude Include="..\PCIDevice.h" />
     <ClInclude Include="..\gui\plugin.h" />
     <ClInclude Include="..\Port80.h" />
