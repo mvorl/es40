@@ -139,6 +139,7 @@ public:
                             PlanePixelMask0 = 0x00c02400,
                             PlanePixelMask01 = 0x00c06400,
                             PlanePixelMask012 = 0x00c0e400,
+                            PlanePixelMask0123 = 0x00c1e400,
                             PlanePixelMask3 = 0x00c10400,
                             PlanePixelMask23 = 0x00c18400,
                             PlanePixelMask123 = 0x00c1c400,
