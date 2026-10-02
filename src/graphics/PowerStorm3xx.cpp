@@ -409,6 +409,11 @@ void CPowerStorm3xx::crtc_map(address_map& map)
 					u16((m_crtc_io_base & ~(0xffu << shift)) |
 						(u32(data) << shift));
 			}));
+	// Reject S3 identification/unlock probes without extension state.
+	map(0x30, 0x30).lr8(NAME([](offs_t) { return u8(0xff); }));
+	map(0x38, 0x39).lrw8(
+		NAME([](offs_t) { return u8(0xff); }),
+		NAME([](offs_t, u8) {}));
 }
 
 void CPowerStorm3xx::sequencer_map(address_map& map)

@@ -770,7 +770,7 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		return;
 	const bool upload = a == HostCommand && v == 0x01000032;
 	const bool fast_copy = a == HostCommand &&
-		(v == 0x00200062 || v == 0x00200072 || v == 0x01200062);
+		(v == 0x00200062 || v == 0x00200072 || v == 0x01200062 || v == 0x01200072);
 	const bool copy = (a == HostCommand &&
 		(v == 0x01000062 || v == 0x00000062 || v == 0x01000072 || v == 0x00000072)) ||
 		fast_copy || cross_copy;
