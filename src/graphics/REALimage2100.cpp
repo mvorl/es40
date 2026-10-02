@@ -872,6 +872,7 @@ uint32_t CRealImage2100::readback_pixel(uint32_t word) const
 
 void CRealImage2100::dma_command(uint32_t v)
 {
+	constexpr uint32_t DMABufferSize = 8192;
 	const uint32_t destination = m_dma_regs[8], source = m_dma_regs[9],
 		completion = m_dma_regs[12], words = v & 0xffff, bytes = words * 4;
 	bool neutral = true;
@@ -879,7 +880,8 @@ void CRealImage2100::dma_command(uint32_t v)
 		neutral &= m_dma_regs[i] == 0;
 	if ((v != 0xc4800010 && v != 0xc480001c && v != 0xc4800020 &&
 		v != 0xc4800027 && v != 0xc4800040 &&
-		v != 0xc4800082 && v != 0xc48000a9 && v != 0xc4800100 && v != 0xc4800400) ||
+		v != 0xc4800082 && v != 0xc48000a9 && v != 0xc4800100 && v != 0xc4800400 &&
+		v != 0xc48007e8) || bytes > DMABufferSize ||
 		!neutral || m_dma_regs[14] != 8 ||
 		!m_readback.width ||
 		uint64_t(m_readback.width) * m_readback.height - m_readback.word < words ||
@@ -894,7 +896,7 @@ void CRealImage2100::dma_command(uint32_t v)
 			"REALimage DMA transfer (rejected; completion not written)", DMACommand, v, true);
 		return;
 	}
-	std::array<uint8_t, 4096> data{};
+	std::array<uint8_t, DMABufferSize> data{};
 	for (uint32_t word = 0; word < words; ++word)
 	{
 		const uint32_t pixel = readback_pixel(m_readback.word + word);
