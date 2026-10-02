@@ -952,7 +952,7 @@ try
 	m_profile.subsystem_device = u16(powerstorm_setting(
 		cfg, "subsystem_device", compaq ? 0x4d31 : 0x4d35, 65535));
 	m_profile.bar0_size =
-		powerstorm_setting(cfg, "bar0_size", 0x2000000, 0x8000000);
+		powerstorm_setting(cfg, "bar0_size", m_profile.bar0_size, 0x8000000);
 	m_profile.bar1_size =
 		powerstorm_setting(cfg, "bar1_size", 0x2000000, 0x8000000);
 	for (const u32 size : {m_profile.bar0_size, m_profile.bar1_size})

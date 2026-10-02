@@ -47,15 +47,15 @@ class CPowerStorm3xx :
 {
 public:
   // Board identity is owned by the card, not the chip. The ROM identifies
-  // 10BA:0304; revision, subsystem IDs and BAR extents are unmeasured.
+  // 10BA:0304; the revision is unmeasured.
   struct PCIConfig
   {
     u16 vendor = 0x10ba, device = 0x0304, subsystem_vendor = 0,
         subsystem_device = 0;
     u8 revision = 0;
     u32 class_code = 0x030000;
-    // Candidate PCI DECODE extents, not physical VRAM sizes.
-    u32 bar0_size = 0x02000000, bar1_size = 0x02000000;
+    // BAR0 includes the front, back and depth apertures through 0x03a00000.
+    u32 bar0_size = 0x04000000, bar1_size = 0x02000000;
     std::array<u32, 64> config_data() const;
     std::array<u32, 64> config_mask(u32 rom_size) const;
   };

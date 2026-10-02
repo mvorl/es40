@@ -247,6 +247,7 @@ private:
   uint8_t dac_data_read();
   void dac_data_write(uint8_t value);
   uint32_t* native_register(uint32_t dword_address);
+  bool framebuffer_access(uint32_t address, int bits, uint32_t& value, bool write);
   uint32_t texture_offset(uint32_t address) const;
   uint32_t status_read();
   uint32_t peek(uint32_t address) const;
@@ -266,7 +267,8 @@ private:
   uint32_t host_read();
   uint32_t readback_pixel(uint32_t word) const;
   void dma_command(uint32_t value);
-  void color_write(uint32_t x, uint32_t y, uint32_t color, uint32_t banks);
+  void color_write(uint32_t x, uint32_t y, uint32_t color, uint32_t banks,
+    uint32_t lanes = 0xffffffffu);
   void composite_cursor(Frame& frame) const;
   void report(
     const char* code, uint32_t address, uint32_t value, const char* message,

@@ -160,6 +160,9 @@ uint32_t CRealImage2100::ReadMem(uint32_t a, int bits)
 			"Invalid native width or alignment");
 		return 0xffffffffu;
 	}
+	uint32_t pixel = 0;
+	if (framebuffer_access(a, bits, pixel, false))
+		return pixel;
 	if (a >= 0x838000 && a < 0x838020 &&
 		m_dac_ports.has_handler(a - 0x838000))
 		return m_dac_ports.read_byte(a - 0x838000);
@@ -200,6 +203,8 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 		report("ACCESS_WIDTH", a, v, "Invalid native width or alignment");
 		return;
 	}
+	if (framebuffer_access(a, bits, v, true))
+		return;
 	if (a >= 0x838000 && a < 0x838020 &&
 		m_dac_ports.has_handler(a - 0x838000))
 	{
@@ -507,7 +512,7 @@ bool CRealImage2100::fast_copy_profile() const
 }
 
 void CRealImage2100::color_write(
-	uint32_t x, uint32_t y, uint32_t color, uint32_t banks)
+	uint32_t x, uint32_t y, uint32_t color, uint32_t banks, uint32_t lanes)
 {
 	if (x >= m_color_width || y >= m_color_height)
 		return;
@@ -516,7 +521,7 @@ void CRealImage2100::color_write(
 		if (banks & (1u << bank))
 		{
 			uint32_t& destination = m_color[bank * m_color_pixels + offset];
-			const uint32_t mask = plane_value(bank, 0, 0xffffffff) & 0xffffff,
+			const uint32_t mask = plane_value(bank, 0, 0xffffffff) & lanes & 0xffffff,
 				rops = plane_value(bank, 4, 0x03030303);
 			uint32_t result = 0;
 			for (unsigned shift = 0; shift < 24; shift += 8)
@@ -531,6 +536,33 @@ void CRealImage2100::color_write(
 			}
 			destination = (destination & ~mask) | (result & mask);
 		}
+}
+
+bool CRealImage2100::framebuffer_access(
+	uint32_t a, int bits, uint32_t& value, bool write)
+{
+	if (a < 0x01000000 || a >= 0x03000000)
+		return false;
+	// Fixed front/back windows use an 8 KiB row pitch.
+	const uint32_t bank = (a >> 24) - 1, x = (a & 0x1fff) >> 2,
+		y = (a & 0x00ffffff) >> 13, shift = (a & 3) * 8;
+	if (!copy_profile() || !plane_profile(bank) ||
+		x >= m_color_width || y >= m_color_height)
+	{
+		unimplemented_once("REALimage framebuffer aperture/profile", a, value, write);
+		if (!write)
+			value = width_mask(bits);
+		return true;
+	}
+	if (write)
+	{
+		m_clear_cache[bank] = {};
+		color_write(x, y, value << shift, 1u << bank, width_mask(bits) << shift);
+	}
+	else
+		value = (m_color[size_t(bank) * m_color_pixels + y * m_color_width + x] >> shift) &
+			width_mask(bits);
+	return true;
 }
 
 void CRealImage2100::block_command(uint32_t v)
