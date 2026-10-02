@@ -881,10 +881,10 @@ void CRealImage2100::dma_command(uint32_t v)
 	bool neutral = true;
 	for (unsigned i : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 10u, 11u, 13u, 15u, 16u, 17u, 18u})
 		neutral &= m_dma_regs[i] == 0;
-	if ((v != 0xc4800010 && v != 0xc480001c && v != 0xc4800020 &&
+	if ((v != 0xc4800001 && v != 0xc4800010 && v != 0xc480001c && v != 0xc4800020 &&
 		v != 0xc4800027 && v != 0xc4800040 &&
 		v != 0xc4800082 && v != 0xc48000a9 && v != 0xc4800100 && v != 0xc4800398 &&
-		v != 0xc4800400 && v != 0xc48007e8) || bytes > DMABufferSize ||
+		v != 0xc4800400 && v != 0xc4800738 && v != 0xc48007e8) || bytes > DMABufferSize ||
 		!neutral || m_dma_regs[14] != 8 ||
 		!m_readback.width ||
 		uint64_t(m_readback.width) * m_readback.height - m_readback.word < words ||
