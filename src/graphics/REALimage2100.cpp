@@ -743,13 +743,12 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		(v == 0x01000062 || v == 0x00000062 || v == 0x01000072 || v == 0x00000072)) ||
 		fast_copy || cross_copy;
 	const bool fill = a == FillCommand && v == 0x09000832;
-	const bool transparent = a == HostCommand &&
-		(v == 0x01000872 || v == 0x01007872 || v == 0x01006872);
-	// Explicit source width, source bit offset zero.
-	const uint32_t mono_width = a != HostCommand ? 0 :
-		(v == 0x010078f2 || v == 0x01007872) ? 8 : v == 0x01006872 ? 7 :
-		v == 0x010058f2 ? 6 : v == 0x010018f2 ? 2 : 0;
-	const bool mono = v == 0x010008f2 || transparent || mono_width;
+	const bool host_mono = a == HostCommand && (v & ~0x7780u) == 0x01000872;
+	const bool transparent = host_mono && !(v & 0x80);
+	const uint32_t mono_offset = host_mono ? (v >> 8) & 7 : 0;
+	// Base glyph commands also carry widths without encoding them in the command.
+	const uint32_t mono_width = host_mono && (v & 0x7700) ? ((v >> 12) & 7) + 1 : 0;
+	const bool mono = host_mono || (a == FillCommand && v == 0x010008f2);
 	const bool profile = fast_copy ? fast_copy_profile() :
 		copy_profile() && (!(selected & 1) || plane_profile(0)) &&
 		(!(selected & 2) || plane_profile(1)) &&
@@ -835,7 +834,7 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 	const uint32_t pattern[] = {peek(MonoPattern0), peek(MonoPattern1),
 		peek(MonoPattern2), peek(MonoPattern3)};
 	if (mono && ((mono_width && width != mono_width) ||
-		(a == HostCommand && (width > 8 || height > 16)) ||
+		(a == HostCommand && (width + mono_offset > 8 || height > 16)) ||
 		(a == FillCommand && (pattern[0] != pattern[2] || pattern[1] != pattern[3]))))
 	{
 		unimplemented_once("REALimage monochrome layout (command rejected)", a, v, true);
@@ -854,7 +853,7 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 			if (mono)
 			{
 				// Local origin, MSB first; brush fills duplicate their eight rows.
-				const uint32_t px = uint32_t(col - x) & 7,
+				const uint32_t px = (uint32_t(col - x) + mono_offset) & 7,
 					py = uint32_t(row - y) & 15;
 				if (!(pattern[3 - py / 4] & (1u << (31 - 8 * (py & 3) - px))))
 				{
