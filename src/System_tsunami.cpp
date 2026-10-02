@@ -34,7 +34,7 @@
 #include "StdAfx.h"
 #include "System.h"
 #include "PCIDevice.h"
-#include "AlphaCPU.h"
+#include "CPU/AlphaCPU.h"
 
 /**
  * \brief Write to PIO space (address above main memory): a mapped device,

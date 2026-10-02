@@ -370,10 +370,10 @@ list(APPEND ES40_SOURCES
     src/AliM1543C_pmu.cpp
     src/AliM1543C_usb.cpp
     src/AliM1543C.cpp
-    src/AlphaCPU_ieeefloat.cpp
-    src/AlphaCPU_vaxfloat.cpp
-    src/AlphaCPU_vmspal.cpp
-    src/AlphaCPU.cpp
+    src/CPU/AlphaCPU_ieeefloat.cpp
+    src/CPU/AlphaCPU_vaxfloat.cpp
+    src/CPU/AlphaCPU_vmspal.cpp
+    src/CPU/AlphaCPU.cpp
     src/AlphaSim.cpp
     # src/graphics/Cirrus.cpp
     src/Configurator.cpp
@@ -421,11 +421,11 @@ list(APPEND ES40_SOURCES
     src/System_es40.cpp
     src/System_tsunami.cpp
     src/SystemComponent.cpp
-    src/TraceEngine.cpp
+    src/CPU/TraceEngine.cpp
     src/graphics/VGA.cpp
-    src/jit/jitengine.cpp
-    src/jit/jitengine_x64.cpp
-    src/jit/jitengine_a64.cpp
+    src/CPU/jit/jitengine.cpp
+    src/CPU/jit/jitengine_x64.cpp
+    src/CPU/jit/jitengine_a64.cpp
     )
 
 if (WIN32)
@@ -505,7 +505,7 @@ if (NOT ES40_DISABLE_ASMJIT)
     set(ASMJIT_NO_INSTALL ON)
     # Build only the backend matching the target: x86-64 is the real codegen host; ARM64
     # (incl. Apple Silicon) builds the JIT scaffolding, which always falls back to the
-    # interpreter (no a64 code is emitted yet -- see src/jit/jitengine_a64.cpp).
+    # interpreter (no a64 code is emitted yet -- see src/CPU/jit/jitengine_a64.cpp).
     set(ASMJIT_NO_FOREIGN ON)
     add_subdirectory(third_party/asmjit)
     list(APPEND ES40_DEFINITIONS ES40_JIT)

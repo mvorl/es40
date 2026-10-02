@@ -132,7 +132,7 @@
 #ifndef CONFIGURATION_ONLY
 
 #include "System.h"
-#include "AlphaCPU.h"
+#include "CPU/AlphaCPU.h"
 #include "Serial.h"
 #include "Flash.h"
 #include "DPR.h"

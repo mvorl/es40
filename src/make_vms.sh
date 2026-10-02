@@ -209,6 +209,10 @@ VMS_EOF
       source_FILE=${source_FILE#gui/}
       object_FILE="gui_$source_FILE"
       source_FILE="[.gui]$source_FILE"
+    elif test "${source_FILE:0:4}" = "CPU/"; then
+      source_FILE=${source_FILE#CPU/}
+      object_FILE="CPU_$source_FILE"
+      source_FILE="[.CPU]$source_FILE"
     elif test "${source_FILE:0:5}" = "base/"; then
       source_FILE=${source_FILE#base/}
       object_FILE="base_$source_FILE"

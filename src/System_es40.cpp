@@ -33,7 +33,7 @@
 #define __STDC_FORMAT_MACROS 1
 #include "StdAfx.h"
 #include "System.h"
-#include "AlphaCPU.h"
+#include "CPU/AlphaCPU.h"
 #include "Flash.h"
 
 /**

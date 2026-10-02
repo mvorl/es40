@@ -107,7 +107,7 @@
 #include "System.h"
 #include "Serial.h"
 #include <time.h>
-#include "AlphaCPU.h"
+#include "CPU/AlphaCPU.h"
 
 #define ToBCD(x)  (((x) / 10 << 4) | ((x) % 10))
 

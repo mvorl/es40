@@ -86,7 +86,7 @@
 #include "StdAfx.h"
 #include "PCIDevice.h"
 #include "System.h"
-#include "diag_rpcc.h"
+#include "CPU/diag_rpcc.h"
 
 #include <chrono>
 #include <cstdarg>

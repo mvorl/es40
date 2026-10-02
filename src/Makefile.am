@@ -75,6 +75,27 @@ endif
 
 AM_CPPFLAGS = -I$(top_srcdir)/src/emu
 
+# CPU headers are distributed with the emulator sources.
+noinst_HEADERS = CPU/AlphaCPU.h \
+       CPU/cpu_arith.h \
+       CPU/cpu_bwx.h \
+       CPU/cpu_control.h \
+       CPU/cpu_debug.h \
+       CPU/cpu_defs.h \
+       CPU/cpu_fp_branch.h \
+       CPU/cpu_fp_memory.h \
+       CPU/cpu_fp_operate.h \
+       CPU/cpu_logical.h \
+       CPU/cpu_memory.h \
+       CPU/cpu_misc.h \
+       CPU/cpu_mvi.h \
+       CPU/cpu_pal.h \
+       CPU/cpu_vax.h \
+       CPU/diag_rpcc.h \
+       CPU/TraceEngine.h \
+       CPU/jit/jitengine.h \
+       CPU/jit/jitengine_internal.h
+
 es40_LDADD = $(ASMJIT_LDADD) $(ES40_LIBS)
 es40_cfg_LDADD = $(ES40_LIBS)
 es40_idb_LDADD = $(ASMJIT_LDADD) $(ES40_LIBS)
@@ -87,10 +108,10 @@ es40_SOURCES = AliM1543C.cpp \
        AliM1543C_ide.cpp \
        AliM1543C_usb.cpp \
        AliM1543C_pmu.cpp \
-       AlphaCPU.cpp \
-       AlphaCPU_ieeefloat.cpp \
-       AlphaCPU_vaxfloat.cpp \
-       AlphaCPU_vmspal.cpp \
+       CPU/AlphaCPU.cpp \
+       CPU/AlphaCPU_ieeefloat.cpp \
+       CPU/AlphaCPU_vaxfloat.cpp \
+       CPU/AlphaCPU_vmspal.cpp \
        AlphaSim.cpp \
        Configurator.cpp \
        DEC21143.cpp \
@@ -143,7 +164,7 @@ es40_SOURCES = AliM1543C.cpp \
        System_es40.cpp \
        System_tsunami.cpp \
        SnapshotFile.h \
-       TraceEngine.cpp \
+       CPU/TraceEngine.cpp \
        graphics/VGA.cpp \
        i2c_spd.cpp \
 	base/ThreadTLS.cpp \
@@ -157,8 +178,8 @@ es40_SOURCES = AliM1543C.cpp \
 	base/Exception.cpp
 
 if ENABLE_ASMJIT
-include jit/asmjit.am
-AM_CPPFLAGS += -I$(top_srcdir)/src/jit -DES40_JIT \
+include CPU/jit/asmjit.am
+AM_CPPFLAGS += -I$(top_srcdir)/src/CPU/jit -DES40_JIT \
                -I$(top_srcdir)/third_party/asmjit
 # release build needs this for ASMJIT, and that's mostly what we have, if we want 
 # asmjit debug, change to ASMJIT_BUILD_DEBUG. 
@@ -172,7 +193,7 @@ AM_CPPFLAGS += -DASMJIT_NO_AARCH64
 endif
 
 # Both backends are listed unconditionally; each is a no-op TU on the other host arch.
-es40_SOURCES += jit/jitengine.cpp jit/jitengine_x64.cpp jit/jitengine_a64.cpp
+es40_SOURCES += CPU/jit/jitengine.cpp CPU/jit/jitengine_x64.cpp CPU/jit/jitengine_a64.cpp
 
 ASMJIT_LDADD = libasmjit.a
 endif

@@ -37,10 +37,16 @@
     <Filter Include="Resource Files\.github stuff">
       <UniqueIdentifier>{a4d7ec1f-da42-411a-89a4-e80b7300a44c}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Header Files\jit">
+    <Filter Include="Header Files\CPU">
+      <UniqueIdentifier>{49b9ce79-7564-42c1-bcfd-5028955ee669}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\CPU">
+      <UniqueIdentifier>{e965e058-b62c-40ca-ba42-83374a531c16}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\CPU\jit">
       <UniqueIdentifier>{9d4e1954-70b3-4ded-8268-6ab211ca925d}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Source Files\jit">
+    <Filter Include="Source Files\CPU\jit">
       <UniqueIdentifier>{afc55d99-1707-459d-8bd0-c5f33acd4dea}</UniqueIdentifier>
     </Filter>
     <Filter Include="Header Files\network">
@@ -69,17 +75,17 @@
     <ClCompile Include="..\AliM1543C_pmu.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\AlphaCPU.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\CPU\AlphaCPU.cpp">
+      <Filter>Source Files\CPU</Filter>
     </ClCompile>
-    <ClCompile Include="..\AlphaCPU_ieeefloat.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\CPU\AlphaCPU_ieeefloat.cpp">
+      <Filter>Source Files\CPU</Filter>
     </ClCompile>
-    <ClCompile Include="..\AlphaCPU_vaxfloat.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\CPU\AlphaCPU_vaxfloat.cpp">
+      <Filter>Source Files\CPU</Filter>
     </ClCompile>
-    <ClCompile Include="..\AlphaCPU_vmspal.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\CPU\AlphaCPU_vmspal.cpp">
+      <Filter>Source Files\CPU</Filter>
     </ClCompile>
     <ClCompile Include="..\AlphaSim.cpp">
       <Filter>Source Files</Filter>
@@ -210,8 +216,8 @@
     <ClCompile Include="..\SystemComponent.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\TraceEngine.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\CPU\TraceEngine.cpp">
+      <Filter>Source Files\CPU</Filter>
     </ClCompile>
     <ClCompile Include="..\graphics\VGA.cpp">
       <Filter>Source Files\graphics</Filter>
@@ -252,14 +258,14 @@
     <ClCompile Include="..\ES1370.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\jit\jitengine.cpp">
-      <Filter>Source Files\jit</Filter>
+    <ClCompile Include="..\CPU\jit\jitengine.cpp">
+      <Filter>Source Files\CPU\jit</Filter>
     </ClCompile>
-    <ClCompile Include="..\jit\jitengine_x64.cpp">
-      <Filter>Source Files\jit</Filter>
+    <ClCompile Include="..\CPU\jit\jitengine_x64.cpp">
+      <Filter>Source Files\CPU\jit</Filter>
     </ClCompile>
-    <ClCompile Include="..\jit\jitengine_a64.cpp">
-      <Filter>Source Files\jit</Filter>
+    <ClCompile Include="..\CPU\jit\jitengine_a64.cpp">
+      <Filter>Source Files\CPU\jit</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -275,8 +281,8 @@
     <ClInclude Include="..\AliM1543C_pmu.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\AlphaCPU.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\CPU\AlphaCPU.h">
+      <Filter>Header Files\CPU</Filter>
     </ClInclude>
     <ClInclude Include="..\graphics\Cirrus.h">
       <Filter>Header Files\graphics</Filter>
@@ -290,47 +296,47 @@
     <ClInclude Include="..\Configurator.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\cpu_arith.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\CPU\cpu_arith.h">
+      <Filter>Header Files\CPU</Filter>
     </ClInclude>
-    <ClInclude Include="..\cpu_bwx.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\CPU\cpu_bwx.h">
+      <Filter>Header Files\CPU</Filter>
     </ClInclude>
-    <ClInclude Include="..\cpu_control.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\CPU\cpu_control.h">
+      <Filter>Header Files\CPU</Filter>
     </ClInclude>
-    <ClInclude Include="..\cpu_debug.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\CPU\cpu_debug.h">
+      <Filter>Header Files\CPU</Filter>
     </ClInclude>
-    <ClInclude Include="..\cpu_defs.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\CPU\cpu_defs.h">
+      <Filter>Header Files\CPU</Filter>
     </ClInclude>
-    <ClInclude Include="..\cpu_fp_branch.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\CPU\cpu_fp_branch.h">
+      <Filter>Header Files\CPU</Filter>
     </ClInclude>
-    <ClInclude Include="..\cpu_fp_memory.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\CPU\cpu_fp_memory.h">
+      <Filter>Header Files\CPU</Filter>
     </ClInclude>
-    <ClInclude Include="..\cpu_fp_operate.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\CPU\cpu_fp_operate.h">
+      <Filter>Header Files\CPU</Filter>
     </ClInclude>
-    <ClInclude Include="..\cpu_logical.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\CPU\cpu_logical.h">
+      <Filter>Header Files\CPU</Filter>
     </ClInclude>
-    <ClInclude Include="..\cpu_memory.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\CPU\cpu_memory.h">
+      <Filter>Header Files\CPU</Filter>
     </ClInclude>
-    <ClInclude Include="..\cpu_misc.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\CPU\cpu_misc.h">
+      <Filter>Header Files\CPU</Filter>
     </ClInclude>
-    <ClInclude Include="..\cpu_mvi.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\CPU\cpu_mvi.h">
+      <Filter>Header Files\CPU</Filter>
     </ClInclude>
-    <ClInclude Include="..\cpu_pal.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\CPU\cpu_pal.h">
+      <Filter>Header Files\CPU</Filter>
     </ClInclude>
-    <ClInclude Include="..\cpu_vax.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\CPU\cpu_vax.h">
+      <Filter>Header Files\CPU</Filter>
     </ClInclude>
     <ClInclude Include="..\datatypes.h">
       <Filter>Header Files</Filter>
@@ -467,8 +473,8 @@
     <ClInclude Include="..\network\telnet.h">
       <Filter>Header Files\network</Filter>
     </ClInclude>
-    <ClInclude Include="..\TraceEngine.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\CPU\TraceEngine.h">
+      <Filter>Header Files\CPU</Filter>
     </ClInclude>
     <ClInclude Include="..\graphics\VGA.h">
       <Filter>Header Files\graphics</Filter>
@@ -551,14 +557,14 @@
     <ClInclude Include="..\ES1370.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\jit\jitengine.h">
-      <Filter>Header Files\jit</Filter>
+    <ClInclude Include="..\CPU\jit\jitengine.h">
+      <Filter>Header Files\CPU\jit</Filter>
     </ClInclude>
-    <ClInclude Include="..\jit\jitengine_internal.h">
-      <Filter>Header Files\jit</Filter>
+    <ClInclude Include="..\CPU\jit\jitengine_internal.h">
+      <Filter>Header Files\CPU\jit</Filter>
     </ClInclude>
-    <ClInclude Include="..\diag_rpcc.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\CPU\diag_rpcc.h">
+      <Filter>Header Files\CPU</Filter>
     </ClInclude>
     <ClInclude Include="..\DiskFileBinCue.h">
       <Filter>Header Files</Filter>

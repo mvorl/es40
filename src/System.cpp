@@ -319,7 +319,7 @@
 #include "System.h"
 #include "PCIDevice.h"
 #include "graphics/VGA.h"
-#include "AlphaCPU.h"
+#include "CPU/AlphaCPU.h"
 #include "network/lockstep.h"
 #include "DPR.h"
 #include "Flash.h"

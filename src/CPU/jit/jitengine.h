@@ -44,7 +44,7 @@
 #include <cstdint>
 #include <vector>
 #include <unordered_set>
-#include "../config_debug.h"   // JIT_VERIFY
+#include "../../config_debug.h"   // JIT_VERIFY
 #ifdef JIT_STATS
 // host cycle counter for the JIT_STATS wall-time split: TSC on x86-64, CNTVCT_EL0 on ARM64
 #if defined(ES40_JIT_X64)

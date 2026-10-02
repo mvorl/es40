@@ -27,7 +27,7 @@
 #ifdef ES40_JIT
 
 #ifdef _WIN32
-#include "../config_win32.h"
+#include "../../config_win32.h"
 #endif
 
 #include "jitengine.h"

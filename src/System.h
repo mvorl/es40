@@ -145,7 +145,7 @@
   * \author Camiel Vanderhoeven
   **/
 #include "SystemComponent.h"
-#include "TraceEngine.h"
+#include "CPU/TraceEngine.h"
 #include "i2c_spd.h"
 #include <atomic>
 #include <chrono>

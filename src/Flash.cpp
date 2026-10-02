@@ -93,7 +93,7 @@
 #include "StdAfx.h"
 #include "Flash.h"
 #include "System.h"
-#include "AlphaCPU.h"
+#include "CPU/AlphaCPU.h"
 #include <memory>
 
   // These are the modes for our flash-state-machine.
