@@ -714,10 +714,12 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 	const bool copy = (a == HostCommand &&
 		(v == 0x01000062 || v == 0x00000062 || v == 0x01000072)) || fast_copy || cross_copy;
 	const bool fill = a == FillCommand && v == 0x09000832;
-	const bool transparent = a == HostCommand && v == 0x01000872;
-	// Explicit eight-pixel width, source bit offset zero.
-	const bool width8_mono = a == HostCommand && v == 0x010078f2;
-	const bool mono = v == 0x010008f2 || transparent || width8_mono;
+	const bool transparent = a == HostCommand &&
+		(v == 0x01000872 || v == 0x01007872 || v == 0x01006872);
+	// Explicit source width, source bit offset zero.
+	const uint32_t mono_width = a != HostCommand ? 0 :
+		(v == 0x010078f2 || v == 0x01007872) ? 8 : v == 0x01006872 ? 7 : 0;
+	const bool mono = v == 0x010008f2 || transparent || mono_width;
 	const bool profile = fast_copy ? fast_copy_profile() :
 		copy_profile() && (!(selected & 1) || plane_profile(0)) &&
 		(!(selected & 2) || plane_profile(1)) &&
@@ -802,7 +804,7 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 	}
 	const uint32_t pattern[] = {peek(MonoPattern0), peek(MonoPattern1),
 		peek(MonoPattern2), peek(MonoPattern3)};
-	if (mono && ((width8_mono && width != 8) ||
+	if (mono && ((mono_width && width != mono_width) ||
 		(a == HostCommand && (width > 8 || height > 16)) ||
 		(a == FillCommand && (pattern[0] != pattern[2] || pattern[1] != pattern[3]))))
 	{
