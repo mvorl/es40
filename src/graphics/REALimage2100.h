@@ -38,8 +38,8 @@
 #include <utility>
 #include <vector>
 
-/** REALimage 2100 native transport, VGA storage and a limited native 2D path.
- * The NT 24-bit copy profile and texture aperture are modeled; no 3D engine.
+/** REALimage 2100 transport, VGA storage and bounded native drawing profiles.
+ * Models NT 2D, the texture aperture and untextured color/depth triangles.
  * Unknown native registers are shadowed with a one-time diagnostic, as in
  * CPermedia2.
  */
@@ -116,6 +116,7 @@ public:
                             MonoPattern3 = 0x00800624;
   // Driver context links are inert metadata preceding DrawControl.
   static constexpr uint32_t ContextLink = 0x008005fc;
+  static constexpr uint32_t VertexBase = 0x00800220, VertexStride = 0x40;
   static constexpr uint32_t DrawControl = 0x00800600,
                             MemoryControl = 0x00800604,
                             PixelControl = 0x00800608,
@@ -272,6 +273,8 @@ private:
   bool fill_profile() const;
   bool copy_profile() const;
   bool fast_copy_profile() const;
+  bool triangle_profile() const;
+  void triangle_command(uint32_t address, uint32_t value);
   void start_command(uint32_t address, uint32_t value);
   void block_command(uint32_t value);
   void host_data(uint32_t value);

@@ -26,6 +26,8 @@
 
 #include "REALimage2100.h"
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <istream>
 #include <ostream>
 #include <sstream>
@@ -45,6 +47,13 @@ static uint32_t width_mask(int bits)
 static bool zero_context_register(uint32_t a)
 {
 	return a == 0x008005cc || a == 0x008005d4 || a == 0x008005dc;
+}
+
+static bool vertex_register(uint32_t a)
+{
+	return a >= CRealImage2100::VertexBase &&
+		a < CRealImage2100::VertexBase + 3 * CRealImage2100::VertexStride &&
+		(a - CRealImage2100::VertexBase) % CRealImage2100::VertexStride < 0x20;
 }
 
 // Register dispatch
@@ -300,7 +309,14 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 		m_clear_cache = {};
 	if (plane_write(key, lanes, (v << shift) & lanes))
 		return;
-	if (key == HostCommand || key == FillCommand || key == BlockCommand)
+	if (vertex_register(key))
+	{
+		if (bits != 32)
+			unimplemented_once("REALimage vertex width (command rejected)", a, v, true);
+		else if ((key - VertexBase) % VertexStride == 0x1c)
+			triangle_command(key, it->second);
+	}
+	else if (key == HostCommand || key == FillCommand || key == BlockCommand)
 	{
 		// Only longword command launches have been established by the driver.
 		if (bits == 32)
@@ -343,7 +359,7 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 	}
 }
 
-// NT 2D subset, decoded from pbxgdac.dll and the startup trace.
+// Native drawing profiles decoded from the NT drivers and traces.
 
 uint32_t CRealImage2100::peek(uint32_t a) const
 {
@@ -442,7 +458,8 @@ bool CRealImage2100::plane_profile(unsigned bank, uint32_t format) const
 
 bool CRealImage2100::native_storage_register(uint32_t a) const
 {
-	return a == ContextLink || a == DrawControl || a == MemoryControl || a == PixelControl ||
+	return vertex_register(a) || a == ContextLink ||
+		a == DrawControl || a == MemoryControl || a == PixelControl ||
 		a == Foreground || a == Background || a == HostOrigin ||
 		a == MonoPattern0 || a == MonoPattern1 ||
 		a == MonoPattern2 || a == MonoPattern3 ||
@@ -943,6 +960,147 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		}
 }
 
+bool CRealImage2100::triangle_profile() const
+{
+	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
+		width = block_width(), columns = (control >> 8) & 15,
+		copy_columns = ((peek(MemoryControl) >> 24) & 63) + 1;
+	if ((control & ~0x000fff01u) != 0x81800002 || banks != 5 ||
+		!native_pixel_profile() || !width || columns != (copy_columns + 1) / 2 ||
+		copy_columns > (m_color_width + 10 * width - 1) / (10 * width) ||
+		m_pending.width || m_readback.width)
+		return false;
+	const std::pair<uint32_t, uint32_t> profile[] = {
+		{GlobalControl0, 0x180}, {GlobalControl1, 0x20800}, {GlobalControl2, 0x33},
+		{PipelineControl0, 0x05008001}, {PipelineControl1, 0},
+		{PipelineControl2, 0x10000000}, {PipelineControl3, 0},
+		{PipelineControl4, 0}, {PipelineControl5, 0},
+		{0x008005cc, 0}, {0x008005d4, 0}, {0x008005dc, 0}, {ContextControl, 0}};
+	for (const auto& reg : profile)
+		if (peek(reg.first) != reg.second)
+			return false;
+	if ((peek(ClipXMin) | peek(ClipXMax) | peek(ClipYMin) | peek(ClipYMax)) & 0xffff000fu)
+		return false;
+	if (!plane_profile(0) || plane_value(0, 0, 0) != 0xffffffffu ||
+		plane_value(0, 4, 0) != 0x03030303 || plane_value(0, 10, 0) != 0)
+		return false;
+	const uint32_t depth[] = {0x0fff0fff, 0, 0xf000, 0x0fff0fff,
+		0x03030303, 0x0a000205, 0, 0, 0, 0, 0x00ff0000, 0x33300000};
+	for (unsigned i = 0; i < std::size(depth); ++i)
+		if (plane_value(2, i, 0) != depth[i])
+			return false;
+	if (plane_value(2, 14, 0) || plane_value(2, 15, 0))
+		return false;
+	for (unsigned bank : {0u, 2u})
+	{
+		if (m_planes[bank].unknown_masks)
+			return false;
+		for (unsigned i = 24; i < 24 + width / 2; ++i)
+			if (plane_value(bank, i, 0xffffffff) != 0xffffffffu)
+				return false;
+	}
+	return true;
+}
+
+void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
+{
+	if (!value)
+		return;
+	auto reject = [&]() {
+		unimplemented_once("REALimage triangle command/profile (command rejected)",
+			address, value, true);
+	};
+	if (value != 0x13 || !triangle_profile())
+	{
+		reject();
+		return;
+	}
+	struct Vertex { double alpha, red, green, blue, x, y, z; } vertex[3];
+	for (unsigned slot = 0; slot < 3; ++slot)
+	{
+		double component[7];
+		for (unsigned i = 0; i < 7; ++i)
+		{
+			const auto reg = m_shadow.find(VertexBase + slot * VertexStride + i * 4);
+			if (reg == m_shadow.end())
+			{
+				reject();
+				return;
+			}
+			float input;
+			static_assert(sizeof(input) == sizeof(reg->second), "IEEE vertex word size");
+			std::memcpy(&input, &reg->second, sizeof(input));
+			if (!std::isfinite(input) ||
+				(i == 0 && (input < 0 || input > 256)) ||
+				((i == 4 || i == 5) && (input < -32768 || input >= 32768)) ||
+				(i == 6 && (input < 0 || input > 1)))
+			{
+				reject();
+				return;
+			}
+			// Lighting can emit overrange RGB; clamp before interpolation.
+			component[i] = i > 0 && i < 4 ? std::clamp(double(input), 0.0, 256.0) : input;
+		}
+		vertex[slot] = {component[0], component[1], component[2], component[3],
+			component[4], component[5], component[6]};
+	}
+	auto edge = [](const Vertex& a, const Vertex& b, double x, double y) {
+		return (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
+	};
+	double area = edge(vertex[0], vertex[1], vertex[2].x, vertex[2].y);
+	if (!area)
+		return;
+	if (area < 0)
+	{
+		std::swap(vertex[1], vertex[2]);
+		area = -area;
+	}
+	const Vertex &a = vertex[0], &b = vertex[1], &c = vertex[2];
+	const int left = std::max(int(peek(ClipXMin) >> 4),
+		int(std::ceil(std::min({a.x, b.x, c.x}) - 0.5))),
+		top = std::max(int(peek(ClipYMin) >> 4),
+			int(std::ceil(std::min({a.y, b.y, c.y}) - 0.5))),
+		right = std::min({int(m_color_width) - 1, int(peek(ClipXMax) >> 4),
+			int(std::floor(std::max({a.x, b.x, c.x}) - 0.5))}),
+		bottom = std::min({int(m_color_height) - 1, int(peek(ClipYMax) >> 4),
+			int(std::floor(std::max({a.y, b.y, c.y}) - 0.5))});
+	if (left > right || top > bottom)
+		return;
+	auto top_left = [](const Vertex& p, const Vertex& q) {
+		return q.y < p.y || (q.y == p.y && q.x > p.x);
+	};
+	const bool include_a = top_left(b, c), include_b = top_left(c, a), include_c = top_left(a, b);
+	const uint32_t wid = (peek(DrawControl) >> 4) & 0xf000;
+	m_clear_cache[0] = {};
+	// Launches reuse all three slots; sorting must leave their registers intact.
+	for (int y = top; y <= bottom; ++y)
+		for (int x = left; x <= right; ++x)
+		{
+			const double ea = edge(b, c, x + 0.5, y + 0.5),
+				eb = edge(c, a, x + 0.5, y + 0.5), ec = edge(a, b, x + 0.5, y + 0.5);
+			if (ea < 0 || (ea == 0 && !include_a) ||
+				eb < 0 || (eb == 0 && !include_b) || ec < 0 || (ec == 0 && !include_c))
+				continue;
+			const size_t offset = size_t(y) * m_color_width + unsigned(x);
+			uint32_t& auxiliary = m_auxiliary[offset];
+			if ((auxiliary & 0xf000) != wid)
+				continue;
+			const double wb = eb / area, wc = ec / area;
+			const uint32_t z = uint32_t(std::clamp(a.z + wb * (b.z - a.z) + wc * (c.z - a.z),
+				0.0, 1.0) * 16777215),
+				old_z = (auxiliary & 0xfff) | ((auxiliary >> 4) & 0xfff000);
+			if (z > old_z)
+				continue;
+			auto channel = [&](double av, double bv, double cv) {
+				return uint32_t(std::clamp(av + wb * (bv - av) + wc * (cv - av), 0.0, 255.0));
+			};
+			const uint32_t color = (channel(a.red, b.red, c.red) << 16) |
+				(channel(a.green, b.green, c.green) << 8) | channel(a.blue, b.blue, c.blue);
+			color_write(unsigned(x), unsigned(y), color, 1);
+			auxiliary = (auxiliary & ~0x0fff0fffu) | (z & 0xfff) | ((z & 0xfff000) << 4);
+		}
+}
+
 void CRealImage2100::host_data(uint32_t v)
 {
 	if (!m_pending.width)
@@ -1027,7 +1185,7 @@ bool CRealImage2100::dma_list_target(uint32_t a) const
 {
 	if (a & 3)
 		return false;
-	if (a == ContextLink || zero_context_register(a))
+	if (vertex_register(a) || a == ContextLink || zero_context_register(a))
 		return true;
 	if (a >= HostData && a < HostData + HostDataSize)
 		return true;
@@ -1041,7 +1199,7 @@ bool CRealImage2100::dma_list_target(uint32_t a) const
 		return plane_index != 24 || a == PlanePixelMask ||
 			!(((a >> 13) & 255) & ~available);
 	}
-	// Command lists initially expose only the existing 2D register set.
+	// Other command-list targets use the existing register handlers.
 	switch (a)
 	{
 	case ClipXMax: case ClipYMax: case ClipXMin: case ClipYMin:
