@@ -41,6 +41,13 @@ static uint32_t width_mask(int bits)
 	return bits == 32 ? 0xffffffffu : (1u << bits) - 1u;
 }
 
+// Bulk context templates write zero to these otherwise undecoded slots.
+static bool zero_context_register(uint32_t a)
+{
+	return a == 0x008005cc || a == 0x008005d4 ||
+		a == 0x008005dc || a == 0x008005fc;
+}
+
 // Register dispatch
 
 void CRealImage2100::dac_port_map(address_map& map)
@@ -319,6 +326,11 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 		if (it->second)
 			unimplemented_once("REALimage display selector", a, v, true);
 	}
+	else if (zero_context_register(key))
+	{
+		if (it->second)
+			unimplemented_once("REALimage context register/profile", a, v, true);
+	}
 	else if (!native_storage_register(key))
 	{
 		// Unmodeled mask aliases must not leave a stale block mask usable.
@@ -347,16 +359,19 @@ int CRealImage2100::plane_register(uint32_t a)
 	if (a == PlanePixelMask ||
 		((a & ~0x1fe000u) == HostData + 0x400 && (a & 0x1fe000u)))
 		return 24;
-	switch (a)
+	// DFE7xx and FFE7xx are the two observed full-selector state forms.
+	const uint32_t state_address = a | 0x00200000u;
+	switch (state_address)
 	{
 	case PlaneStateBase + 0x00: case PlaneStateBase + 0x04:
 	case PlaneStateBase + 0x08: case PlaneStateBase + 0x0c:
 	case PlaneStateBase + 0x10: case PlaneStateBase + 0x14:
-	case PlaneStateBase + 0x18: case PlaneStateBase + 0x20:
+	case PlaneStateBase + 0x18: case PlaneStateBase + 0x1c:
+	case PlaneStateBase + 0x20:
 	case PlaneStateBase + 0x24: case PlaneStateBase + 0x28:
 	case PlaneStateBase + 0x2c: case PlaneStateBase + 0x38:
 	case PlaneStateBase + 0x3c:
-		return int((a - PlaneStateBase) / 4);
+		return int((state_address - PlaneStateBase) / 4);
 	default:
 		return -1;
 	}
@@ -417,7 +432,8 @@ bool CRealImage2100::plane_profile(unsigned bank, uint32_t format) const
 		plane_value(bank, 3, 0) == 0 &&
 		!(plane_value(bank, 4, 0x03030303) & 0xf0f0f0f0) &&
 		plane_value(bank, 5, 0x0a000000) == 0x0a000000 &&
-		plane_value(bank, 6, 0) == 0 && plane_value(bank, 8, 0) == 0 &&
+		plane_value(bank, 6, 0) == 0 && plane_value(bank, 7, 0) == 0 &&
+		plane_value(bank, 8, 0) == 0 &&
 		plane_value(bank, 9, 0) == 0 &&
 		(compare_mask == 0 || compare_mask == 0x00ff0000) &&
 		plane_value(bank, 11, 0x33300000) == 0x33300000 &&
@@ -441,6 +457,8 @@ bool CRealImage2100::native_storage_register(uint32_t a) const
 		a == GlobalControl0 || a == GlobalControl1 || a == GlobalControl2 ||
 		a == PipelineControl0 || a == PipelineControl1 ||
 		a == PipelineControl2 || a == PipelineControl3 ||
+		a == PipelineControl4 || a == PipelineControl5 ||
+		zero_context_register(a) ||
 		(a >= TimingBase && a <= TimingBase + 0x1c);
 }
 
@@ -469,7 +487,9 @@ bool CRealImage2100::native_copy_control_profile() const
 	const std::pair<uint32_t, uint32_t> profile[] = {
 		{GlobalControl0, 1}, {GlobalControl1, 0x20811}, {GlobalControl2, 0x33},
 		{PipelineControl0, 0}, {PipelineControl1, 0},
-		{PipelineControl2, 0x10000000}, {PipelineControl3, 0}};
+		{PipelineControl2, 0x10000000}, {PipelineControl3, 0},
+		{PipelineControl4, 0}, {PipelineControl5, 0},
+		{0x008005cc, 0}, {0x008005d4, 0}, {0x008005dc, 0}, {0x008005fc, 0}};
 	for (const auto& reg : profile)
 	{
 		const auto it = m_shadow.find(reg.first);
@@ -499,6 +519,7 @@ bool CRealImage2100::fast_copy_profile() const
 		plane_value(bank, 3, 0) != 0 ||
 		plane_value(bank, 4, 0x03030303) != 0x05050505 ||
 		plane_value(bank, 5, 0x0a000000) != 0 || plane_value(bank, 6, 0) != 1 ||
+		plane_value(bank, 7, 0) != 0 ||
 		plane_value(bank, 8, 0) != 0 || plane_value(bank, 9, 0) != 0 ||
 		plane_value(bank, 10, 0) != 0 ||
 		plane_value(bank, 11, 0x33300000) != 0x33300000 ||
@@ -983,6 +1004,8 @@ bool CRealImage2100::dma_list_target(uint32_t a) const
 {
 	if (a & 3)
 		return false;
+	if (zero_context_register(a))
+		return true;
 	if (a >= HostData && a < HostData + HostDataSize)
 		return true;
 	if (a >= 0x01000000 && a < 0x03000000)
@@ -1002,6 +1025,7 @@ bool CRealImage2100::dma_list_target(uint32_t a) const
 	case GlobalControl0: case GlobalControl1: case GlobalControl2:
 	case PipelineControl0: case PipelineControl1:
 	case PipelineControl2: case PipelineControl3:
+	case PipelineControl4: case PipelineControl5:
 	case DrawControl: case Foreground: case Background:
 	case MonoPattern0: case MonoPattern1: case MonoPattern2: case MonoPattern3:
 	case HostOrigin: case HostExtent: case HostCommand:
@@ -1577,7 +1601,7 @@ void CRealImage2100::RestoreState(std::istream& in)
 	{
 		plane.written = get32(p);
 		plane.unknown_masks = get32(p);
-		if ((plane.written & ~(version == 11 ? 0xffffcf7fu : 0x0fffcf7fu)) ||
+		if ((plane.written & ~(version == 11 ? 0xffffcfffu : 0x0fffcfffu)) ||
 			plane.unknown_masks > (version == 11 ? 255u : 15u))
 			throw std::runtime_error("Invalid REALimage plane register mask");
 		const unsigned registers = version == 11 ? PlaneRegisterCount : LegacyPlaneRegisterCount;

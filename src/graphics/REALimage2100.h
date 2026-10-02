@@ -106,7 +106,9 @@ public:
   static constexpr uint32_t PipelineControl0 = 0x008005c0,
                             PipelineControl1 = 0x008005c4,
                             PipelineControl2 = 0x008005c8,
-                            PipelineControl3 = 0x008005d8;
+                            PipelineControl3 = 0x008005d8,
+                            PipelineControl4 = 0x008005d0,
+                            PipelineControl5 = 0x008005e0;
   // Four source bitmap words; the driver launches a separate drawing command.
   static constexpr uint32_t MonoPattern0 = 0x00800618,
                             MonoPattern1 = 0x0080061c,
