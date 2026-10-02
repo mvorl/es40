@@ -721,7 +721,8 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		(v == 0x01000872 || v == 0x01007872 || v == 0x01006872);
 	// Explicit source width, source bit offset zero.
 	const uint32_t mono_width = a != HostCommand ? 0 :
-		(v == 0x010078f2 || v == 0x01007872) ? 8 : v == 0x01006872 ? 7 : 0;
+		(v == 0x010078f2 || v == 0x01007872) ? 8 : v == 0x01006872 ? 7 :
+		v == 0x010018f2 ? 2 : 0;
 	const bool mono = v == 0x010008f2 || transparent || mono_width;
 	const bool profile = fast_copy ? fast_copy_profile() :
 		copy_profile() && (!(selected & 1) || plane_profile(0)) &&
