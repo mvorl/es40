@@ -114,6 +114,8 @@ public:
                             MonoPattern1 = 0x0080061c,
                             MonoPattern2 = 0x00800620,
                             MonoPattern3 = 0x00800624;
+  // Driver context links are inert metadata preceding DrawControl.
+  static constexpr uint32_t ContextLink = 0x008005fc;
   static constexpr uint32_t DrawControl = 0x00800600,
                             MemoryControl = 0x00800604,
                             PixelControl = 0x00800608,
@@ -162,7 +164,8 @@ public:
     PlaneCount * (LegacyPlaneRegisterCount + 2) * 4 + 2 * 3 * 4;
   static constexpr uint32_t MaxStateSize = MinStateSize + 24 + MaxShadowRegisters * 8 +
     MaxTextureSize - MinTextureSize + (MaxColorPixels - ColorPixels) * 9 +
-    PlaneCount * (PlaneRegisterCount - LegacyPlaneRegisterCount) * 4;
+    PlaneCount * (PlaneRegisterCount - LegacyPlaneRegisterCount) * 4 +
+    MaxColorPixels * 3 + 12;
 
   using DiagnosticCallback = std::function<void(const Diagnostic&)>;
   using UnimplementedCallback = std::function<void(
@@ -265,7 +268,8 @@ private:
   bool plane_profile(unsigned bank, uint32_t format = 0x100) const;
   bool native_pixel_profile() const;
   uint32_t block_width() const;
-  bool native_copy_control_profile() const;
+  bool native_copy_control_profile(bool clear = false) const;
+  bool fill_profile() const;
   bool copy_profile() const;
   bool fast_copy_profile() const;
   void start_command(uint32_t address, uint32_t value);
@@ -295,7 +299,8 @@ private:
            m_color_pixels = ColorPixels;
   uint8_t m_board_straps = BoardStraps;
   std::vector<uint32_t> m_color;
-  std::vector<uint8_t> m_window_id;
+  // Packed plane 4, with WID in bits 12..15.
+  std::vector<uint32_t> m_auxiliary;
   std::vector<uint8_t> m_texture;
   std::array<uint32_t, DMARegisterCount> m_dma_regs{};
   struct PlaneState
@@ -310,7 +315,7 @@ private:
   {
     uint32_t source = 0, color = 0, known = 0;
   };
-  std::array<ClearCache, 2> m_clear_cache{};
+  std::array<ClearCache, 3> m_clear_cache{};
   // Host data is a stream of RGB dwords, not a framebuffer address.
   struct Pending
   {
