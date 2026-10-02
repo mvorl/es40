@@ -246,6 +246,7 @@ private:
   bool plane_write(uint32_t address, uint32_t lanes, uint32_t value);
   uint32_t plane_value(unsigned bank, unsigned index, uint32_t fallback) const;
   bool plane_profile(unsigned bank, uint32_t format = 0x100) const;
+  bool native_pixel_profile() const;
   bool native_copy_control_profile() const;
   bool copy_profile() const;
   bool fast_copy_profile() const;

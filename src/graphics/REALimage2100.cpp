@@ -431,8 +431,20 @@ bool CRealImage2100::native_storage_register(uint32_t a) const
 		(a >= TimingBase && a <= TimingBase + 0x1c);
 }
 
+bool CRealImage2100::native_pixel_profile() const
+{
+	const uint32_t memory = peek(MemoryControl);
+	return (memory == 0x0c008000 || memory == 0x0f008000) &&
+		peek(PixelControl) == 0x42722060;
+}
+
 bool CRealImage2100::native_copy_control_profile() const
 {
+	// DrawControl bits 8..11 count 160-pixel page columns.
+	const uint32_t columns = (peek(DrawControl) >> 8) & 15;
+	if (!native_pixel_profile() ||
+		columns != (peek(MemoryControl) == 0x0c008000 ? 7u : 8u))
+		return false;
 	// Other programmed pipeline modes have not been decoded.
 	const std::pair<uint32_t, uint32_t> profile[] = {
 		{GlobalControl0, 1}, {GlobalControl1, 0x20811}, {GlobalControl2, 0x33},
@@ -451,16 +463,14 @@ bool CRealImage2100::copy_profile() const
 {
 	// Only the observed RGB copy profile; bits 12..15 select banks.
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
-	return (control & ~0xf000u) == 0x81000702 && banks && !(banks & ~3u) &&
-		peek(MemoryControl) == 0x0c008000 &&
-		peek(PixelControl) == 0x42722060 && native_copy_control_profile();
+	return (control & ~0xff00u) == 0x81000002 && banks && !(banks & ~3u) &&
+		native_copy_control_profile();
 }
 
 bool CRealImage2100::fast_copy_profile() const
 {
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
-	if ((control & ~0xf000u) != 0x21000702 || (banks != 1 && banks != 2) ||
-		peek(MemoryControl) != 0x0c008000 || peek(PixelControl) != 0x42722060 ||
+	if ((control & ~0xff00u) != 0x21000002 || (banks != 1 && banks != 2) ||
 		!native_copy_control_profile())
 		return false;
 	const unsigned bank = banks == 2 ? 1 : 0;
@@ -538,9 +548,8 @@ void CRealImage2100::block_command(uint32_t v)
 		unimplemented_once(
 			"REALimage block command/profile (command rejected)", BlockCommand, v, true);
 	};
-	if ((control & ~0x0400f000u) != 0x81000702 || !banks || (banks & ~7u) ||
+	if ((control & ~0x0400ff00u) != 0x81000002 || !banks || (banks & ~7u) ||
 		v != (((banks ^ 7u) << 18) | (copy ? 0x30000u : 0x10000u)) ||
-		peek(MemoryControl) != 0x0c008000 || peek(PixelControl) != 0x42722060 ||
 		!native_copy_control_profile() || m_pending.width || m_readback.width ||
 		((source | destination | extent) & ~0x07ff07ffu) ||
 		(!copy && source) || (copy && !configuration) ||
@@ -722,7 +731,7 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 	// Explicit source width, source bit offset zero.
 	const uint32_t mono_width = a != HostCommand ? 0 :
 		(v == 0x010078f2 || v == 0x01007872) ? 8 : v == 0x01006872 ? 7 :
-		v == 0x010018f2 ? 2 : 0;
+		v == 0x010058f2 ? 6 : v == 0x010018f2 ? 2 : 0;
 	const bool mono = v == 0x010008f2 || transparent || mono_width;
 	const bool profile = fast_copy ? fast_copy_profile() :
 		copy_profile() && (!(selected & 1) || plane_profile(0)) &&
@@ -927,8 +936,7 @@ CRealImage2100::Frame CRealImage2100::scanout(std::string* error) const
 		error->clear();
 	if (!native_display() || (m_board_io & 0x80))
 		return reject("Native display disabled/blanked");
-	if (peek(MemoryControl) != 0x0c008000 ||
-		peek(PixelControl) != 0x42722060)
+	if (!native_pixel_profile())
 		return reject("Native pixel layout unsupported");
 	if (!(m_dac_regs[0x0b] & 1) || !(m_dac_regs[0x0d] & 4))
 		return reject("Native DAC disabled");
@@ -945,12 +953,15 @@ CRealImage2100::Frame CRealImage2100::scanout(std::string* error) const
 	// Unlike VGA, vertical display is a count, not a last-line index.
 	const uint32_t horizontal = peek(TimingBase),
 		overflow = peek(TimingBase + 4) >> 24,
-		vertical = peek(TimingBase + 0x10);
-	const uint32_t width = (((horizontal >> 8) & 255) + 1) * 8,
-		height = ((vertical >> 16) & 255) |
-			((overflow & 2) << 7) | ((overflow & 0x40) << 3);
-	// Extended vertical timing and other serializer modes are not established.
-	if ((peek(TimingBase + 0x1c) & 0x00ff0000) || !height ||
+		vertical = peek(TimingBase + 0x10),
+		extension = (peek(TimingBase + 0x1c) >> 16) & 255;
+	const uint32_t width = (((horizontal >> 8) & 255) + 1) * 8;
+	// Both drivers use extension 0x0d for their 1280x1024 timings.
+	const bool extended_1024 = width == 1280 && extension == 0x0d;
+	const uint32_t height = ((vertical >> 16) & 255) |
+		((overflow & 2) << 7) | ((overflow & 0x40) << 3) |
+		(extended_1024 ? 1024u : 0u);
+	if ((extension && !extended_1024) || !height ||
 		width > ColorWidth || height > ColorHeight)
 		return reject("Native timing unsupported");
 	Frame frame;
