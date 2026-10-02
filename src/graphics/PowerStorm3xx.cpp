@@ -1308,7 +1308,8 @@ bool CPowerStorm3xx::dma_ram_range(u32 start, size_t length)
 bool CPowerStorm3xx::dma_read(
 	u32 address, uint8_t* destination, size_t count, u32 completion)
 {
-	if (!(config_read(0, 4, 16) & 4) || !destination || !count || count > 32768 ||
+	if (!(config_read(0, 4, 16) & 4) || !destination || !count ||
+		count > CRealImage2100::DMACommandListMaxBytes ||
 		((address | completion | count) & 3) ||
 		!dma_ram_range(address, count) || !dma_ram_range(completion, 4))
 		return false;

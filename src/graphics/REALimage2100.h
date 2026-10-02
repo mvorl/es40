@@ -154,6 +154,9 @@ public:
                             PlaneRegisterCount = 32;
   static constexpr uint32_t DMABase = 0x00801000, DMARegisterCount = 19,
                             DMACommand = 0x0080101c, DMAReset = 0x0080103c;
+  // Outer descriptors count DWORDs in bits 21:0; packet counts are 16-bit.
+  static constexpr uint32_t DMACommandListCountMask = 0x003fffff,
+                            DMACommandListMaxBytes = DMACommandListCountMask * 4;
   static constexpr uint32_t MinTextureSize = 16u * 1024 * 1024,
                             MaxTextureSize = 32u * 1024 * 1024;
   // Bounds shadow storage; BAR0 decodes far more than any register file.

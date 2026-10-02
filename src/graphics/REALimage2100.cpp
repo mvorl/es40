@@ -1142,7 +1142,7 @@ uint32_t CRealImage2100::readback_pixel(uint32_t word) const
 
 void CRealImage2100::dma_command(uint32_t v)
 {
-	if ((v & 0xffff0000u) == 0xc0400000u)
+	if ((v & ~DMACommandListCountMask) == 0xc0400000u)
 	{
 		dma_command_list(v);
 		return;
@@ -1226,9 +1226,8 @@ bool CRealImage2100::dma_list_target(uint32_t a) const
 
 void CRealImage2100::dma_command_list(uint32_t v)
 {
-	constexpr uint32_t BufferSize = 32768;
 	const uint32_t source = m_dma_regs[8], initial_address = m_dma_regs[9],
-		completion = m_dma_regs[12], words = v & 0xffff, bytes = words * 4;
+		completion = m_dma_regs[12], words = v & DMACommandListCountMask, bytes = words * 4;
 	auto reject = [&]() {
 		unimplemented("REALimage DMA command list (rejected; completion not written)",
 			DMACommand, v, true);
@@ -1236,7 +1235,8 @@ void CRealImage2100::dma_command_list(uint32_t v)
 	bool neutral = true;
 	for (unsigned i : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 10u, 11u, 13u, 15u, 16u, 17u, 18u})
 		neutral &= m_dma_regs[i] == 0;
-	if ((v & 0xffff0000u) != 0xc0400000u || !words || bytes > BufferSize ||
+	if ((v & ~DMACommandListCountMask) != 0xc0400000u ||
+		!words || bytes > DMACommandListMaxBytes ||
 		m_dma_list_active || !neutral || m_dma_regs[14] != 8 ||
 		((source | initial_address | completion) & 3) ||
 		uint64_t(source) + bytes > 0x100000000ull ||
@@ -1247,7 +1247,7 @@ void CRealImage2100::dma_command_list(uint32_t v)
 		reject();
 		return;
 	}
-	std::array<uint8_t, BufferSize> data{};
+	std::vector<uint8_t> data(bytes);
 	if (!m_dma_reader || !m_dma_completer ||
 		!m_dma_reader(source, data.data(), bytes, completion))
 	{
