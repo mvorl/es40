@@ -167,6 +167,9 @@ public:
     const char* what, uint32_t address, uint32_t value, bool write)>;
   // Write payload, then zero to the completion address.
   using DMAWriter = std::function<bool(uint32_t, const uint8_t*, size_t, uint32_t)>;
+  // Preflight source and completion RAM; read payload without completing.
+  using DMAReader = std::function<bool(uint32_t, uint8_t*, size_t, uint32_t)>;
+  using DMACompleter = std::function<bool(uint32_t)>;
 
   CRealImage2100();
   CRealImage2100(const CRealImage2100&) = delete;
@@ -214,6 +217,8 @@ public:
   }
 
   void set_dma_writer(DMAWriter fn) { m_dma_writer = std::move(fn); }
+  void set_dma_reader(DMAReader fn) { m_dma_reader = std::move(fn); }
+  void set_dma_completer(DMACompleter fn) { m_dma_completer = std::move(fn); }
 
   // Borrowed by CVGA. No claim that native BAR1 aliases this storage.
   uint8_t* vram_data() { return m_vga_memory.data(); }
@@ -267,6 +272,8 @@ private:
   uint32_t host_read();
   uint32_t readback_pixel(uint32_t word) const;
   void dma_command(uint32_t value);
+  void dma_command_list(uint32_t value);
+  bool dma_list_target(uint32_t address) const;
   void color_write(uint32_t x, uint32_t y, uint32_t color, uint32_t banks,
     uint32_t lanes = 0xffffffffu);
   void composite_cursor(Frame& frame) const;
@@ -324,6 +331,9 @@ private:
   DiagnosticCallback m_diagnostic;
   UnimplementedCallback m_unimplemented;
   DMAWriter m_dma_writer;
+  DMAReader m_dma_reader;
+  DMACompleter m_dma_completer;
+  bool m_dma_list_active = false, m_dma_list_rejected = false;
 };
 
 #endif // INCLUDED_REALimage2100_H_

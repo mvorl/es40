@@ -149,6 +149,9 @@ private:
   void publish_frame();
   void diagnostic(const CRealImage2100::Diagnostic& d);
   bool dma_write(u32 address, const uint8_t* source, size_t count, u32 completion);
+  bool dma_ram_range(u32 address, size_t count);
+  bool dma_read(u32 address, uint8_t* destination, size_t count, u32 completion);
+  bool dma_complete(u32 completion);
   void trace_unimplemented(const std::string& text) override;
 
   CDisplayOutput m_output;

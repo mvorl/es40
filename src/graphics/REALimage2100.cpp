@@ -596,7 +596,8 @@ void CRealImage2100::block_command(uint32_t v)
 		unimplemented_once(
 			"REALimage block command/profile (command rejected)", BlockCommand, v, true);
 	};
-	if ((control & ~0x0400ff01u) != 0x81000002 || !banks || (banks & ~7u) ||
+	const uint32_t control_fields = 0x0400ff01u | (window_clear ? 0x000f0000u : 0);
+	if ((control & ~control_fields) != 0x81000002 || !banks || (banks & ~7u) ||
 		v != (((banks ^ 7u) << 18) | (copy ? 0x30000u : 0x10000u)) ||
 		!native_copy_control_profile() || m_pending.width || m_readback.width ||
 		((source | destination | extent) & ~0x07ff07ffu) ||
@@ -933,6 +934,11 @@ uint32_t CRealImage2100::readback_pixel(uint32_t word) const
 
 void CRealImage2100::dma_command(uint32_t v)
 {
+	if ((v & 0xffff0000u) == 0xc0400000u)
+	{
+		dma_command_list(v);
+		return;
+	}
 	// Emulator staging limit, independent of driver buffer allocation.
 	constexpr uint32_t DMABufferSize = 32768;
 	const uint32_t destination = m_dma_regs[8], source = m_dma_regs[9],
@@ -971,6 +977,155 @@ void CRealImage2100::dma_command(uint32_t v)
 	m_readback.word += words;
 	if (m_readback.word == m_readback.width * m_readback.height)
 		m_readback = {};
+}
+
+bool CRealImage2100::dma_list_target(uint32_t a) const
+{
+	if (a & 3)
+		return false;
+	if (a >= HostData && a < HostData + HostDataSize)
+		return true;
+	if (a >= 0x01000000 && a < 0x03000000)
+		return ((a & 0x1fff) >> 2) < m_color_width &&
+			((a & 0x00ffffff) >> 13) < m_color_height;
+	const int plane_index = plane_register(a);
+	if (plane_index >= 0)
+	{
+		const uint32_t available = m_color_width == MaxColorWidth ? 255u : 15u;
+		return plane_index != 24 || a == PlanePixelMask ||
+			!(((a >> 13) & 255) & ~available);
+	}
+	// Command lists initially expose only the existing 2D register set.
+	switch (a)
+	{
+	case ClipXMax: case ClipYMax: case ClipXMin: case ClipYMin:
+	case GlobalControl0: case GlobalControl1: case GlobalControl2:
+	case PipelineControl0: case PipelineControl1:
+	case PipelineControl2: case PipelineControl3:
+	case DrawControl: case Foreground: case Background:
+	case MonoPattern0: case MonoPattern1: case MonoPattern2: case MonoPattern3:
+	case HostOrigin: case HostExtent: case HostCommand:
+	case FillOrigin: case FillExtent: case FillCommand:
+	case BlockSource: case BlockDestination: case BlockExtent: case BlockCommand:
+		return true;
+	default:
+		return false;
+	}
+}
+
+void CRealImage2100::dma_command_list(uint32_t v)
+{
+	constexpr uint32_t BufferSize = 32768;
+	const uint32_t source = m_dma_regs[8], initial_address = m_dma_regs[9],
+		completion = m_dma_regs[12], words = v & 0xffff, bytes = words * 4;
+	auto reject = [&]() {
+		unimplemented("REALimage DMA command list (rejected; completion not written)",
+			DMACommand, v, true);
+	};
+	bool neutral = true;
+	for (unsigned i : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 10u, 11u, 13u, 15u, 16u, 17u, 18u})
+		neutral &= m_dma_regs[i] == 0;
+	if ((v & 0xffff0000u) != 0xc0400000u || !words || bytes > BufferSize ||
+		m_dma_list_active || !neutral || m_dma_regs[14] != 8 ||
+		((source | initial_address | completion) & 3) ||
+		uint64_t(source) + bytes > 0x100000000ull ||
+		uint64_t(completion) + 4 > 0x100000000ull ||
+		(uint64_t(completion) < uint64_t(source) + bytes &&
+			uint64_t(completion) + 4 > source))
+	{
+		reject();
+		return;
+	}
+	std::array<uint8_t, BufferSize> data{};
+	if (!m_dma_reader || !m_dma_completer ||
+		!m_dma_reader(source, data.data(), bytes, completion))
+	{
+		report("DMA_READ", source, bytes, "PCI DMA read unavailable or rejected");
+		return;
+	}
+	auto word_at = [&](uint32_t index) {
+		const uint8_t* p = data.data() + size_t(index) * 4;
+		return uint32_t(p[0]) | (uint32_t(p[1]) << 8) |
+			(uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
+	};
+	struct Packet
+	{
+		uint32_t address, wait_mask, first, count;
+	};
+	std::vector<Packet> packets;
+	uint32_t cursor = 0, address = initial_address;
+	while (cursor < words)
+	{
+		const uint32_t control = word_at(cursor++), count = control & 0xffff;
+		if (count > words - cursor ||
+			uint64_t(address) + uint64_t(count) * 4 > 0x100000000ull)
+		{
+			reject();
+			return;
+		}
+		if (!dma_list_target(address))
+		{
+			report("DMA_TARGET", address, control, "Unsupported DMA command-list target");
+			reject();
+			return;
+		}
+		for (uint32_t i = 0; i < count; ++i)
+			if (!dma_list_target(address + i * 4))
+			{
+				report("DMA_TARGET", address + i * 4, word_at(cursor + i),
+					"Unsupported DMA command-list target");
+				reject();
+				return;
+			}
+		packets.push_back({address, control & 0xffff0000u, cursor, count});
+		cursor += count;
+		if (cursor == words)
+			break;
+		address = word_at(cursor++);
+		if (cursor == words)
+		{
+			reject();
+			return;
+		}
+	}
+	struct ActiveList
+	{
+		bool& active;
+		~ActiveList() { active = false; }
+	} active{m_dma_list_active};
+	m_dma_list_active = true;
+	m_dma_list_rejected = false;
+	for (const auto& packet : packets)
+	{
+		if (packet.wait_mask)
+		{
+			bool ready = false;
+			for (uint32_t i = 0; i < StatusFrameReads; ++i)
+				if (!(status_read() & packet.wait_mask))
+				{
+					ready = true;
+					break;
+				}
+			if (!ready)
+			{
+				report("DMA_WAIT", packet.address, packet.wait_mask,
+					"DMA command-list status wait did not complete");
+				return;
+			}
+		}
+		for (uint32_t i = 0; i < packet.count; ++i)
+		{
+			WriteMem(packet.address + i * 4, 32, word_at(packet.first + i));
+			if (m_dma_list_rejected)
+			{
+				reject();
+				return;
+			}
+		}
+	}
+	if (!m_dma_completer(completion))
+		report("DMA_COMPLETE", completion, 0,
+			"PCI DMA completion unavailable or rejected");
 }
 
 CRealImage2100::Frame CRealImage2100::scanout(std::string* error) const
@@ -1217,6 +1372,8 @@ void CRealImage2100::reset(bool clear)
 void CRealImage2100::report(
 	const char* code, uint32_t a, uint32_t v, const char* message, bool fatal)
 {
+	if (m_dma_list_active)
+		m_dma_list_rejected = true;
 	if (m_diagnostic)
 		m_diagnostic(Diagnostic{code, message, a, v, fatal});
 }
@@ -1224,6 +1381,8 @@ void CRealImage2100::report(
 void CRealImage2100::unimplemented(
 	const char* what, uint32_t a, uint32_t v, bool write)
 {
+	if (m_dma_list_active)
+		m_dma_list_rejected = true;
 	if (m_unimplemented)
 		m_unimplemented(what, a, v, write);
 }
@@ -1231,6 +1390,8 @@ void CRealImage2100::unimplemented(
 void CRealImage2100::unimplemented_once(
 	const char* what, uint32_t a, uint32_t v, bool write)
 {
+	if (m_dma_list_active)
+		m_dma_list_rejected = true;
 	if (m_warned.size() < MaxShadowRegisters && m_warned.insert(a & ~3u).second)
 		unimplemented(what, a, v, write);
 }

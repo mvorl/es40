@@ -1031,6 +1031,13 @@ try
 		[this](uint32_t address, const uint8_t* source, size_t count, uint32_t completion) {
 			return dma_write(address, source, count, completion);
 		});
+	m_realimage.set_dma_reader(
+		[this](uint32_t address, uint8_t* destination, size_t count, uint32_t completion) {
+			return dma_read(address, destination, count, completion);
+		});
+	m_realimage.set_dma_completer([this](uint32_t completion) {
+		return dma_complete(completion);
+	});
 	m_initialized = true;
 	ResetPCI();
 	printf(
@@ -1283,25 +1290,69 @@ void CPowerStorm3xx::WriteMem_Bar(
 	}
 }
 
+bool CPowerStorm3xx::dma_ram_range(u32 start, size_t length)
+{
+	if (length > 0x100000000ull - start)
+		return false;
+	for (size_t done = 0; done < length;)
+	{
+		const u64 physical = cSystem->PCI_Phys(myPCIBus, start + u32(done));
+		const size_t chunk = std::min(length - done, size_t(8192 - (physical & 8191)));
+		if (!cSystem->PtrToMem(physical) || !cSystem->PtrToMem(physical + chunk - 1))
+			return false;
+		done += chunk;
+	}
+	return true;
+}
+
+bool CPowerStorm3xx::dma_read(
+	u32 address, uint8_t* destination, size_t count, u32 completion)
+{
+	if (!(config_read(0, 4, 16) & 4) || !destination || !count || count > 32768 ||
+		((address | completion | count) & 3) ||
+		!dma_ram_range(address, count) || !dma_ram_range(completion, 4))
+		return false;
+	do_pci_read(address, destination, 1, count);
+	if (m_trace)
+	{
+		m_trace << "# DMA read " << std::hex << address << " bytes=" << count
+			<< " completion=" << completion << '\n';
+		for (size_t offset = 0; offset < count; offset += 64)
+		{
+			m_trace << "# DMA payload " << offset;
+			for (size_t i = offset; i < std::min(offset + 64, count); i += 4)
+			{
+				const uint32_t value = uint32_t(destination[i]) |
+					(uint32_t(destination[i + 1]) << 8) |
+					(uint32_t(destination[i + 2]) << 16) |
+					(uint32_t(destination[i + 3]) << 24);
+				m_trace << ' ' << value;
+			}
+			m_trace << '\n';
+		}
+		m_trace << std::dec;
+	}
+	return true;
+}
+
+bool CPowerStorm3xx::dma_complete(u32 completion)
+{
+	if (!(config_read(0, 4, 16) & 4) || (completion & 3) ||
+		!dma_ram_range(completion, 4))
+		return false;
+	uint8_t done[4]{};
+	do_pci_write(completion, done, 1, sizeof(done));
+	if (m_trace)
+		m_trace << "# DMA complete " << std::hex << completion << std::dec << '\n';
+	return true;
+}
+
 bool CPowerStorm3xx::dma_write(
 	u32 address, const uint8_t* source, size_t count, u32 completion)
 {
 	if (!(config_read(0, 4, 16) & 4))
 		return false;
-	auto ram_range = [&](u32 start, size_t length) {
-		if (length > 0x100000000ull - start)
-			return false;
-		for (size_t done = 0; done < length;)
-		{
-			const u64 physical = cSystem->PCI_Phys(myPCIBus, start + u32(done));
-			const size_t chunk = std::min(length - done, size_t(8192 - (physical & 8191)));
-			if (!cSystem->PtrToMem(physical) || !cSystem->PtrToMem(physical + chunk - 1))
-				return false;
-			done += chunk;
-		}
-		return true;
-	};
-	if (!ram_range(address, count) || !ram_range(completion, 4))
+	if (!dma_ram_range(address, count) || !dma_ram_range(completion, 4))
 		return false;
 	if (m_trace)
 		m_trace << "# DMA write " << std::hex << address << " bytes=" << count
