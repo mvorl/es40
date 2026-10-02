@@ -699,7 +699,7 @@ void CRealImage2100::block_command(uint32_t v)
 		for (unsigned i = 24; i < 24 + groups; ++i)
 		{
 			const uint32_t bits = plane_value(2, i, 0xffffffff);
-			if (bits != (bits & 255) * 0x01010101u || (seed && bits != 0xffffffffu))
+			if (bits != (bits & 255) * 0x01010101u)
 			{
 				reject();
 				return;
@@ -755,7 +755,7 @@ void CRealImage2100::block_command(uint32_t v)
 		for (unsigned i = 24; i < 24 + groups; ++i)
 		{
 			const uint32_t bits = plane_value(bank, i, 0xffffffff);
-			if (bits != (bits & 255) * 0x01010101u || (seed && bits != 0xffffffffu))
+			if (bits != (bits & 255) * 0x01010101u)
 			{
 				reject();
 				return;
@@ -764,6 +764,7 @@ void CRealImage2100::block_command(uint32_t v)
 	}
 	if (seed)
 	{
+		// Offscreen seeds bypass retained configuration pixel masks.
 		const uint32_t key = ((dy / 4) << 16) | (dx / 10);
 		if (auxiliary_clear)
 			m_clear_cache[2] = {key, auxiliary_value & auxiliary_mask, auxiliary_mask};
@@ -962,9 +963,10 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 bool CRealImage2100::triangle_profile() const
 {
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
+		bank = (banks & 3) == 2 ? 1 : 0,
 		width = block_width(), columns = (control >> 8) & 15,
 		copy_columns = ((peek(MemoryControl) >> 24) & 63) + 1;
-	if ((control & ~0x000fff01u) != 0x81800002 || banks != 5 ||
+	if ((control & ~0x000fff01u) != 0x81800002 || (banks != 5 && banks != 6) ||
 		!native_pixel_profile() || !width || columns != (copy_columns + 1) / 2 ||
 		copy_columns > (m_color_width + 10 * width - 1) / (10 * width) ||
 		m_pending.width || m_readback.width)
@@ -980,22 +982,24 @@ bool CRealImage2100::triangle_profile() const
 			return false;
 	if ((peek(ClipXMin) | peek(ClipXMax) | peek(ClipYMin) | peek(ClipYMax)) & 0xffff000fu)
 		return false;
-	if (!plane_profile(0) || plane_value(0, 0, 0) != 0xffffffffu ||
-		plane_value(0, 4, 0) != 0x03030303 || plane_value(0, 10, 0) != 0)
+	const uint32_t depth_control = plane_value(2, 5, 0);
+	if (!plane_profile(bank) || plane_value(bank, 0, 0) != 0xffffffffu ||
+		plane_value(bank, 4, 0) != 0x03030303 || plane_value(bank, 10, 0) != 0 ||
+		(depth_control != 0x0a000205 && depth_control != 0x0a000207))
 		return false;
 	const uint32_t depth[] = {0x0fff0fff, 0, 0xf000, 0x0fff0fff,
-		0x03030303, 0x0a000205, 0, 0, 0, 0, 0x00ff0000, 0x33300000};
+		0x03030303, depth_control, 0, 0, 0, 0, 0x00ff0000, 0x33300000};
 	for (unsigned i = 0; i < std::size(depth); ++i)
 		if (plane_value(2, i, 0) != depth[i])
 			return false;
 	if (plane_value(2, 14, 0) || plane_value(2, 15, 0))
 		return false;
-	for (unsigned bank : {0u, 2u})
+	for (unsigned plane : {bank, 2u})
 	{
-		if (m_planes[bank].unknown_masks)
+		if (m_planes[plane].unknown_masks)
 			return false;
 		for (unsigned i = 24; i < 24 + width / 2; ++i)
-			if (plane_value(bank, i, 0xffffffff) != 0xffffffffu)
+			if (plane_value(plane, i, 0xffffffff) != 0xffffffffu)
 				return false;
 	}
 	return true;
@@ -1003,7 +1007,8 @@ bool CRealImage2100::triangle_profile() const
 
 void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 {
-	if (!value)
+	// These commands retain the slot without launching a primitive.
+	if (!value || value == 0x10)
 		return;
 	auto reject = [&]() {
 		unimplemented_once("REALimage triangle command/profile (command rejected)",
@@ -1069,8 +1074,10 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 		return q.y < p.y || (q.y == p.y && q.x > p.x);
 	};
 	const bool include_a = top_left(b, c), include_b = top_left(c, a), include_c = top_left(a, b);
-	const uint32_t wid = (peek(DrawControl) >> 4) & 0xf000;
-	m_clear_cache[0] = {};
+	const uint32_t wid = (peek(DrawControl) >> 4) & 0xf000,
+		bank = ((peek(DrawControl) >> 12) & 3) == 2 ? 1 : 0;
+	const bool depth_less = plane_value(2, 5, 0) == 0x0a000207;
+	m_clear_cache[bank] = {};
 	// Launches reuse all three slots; sorting must leave their registers intact.
 	for (int y = top; y <= bottom; ++y)
 		for (int x = left; x <= right; ++x)
@@ -1088,14 +1095,14 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 			const uint32_t z = uint32_t(std::clamp(a.z + wb * (b.z - a.z) + wc * (c.z - a.z),
 				0.0, 1.0) * 16777215),
 				old_z = (auxiliary & 0xfff) | ((auxiliary >> 4) & 0xfff000);
-			if (z > old_z)
+			if (z > old_z || (depth_less && z == old_z))
 				continue;
 			auto channel = [&](double av, double bv, double cv) {
 				return uint32_t(std::clamp(av + wb * (bv - av) + wc * (cv - av), 0.0, 255.0));
 			};
 			const uint32_t color = (channel(a.red, b.red, c.red) << 16) |
 				(channel(a.green, b.green, c.green) << 8) | channel(a.blue, b.blue, c.blue);
-			color_write(unsigned(x), unsigned(y), color, 1);
+			color_write(unsigned(x), unsigned(y), color, 1u << bank);
 			auxiliary = (auxiliary & ~0x0fff0fffu) | (z & 0xfff) | ((z & 0xfff000) << 4);
 		}
 }
