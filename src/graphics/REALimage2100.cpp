@@ -499,11 +499,12 @@ bool CRealImage2100::native_copy_control_profile(bool clear) const
 	if (!native_pixel_profile() || !width || columns != (copy_columns + 1) / 2 ||
 		copy_columns > (m_color_width + 10 * width - 1) / (10 * width))
 		return false;
-	const bool context_clear = clear && peek(GlobalControl0) == 0x190 &&
+	const uint32_t global = peek(GlobalControl0);
+	const bool context_clear = clear && (global == 0x180 || global == 0x190) &&
 		peek(GlobalControl1) == 0x20800;
 	// Other programmed pipeline modes have not been decoded.
 	const std::pair<uint32_t, uint32_t> profile[] = {
-		{GlobalControl0, context_clear ? 0x190u : 1u},
+		{GlobalControl0, context_clear ? global : 1u},
 		{GlobalControl1, context_clear ? 0x20800u : 0x20811u}, {GlobalControl2, 0x33},
 		{PipelineControl0, 0}, {PipelineControl1, 0},
 		{PipelineControl2, 0x10000000}, {PipelineControl3, 0},
@@ -617,9 +618,10 @@ void CRealImage2100::block_command(uint32_t v)
 {
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
 		source = peek(BlockSource), destination = peek(BlockDestination),
-		extent = peek(BlockExtent);
+		extent = peek(BlockExtent), auxiliary_mask = plane_value(2, 0, 0xffffffff),
+		auxiliary_value = plane_value(2, 16, 0);
 	const bool copy = (v & 0x20000) != 0, configuration = (control & 0x04000000) != 0;
-	const bool auxiliary_clear = v == 0x000d0000 && banks == 4;
+	const bool auxiliary_clear = !copy && (banks & 4) && auxiliary_mask;
 	const bool seed = !configuration && !copy;
 	const uint32_t clear_width = block_width(), groups = clear_width / 2,
 		dx = destination & 0x7ff, dy = destination >> 16,
@@ -651,7 +653,7 @@ void CRealImage2100::block_command(uint32_t v)
 		!native_copy_control_profile(!copy) || m_pending.width || m_readback.width ||
 		((source | destination | extent) & ~0x07ff07ffu) ||
 		(!copy && source) || (copy && !configuration) ||
-		((banks & 4) && plane_value(2, 0, 0xffffffff) && !auxiliary_clear))
+		((banks & 4) && auxiliary_mask && !auxiliary_clear))
 	{
 		reject();
 		return;
@@ -666,20 +668,21 @@ void CRealImage2100::block_command(uint32_t v)
 	}
 	if (auxiliary_clear)
 	{
-		const uint32_t mask = plane_value(2, 0, 0xffffffff),
-			value = plane_value(2, 16, 0);
-		const bool window_only = configuration && !(mask & ~0x0000f000u) &&
-			plane_profile(2, 0) && plane_value(2, 10, 0) == 0;
-		const bool packed_clear = mask == 0xffffffffu &&
+		const uint32_t depth_control = plane_value(2, 5, 0);
+		const bool neutral_clear = plane_profile(2, 0) && plane_value(2, 10, 0) == 0 &&
+			(auxiliary_mask == 0xffffffffu ||
+				(configuration && !(auxiliary_mask & ~0x0000f000u)));
+		// Block clears bypass the retained depth comparison.
+		const bool packed_clear = auxiliary_mask == 0xffffffffu &&
 			plane_value(2, 1, 0) == 0 && plane_value(2, 2, 0) == 0xf000 &&
 			plane_value(2, 3, 0) == 0x0fff0fff &&
-			plane_value(2, 5, 0) == 0x0a000200 &&
+			(depth_control == 0x0a000200 || depth_control == 0x0a000205) &&
 			plane_value(2, 6, 0) == 0 && plane_value(2, 7, 0) == 0 &&
 			plane_value(2, 8, 0) == 0 && plane_value(2, 9, 0) == 0 &&
 			plane_value(2, 10, 0) == 0x00ff0000 &&
 			plane_value(2, 11, 0) == 0x33300000 &&
 			plane_value(2, 14, 0) == 0 && plane_value(2, 15, 0) == 0;
-		if ((!window_only && !packed_clear) ||
+		if ((!neutral_clear && !packed_clear) ||
 			plane_value(2, 4, 0x03030303) != 0x03030303 ||
 			m_planes[2].unknown_masks ||
 			(m_planes[2].written & 0x00ff0000) != 0x00ff0000)
@@ -688,7 +691,7 @@ void CRealImage2100::block_command(uint32_t v)
 			return;
 		}
 		for (unsigned i = 17; i < 24; ++i)
-			if ((plane_value(2, i, 0) ^ value) & mask)
+			if ((plane_value(2, i, 0) ^ auxiliary_value) & auxiliary_mask)
 			{
 				reject();
 				return;
@@ -702,24 +705,6 @@ void CRealImage2100::block_command(uint32_t v)
 				return;
 			}
 		}
-		if (seed)
-		{
-			m_clear_cache[2] = {((dy / 4) << 16) | (dx / 10), value & mask, mask};
-			return;
-		}
-		invalidate_cache();
-		for (uint32_t row = y; row < std::min(bottom, m_color_height); ++row)
-			for (uint32_t col = x; col < std::min(right, m_color_width); ++col)
-			{
-				const uint32_t bits = plane_value(2, 24 + col % groups, 0xffffffff),
-					bit = 2 * (row & 3) + ((col / groups) & 1);
-				if (bits & (1u << bit))
-				{
-					auto& pixel = m_auxiliary[size_t(row) * m_color_width + col];
-					pixel = (pixel & ~mask) | (value & mask);
-				}
-			}
-		return;
 	}
 	std::array<uint32_t, 2> colors{};
 	for (unsigned bank = 0; bank < 2; ++bank)
@@ -780,6 +765,8 @@ void CRealImage2100::block_command(uint32_t v)
 	if (seed)
 	{
 		const uint32_t key = ((dy / 4) << 16) | (dx / 10);
+		if (auxiliary_clear)
+			m_clear_cache[2] = {key, auxiliary_value & auxiliary_mask, auxiliary_mask};
 		for (unsigned bank = 0; bank < 2; ++bank)
 			if (banks & (1u << bank))
 			{
@@ -798,6 +785,17 @@ void CRealImage2100::block_command(uint32_t v)
 	invalidate_cache();
 	for (uint32_t row = y; row < std::min(bottom, m_color_height); ++row)
 		for (uint32_t col = x; col < std::min(right, m_color_width); ++col)
+		{
+			if (auxiliary_clear)
+			{
+				const uint32_t bits = plane_value(2, 24 + col % groups, 0xffffffff),
+					bit = 2 * (row & 3) + ((col / groups) & 1);
+				if (bits & (1u << bit))
+				{
+					auto& pixel = m_auxiliary[size_t(row) * m_color_width + col];
+					pixel = (pixel & ~auxiliary_mask) | (auxiliary_value & auxiliary_mask);
+				}
+			}
 			for (unsigned bank = 0; bank < 2; ++bank)
 				if (banks & (1u << bank))
 				{
@@ -806,6 +804,7 @@ void CRealImage2100::block_command(uint32_t v)
 					if (bits & (1u << bit))
 						color_write(col, row, colors[bank], 1u << bank);
 				}
+		}
 }
 
 void CRealImage2100::start_command(uint32_t a, uint32_t v)
