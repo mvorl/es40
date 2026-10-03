@@ -277,10 +277,10 @@ SafeOp classify(uint32_t ins, bool pal_block)
         return (func == 0x70) ? OP_FTOIT : OP_FTOIS;
       }
       break;
-    case 0x18: // MISC: memory barriers -> mfence (keep MP ordering); prefetch/cache hints -> no-op
+    case 0x18: // MISC: MB -> full fence; TRAPB/EXCB/WMB + prefetch/cache hints -> no code
       switch (ins & 0xFFFF) {
-        case 0x0000: case 0x0400:                    // TRAPB, EXCB
-        case 0x4000: case 0x4400: return OP_MFENCE;  // MB, WMB
+        case 0x4000: return OP_MFENCE;               // MB: StoreLoad fence
+        case 0x0000: case 0x0400: case 0x4400:       // TRAPB, EXCB, WMB: no code under precise traps and TSO
         case 0x8000: case 0xA000: case 0xE800:       // FETCH, FETCH_M, ECB
         case 0xF800: case 0xFC00: return OP_NOP;     // WH64, WH64EN
         // RPCC/RC/RS read time-varying / consumed state into Ra; the verify log+replays the read so the
@@ -418,6 +418,11 @@ struct CJitEngine::RegAlloc {
   bool dpc_live;                                 // previous guest op left RDX/R10/R11 = va/bias/slot
   int dpc_base, dpc_disp;
   bool dpc_write, dpc_force_align;
+  // Direct exits: the terminator leaves its condition in FLAGS; exit_kind 1 = conditional, 2 = BR/BSR.
+  bool     direct_exits;
+  int      exit_kind;
+  uint32_t exit_cc;
+  uint64_t exit_tgt, exit_fall;
 #ifdef JIT_STATS
   uint64_t* licm_slots;   // per-memop "page last seen" slots (null = don't probe)
   uint32_t  licm_n, licm_max;
@@ -551,6 +556,9 @@ static constexpr bool RegionIR = true;
 static constexpr bool RegionCacheReg = false;   // measured flat: the mandatory spill/unbind at every
                                                 // helper call cancels the load saved per use
 
+// Non-PAL branch and fall-through exits as patched `jmp rel32`; false = poly-link slot walk.
+static constexpr bool DirectPatch = true;
+
 struct RegionOp {
   enum Kind : uint8_t { BLOCK_ENTER, INSTR, BLOCK_END, GUARD };
   Kind     kind;
@@ -675,6 +683,19 @@ static void emit_cold_mem_stub(asmjit::x86::Assembler& a, const uint8_t* gpa,
   a.jmp(s.join);
 }
 
+// check_int and check_timers are adjacent bytes: one word compare covers both.
+static void emit_pending_check(asmjit::x86::Assembler& a, const CJitEngine::JitOffsets& off,
+                               const asmjit::Label& lbl)
+{
+  using namespace asmjit;
+  if (off.check_timers == off.check_int + 1) {
+    a.cmp(x86::word_ptr(x86::rbp, off.check_int), imm(0)); a.jne(lbl);
+  } else {
+    a.cmp(x86::byte_ptr(x86::rbp, off.check_int), imm(0)); a.jne(lbl);
+    a.cmp(x86::byte_ptr(x86::rbp, off.check_timers), imm(0)); a.jne(lbl);
+  }
+}
+
 void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const HelperSet& hs,
     bool pal_block, JitBlock* b, uint32_t ins, uint32_t i,
     RegAlloc& regalloc, void* cold_ptr, bool defer_pc)
@@ -733,11 +754,16 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
         };
 
     do {
-        // MISC (0x18) barriers/hints: emit an mfence for TRAPB/EXCB/MB/WMB (x86's seq_cst fence, to
-        // preserve the guest's MP memory ordering, matching DO_*'s atomic_thread_fence), nothing for
-        // the prefetch/cache hints -- then keep going so the block extends straight past them.
+        // MB: a locked RMW on our frame is a full barrier, cheaper than mfence.
         if (op == OP_NOP)    { preserve_dpc(); continue; }
-        if (op == OP_MFENCE) { a.mfence(); continue; }
+        if (op == OP_MFENCE) {
+#ifdef JIT_STATS
+            a.mov(x86::rax, imm((uint64_t) &m_mb_exec)); a.inc(x86::qword_ptr(x86::rax));
+            regalloc.rax_holds = -1;
+#endif
+            a.lock().or_(x86::dword_ptr(x86::rsp), imm(0));
+            preserve_dpc(); continue;
+        }
 
         // A result aimed at R31 is an architectural no-op, so emit nothing for it.
         const uint32_t raw_opcode = ins >> 26;
@@ -2042,6 +2068,30 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             const int64_t  bdisp = (int64_t)((uint64_t)(ins & 0x1FFFFF) << 43) >> 43;  // sext disp21
             const uint64_t fall = b->tag + 4 * (uint64_t)(i + 1);
             const uint64_t tgt = fall + (uint64_t)(bdisp * 4);
+            if (regalloc.direct_exits) {
+                // Direct exit: condition stays in FLAGS; compile_block emits the jumps.
+                if (op == OP_BR || op == OP_BSR) {
+                    if (ra != 31) { a.mov(x86::r10, imm(fall & ~(uint64_t)3)); mov_to_reg(ra, x86::r10); }
+                    regalloc.exit_kind = 2;
+                } else {
+                    test_ra(op == OP_BLBC || op == OP_BLBS);
+                    uint32_t cc = 0;
+                    switch (op) {
+                    case OP_BEQ: case OP_BLBC: cc = (uint32_t) x86::CondCode::kZ;  break;
+                    case OP_BNE: case OP_BLBS: cc = (uint32_t) x86::CondCode::kNZ; break;
+                    case OP_BLT: cc = (uint32_t) x86::CondCode::kS;  break;
+                    case OP_BGE: cc = (uint32_t) x86::CondCode::kNS; break;
+                    case OP_BLE: cc = (uint32_t) x86::CondCode::kLE; break;
+                    case OP_BGT: cc = (uint32_t) x86::CondCode::kG;  break;
+                    default: break;
+                    }
+                    regalloc.exit_kind = 1;
+                    regalloc.exit_cc = cc;
+                }
+                regalloc.exit_tgt = tgt;
+                regalloc.exit_fall = fall;
+                continue;
+            }
             if (op == OP_BR || op == OP_BSR) {                 // Ra = return address; PC = target
                 if (ra != 31) { a.mov(x86::r10, imm(fall & ~(uint64_t)3)); mov_to_reg(ra, x86::r10); }  // link = PC & ~3 (DO_BR)
                 a.mov(x86::r10, imm(tgt));
@@ -2517,6 +2567,14 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   ra.dpc_live = false;
   ra.dpc_base = ra.dpc_disp = 0;
   ra.dpc_write = ra.dpc_force_align = false;
+  ra.exit_kind = 0; ra.exit_cc = 0; ra.exit_tgt = ra.exit_fall = 0;
+  // Non-PAL only; fused scans pick their next PC in R10 at runtime.
+#ifndef JIT_VERIFY
+  ra.direct_exits = DirectPatch && !pal_block
+      && !(counted_scan_fused || word_scan_fused || byte_scan_fused || tail_scan_fused);
+#else
+  ra.direct_exits = false;
+#endif
 #ifdef JIT_STATS
   ra.licm_slots = nullptr; ra.licm_n = ra.licm_max = 0;   // probe regions only, not blocks
 #endif
@@ -2544,11 +2602,10 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     Label remainder = a.new_label();
 
     // Preserve the normal backward-edge delivery point if it would be cut short.
-    a.mov(x86::rax, x86::qword_ptr(x86::rbp, m_off.jit_budget));
+    a.mov(x86::eax, imm(kChainCeiling));
     a.sub(x86::rax, x86::r13);
     a.cmp(x86::rax, imm(66)); a.jb(normal);
-    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0)); a.jne(normal);
-    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_timers), imm(0)); a.jne(normal);
+    emit_pending_check(a, m_off, normal);
     a.test(x86::r12, imm(7)); a.jnz(normal);              // R1 must be word-aligned
     a.test(x86::rdi, x86::rdi); a.js(normal);             // loop entry requires R0 >= 0
 
@@ -2628,11 +2685,10 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 #ifdef _WIN32
     Label normal = a.new_label(), no_match = a.new_label(), commit = a.new_label();
 
-    a.mov(x86::rax, x86::qword_ptr(x86::rbp, m_off.jit_budget));
+    a.mov(x86::eax, imm(kChainCeiling));
     a.sub(x86::rax, x86::r13);
     a.cmp(x86::rax, imm(48)); a.jb(normal);
-    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0)); a.jne(normal);
-    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_timers), imm(0)); a.jne(normal);
+    emit_pending_check(a, m_off, normal);
     a.cmp(x86::rdi, imm(1)); a.jb(normal);
     a.cmp(x86::rdi, imm(8)); a.ja(normal);
     a.mov(x86::rax, x86::rsi); a.cmp(x86::rax, imm(255)); a.ja(normal);
@@ -2683,11 +2739,10 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 
     // The collapsed path accounts for at most 64 guest instructions. 
     // Keep it in sync with expected length. 
-    a.mov(x86::rax, x86::qword_ptr(x86::rbp, m_off.jit_budget));
+    a.mov(x86::eax, imm(kChainCeiling));
     a.sub(x86::rax, x86::r13);
     a.cmp(x86::rax, imm(64)); a.jb(normal);
-    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0)); a.jne(normal);
-    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_timers), imm(0)); a.jne(normal);
+    emit_pending_check(a, m_off, normal);
     a.test(x86::rdi, x86::rdi); a.jz(normal);               // R0==0 would wrap on mismatch
     a.mov(x86::rax, x86::rsi); a.cmp(x86::rax, imm(255)); a.ja(normal);
 
@@ -2754,11 +2809,10 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     Label scalar_loop = a.new_label(), found = a.new_label(), commit = a.new_label();
 
     // Require room for the maximum 16-candidate batch. 
-    a.mov(x86::rax, x86::qword_ptr(x86::rbp, m_off.jit_budget));
+    a.mov(x86::eax, imm(kChainCeiling));
     a.sub(x86::rax, x86::r13);
     a.cmp(x86::rax, imm(16 * 22)); a.jb(normal);
-    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0)); a.jne(normal);
-    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_timers), imm(0)); a.jne(normal);
+    emit_pending_check(a, m_off, normal);
 
     // candidates = R6 - R4 + 1, capped at 16 and at the current 8 KB haystack page.
     a.mov(x86::rdx, x86::qword_ptr(x86::rbx, 6 * 8));
@@ -2854,12 +2908,14 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   // Gate the chain: stop if we've hit the budget ceiling or an interrupt/timer is pending
   // Interrupts are architecturally deferred while the target remains in PALmode.
   auto emit_gate = [&](Label& lbl) {
-    a.cmp(x86::r13, x86::qword_ptr(x86::rbp, m_off.jit_budget)); a.jge(lbl);
+    a.cmp(x86::r13, imm(kChainCeiling)); a.jge(lbl);   // constant ceiling: no budget load
     if (!pal_block) {
       // Direct branches and JMP preserve the source mode. CALL_PAL may (always?) enter
       // PALmode. taking one pass on that cold race stays simple.
-      a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0)); a.jne(lbl);
-    } else if (terminator_jmp && (words[plen - 1] >> 26) == 0x1e) {
+      emit_pending_check(a, m_off, lbl);
+      return;
+    }
+    if (terminator_jmp && (words[plen - 1] >> 26) == 0x1e) {
       // HW_RET can leave PALmode. If an interrupt became pending in the handler,
       // return to the dispatcher.
       Label deferred = a.new_label();
@@ -2904,10 +2960,41 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
       if (sl + 1 < kLinkSlots) a.bind(nxt);
     }
     a.bind(miss);
-    a.mov(x86::rax, imm((uint64_t) &b->link[0]));
-    a.mov(x86::qword_ptr(x86::rbp, m_off.link_from), x86::rax);   // request a successor-cache patch (LinkSlot*)
+    // Bit 0: non-global source.
+    a.mov(x86::rax, imm((uint64_t) &b->link[0] | (b->asm_global ? 0u : 1u)));
+    a.mov(x86::qword_ptr(x86::rbp, m_off.link_from), x86::rax);
     // fall through to lbl (return to dispatcher)
   };
+
+  // One `jmp rel32` per static successor, aimed at its stub until the dispatcher patches it.
+  struct DirectExit { Label site, stub, desc, gate_fail; uint64_t pc; bool gate; };
+  std::vector<DirectExit> dexits;
+  Label exit_common;   // cold: state.pc = r10, eax = count, -> done
+  auto emit_direct_site = [&](uint64_t pc, bool gate) {
+    DirectExit x;
+    x.site = a.new_label(); x.stub = a.new_label(); x.desc = a.new_label(); x.gate_fail = a.new_label();
+    x.pc = pc; x.gate = gate;
+    if (gate) emit_gate(x.gate_fail);                 // backward edge: ceiling + pending poll
+    a.bind(x.site);
+    a.long_().jmp(x.stub);                            // the patch site
+    dexits.push_back(x);
+  };
+  const bool direct_fallthrough = ra.direct_exits && !terminator_branch && !terminator_jmp;
+  if (ra.exit_kind != 0 || direct_fallthrough) {
+    exit_common = a.new_label();
+    a.lea(x86::r13, x86::ptr(x86::r13, (int32_t) plen));   // count; flags untouched for the jcc
+    if (ra.exit_kind == 1) {
+      Label taken = a.new_label();
+      a.j((x86::CondCode) ra.exit_cc, taken);
+      emit_direct_site(ra.exit_fall, false);              // fall-through is forward: no gate
+      a.bind(taken);
+      emit_direct_site(ra.exit_tgt, ((words[plen - 1] >> 20) & 1) != 0);   // gate backward targets
+    } else if (ra.exit_kind == 2) {
+      emit_direct_site(ra.exit_tgt, ((words[plen - 1] >> 20) & 1) != 0);
+    } else {
+      emit_direct_site(b->tag + 4 * (uint64_t) plen, false);   // straight-line fall-through
+    }
+  } else
 #endif
   if (terminator_jmp) {
     // Computed jump (JMP / HW_RET): R10 holds the register target. Publish it only on return to 
@@ -2919,6 +3006,9 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 #ifndef JIT_VERIFY
     Label exit_chain = a.new_label(), exit_pc_ready = a.new_label();
     emit_gate(exit_chain);                                        // budget/interrupt: bail to dispatcher
+#ifdef JIT_STATS
+    a.mov(x86::rax, imm((uint64_t) &m_jmp_exits)); a.inc(x86::qword_ptr(x86::rax));   // PIC hit rate = exits - resolver calls
+#endif
     // Per-site PIC: returns and most computed calls are stable at a given instruction.
     { Label pic_miss = a.new_label();
       for (int sl = 0; sl < kLinkSlots; ++sl) {
@@ -2947,7 +3037,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     a.mov(x86::qword_ptr(x86::rbx, 23 * 8), x86::r9);
     a.mov(aq(0), x86::rbp);                                       // cpu    (arg 0)
     a.mov(aq(1), x86::r10);                                       // target (arg 1) == state.pc
-    a.mov(aq(2), imm((uint64_t) &b->link[0]));                    // per-site target cache
+    a.mov(aq(2), imm((uint64_t) &b->link[0] | (b->asm_global ? 0u : 1u)));   // per-site target cache (bit 0: non-global source)
     { const int hi = helper_index(hs, indirect_helper);           // jit_indirect(cpu, target) -> body | 0
       if (hi >= 0 && m_off.helpers)
         a.call(x86::qword_ptr(x86::rbp, (int32_t) (m_off.helpers + hi * 8)));
@@ -3024,9 +3114,39 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   a.pop(x86::rbx);
   a.ret();
 
-  // Cold tail: the outlined memop slow paths (dead 99.8% of the time -- dpc hit rate). 
+  // Cold tail: the outlined memop slow paths (dead 99.8% of the time -- dpc hit rate).
   for (const ColdMemStub& s : cold)
     emit_cold_mem_stub(a, gpa, m_off, s);
+
+#ifndef JIT_VERIFY
+  // Direct-exit stubs and PatchSite descriptors.
+  if (!dexits.empty()) {
+    a.bind(exit_common);
+    a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
+    a.mov(x86::eax, x86::r13d);
+    a.jmp(done);
+    for (const DirectExit& x : dexits) {
+      if (x.gate) {                                     // gate failed: plain exit, no patch request
+        a.bind(x.gate_fail);
+        a.mov(x86::r10, imm(x.pc));
+        a.jmp(exit_common);
+      }
+      a.bind(x.stub);
+      a.mov(x86::r10, imm(x.pc));
+      a.lea(x86::rax, x86::ptr(x.desc));
+      a.or_(x86::rax, imm(2 | (b->asm_global ? 0 : 1)));   // bit 1: PatchSite; bit 0: non-global source
+      a.mov(x86::qword_ptr(x86::rbp, m_off.link_from), x86::rax);
+      a.jmp(exit_common);
+    }
+    a.align(AlignMode::kData, 8);
+    for (const DirectExit& x : dexits) {                // PatchSite { site, stub, tag }
+      a.bind(x.desc);
+      a.embed_label(x.site);
+      a.embed_label(x.stub);
+      a.embed_uint64(x.pc);
+    }
+  }
+#endif
 
   const size_t csz = code.code_size();
   JitFn fn = nullptr;
@@ -3250,6 +3370,8 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   ra.dpc_live = false;
   ra.dpc_base = ra.dpc_disp = 0;
   ra.dpc_write = ra.dpc_force_align = false;
+  ra.direct_exits = false;   // traces keep the R10 convention (guards read it)
+  ra.exit_kind = 0; ra.exit_cc = 0; ra.exit_tgt = ra.exit_fall = 0;
 #ifdef JIT_STATS
   { const uint32_t left = (uint32_t) (sizeof(m_licm_pool) / sizeof(m_licm_pool[0])) - m_licm_next;
     ra.licm_slots = m_licm_pool + m_licm_next; ra.licm_n = 0; ra.licm_max = left > 64 ? 64 : left; }
@@ -3360,9 +3482,8 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
     Label not_head = a.new_label();
     a.mov(x86::rcx, imm(source_desc[0].guest_pc));
     a.cmp(x86::r10, x86::rcx); a.jne(not_head);                                  // not the head -> final exit
-    a.cmp(x86::r13, x86::qword_ptr(x86::rbp, m_off.jit_budget)); a.jge(done);   // budget ceiling
-    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0));     a.jne(done);   // interrupt pending
-    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_timers), imm(0));  a.jne(done);   // timer pending
+    a.cmp(x86::r13, imm(kChainCeiling)); a.jge(done);                          // chain ceiling
+    emit_pending_check(a, m_off, done);                                        // interrupt / timer pending
     a.mov(x86::rcx, imm((uint64_t) &t->underrun));                             // R3b: looping -> healthy
     a.mov(x86::dword_ptr(x86::rcx), imm(0));
     a.jmp(body);                                                               // loop in compiled code
@@ -3373,9 +3494,8 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
     if (final_is_jmp) {
       // Computed target: chain via jit_indirect, gated + pin-adapted like the stub.
       Label jref = a.new_label(), jmiss = a.new_label();
-      a.cmp(x86::r13, x86::qword_ptr(x86::rbp, m_off.jit_budget)); a.jge(jref);
-      a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0));    a.jne(jref);
-      a.cmp(x86::byte_ptr(x86::rbp, m_off.check_timers), imm(0)); a.jne(jref);
+      a.cmp(x86::r13, imm(kChainCeiling)); a.jge(jref);
+      emit_pending_check(a, m_off, jref);
       if (pins_differ) {
         for (int k = 0; k < n_pins; ++k) a.mov(x86::qword_ptr(x86::rbx, pin_guest[k] * 8), x86::gpq((uint32_t) pin_hosts[k]));
         a.mov(x86::r12, x86::qword_ptr(x86::rbx, 1 * 8));
@@ -3424,9 +3544,8 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
     Label stub_ret = a.new_label(), miss = a.new_label();
     a.mov(x86::rcx, imm((uint64_t) &t->underrun));   // count the side-exit (closure resets)
     a.inc(x86::dword_ptr(x86::rcx));
-    a.cmp(x86::r13, x86::qword_ptr(x86::rbp, m_off.jit_budget)); a.jge(stub_ret);
-    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0));    a.jne(stub_ret);
-    a.cmp(x86::byte_ptr(x86::rbp, m_off.check_timers), imm(0)); a.jne(stub_ret);
+    a.cmp(x86::r13, imm(kChainCeiling)); a.jge(stub_ret);
+    emit_pending_check(a, m_off, stub_ret);
     if (vol_sync) a.mov(x86::qword_ptr(x86::rbx, vol_reg * 8), x86::r8);   // commit before leaving
     if (pins_differ) {   // adapter: trace pins -> regs[], then the global block convention
       for (int k = 0; k < n_pins; ++k) a.mov(x86::qword_ptr(x86::rbx, pin_guest[k] * 8), x86::gpq((uint32_t) pin_hosts[k]));
@@ -3460,7 +3579,9 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
       if (sl + 1 < kLinkSlots) a.bind(nxt);
     }
     a.bind(miss);
-    a.mov(x86::qword_ptr(x86::rbp, m_off.link_from), x86::r11);   // request a patch of this exit's slots
+    a.mov(x86::rax, x86::r11);                                     // request a patch of this exit's slots
+    if (!source_desc[0].asm_global) a.or_(x86::rax, imm(1));       // bit 0: non-global source (see emit_chain)
+    a.mov(x86::qword_ptr(x86::rbp, m_off.link_from), x86::rax);
     a.mov(x86::eax, x86::r13d);
     if (pins_differ) a.jmp(done_nosync); else a.jmp(done);
     a.bind(stub_ret);

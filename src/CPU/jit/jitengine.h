@@ -108,6 +108,9 @@ public:
   static constexpr int kLinkSlots = 2;   // cached direct successors per block (poly-link). Instrumentation
                                          // showed the thrashing fanout is EXACTLY 2; bump only if f3/f4 appear.
 
+  // Chain instructions before a gated exit returns; a constant so the gate loads nothing.
+  static constexpr uint32_t kChainCeiling = 8192;
+
   // Packed successor snapshot for the poly-link chain guard: everything the emitted guard reads
   // lives in the SOURCE block's cache line meaning no dereference into the successor's JitBlock on the
   // hot path. 
@@ -116,6 +119,14 @@ public:
     uint64_t tag;    // this exit's target virtual PC (entries are keyed, so a hit is correct for that PC)
     uint64_t vgen;   // low 63 bits: validation epoch; bit 63: target PAL shadow variant
     void*    body;   // successor's chained entry point at patch time; null = empty slot
+  };
+
+  // Direct exit: a `jmp rel32` in the code allocation, retargeted by the dispatcher.
+  struct PatchSite
+  {
+    uint8_t* site;   // E9 opcode
+    uint8_t* stub;   // unpatched target
+    uint64_t tag;    // static successor PC
   };
 
   // FIELD ORDER IS LOAD-BEARING: everything lookup() reads -- tag, asn, asm_global,
@@ -334,10 +345,19 @@ public:
   // I-stream TB invalidate (tbia/tbiap/tbis, ACCESS_EXEC) ... those can remap a code page WITHOUT
   // flushing the JIT, so a chained block could run stale bytes.
   inline void     note_itb_invalidate() { ++m_itb_gen; ++m_vgen_cur; invalidate_links(); }
+  // ASN switch: only global-source edges can hold a wrong-ASN successor.
+  inline void     note_asn_change()     { invalidate_links_global(); }
   // Combined validation epoch, maintained (not summed) so the emitted chain guard reads ONE qword.
   inline uint64_t vgen() const          { return m_vgen_cur; }
-  void note_link_patch(LinkSlot* slots) { m_active_links.insert(slots); }
-  void invalidate_links();
+  // Tagged request pointer: bit 1 = PatchSite (else LinkSlot[]), bit 0 = non-global source.
+  void patch_edge(void* tagged, uint64_t tag, uint64_t vgen_bits, void* body);
+  void invalidate_links();          // every patched edge (epoch change)
+  void invalidate_links_global();   // only edges out of global-source blocks (ASN change)
+#ifdef JIT_STATS
+  inline void note_interp_breaker(uint32_t ins) { m_rt_break_op[ins >> 26]++; }   // first interpreted op
+#else
+  inline void note_interp_breaker(uint32_t) {}
+#endif
 
   // Bail-cause counters (JIT_STATS): why a compiled chain returned to the dispatcher -- a branch/
   // fall-through cached-link miss vs a computed-jump (jit_indirect) miss. Empty when stats are off,
@@ -391,8 +411,9 @@ private:
   uint64_t m_itb_gen = 0; // current ITB generation (bumped on every I-stream TB invalidate)
   uint64_t m_flush_gen = 0; // current icache-flush generation (bumped by flush(); lazy IC_FLUSH/IMB)
   uint64_t m_vgen_cur = 0;  // maintained epoch = itb + flush + non-global-flush bumps 
-  std::unordered_set<LinkSlot*> m_active_links; // patched block/trace exits to clear on an epoch
-                                                // change; unordered set so re-registration never grows it
+  std::unordered_set<void*> m_active_links;     // patched edges, bit 1 = PatchSite
+  std::unordered_set<void*> m_global_src_links; // subset with global sources
+  static void clear_edge(void* key);            // un-patch a site or empty a LinkSlot array
   uint64_t m_code_bytes;  // compiled bytes since last reclaim (see flush())
   bool     m_reclaim_pending = false;   // flush() hit kReclaimBytes; reclaim at the next dispatch boundary
   void*    m_rt;          // asmjit::JitRuntime*
@@ -415,6 +436,14 @@ private:
   uint64_t m_bail_link, m_jmp_attempt, m_jmp_hit;   // windowed: link-miss bails, jit_indirect attempts/hits
   uint64_t m_fresh_cold, m_fresh_tag, m_fresh_asn, m_fresh_phys, m_fresh_hash;  // windowed: record() step-4 fresh-compile reason
   uint64_t m_trace_formed, m_trace_entered, m_trace_exits, m_trace_stale;       // windowed: trace tier activity (M1+)
+  uint64_t m_link_invalidations, m_links_cleared;      // windowed: epoch bumps / edges cleared
+  uint64_t m_asn_link_clears, m_asn_links_cleared;     // windowed: ASN switches / global-source edges cleared
+  uint64_t m_evict_link_clears;                        // windowed: clears forced by cross-ASN evictions
+  uint64_t m_direct_patches, m_patch_unreachable;      // windowed: sites patched / beyond rel32 reach
+  uint64_t m_reclaims;                                 // cumulative: code reclaims
+  uint64_t m_jmp_exits;                                // windowed: computed-jump exits
+  uint64_t m_mb_exec;                                  // windowed: MB fences executed
+  uint64_t m_rt_break_op[64];                          // windowed: interp dispatches by breaking opcode
   uint64_t m_licm_same, m_licm_diff;   // region memops hitting the same page as last time
   uint64_t m_licm_pool[4096];          // per-memop last-page slots (shared pool; collisions just blur the stat)
   uint32_t m_licm_next;

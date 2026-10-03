@@ -416,7 +416,8 @@ void CAlphaCPU::run()
 			if (StopThread)
 				return;
 #ifdef ES40_JIT
-			jit_run(2000);
+			// One chain ceiling per batch of clock and timer work.
+			jit_run((int) CJitEngine::kChainCeiling);
 #else
 			// execute() now owns a 512-instruction batch. Calling it 2,000 times
 			// here accidentally turned one scheduler turn into ~1M instructions,
@@ -893,13 +894,12 @@ static double max_mips = 0.0;
 #include <time.h>
 #endif
 
-// ASN switch: bump the chain epoch so compiled chain edges revalidate through the asn-keyed
-// lookup paths (the chain guard checks tag+epoch only). No-op in non-JIT builds.
+// ASN switch: only edges out of global blocks can hold a wrong-ASN successor.
 void CAlphaCPU::jit_note_asn_change()
 {
 #ifdef ES40_JIT
 	if (m_jit)
-		m_jit->note_itb_invalidate();
+		m_jit->note_asn_change();
 #endif
 }
 
@@ -1083,16 +1083,7 @@ void CAlphaCPU::jit_run(int budget)
 				// re-stamped) -- patch its slots with the trace's chained entry so the edge lands
 				// in-frame next time. Hook-before-block ordering makes traces win the patch.
 				if (m_link_from && t->chain_entry) { m_jit->note_link_bail();
-					CJitEngine::LinkSlot* lf = (CJitEngine::LinkSlot*)m_link_from;
-					const CJitEngine::LinkSlot snap = { t->head_tag, t->vgen, t->chain_entry };
-					int found = -1, empty = -1; bool was_live = false;
-					for (int i = 0; i < CJitEngine::kLinkSlots; ++i)
-						if (lf[i].body) { was_live = true; if (lf[i].tag == t->head_tag) found = i; }
-						else if (empty < 0) empty = i;
-					if (!was_live) m_jit->note_link_patch(lf);   // empty->live: register (pre-filter; the engine set dedups)
-					if (found >= 0) lf[found] = snap;
-					else if (empty >= 0) lf[empty] = snap;
-					else { for (int i = CJitEngine::kLinkSlots - 1; i > 0; --i) lf[i] = lf[i-1]; lf[0] = snap; }
+					m_jit->patch_edge(m_link_from, t->head_tag, t->vgen, t->chain_entry);
 					m_link_from = nullptr; }
 				m_jit_budget = budget;   // ceiling for the trace (its loads/bails honor it like a block)
 #ifdef JIT_STATS
@@ -1582,18 +1573,9 @@ void CAlphaCPU::jit_run(int budget)
 			// returning.
 			// 
 			// Tag-keyed: an existing entry for this target MUST be refreshed in place.
-			if (m_link_from) { m_jit->note_link_bail();   // (fanout stats retired with the generic LinkSlot* target)
-				CJitEngine::LinkSlot* lf = (CJitEngine::LinkSlot*)m_link_from;
-				const CJitEngine::LinkSlot snap = { b->tag,
-					b->vgen | (b->pal_shadow ? (U64(1) << 63) : 0), b->jit_body };
-				int found = -1, empty = -1; bool was_live = false;   // preserve the first-observed edge in slot 0 while space remains
-				for (int i = 0; i < CJitEngine::kLinkSlots; ++i)
-					if (lf[i].body) { was_live = true; if (lf[i].tag == b->tag) found = i; }
-					else if (empty < 0) empty = i;
-				if (!was_live) m_jit->note_link_patch(lf);   // empty->live: register (pre-filter; the engine set dedups)
-				if (found >= 0) lf[found] = snap;
-				else if (empty >= 0) lf[empty] = snap;
-				else { for (int i = CJitEngine::kLinkSlots - 1; i > 0; --i) lf[i] = lf[i-1]; lf[0] = snap; }
+			if (m_link_from) { m_jit->note_link_bail();
+				m_jit->patch_edge(m_link_from, b->tag,
+					b->vgen | (b->pal_shadow ? (U64(1) << 63) : 0), b->jit_body);
 				m_link_from = nullptr; }
 			m_jit_budget = budget;   // ceiling for compiled chains (epilogue stops at it)
 #ifdef JIT_STATS
@@ -1625,6 +1607,11 @@ void CAlphaCPU::jit_run(int budget)
 		// the block, record it, and compile its prefix. Count the link-miss bail before dropping it.
 		if (m_link_from) m_jit->note_link_bail();
 		m_link_from = nullptr;
+#ifdef JIT_STATS
+		// Compiled with no code: the first op is a runtime breaker.
+		if (have_phys && b && b->compiled && !b->code && start_phys + 4 <= dram_size)
+			m_jit->note_interp_breaker(*(const u32*)((const u8*)dram_ptr + start_phys));
+#endif
 		u32 n = 0;
 		u64 expected = start_virt;
 #ifdef JIT_STATS
@@ -2450,22 +2437,8 @@ void* CAlphaCPU::jit_indirect(CAlphaCPU* cpu, u64 target, void* link_cache)
 	if (!b || !b->jit_body) return nullptr;
 	auto hit = [&](void* body) -> void* {
 		if (link_cache)
-		{
-			auto* links = (CJitEngine::LinkSlot*)link_cache;
-			const CJitEngine::LinkSlot snap = { target,
-				cpu->m_jit->vgen() | (b->pal_shadow ? (U64(1) << 63) : 0), body };
-			int found = -1, empty = -1; bool was_live = false;
-			for (int i = 0; i < CJitEngine::kLinkSlots; ++i)
-				if (links[i].body) { was_live = true; if (links[i].tag == target) found = i; }
-				else if (empty < 0) empty = i;
-			if (!was_live) cpu->m_jit->note_link_patch(links);   // empty->live: register (pre-filter; the engine set dedups)
-			if (found >= 0) links[found] = snap;
-			else if (empty >= 0) links[empty] = snap;
-			else {
-				for (int i = CJitEngine::kLinkSlots - 1; i > 0; --i) links[i] = links[i - 1];
-				links[0] = snap;
-			}
-		}
+			cpu->m_jit->patch_edge(link_cache, target,
+				cpu->m_jit->vgen() | (b->pal_shadow ? (U64(1) << 63) : 0), body);
 		cpu->m_jit->note_jmp_hit();
 		return body;
 	};
@@ -4037,8 +4010,9 @@ int CAlphaCPU::virt2phys(u64 virt, u64* phys, int flags, bool* asm_bit, u32 ins)
 			}
 
 			*phys = spe_phys;
+			// Superpage translations are ASN-independent; treat them as ASM.
 			if (asm_bit)
-				*asm_bit = false;
+				*asm_bit = true;
 #if defined(DEBUG_TB)
 			if (forreal)
 #if defined(IDB)
