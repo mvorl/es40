@@ -989,7 +989,7 @@ bool CRealImage2100::triangle_profile() const
 		flat = pipeline == 0x0a4c2770, no_depth = textured || flat,
 		blend = peek(PipelineControl2) == 0x20000080;
 	if ((pipeline != 0x05008001 && pipeline != 0x8a4c2660 &&
-		pipeline != 0x8a4c2770 && !flat) || (blend && !flat))
+		pipeline != 0x8a4c2770 && pipeline != 0x8a4c2880 && !flat) || (blend && !flat))
 		return false;
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
 		bank = (banks & 3) == 2 ? 1 : 0,
