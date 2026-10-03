@@ -676,7 +676,8 @@ void CRealImage2100::block_command(uint32_t v)
 		const bool packed_clear = auxiliary_mask == 0xffffffffu &&
 			plane_value(2, 1, 0) == 0 && plane_value(2, 2, 0) == 0xf000 &&
 			plane_value(2, 3, 0) == 0x0fff0fff &&
-			(depth_control == 0x0a000200 || depth_control == 0x0a000205) &&
+			(depth_control == 0x0a000200 || depth_control == 0x0a000205 ||
+				depth_control == 0x0a000207) &&
 			plane_value(2, 6, 0) == 0 && plane_value(2, 7, 0) == 0 &&
 			plane_value(2, 8, 0) == 0 && plane_value(2, 9, 0) == 0 &&
 			plane_value(2, 10, 0) == 0x00ff0000 &&
@@ -964,15 +965,17 @@ bool CRealImage2100::triangle_profile() const
 {
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
 		bank = (banks & 3) == 2 ? 1 : 0,
+		global = peek(GlobalControl0),
 		width = block_width(), columns = (control >> 8) & 15,
 		copy_columns = ((peek(MemoryControl) >> 24) & 63) + 1;
 	if ((control & ~0x000fff01u) != 0x81800002 || (banks != 5 && banks != 6) ||
+		(global != 0x180 && global != 0x190) ||
 		!native_pixel_profile() || !width || columns != (copy_columns + 1) / 2 ||
 		copy_columns > (m_color_width + 10 * width - 1) / (10 * width) ||
 		m_pending.width || m_readback.width)
 		return false;
 	const std::pair<uint32_t, uint32_t> profile[] = {
-		{GlobalControl0, 0x180}, {GlobalControl1, 0x20800}, {GlobalControl2, 0x33},
+		{GlobalControl1, 0x20800}, {GlobalControl2, 0x33},
 		{PipelineControl0, 0x05008001}, {PipelineControl1, 0},
 		{PipelineControl2, 0x10000000}, {PipelineControl3, 0},
 		{PipelineControl4, 0}, {PipelineControl5, 0},
