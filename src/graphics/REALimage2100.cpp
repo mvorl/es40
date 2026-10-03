@@ -49,11 +49,19 @@ static bool zero_context_register(uint32_t a)
 	return a == 0x008005cc || a == 0x008005d4 || a == 0x008005dc;
 }
 
+static bool flat_vertex_register(uint32_t a)
+{
+	return a >= CRealImage2100::FlatVertexBase &&
+		a < CRealImage2100::FlatVertexBase + 3 * CRealImage2100::VertexStride &&
+		(a - CRealImage2100::FlatVertexBase) % CRealImage2100::VertexStride < 0x34;
+}
+
 static bool vertex_register(uint32_t a)
 {
-	return a >= CRealImage2100::VertexBase &&
-		a < CRealImage2100::VertexBase + 3 * CRealImage2100::VertexStride &&
-		(a - CRealImage2100::VertexBase) % CRealImage2100::VertexStride < 0x20;
+	return flat_vertex_register(a) ||
+		(a >= CRealImage2100::VertexTextureBase &&
+		 a < CRealImage2100::VertexTextureBase + 3 * CRealImage2100::VertexStride &&
+		 (a - CRealImage2100::VertexTextureBase) % CRealImage2100::VertexStride < 0x34);
 }
 
 // Register dispatch
@@ -175,6 +183,8 @@ uint32_t CRealImage2100::ReadMem(uint32_t a, int bits)
 			"Invalid native width or alignment");
 		return 0xffffffffu;
 	}
+	if (flat_vertex_register(a & ~3u))
+		a -= 0x100;
 	uint32_t pixel = 0;
 	if (framebuffer_access(a, bits, pixel, false))
 		return pixel;
@@ -217,6 +227,17 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 	{
 		report("ACCESS_WIDTH", a, v, "Invalid native width or alignment");
 		return;
+	}
+	const uint32_t original_address = a;
+	if (flat_vertex_register(a & ~3u))
+	{
+		if (bits != 32)
+		{
+			unimplemented_once("REALimage vertex width (command rejected)", a, v, true);
+			return;
+		}
+		// Flat and smooth ports address the same vertex slots.
+		a -= 0x100;
 	}
 	if (framebuffer_access(a, bits, v, true))
 		return;
@@ -314,7 +335,7 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 		if (bits != 32)
 			unimplemented_once("REALimage vertex width (command rejected)", a, v, true);
 		else if ((key - VertexBase) % VertexStride == 0x1c)
-			triangle_command(key, it->second);
+			triangle_command(original_address, it->second);
 	}
 	else if (key == HostCommand || key == FillCommand || key == BlockCommand)
 	{
@@ -963,6 +984,7 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 
 bool CRealImage2100::triangle_profile() const
 {
+	const bool textured = peek(PipelineControl0) == 0x8a4c2660;
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
 		bank = (banks & 3) == 2 ? 1 : 0,
 		global = peek(GlobalControl0),
@@ -974,9 +996,11 @@ bool CRealImage2100::triangle_profile() const
 		copy_columns > (m_color_width + 10 * width - 1) / (10 * width) ||
 		m_pending.width || m_readback.width)
 		return false;
+	if (textured && (global != 0x180 || peek(TextureBase) != 0))
+		return false;
 	const std::pair<uint32_t, uint32_t> profile[] = {
 		{GlobalControl1, 0x20800}, {GlobalControl2, 0x33},
-		{PipelineControl0, 0x05008001}, {PipelineControl1, 0},
+		{PipelineControl0, textured ? 0x8a4c2660u : 0x05008001u}, {PipelineControl1, 0},
 		{PipelineControl2, 0x10000000}, {PipelineControl3, 0},
 		{PipelineControl4, 0}, {PipelineControl5, 0},
 		{0x008005cc, 0}, {0x008005d4, 0}, {0x008005dc, 0}, {ContextControl, 0}};
@@ -988,9 +1012,10 @@ bool CRealImage2100::triangle_profile() const
 	const uint32_t depth_control = plane_value(2, 5, 0);
 	if (!plane_profile(bank) || plane_value(bank, 0, 0) != 0xffffffffu ||
 		plane_value(bank, 4, 0) != 0x03030303 || plane_value(bank, 10, 0) != 0 ||
-		(depth_control != 0x0a000205 && depth_control != 0x0a000207))
+		(textured ? depth_control != 0x0a000200 :
+			(depth_control != 0x0a000205 && depth_control != 0x0a000207)))
 		return false;
-	const uint32_t depth[] = {0x0fff0fff, 0, 0xf000, 0x0fff0fff,
+	const uint32_t depth[] = {textured ? 0u : 0x0fff0fffu, 0, 0xf000, 0x0fff0fff,
 		0x03030303, depth_control, 0, 0, 0, 0, 0x00ff0000, 0x33300000};
 	for (unsigned i = 0; i < std::size(depth); ++i)
 		if (plane_value(2, i, 0) != depth[i])
@@ -1017,16 +1042,18 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 		unimplemented_once("REALimage triangle command/profile (command rejected)",
 			address, value, true);
 	};
-	if (value != 0x13 || !triangle_profile())
+	const bool textured = peek(PipelineControl0) == 0x8a4c2660;
+	if (value != 0x13 || !triangle_profile() ||
+		(flat_vertex_register(address) && !textured))
 	{
 		reject();
 		return;
 	}
-	struct Vertex { double alpha, red, green, blue, x, y, z; } vertex[3];
+	struct Vertex { double alpha, red, green, blue, x, y, z, s, t; } vertex[3]{};
 	for (unsigned slot = 0; slot < 3; ++slot)
 	{
-		double component[7];
-		for (unsigned i = 0; i < 7; ++i)
+		double component[7]{};
+		for (unsigned i = textured ? 4 : 0; i < 7; ++i)
 		{
 			const auto reg = m_shadow.find(VertexBase + slot * VertexStride + i * 4);
 			if (reg == m_shadow.end())
@@ -1040,7 +1067,7 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 			if (!std::isfinite(input) ||
 				(i == 0 && (input < 0 || input > 256)) ||
 				((i == 4 || i == 5) && (input < -32768 || input >= 32768)) ||
-				(i == 6 && (input < 0 || input > 1)))
+				(i == 6 && (textured ? input <= 0 : (input < 0 || input > 1))))
 			{
 				reject();
 				return;
@@ -1049,7 +1076,33 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 			component[i] = i > 0 && i < 4 ? std::clamp(double(input), 0.0, 256.0) : input;
 		}
 		vertex[slot] = {component[0], component[1], component[2], component[3],
-			component[4], component[5], component[6]};
+			component[4], component[5], component[6], 0, 0};
+		if (textured)
+		{
+			float coordinates[4];
+			for (unsigned i = 0; i < 4; ++i)
+			{
+				const auto reg = m_shadow.find(VertexTextureBase + slot * VertexStride + i * 4);
+				if (reg == m_shadow.end())
+				{
+					reject();
+					return;
+				}
+				std::memcpy(&coordinates[i], &reg->second, sizeof(float));
+				if (!std::isfinite(coordinates[i]))
+				{
+					reject();
+					return;
+				}
+			}
+			if (coordinates[0] != 1 || coordinates[3] != 0)
+			{
+				reject();
+				return;
+			}
+			vertex[slot].s = coordinates[1];
+			vertex[slot].t = coordinates[2];
+		}
 	}
 	auto edge = [](const Vertex& a, const Vertex& b, double x, double y) {
 		return (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
@@ -1095,6 +1148,16 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 			if ((auxiliary & 0xf000) != wid)
 				continue;
 			const double wb = eb / area, wc = ec / area;
+			if (textured)
+			{
+				// This profile supplies scaled clip W in the vertex Z slot.
+				const double wa = ea / area / a.z, tb = wb / b.z, tc = wc / c.z,
+					denominator = wa + tb + tc;
+				const double s = (wa * a.s + tb * b.s + tc * c.s) / denominator,
+					t = (wa * a.t + tb * b.t + tc * c.t) / denominator;
+				color_write(unsigned(x), unsigned(y), texture_color(s, t), 1u << bank);
+				continue;
+			}
 			const uint32_t z = uint32_t(std::clamp(a.z + wb * (b.z - a.z) + wc * (c.z - a.z),
 				0.0, 1.0) * 16777215),
 				old_z = (auxiliary & 0xfff) | ((auxiliary >> 4) & 0xfff000);
@@ -1108,6 +1171,28 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 			color_write(unsigned(x), unsigned(y), color, 1u << bank);
 			auxiliary = (auxiliary & ~0x0fff0fffu) | (z & 0xfff) | ((z & 0xfff000) << 4);
 		}
+}
+
+// Captured 64x64 RGB565, linear/repeat sampling, RGB decal mode.
+uint32_t CRealImage2100::texture_color(double s, double t) const
+{
+	const double u = std::fmod(s, 1.0) * 64 - 0.5,
+		v = std::fmod(t, 1.0) * 64 - 0.5;
+	const int x = int(std::floor(u)), y = int(std::floor(v));
+	const double fx = u - x, fy = v - y;
+	auto texel = [&](int tx, int ty) {
+		const uint32_t offset = texture_offset(((uint32_t(ty) & 63) << 14) |
+			((uint32_t(tx) & 63) << 1));
+		return uint32_t(m_texture[offset]) | (uint32_t(m_texture[offset + 1]) << 8);
+	};
+	const uint32_t pixels[] = {texel(x, y), texel(x + 1, y), texel(x, y + 1), texel(x + 1, y + 1)};
+	auto channel = [&](unsigned shift, uint32_t mask) {
+		const double a = (pixels[0] >> shift) & mask, b = (pixels[1] >> shift) & mask,
+			c = (pixels[2] >> shift) & mask, d = (pixels[3] >> shift) & mask;
+		const double top = a + fx * (b - a), bottom = c + fx * (d - c);
+		return uint32_t(std::clamp((top + fy * (bottom - top)) * 255 / mask, 0.0, 255.0));
+	};
+	return (channel(11, 31) << 16) | (channel(5, 63) << 8) | channel(0, 31);
 }
 
 void CRealImage2100::host_data(uint32_t v)

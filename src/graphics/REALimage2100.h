@@ -39,7 +39,7 @@
 #include <vector>
 
 /** REALimage 2100 transport, VGA storage and bounded native drawing profiles.
- * Models NT 2D, the texture aperture and untextured color/depth triangles.
+ * Models NT 2D, texture storage, and bounded color/depth/textured triangles.
  * Unknown native registers are shadowed with a one-time diagnostic, as in
  * CPermedia2.
  */
@@ -117,7 +117,8 @@ public:
                             MonoPattern3 = 0x00800624;
   // Driver context links are inert metadata preceding DrawControl.
   static constexpr uint32_t ContextLink = 0x008005fc;
-  static constexpr uint32_t VertexBase = 0x00800220, VertexStride = 0x40;
+  static constexpr uint32_t VertexBase = 0x00800220, VertexStride = 0x40,
+                            VertexTextureBase = 0x0080020c, FlatVertexBase = 0x0080030c;
   static constexpr uint32_t DrawControl = 0x00800600,
                             MemoryControl = 0x00800604,
                             PixelControl = 0x00800608,
@@ -279,6 +280,7 @@ private:
   bool fast_copy_profile() const;
   bool triangle_profile() const;
   void triangle_command(uint32_t address, uint32_t value);
+  uint32_t texture_color(double s, double t) const;
   void start_command(uint32_t address, uint32_t value);
   void block_command(uint32_t value);
   void host_data(uint32_t value);
