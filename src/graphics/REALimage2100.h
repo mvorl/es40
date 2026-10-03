@@ -285,6 +285,7 @@ private:
   uint32_t readback_pixel(uint32_t word) const;
   void dma_command(uint32_t value);
   void dma_command_list(uint32_t value);
+  void dma_texture_upload(uint32_t value);
   bool dma_list_target(uint32_t address) const;
   void color_write(uint32_t x, uint32_t y, uint32_t color, uint32_t banks,
     uint32_t lanes = 0xffffffffu);

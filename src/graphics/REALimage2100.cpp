@@ -1145,7 +1145,13 @@ uint32_t CRealImage2100::readback_pixel(uint32_t word) const
 
 void CRealImage2100::dma_command(uint32_t v)
 {
-	if ((v & ~DMACommandListCountMask) == 0xc0400000u)
+	const uint32_t mode = v & ~DMACommandListCountMask;
+	if (mode == 0xa1800000u || mode == 0xc0800000u)
+	{
+		dma_texture_upload(v);
+		return;
+	}
+	if (mode == 0xc0400000u)
 	{
 		dma_command_list(v);
 		return;
@@ -1155,7 +1161,7 @@ void CRealImage2100::dma_command(uint32_t v)
 	const uint32_t destination = m_dma_regs[8], source = m_dma_regs[9],
 		completion = m_dma_regs[12], words = v & 0xffff, bytes = words * 4;
 	bool neutral = true;
-	for (unsigned i : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 10u, 11u, 13u, 15u, 16u, 17u, 18u})
+	for (unsigned i : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 10u, 13u, 15u, 16u, 17u, 18u})
 		neutral &= m_dma_regs[i] == 0;
 	if ((v & 0xffff0000u) != 0xc4800000u || !words || bytes > DMABufferSize ||
 		!neutral || m_dma_regs[14] != 8 ||
@@ -1188,6 +1194,86 @@ void CRealImage2100::dma_command(uint32_t v)
 	m_readback.word += words;
 	if (m_readback.word == m_readback.width * m_readback.height)
 		m_readback = {};
+}
+
+void CRealImage2100::dma_texture_upload(uint32_t v)
+{
+	const uint32_t completion = m_dma_regs[12];
+	auto reject = [&]() {
+		unimplemented("REALimage DMA texture upload (rejected; completion not written)",
+			DMACommand, v, true);
+	};
+	auto source_range = [&](uint32_t address, uint32_t bytes) {
+		return !((address | bytes) & 3) &&
+			uint64_t(address) + bytes <= 0x100000000ull &&
+			!(uint64_t(completion) < uint64_t(address) + bytes &&
+				uint64_t(completion) + 4 > address);
+	};
+	bool neutral = true;
+	for (unsigned i : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 10u, 13u, 15u, 16u, 17u, 18u})
+		neutral &= m_dma_regs[i] == 0;
+	if (!neutral || m_dma_regs[14] != 8 || m_dma_list_active || (completion & 3))
+	{
+		reject();
+		return;
+	}
+	if (!m_dma_reader || !m_dma_completer)
+	{
+		report("DMA_READ", m_dma_regs[8], v, "PCI DMA upload callbacks unavailable");
+		return;
+	}
+	// Stage the chain so a bad link cannot leave a partial upload.
+	auto texture = m_texture;
+	std::set<uint32_t> visited;
+	uint32_t command = v, source = m_dma_regs[8], target = m_dma_regs[9],
+		next = m_dma_regs[11];
+	for (;;)
+	{
+		const uint32_t mode = command & ~DMACommandListCountMask,
+			bytes = (command & DMACommandListCountMask) * 4;
+		if ((mode != 0xa1800000u && mode != 0xc0800000u) || !bytes ||
+			!source_range(source, bytes) || (target & 3) || target < 0x04000000u ||
+			uint64_t(target) + bytes > 0x04000000ull + MaxTextureSize ||
+			(mode == 0xa1800000u &&
+				(!source_range(next, 16) || !visited.insert(next).second)))
+		{
+			reject();
+			return;
+		}
+		std::vector<uint8_t> data(bytes);
+		if (!m_dma_reader(source, data.data(), bytes, completion))
+		{
+			report("DMA_READ", source, bytes, "PCI DMA texture data unavailable or rejected");
+			return;
+		}
+		for (uint32_t i = 0; i < bytes; i += 4)
+		{
+			const uint32_t offset = texture_offset(target - 0x04000000u + i);
+			if (offset != 0xffffffffu)
+				std::copy_n(data.data() + i, 4, texture.data() + offset);
+		}
+		if (mode == 0xc0800000u)
+			break;
+		std::array<uint8_t, 16> descriptor{};
+		if (!m_dma_reader(next, descriptor.data(), descriptor.size(), completion))
+		{
+			report("DMA_READ", next, uint32_t(descriptor.size()),
+				"PCI DMA descriptor unavailable or rejected");
+			return;
+		}
+		auto word = [&](unsigned i) {
+			const uint8_t* p = descriptor.data() + i * 4;
+			return uint32_t(p[0]) | (uint32_t(p[1]) << 8) |
+				(uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
+		};
+		command = word(0);
+		source = word(1);
+		target = word(2);
+		next = word(3);
+	}
+	m_texture.swap(texture);
+	if (!m_dma_completer(completion))
+		report("DMA_COMPLETE", completion, v, "PCI DMA completion unavailable or rejected");
 }
 
 bool CRealImage2100::dma_list_target(uint32_t a) const
@@ -1236,7 +1322,7 @@ void CRealImage2100::dma_command_list(uint32_t v)
 			DMACommand, v, true);
 	};
 	bool neutral = true;
-	for (unsigned i : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 10u, 11u, 13u, 15u, 16u, 17u, 18u})
+	for (unsigned i : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 10u, 13u, 15u, 16u, 17u, 18u})
 		neutral &= m_dma_regs[i] == 0;
 	if ((v & ~DMACommandListCountMask) != 0xc0400000u ||
 		!words || bytes > DMACommandListMaxBytes ||
