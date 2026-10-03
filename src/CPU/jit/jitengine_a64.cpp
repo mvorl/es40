@@ -177,6 +177,7 @@ public:
 // dirty kill switches for remote debugging
 static constexpr bool kA64DpcReuse = true;        // reuse {va, slot, bias} across memops
 static constexpr bool kA64ForwardValues = true;   // reuse x11's guest-register mirror
+static constexpr bool kA64DirectPatch = true;     // non-PAL branch/fall-through exits as patched `b`
 
 // Every block body shares this exact mapping so a chained entry can inherit the
 // live pin bank without an adapter. R22/R23 name the main-bank slots; PAL-shadow
@@ -218,7 +219,7 @@ enum class A64OpKind : uint8_t {
   kLoadLocked,    // LDL_L/LDQ_L via jit_read_locked (lock monitor lives in the helper)
   kStoreCond,     // STL_C/STQ_C via jit_stc: Ra = success; 0x100 = translation bail
   kInta,          // INTA (0x10) add/sub/scaled/compares/CMPBGE (/V forms interpret)
-  kMisc,          // MISC (0x18): barriers -> dmb ish, hints -> nothing, RPCC/RC/RS helper
+  kMisc,          // MISC (0x18): MB dmb ish, WMB dmb ishst, TRAPB/EXCB/hints nothing, RPCC/RC/RS helper
   kCallPal,       // CALL_PAL (0x00): OPCDEC gate, exc_addr, R23/R55 link, vector terminator
   kHwMtpr,        // HW_MTPR (0x1d): jit_hw_mtpr / no-op IPRs; I_CTL is the redispatch term
   kHwLd,          // HW_LD (0x1b): physical DRAM inline, virtual via jit_read_vpte
@@ -2375,6 +2376,20 @@ static asmjit::Error emit_a64_load_cpu_u8(asmjit::a64::Assembler& a,
                  : a.ldrb(dst, a64::ptr(address));
 }
 
+static asmjit::Error emit_a64_load_cpu_u16(asmjit::a64::Assembler& a,
+    const asmjit::a64::Gp& dst, uint32_t offset, bool acquire)
+{
+  using namespace asmjit;
+  if (!dst.is_gp32() || !a64_is_tail_scratch(dst)) return Error::kInvalidArgument;
+  const a64::Gp address = a64::x(dst.id());
+  const a64::Gp expansion = a64_tail_scratch_avoiding(dst.id());
+  Error err = emit_a64_add_offset(a, address, CJitEngine::RegAlloc::kCpu,
+                                  static_cast<int64_t>(offset), expansion);
+  if (err != Error::kOk) return err;
+  return acquire ? a.ldarh(dst, a64::ptr(address))
+                 : a.ldrh(dst, a64::ptr(address));
+}
+
 static asmjit::Error emit_a64_store_cpu_u64(asmjit::a64::Assembler& a,
     const asmjit::a64::Gp& src, uint32_t offset)
 {
@@ -2663,6 +2678,12 @@ struct A64EmitContext {
   std::vector<A64ColdStub>* cold = nullptr;   // production memop slow paths
   A64DpcState prev_dpc{};                     // DPC state entering the current op
   int prev_fwd = -1;                          // forwarded guest GPR entering the op
+  // Direct exits: the branch terminator records its successors here instead of moving x22.
+  bool direct_exits = false;
+  uint8_t direct_kind = 0;                    // 0 fall-through, 1 conditional, 2 unconditional
+  asmjit::Label direct_taken{};
+  uint64_t direct_target = 0;
+  uint64_t direct_fall = 0;
 };
 
 // Rc = Ra <logical> op2 -- each of the six is one A64 register-form op. The 8-bit
@@ -2745,6 +2766,11 @@ static A64OpEmitReceipt emit_a64_branch_int(A64EmitContext& context,
   const uint64_t fall = a64_advance_pc(context.start_pc, index + 1);
   const uint64_t target = a64_branch_target(fall, op.ins);
   Error err = Error::kOk;
+  auto exit_to = [&](uint64_t pc) {   // direct exit: one static successor
+    context.direct_kind = 2;
+    context.direct_target = pc;
+    context.direct_fall = fall;
+  };
 
   if (op.opcode == 0x30 || op.opcode == 0x34) {   // BR / BSR
     const A64GprRoute wa =
@@ -2765,8 +2791,10 @@ static A64OpEmitReceipt emit_a64_branch_int(A64EmitContext& context,
       default:
         return {Error::kInvalidArgument, op.kind};
     }
-    if (err == Error::kOk)
-      err = emit_a64_mov_u64(a, RA::kNextPc, target);
+    if (err == Error::kOk) {
+      if (context.direct_exits) exit_to(target);
+      else err = emit_a64_mov_u64(a, RA::kNextPc, target);
+    }
     return a64_completed_op_receipt(op, err);
   }
 
@@ -2777,7 +2805,8 @@ static A64OpEmitReceipt emit_a64_branch_int(A64EmitContext& context,
     // base -- reg 31 is SP there). BEQ/BGE/BLE/BLBC on zero are always taken.
     const bool taken = op.opcode == 0x39 || op.opcode == 0x3e
                     || op.opcode == 0x3b || op.opcode == 0x38;
-    if (taken) err = emit_a64_mov_u64(a, RA::kNextPc, target);
+    if (context.direct_exits) exit_to(taken ? target : fall);
+    else if (taken) err = emit_a64_mov_u64(a, RA::kNextPc, target);
     return a64_completed_op_receipt(op, err);
   }
   a64::Gp src = RA::kScratch0;
@@ -2792,6 +2821,39 @@ static A64OpEmitReceipt emit_a64_branch_int(A64EmitContext& context,
       return {Error::kInvalidArgument, op.kind};
   }
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
+
+  if (context.direct_exits) {
+    // Branch to the taken label; the patch tail binds it and emits both sites.
+    const Label taken = a.new_label();
+    switch (op.opcode) {
+      case 0x39: err = a.cbz(src, taken);  break;                 // BEQ
+      case 0x3d: err = a.cbnz(src, taken); break;                 // BNE
+      case 0x38: err = a.tst(src, imm(1));                        // BLBC
+                 if (err == Error::kOk) err = a.b_eq(taken);
+                 break;
+      case 0x3c: err = a.tst(src, imm(1));                        // BLBS
+                 if (err == Error::kOk) err = a.b_ne(taken);
+                 break;
+      case 0x3a: err = a.cmp(src, imm(0));                        // BLT
+                 if (err == Error::kOk) err = a.b_lt(taken);
+                 break;
+      case 0x3b: err = a.cmp(src, imm(0));                        // BLE
+                 if (err == Error::kOk) err = a.b_le(taken);
+                 break;
+      case 0x3e: err = a.cmp(src, imm(0));                        // BGE
+                 if (err == Error::kOk) err = a.b_ge(taken);
+                 break;
+      case 0x3f: err = a.cmp(src, imm(0));                        // BGT
+                 if (err == Error::kOk) err = a.b_gt(taken);
+                 break;
+      default:   return {Error::kInvalidInstruction, op.kind};
+    }
+    context.direct_kind = 1;
+    context.direct_taken = taken;
+    context.direct_target = target;
+    context.direct_fall = fall;
+    return a64_completed_op_receipt(op, err);
+  }
 
   const Label not_taken = a.new_label();
   switch (op.opcode) {
@@ -4171,10 +4233,13 @@ static A64OpEmitReceipt emit_a64_misc(A64EmitContext& context,
   const uint32_t fn = op.ins & 0xffffu;
 
   switch (fn) {
-    case 0x0000: case 0x0400: case 0x4000: case 0x4400:
-      return a64_completed_op_receipt(op, a.dmb(imm(0xB)));   // ISH
+    case 0x4000:
+      return a64_completed_op_receipt(op, a.dmb(imm(0xB)));   // MB: ish
+    case 0x4400:
+      return a64_completed_op_receipt(op, a.dmb(imm(0xA)));   // WMB: ishst
+    case 0x0000: case 0x0400:                                 // TRAPB, EXCB: traps are precise
     case 0x8000: case 0xA000: case 0xE800: case 0xF800: case 0xFC00:
-      return a64_completed_op_receipt(op);                    // hint: no code
+      return a64_completed_op_receipt(op);                    // no code
     default:
       break;
   }
@@ -5427,14 +5492,17 @@ static asmjit::Error emit_a64_chain_gate(asmjit::a64::Assembler& a,
       && gate != A64ChainGate::kPollInterruptOnNativeTarget)
     return Error::kInvalidArgument;
 
-  Error err = emit_a64_load_cpu_u64(a, RA::kScratch0, offsets.jit_budget);
+  Error err = a.cmp(RA::kChainCount, imm(CJitEngine::kChainCeiling));   // constant ceiling
   if (err != Error::kOk) return err;
-  err = a.cmp(RA::kChainCount, RA::kScratch0);
-  if (err != Error::kOk) return err;
-  err = a.b_ge(bailout);  // m_jit_budget is signed, matching the x64 JGE gate.
+  err = a.b_ge(bailout);
   if (err != Error::kOk) return err;
 
   if (gate == A64ChainGate::kPollAll) {
+    // Adjacent, halfword-aligned flags: one acquire load covers both.
+    if (offsets.check_timers == offsets.check_int + 1 && (offsets.check_int & 1u) == 0) {
+      err = emit_a64_load_cpu_u16(a, RA::kScratch0.w(), offsets.check_int, true);
+      return err != Error::kOk ? err : a.cbnz(RA::kScratch0.w(), bailout);
+    }
     err = emit_a64_load_cpu_u8(a, RA::kScratch0.w(), offsets.check_int, true);
     if (err != Error::kOk) return err;
     err = a.cbnz(RA::kScratch0.w(), bailout);
@@ -5551,7 +5619,8 @@ static asmjit::Error emit_a64_direct_chain_tail(asmjit::a64::Assembler& a,
     const CJitEngine::JitOffsets& offsets,
     const A64DirectChainContract& contract, CJitEngine::LinkSlot* slots,
     uint64_t source_tag,
-    const asmjit::Label& body, const asmjit::Label& done)
+    const asmjit::Label& body, const asmjit::Label& done,
+    bool source_global = true)
 {
   using RA = CJitEngine::RegAlloc;
   using namespace asmjit;
@@ -5568,7 +5637,7 @@ static asmjit::Error emit_a64_direct_chain_tail(asmjit::a64::Assembler& a,
   }
 
 #ifdef JIT_VERIFY
-  (void) source_tag; (void) body;   // no chain in the verify shape
+  (void) source_tag; (void) body; (void) source_global;   // no chain in the verify shape
   if (!contract.publish_pc_before_probe) {
     err = emit_a64_store_cpu_u64(a, RA::kNextPc, offsets.state_pc);
     if (err != Error::kOk) return err;
@@ -5606,8 +5675,8 @@ static asmjit::Error emit_a64_direct_chain_tail(asmjit::a64::Assembler& a,
 
   err = a.bind(miss);
   if (err != Error::kOk) return err;
-  err = emit_a64_mov_u64(a, RA::kScratch1,
-                         reinterpret_cast<uintptr_t>(slots));
+  err = emit_a64_mov_u64(a, RA::kScratch1,                      // bit 0: non-global source
+                         reinterpret_cast<uintptr_t>(slots) | (source_global ? 0u : 1u));
   if (err != Error::kOk) return err;
   err = emit_a64_store_cpu_u64(a, RA::kScratch1, offsets.link_from);
   if (err != Error::kOk) return err;
@@ -5626,7 +5695,7 @@ static asmjit::Error emit_a64_indirect_chain_tail(asmjit::a64::Assembler& a,
     const CJitEngine::JitOffsets& offsets, const CJitEngine::HelperSet& helpers,
     const CJitEngine::RegAlloc& regs,
     const A64IndirectChainContract& contract, CJitEngine::LinkSlot* slots,
-    const asmjit::Label& done)
+    const asmjit::Label& done, bool source_global = true)
 {
   using RA = CJitEngine::RegAlloc;
   using namespace asmjit;
@@ -5648,6 +5717,7 @@ static asmjit::Error emit_a64_indirect_chain_tail(asmjit::a64::Assembler& a,
 #ifdef JIT_VERIFY
   (void)helpers;
   (void)regs;
+  (void)source_global;
   if (!contract.publish_pc_before_probe) {
     err = emit_a64_store_cpu_u64(a, RA::kNextPc, offsets.state_pc);
     if (err != Error::kOk) return err;
@@ -5672,7 +5742,8 @@ static asmjit::Error emit_a64_indirect_chain_tail(asmjit::a64::Assembler& a,
       contract.source_pal_shadow, helpers.indirect_helper,
       {{A64CallArgKind::kCpu, 0},
        {A64CallArgKind::kHost, RA::kNextPc.id()},
-       {A64CallArgKind::kImm64, reinterpret_cast<uintptr_t>(slots)}});
+       {A64CallArgKind::kImm64,                                  // bit 0: non-global source
+        reinterpret_cast<uintptr_t>(slots) | (source_global ? 0u : 1u)}});
   if (err != Error::kOk) return err;
   err = a.cbz(a64::x0, done);
   if (err != Error::kOk) return err;
@@ -5687,6 +5758,107 @@ static asmjit::Error emit_a64_indirect_chain_tail(asmjit::a64::Assembler& a,
   }
   return a.b(done);
 #endif
+}
+
+struct A64DirectExit {
+  asmjit::Label site, stub, desc, gate_fail;
+  uint64_t pc = 0;
+  bool gate = false;
+};
+
+// Direct-patched exits: one `b` site per static successor, aimed at its stub until the
+// dispatcher retargets it (CJitEngine::patch_edge). Backward targets keep the gate.
+static asmjit::Error emit_a64_direct_patch_tail(A64EmitContext& context,
+    const A64BlockExit& exit, uint32_t terminator_ins,
+    std::vector<A64DirectExit>& exits)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = context.assembler;
+  if (exit.completed_delta == 0 || exit.completed_delta > kA64MaxBlockOps)
+    return Error::kInvalidArgument;
+
+  auto count = [&]() -> Error {
+    return a.add(RA::kChainCount, RA::kChainCount, imm(exit.completed_delta));
+  };
+  auto site = [&](uint64_t pc, bool gate) -> Error {
+    A64DirectExit x;
+    x.site = a.new_label(); x.stub = a.new_label(); x.desc = a.new_label();
+    x.gate_fail = a.new_label(); x.pc = pc; x.gate = gate;
+    Error err = Error::kOk;
+    if (gate)
+      err = emit_a64_chain_gate(a, context.offsets, A64ChainGate::kPollAll, x.gate_fail);
+    if (err == Error::kOk) err = a.bind(x.site);
+    if (err == Error::kOk) err = a.b(x.stub);          // the patch site
+    if (err == Error::kOk) exits.push_back(x);
+    return err;
+  };
+  const bool backward = ((terminator_ins >> 20) & 1u) != 0;
+
+  Error err = Error::kOk;
+  switch (context.direct_kind) {
+    case 1:   // conditional: both arms count the block (the taken branch skips the fall arm)
+      err = count();
+      if (err == Error::kOk) err = site(context.direct_fall, false);
+      if (err == Error::kOk) err = a.bind(context.direct_taken);
+      if (err == Error::kOk) err = count();
+      if (err == Error::kOk) err = site(context.direct_target, backward);
+      return err;
+    case 2:
+      err = count();
+      if (err == Error::kOk)
+        err = site(context.direct_target,
+                   backward && context.direct_target != context.direct_fall);
+      return err;
+    default:
+      err = count();
+      if (err == Error::kOk) err = site(exit.fallthrough_pc, false);
+      return err;
+  }
+}
+
+// Cold side: exit stubs (x22 = pc, link_from = PatchSite|2|nonglobal) and the descriptors.
+static asmjit::Error emit_a64_direct_patch_cold(A64EmitContext& context,
+    const std::vector<A64DirectExit>& exits, bool source_global)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = context.assembler;
+  if (exits.empty()) return Error::kOk;
+
+  const Label exit_common = a.new_label();
+  Error err = a.bind(exit_common);
+  if (err != Error::kOk) return err;
+  err = emit_a64_store_cpu_u64(a, RA::kNextPc, context.offsets.state_pc);
+  if (err != Error::kOk) return err;
+  err = a.b(context.done);
+  if (err != Error::kOk) return err;
+
+  for (const A64DirectExit& x : exits) {
+    if (x.gate) {                                       // gate failed: plain exit, no request
+      err = a.bind(x.gate_fail);
+      if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kNextPc, x.pc);
+      if (err == Error::kOk) err = a.b(exit_common);
+      if (err != Error::kOk) return err;
+    }
+    err = a.bind(x.stub);
+    if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kNextPc, x.pc);
+    if (err == Error::kOk) err = a.adr(RA::kScratch0, x.desc);
+    if (err == Error::kOk) err = a.orr(RA::kScratch0, RA::kScratch0, imm(source_global ? 2 : 3));
+    if (err == Error::kOk) err = emit_a64_store_cpu_u64(a, RA::kScratch0, context.offsets.link_from);
+    if (err == Error::kOk) err = a.b(exit_common);
+    if (err != Error::kOk) return err;
+  }
+  err = a.align(AlignMode::kData, 8);
+  if (err != Error::kOk) return err;
+  for (const A64DirectExit& x : exits) {                // PatchSite { site, stub, tag }
+    err = a.bind(x.desc);
+    if (err == Error::kOk) err = a.embed_label(x.site);
+    if (err == Error::kOk) err = a.embed_label(x.stub);
+    if (err == Error::kOk) err = a.embed_uint64(x.pc);
+    if (err != Error::kOk) return err;
+  }
+  return Error::kOk;
 }
 
 static asmjit::Error emit_a64_prologue(asmjit::a64::Assembler& a)
@@ -5890,9 +6062,34 @@ static bool a64_validate_tail_emitters(const asmjit::Environment& environment,
     return finish(code, a, done);
   };
 
+  auto validate_direct_patch = [&]() -> bool {
+    CodeHolder code;
+    if (code.init(environment, features) != Error::kOk) return false;
+    a64::Assembler a;
+    if (code.attach(&a) != Error::kOk) return false;
+    a.add_diagnostic_options(DiagnosticOptions::kValidateAssembler);
+    const Label done = a.new_label();
+    if (emit_a64_mov_u64(a, RA::kChainCount, 0) != Error::kOk) return false;
+    CJitEngine::RegAlloc patch_regs = make_a64_block_regalloc();
+    A64EmitContext context{a, offsets, helpers, patch_regs, done, 0x1000, false, false};
+    context.direct_exits = true;
+    const A64BlockExit exit{0x1008, 2, A64ExitKind::kFallthrough};
+    std::vector<A64DirectExit> exits;
+    if (emit_a64_direct_patch_tail(context, exit, 0x10u << 26, exits) != Error::kOk)
+      return false;
+    if (a.bind(done) != Error::kOk
+        || a.mov(RA::kResultCount, RA::kChainCount.w()) != Error::kOk
+        || a.ret(a64::x30) != Error::kOk)
+      return false;
+    if (emit_a64_direct_patch_cold(context, exits, false) != Error::kOk) return false;
+    return a.finalize() == Error::kOk && !code.has_unresolved_fixups()
+        && exits.size() == 1 && (code.code_size() & 3u) == 0;
+  };
+
   // Fall-throughs and the forward branch exercise the thinned (gateless) tail;
   // the backward branch, CALL_PAL, and redispatch exercise the gated one.
-  return validate_direct(A64ExitKind::kFallthrough, 0x10u << 26, false, false)
+  return validate_direct_patch()
+      && validate_direct(A64ExitKind::kFallthrough, 0x10u << 26, false, false)
       && validate_direct(A64ExitKind::kFallthrough, 0x10u << 26, true, true)
       && validate_direct(A64ExitKind::kDirect, (0x39u << 26) | 0x1fffffu, true, true)
       && validate_direct(A64ExitKind::kDirect, (0x39u << 26) | 0x4u, false, false)
@@ -6091,6 +6288,16 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   A64EmitContext emit_context{a, m_off, helpers, regalloc, done, b->tag,
                               pal_block, b->pal_shadow};
   emit_context.plan = &plan;
+  // Direct exits: non-PAL fall-throughs and integer branches. Chaining is verify-blind.
+  bool direct_patch = false;
+#ifndef JIT_VERIFY
+  direct_patch = kA64DirectPatch && !pal_block && chain.eligible()
+      && (exit.kind == A64ExitKind::kFallthrough
+          || (exit.kind == A64ExitKind::kDirect && plan.count != 0
+              && plan.ops[plan.count - 1].kind == A64OpKind::kBranchInt));
+#endif
+  emit_context.direct_exits = direct_patch;
+  std::vector<A64DirectExit> direct_exits;
   std::vector<A64ColdStub> cold_stubs;   // production memop slow paths (cold tail)
   emit_context.cold = &cold_stubs;
   const A64BodyEmitReceipt body_emission = emit_a64_block_body(
@@ -6102,11 +6309,13 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
       });
   if (!body_emission.complete_for(plan)) return;
 
-  const asmjit::Error tail_err = chain.eligible()
+  const asmjit::Error tail_err = direct_patch
+      ? emit_a64_direct_patch_tail(emit_context, exit, terminator_ins, direct_exits)
+      : chain.eligible()
       ? emit_a64_direct_chain_tail(a, m_off, chain, &b->link[0],
-                                  b->tag, body, done)
+                                  b->tag, body, done, b->asm_global)
       : emit_a64_indirect_chain_tail(a, m_off, helpers, regalloc, indirect,
-                                    &b->link[0], done);
+                                    &b->link[0], done, b->asm_global);
   if (tail_err != asmjit::Error::kOk) return;
 
   if (a.bind(done) != asmjit::Error::kOk) return;
@@ -6139,6 +6348,8 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     }
     if (a.b(s.join) != asmjit::Error::kOk) return;
   }
+  if (emit_a64_direct_patch_cold(emit_context, direct_exits, b->asm_global)
+      != asmjit::Error::kOk) return;
 #endif
   if (a.finalize() != asmjit::Error::kOk) return;
 

@@ -462,11 +462,23 @@ void CJitEngine::flush_non_global()
 // Retargets a direct exit; false beyond rel32 reach. Same-thread write only.
 static bool write_site(CJitEngine::PatchSite* s, const uint8_t* target)
 {
+#if defined(ES40_JIT_A64)
+  // `b imm26`: +-128 MB, word aligned. The scope handles W^X hosts and the I-cache flush.
+  const int64_t rel = (int64_t) (target - s->site);
+  if ((rel & 3) != 0 || rel < -(int64_t(1) << 27) || rel >= (int64_t(1) << 27)) return false;
+  const uint32_t ins = 0x14000000u | ((uint32_t) (rel >> 2) & 0x03ffffffu);
+  {
+    asmjit::VirtMem::ProtectJitReadWriteScope scope(s->site, sizeof(ins));
+    memcpy(s->site, &ins, sizeof(ins));
+  }
+  return true;
+#else
   const int64_t rel = (int64_t) (target - (s->site + 5));
   if (rel != (int64_t) (int32_t) rel) return false;
   const int32_t r32 = (int32_t) rel;
   memcpy(s->site + 1, &r32, sizeof(r32));
   return true;
+#endif
 }
 
 void CJitEngine::clear_edge(void* key)
