@@ -729,12 +729,16 @@ void CRealImage2100::block_command(uint32_t v)
 		}
 	}
 	std::array<uint32_t, 2> colors{};
+	std::array<bool, 2> blend_clear{};
 	for (unsigned bank = 0; bank < 2; ++bank)
 	{
-		const uint32_t mask = plane_value(bank, 0, 0xffffffff) & 0xffffff;
+		const uint32_t mask = plane_value(bank, 0, 0xffffffff) & 0xffffff,
+			rops = plane_value(bank, 4, 0x03030303);
 		if (!(banks & (1u << bank)) || !mask)
 			continue;
-		if (!plane_profile(bank) || m_planes[bank].unknown_masks)
+		blend_clear[bank] = !copy && rops == 0xd0d0d0d0;
+		if (!plane_profile(bank, 0x100, blend_clear[bank] ? rops : 0) ||
+			m_planes[bank].unknown_masks)
 		{
 			reject();
 			return;
@@ -764,10 +768,10 @@ void CRealImage2100::block_command(uint32_t v)
 					return;
 				}
 		}
-		// Offscreen seeds bypass the retained RGB ROP.
-		const uint32_t rops = plane_value(bank, 4, 0x03030303);
+		// Seeds and neutral-pipeline clears bypass retained blending.
 		for (unsigned shift = 0; shift < 24; shift += 8)
-			if (!seed && (mask & (0xffu << shift)) && ((rops >> shift) & 15) != 3 &&
+			if (!seed && !blend_clear[bank] &&
+				(mask & (0xffu << shift)) && ((rops >> shift) & 15) != 3 &&
 				(((rops >> shift) & 15) != 0 ||
 					(colors[bank] & mask & (0xffu << shift))))
 			{
@@ -825,7 +829,17 @@ void CRealImage2100::block_command(uint32_t v)
 					const uint32_t bits = plane_value(bank, 24 + col % groups, 0xffffffff),
 						bit = 2 * (row & 3) + ((col / groups) & 1);
 					if (bits & (1u << bit))
-						color_write(col, row, colors[bank], 1u << bank);
+					{
+						if (blend_clear[bank])
+						{
+							const uint32_t mask = plane_value(bank, 0, 0xffffffff) & 0xffffff;
+							auto& pixel = m_color[size_t(bank) * m_color_pixels +
+								size_t(row) * m_color_width + col];
+							pixel = (pixel & ~mask) | (colors[bank] & mask);
+						}
+						else
+							color_write(col, row, colors[bank], 1u << bank);
+					}
 				}
 		}
 }
@@ -1304,7 +1318,7 @@ void CRealImage2100::dma_command(uint32_t v)
 		dma_texture_upload(v);
 		return;
 	}
-	if (mode == 0xc0400000u)
+	if (mode == 0xc0400000u || mode == 0xa1000000u)
 	{
 		dma_command_list(v);
 		return;
@@ -1469,74 +1483,116 @@ bool CRealImage2100::dma_list_target(uint32_t a) const
 
 void CRealImage2100::dma_command_list(uint32_t v)
 {
-	const uint32_t source = m_dma_regs[8], initial_address = m_dma_regs[9],
-		completion = m_dma_regs[12], words = v & DMACommandListCountMask, bytes = words * 4;
+	const uint32_t completion = m_dma_regs[12];
+	uint32_t command = v, source = m_dma_regs[8], initial_address = m_dma_regs[9],
+		next = m_dma_regs[11];
 	auto reject = [&]() {
 		unimplemented("REALimage DMA command list (rejected; completion not written)",
 			DMACommand, v, true);
 	};
+	auto source_range = [&](uint32_t address, uint32_t bytes) {
+		return !((address | bytes) & 3) &&
+			uint64_t(address) + bytes <= 0x100000000ull &&
+			!(uint64_t(completion) < uint64_t(address) + bytes &&
+				uint64_t(completion) + 4 > address);
+	};
 	bool neutral = true;
 	for (unsigned i : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 10u, 13u, 15u, 16u, 17u, 18u})
 		neutral &= m_dma_regs[i] == 0;
-	if ((v & ~DMACommandListCountMask) != 0xc0400000u ||
-		!words || bytes > DMACommandListMaxBytes ||
-		m_dma_list_active || !neutral || m_dma_regs[14] != 8 ||
-		((source | initial_address | completion) & 3) ||
-		uint64_t(source) + bytes > 0x100000000ull ||
-		uint64_t(completion) + 4 > 0x100000000ull ||
-		(uint64_t(completion) < uint64_t(source) + bytes &&
-			uint64_t(completion) + 4 > source))
+	if (m_dma_list_active || !neutral || m_dma_regs[14] != 8 || (completion & 3))
 	{
 		reject();
 		return;
 	}
-	std::vector<uint8_t> data(bytes);
-	if (!m_dma_reader || !m_dma_completer ||
-		!m_dma_reader(source, data.data(), bytes, completion))
+	if (!m_dma_reader || !m_dma_completer)
 	{
-		report("DMA_READ", source, bytes, "PCI DMA read unavailable or rejected");
+		report("DMA_READ", source, v, "PCI DMA command-list callbacks unavailable");
 		return;
 	}
-	auto word_at = [&](uint32_t index) {
-		const uint8_t* p = data.data() + size_t(index) * 4;
+	auto decode_word = [](const uint8_t* p) {
 		return uint32_t(p[0]) | (uint32_t(p[1]) << 8) |
 			(uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
+	};
+	std::vector<uint8_t> data;
+	auto word_at = [&](uint32_t index) {
+		return decode_word(data.data() + size_t(index) * 4);
 	};
 	struct Packet
 	{
 		uint32_t address, wait_mask, first, count;
 	};
 	std::vector<Packet> packets;
-	uint32_t cursor = 0, address = initial_address;
-	while (cursor < words)
+	std::set<uint32_t> visited;
+	// Preflight every link within the existing staging budget before executing.
+	for (;;)
 	{
-		const uint32_t control = word_at(cursor++), count = control & 0xffff;
-		if (count > words - cursor ||
-			uint64_t(address) + uint64_t(count) * 4 > 0x100000000ull)
+		const uint32_t mode = command & ~DMACommandListCountMask,
+			words = command & DMACommandListCountMask, bytes = words * 4;
+		if ((mode != 0xc0400000u && mode != 0xa1000000u) || !words ||
+			bytes > DMACommandListMaxBytes - data.size() || !source_range(source, bytes) ||
+			(initial_address & 3) || (mode == 0xa1000000u &&
+				(!source_range(next, 16) || !visited.insert(next).second)))
 		{
 			reject();
 			return;
 		}
-		if (!dma_list_target(address))
+		const uint32_t first = uint32_t(data.size() / 4), end = first + words;
+		data.resize(data.size() + bytes);
+		if (!m_dma_reader(source, data.data() + size_t(first) * 4, bytes, completion))
 		{
-			report("DMA_TARGET", address, control, "Unsupported DMA command-list target");
-			reject();
+			report("DMA_READ", source, bytes, "PCI DMA read unavailable or rejected");
 			return;
 		}
-		for (uint32_t i = 0; i < count; ++i)
-			if (!dma_list_target(address + i * 4))
+		uint32_t cursor = first, address = initial_address;
+		while (cursor < end)
+		{
+			const uint32_t control = word_at(cursor++), count = control & 0xffff;
+			if (count > end - cursor ||
+				uint64_t(address) + uint64_t(count) * 4 > 0x100000000ull)
 			{
-				report("DMA_TARGET", address + i * 4, word_at(cursor + i),
-					"Unsupported DMA command-list target");
 				reject();
 				return;
 			}
-		packets.push_back({address, control & 0xffff0000u, cursor, count});
-		cursor += count;
-		if (cursor == words)
+			if (!dma_list_target(address))
+			{
+				report("DMA_TARGET", address, control, "Unsupported DMA command-list target");
+				reject();
+				return;
+			}
+			for (uint32_t i = 0; i < count; ++i)
+				if (!dma_list_target(address + i * 4))
+				{
+					report("DMA_TARGET", address + i * 4, word_at(cursor + i),
+						"Unsupported DMA command-list target");
+					reject();
+					return;
+				}
+			packets.push_back({address, control & 0xffff0000u, cursor, count});
+			cursor += count;
+			if (cursor == end)
+				break;
+			address = word_at(cursor++);
+			if (cursor == end)
+			{
+				reject();
+				return;
+			}
+		}
+		if (mode == 0xc0400000u)
 			break;
-		address = word_at(cursor++);
-		if (cursor == words)
+		std::array<uint8_t, 16> descriptor{};
+		if (!m_dma_reader(next, descriptor.data(), descriptor.size(), completion))
+		{
+			report("DMA_READ", next, uint32_t(descriptor.size()),
+				"PCI DMA descriptor unavailable or rejected");
+			return;
+		}
+		command = decode_word(descriptor.data());
+		source = decode_word(descriptor.data() + 4);
+		initial_address = decode_word(descriptor.data() + 8);
+		next = decode_word(descriptor.data() + 12);
+		// Captured chains retain the latched completion address at their terminal link.
+		if ((command & ~DMACommandListCountMask) == 0xc0400000u && next != completion)
 		{
 			reject();
 			return;
