@@ -280,7 +280,8 @@ private:
   bool fast_copy_profile() const;
   bool triangle_profile() const;
   void triangle_command(uint32_t address, uint32_t value);
-  uint32_t texture_color(double s, double t) const;
+  uint32_t texture_color(double s, double t, uint32_t base,
+    uint32_t width, uint32_t height, unsigned row_shift) const;
   void start_command(uint32_t address, uint32_t value);
   void block_command(uint32_t value);
   void host_data(uint32_t value);

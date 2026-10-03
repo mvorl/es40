@@ -1197,6 +1197,13 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 	const uint32_t wid = (peek(DrawControl) >> 4) & 0xf000,
 		bank = ((peek(DrawControl) >> 12) & 3) == 2 ? 1 : 0;
 	const bool depth_less = plane_value(2, 5, 0) == 0x0a000207;
+	const uint32_t texture_profile = peek(PipelineControl0),
+		texture_base = textured ? texture_offset(peek(TextureBase)) : 0,
+		texture_width = 1u << ((texture_profile >> 8) & 15),
+		texture_height = 1u << ((texture_profile >> 4) & 15);
+	const unsigned texture_row_shift = m_texture.size() == MaxTextureSize ? 14 : 13;
+	// Validated triangle profiles write every RGB channel.
+	uint32_t* const color_plane = m_color.data() + size_t(bank) * m_color_pixels;
 	m_clear_cache[bank] = {};
 	// Launches reuse all three slots; sorting must leave their registers intact.
 	for (int y = top; y <= bottom; ++y)
@@ -1211,6 +1218,7 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 			uint32_t& auxiliary = m_auxiliary[offset];
 			if ((auxiliary & 0xf000) != wid)
 				continue;
+			uint32_t& destination = color_plane[offset];
 			const double wb = eb / area, wc = ec / area;
 			if (textured)
 			{
@@ -1219,12 +1227,13 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 					denominator = wa + tb + tc;
 				const double s = (wa * a.s + tb * b.s + tc * c.s) / denominator,
 					t = (wa * a.t + tb * b.t + tc * c.t) / denominator;
-				color_write(unsigned(x), unsigned(y), texture_color(s, t), 1u << bank);
+				const uint32_t color = texture_color(s, t, texture_base,
+					texture_width, texture_height, texture_row_shift);
+				destination = (destination & 0xff000000u) | color;
 				continue;
 			}
 			if (flat)
 			{
-				uint32_t& destination = m_color[size_t(bank) * m_color_pixels + offset];
 				uint32_t color = 0;
 				for (unsigned i = 1; i < 4; ++i)
 				{
@@ -1233,10 +1242,7 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 						((destination >> shift) & 255) * (1 - flat_color[0]) : flat_color[i];
 					color |= uint32_t(channel) << shift;
 				}
-				if (blend)
-					destination = (destination & 0xff000000u) | color;
-				else
-					color_write(unsigned(x), unsigned(y), color, 1u << bank);
+				destination = (destination & 0xff000000u) | color;
 				continue;
 			}
 			const uint32_t z = uint32_t(std::clamp(a.z + wb * (b.z - a.z) + wc * (c.z - a.z),
@@ -1249,23 +1255,22 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 			};
 			const uint32_t color = (channel(a.red, b.red, c.red) << 16) |
 				(channel(a.green, b.green, c.green) << 8) | channel(a.blue, b.blue, c.blue);
-			color_write(unsigned(x), unsigned(y), color, 1u << bank);
+			destination = (destination & 0xff000000u) | color;
 			auxiliary = (auxiliary & ~0x0fff0fffu) | (z & 0xfff) | ((z & 0xfff000) << 4);
 		}
 }
 
 // RGB565, linear/repeat sampling, RGB decal mode.
-uint32_t CRealImage2100::texture_color(double s, double t) const
+uint32_t CRealImage2100::texture_color(double s, double t, uint32_t base,
+	uint32_t width, uint32_t height, unsigned row_shift) const
 {
-	const uint32_t pipeline = peek(PipelineControl0), base = peek(TextureBase),
-		width = 1u << ((pipeline >> 8) & 15), height = 1u << ((pipeline >> 4) & 15);
 	const double u = std::fmod(s, 1.0) * width - 0.5,
 		v = std::fmod(t, 1.0) * height - 0.5;
 	const int x = int(std::floor(u)), y = int(std::floor(v));
 	const double fx = u - x, fy = v - y;
 	auto texel = [&](int tx, int ty) {
-		const uint32_t offset = texture_offset(base + ((uint32_t(ty) & (height - 1)) << 14) +
-			((uint32_t(tx) & (width - 1)) << 1));
+		const uint32_t offset = base + ((uint32_t(ty) & (height - 1)) << row_shift) +
+			((uint32_t(tx) & (width - 1)) << 1);
 		return uint32_t(m_texture[offset]) | (uint32_t(m_texture[offset + 1]) << 8);
 	};
 	const uint32_t pixels[] = {texel(x, y), texel(x + 1, y), texel(x, y + 1), texel(x + 1, y + 1)};
@@ -1688,6 +1693,18 @@ CRealImage2100::Frame CRealImage2100::scanout(std::string* error) const
 	frame.height = height;
 	frame.argb.resize(size_t(width) * height);
 	// This profile displays bank 1; page flips and overlays are unmodeled.
+	if (std::all_of(supported_windows.begin(), supported_windows.end(), [](bool v) { return v; }))
+	{
+		for (uint32_t y = 0; y < height; ++y)
+		{
+			const uint32_t* source = m_color.data() + size_t(y) * m_color_width;
+			uint32_t* destination = frame.argb.data() + size_t(y) * width;
+			for (uint32_t x = 0; x < width; ++x)
+				destination[x] = 0xff000000 | source[x];
+		}
+		composite_cursor(frame);
+		return frame;
+	}
 	for (uint32_t y = 0; y < height; ++y)
 		for (uint32_t x = 0; x < width; ++x)
 		{
