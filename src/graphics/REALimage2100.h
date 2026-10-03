@@ -103,6 +103,7 @@ public:
                             GlobalControl0 = 0x00800410,
                             GlobalControl1 = 0x00800414,
                             GlobalControl2 = 0x00800418;
+  static constexpr uint32_t TextureBase = 0x00800500;
   static constexpr uint32_t PipelineControl0 = 0x008005c0,
                             PipelineControl1 = 0x008005c4,
                             PipelineControl2 = 0x008005c8,

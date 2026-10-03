@@ -458,7 +458,7 @@ bool CRealImage2100::plane_profile(unsigned bank, uint32_t format) const
 
 bool CRealImage2100::native_storage_register(uint32_t a) const
 {
-	return vertex_register(a) || a == ContextLink ||
+	return vertex_register(a) || a == TextureBase || a == ContextLink ||
 		a == DrawControl || a == MemoryControl || a == PixelControl ||
 		a == Foreground || a == Background || a == HostOrigin ||
 		a == MonoPattern0 || a == MonoPattern1 ||
@@ -743,10 +743,10 @@ void CRealImage2100::block_command(uint32_t v)
 					return;
 				}
 		}
-		// Accept only cases where block ROP application and bypass agree.
+		// Offscreen seeds bypass the retained RGB ROP.
 		const uint32_t rops = plane_value(bank, 4, 0x03030303);
 		for (unsigned shift = 0; shift < 24; shift += 8)
-			if ((mask & (0xffu << shift)) && ((rops >> shift) & 15) != 3 &&
+			if (!seed && (mask & (0xffu << shift)) && ((rops >> shift) & 15) != 3 &&
 				(((rops >> shift) & 15) != 0 ||
 					(colors[bank] & mask & (0xffu << shift))))
 			{
@@ -1299,6 +1299,7 @@ bool CRealImage2100::dma_list_target(uint32_t a) const
 	{
 	case ClipXMax: case ClipYMax: case ClipXMin: case ClipYMin:
 	case GlobalControl0: case GlobalControl1: case GlobalControl2:
+	case TextureBase:
 	case PipelineControl0: case PipelineControl1:
 	case PipelineControl2: case PipelineControl3:
 	case PipelineControl4: case PipelineControl5:
