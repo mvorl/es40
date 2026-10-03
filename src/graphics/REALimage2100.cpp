@@ -1086,7 +1086,7 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 			if (!std::isfinite(input) ||
 				(i == 0 && (input < 0 || input > 256)) ||
 				((i == 4 || i == 5) && (input < -32768 || input >= 32768)) ||
-				(i == 6 && (no_depth ? input <= 0 : (input < 0 || input > 1))))
+				(i == 6 && (no_depth ? input == 0 : (input < 0 || input > 1))))
 			{
 				reject();
 				return;
@@ -1122,6 +1122,13 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 			vertex[slot].s = coordinates[1];
 			vertex[slot].t = coordinates[2];
 		}
+	}
+	// The shared projection scale can be negative; reject a horizon crossing.
+	if (textured && ((vertex[0].z < 0) != (vertex[1].z < 0) ||
+		(vertex[0].z < 0) != (vertex[2].z < 0)))
+	{
+		reject();
+		return;
 	}
 	double flat_color[4]{};
 	if (flat && !textured)
