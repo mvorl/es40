@@ -29,9 +29,82 @@
 #include <cmath>
 #include <cstring>
 #include <istream>
+#include <limits>
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
+
+// Finite repeat coordinates only need the fractional IEEE-754 bits.
+static double realimage_repeat_fraction(double value)
+{
+	if constexpr (sizeof(double) != sizeof(uint64_t) ||
+		!std::numeric_limits<double>::is_iec559 ||
+		std::numeric_limits<double>::digits != 53 ||
+		std::numeric_limits<double>::max_exponent != 1024)
+		return std::fmod(value, 1.0);
+	uint64_t bits;
+	std::memcpy(&bits, &value, sizeof(bits));
+	const unsigned exponent = unsigned((bits >> 52) & 0x7ff);
+	if (exponent < 1023)
+		return value;
+	if (exponent >= 1075)
+		return 0;
+	bits &= ~((uint64_t(1) << (1075 - exponent)) - 1);
+	double integral;
+	std::memcpy(&integral, &bits, sizeof(integral));
+	return value - integral;
+}
+
+#if (defined(_M_X64) || defined(__SSE2__) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)) && !defined(REALIMAGE_SCALAR_ONLY)
+#define REALIMAGE_SSE2 1
+#include <emmintrin.h>
+static __m128i realimage_texture2(__m128d s, __m128d t, const uint8_t* texture,
+	uint32_t base, uint32_t width, uint32_t height, unsigned row_shift)
+{
+	auto repeat = [](__m128d q) {
+		return _mm_set_pd(realimage_repeat_fraction(_mm_cvtsd_f64(_mm_unpackhi_pd(q, q))),
+			realimage_repeat_fraction(_mm_cvtsd_f64(q)));
+	};
+	const __m128d u = _mm_sub_pd(_mm_mul_pd(repeat(s), _mm_set1_pd(width)), _mm_set1_pd(0.5)),
+		v = _mm_sub_pd(_mm_mul_pd(repeat(t), _mm_set1_pd(height)), _mm_set1_pd(0.5));
+	auto floor_int = [](__m128d q) {
+		const __m128i truncated = _mm_cvttpd_epi32(q);
+		const __m128i below = _mm_castpd_si128(_mm_cmplt_pd(q, _mm_cvtepi32_pd(truncated)));
+		return _mm_sub_epi32(truncated, _mm_and_si128(
+			_mm_shuffle_epi32(below, _MM_SHUFFLE(3, 1, 2, 0)), _mm_set1_epi32(1)));
+	};
+	const __m128i x = floor_int(u), y = floor_int(v);
+	const __m128d fx = _mm_sub_pd(u, _mm_cvtepi32_pd(x)), fy = _mm_sub_pd(v, _mm_cvtepi32_pd(y));
+	const __m128i xmask = _mm_set1_epi32(width - 1), ymask = _mm_set1_epi32(height - 1);
+	const __m128i x0 = _mm_slli_epi32(_mm_and_si128(x, xmask), 1),
+		x1 = _mm_slli_epi32(_mm_and_si128(_mm_add_epi32(x, _mm_set1_epi32(1)), xmask), 1),
+		y0 = _mm_sll_epi32(_mm_and_si128(y, ymask), _mm_cvtsi32_si128(row_shift)),
+		y1 = _mm_sll_epi32(_mm_and_si128(_mm_add_epi32(y, _mm_set1_epi32(1)), ymask), _mm_cvtsi32_si128(row_shift));
+	auto texel = [&](__m128i xx, __m128i yy) {
+		const __m128i at = _mm_add_epi32(_mm_set1_epi32(base), _mm_add_epi32(xx, yy));
+		const unsigned a = unsigned(_mm_cvtsi128_si32(at)), b = unsigned(_mm_cvtsi128_si32(_mm_srli_si128(at, 4)));
+		uint16_t first, second;
+		std::memcpy(&first, texture + a, 2);
+		std::memcpy(&second, texture + b, 2);
+		return _mm_set_epi32(0, 0, second, first);
+	};
+	const __m128i p00 = texel(x0, y0), p10 = texel(x1, y0), p01 = texel(x0, y1), p11 = texel(x1, y1);
+	auto channel = [&](unsigned shift, uint32_t mask) {
+		const __m128i shifts = _mm_cvtsi32_si128(shift), masks = _mm_set1_epi32(mask);
+		auto expand = [&](const __m128i p) {
+			return _mm_cvtepi32_pd(_mm_and_si128(_mm_srl_epi32(p, shifts), masks));
+		};
+		const __m128d a = expand(p00), b = expand(p10), c = expand(p01), d = expand(p11);
+		const __m128d top = _mm_add_pd(a, _mm_mul_pd(fx, _mm_sub_pd(b, a))),
+			bottom = _mm_add_pd(c, _mm_mul_pd(fx, _mm_sub_pd(d, c)));
+		const __m128d color = _mm_div_pd(_mm_mul_pd(_mm_add_pd(top,
+			_mm_mul_pd(fy, _mm_sub_pd(bottom, top))), _mm_set1_pd(255)), _mm_set1_pd(mask));
+		return _mm_cvttpd_epi32(_mm_max_pd(_mm_setzero_pd(), _mm_min_pd(_mm_set1_pd(255), color)));
+	};
+	return _mm_or_si128(_mm_slli_epi32(channel(11, 31), 16),
+		_mm_or_si128(_mm_slli_epi32(channel(5, 63), 8), channel(0, 31)));
+}
+#endif
 
 static bool valid_width(int bits)
 {
@@ -1205,9 +1278,106 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 	// Validated triangle profiles write every RGB channel.
 	uint32_t* const color_plane = m_color.data() + size_t(bank) * m_color_pixels;
 	m_clear_cache[bank] = {};
+	struct RowEdge { const Vertex *p, *q; double slope; bool inclusive; };
+	const RowEdge row_edges[] = {
+		{&b, &c, c.y == b.y ? 0 : (c.x - b.x) / (c.y - b.y), include_a},
+		{&c, &a, a.y == c.y ? 0 : (a.x - c.x) / (a.y - c.y), include_b},
+		{&a, &b, b.y == a.y ? 0 : (b.x - a.x) / (b.y - a.y), include_c}};
+	// Skip only spans rejected by the original edge test.
+	auto row_span = [&](int y, int& span_left, int& span_right) {
+		span_left = left;
+		span_right = right;
+		for (const auto& limit : row_edges)
+		{
+			if (span_left > span_right)
+				break;
+			const Vertex &p = *limit.p, &q = *limit.q;
+			auto outside = [&](int x) {
+				const double e = edge(p, q, x + 0.5, y + 0.5);
+				return e < 0 || (e == 0 && !limit.inclusive);
+			};
+			if (q.y == p.y)
+			{
+				if (outside(span_left))
+					span_left = span_right + 1;
+				continue;
+			}
+			const double crossing = p.x + (y + 0.5 - p.y) * limit.slope - 0.5;
+			if (!std::isfinite(crossing))
+				continue;
+			if (q.y < p.y)
+			{
+				const int bound = int(std::clamp(std::floor(crossing) - 1,
+					double(span_left), double(span_right + 1)));
+				if (bound > span_left && outside(bound - 1))
+					span_left = bound;
+			}
+			else
+			{
+				const int bound = int(std::clamp(std::ceil(crossing) + 1,
+					double(span_left - 1), double(span_right)));
+				if (bound < span_right && outside(bound + 1))
+					span_right = bound;
+			}
+		}
+	};
+
+#if defined(REALIMAGE_SSE2)
+	if (textured)
+	{
+		const __m128d zero = _mm_setzero_pd(), area2 = _mm_set1_pd(area);
+		auto vector_edge = [&] (const Vertex& p, const Vertex& q, __m128d xx, __m128d yy) {
+			return _mm_sub_pd(_mm_mul_pd(_mm_set1_pd(q.x - p.x), _mm_sub_pd(yy, _mm_set1_pd(p.y))),
+				_mm_mul_pd(_mm_set1_pd(q.y - p.y), _mm_sub_pd(xx, _mm_set1_pd(p.x))));
+		};
+		auto inside = [&] (__m128d e, bool include) {
+			return include ? _mm_cmpge_pd(e, zero) : _mm_cmpgt_pd(e, zero);
+		};
+		for (int y = top; y <= bottom; ++y)
+		{
+			int span_left, span_right;
+			row_span(y, span_left, span_right);
+			for (int x = span_left; x <= span_right; x += 2)
+			{
+				const __m128d xx = _mm_set_pd(x + 1.5, x + 0.5), yy = _mm_set1_pd(y + 0.5);
+				const __m128d ea = vector_edge(b, c, xx, yy), eb = vector_edge(c, a, xx, yy), ec = vector_edge(a, b, xx, yy);
+				unsigned active = unsigned(_mm_movemask_pd(_mm_and_pd(inside(ea, include_a),
+					_mm_and_pd(inside(eb, include_b), inside(ec, include_c))))) & (x < span_right ? 3u : 1u);
+				const size_t offset = size_t(y) * m_color_width + unsigned(x);
+				if ((active & 1) && (m_auxiliary[offset] & 0xf000) != wid)
+					active &= ~1u;
+				if ((active & 2) && (m_auxiliary[offset + 1] & 0xf000) != wid)
+					active &= ~2u;
+				if (!active)
+					continue;
+				const __m128d wb = _mm_div_pd(eb, area2), wc = _mm_div_pd(ec, area2),
+					wa = _mm_div_pd(_mm_div_pd(ea, area2), _mm_set1_pd(a.z)),
+					tb = _mm_div_pd(wb, _mm_set1_pd(b.z)), tc = _mm_div_pd(wc, _mm_set1_pd(c.z));
+				const __m128d mask = _mm_castsi128_pd(_mm_set_epi64x(active & 2 ? -1ll : 0, active & 1 ? -1ll : 0));
+				const __m128d denominator = _mm_or_pd(_mm_and_pd(mask, _mm_add_pd(_mm_add_pd(wa, tb), tc)),
+					_mm_andnot_pd(mask, _mm_set1_pd(1)));
+				const __m128d s = _mm_div_pd(_mm_add_pd(_mm_add_pd(_mm_mul_pd(wa, _mm_set1_pd(a.s)),
+					_mm_mul_pd(tb, _mm_set1_pd(b.s))), _mm_mul_pd(tc, _mm_set1_pd(c.s))), denominator),
+					t = _mm_div_pd(_mm_add_pd(_mm_add_pd(_mm_mul_pd(wa, _mm_set1_pd(a.t)),
+					_mm_mul_pd(tb, _mm_set1_pd(b.t))), _mm_mul_pd(tc, _mm_set1_pd(c.t))), denominator);
+				const __m128i color = realimage_texture2(s, t, m_texture.data(), texture_base,
+					texture_width, texture_height, texture_row_shift);
+				if (active & 1)
+					color_plane[offset] = (color_plane[offset] & 0xff000000u) | unsigned(_mm_cvtsi128_si32(color));
+				if (active & 2)
+					color_plane[offset + 1] = (color_plane[offset + 1] & 0xff000000u) |
+						unsigned(_mm_cvtsi128_si32(_mm_srli_si128(color, 4)));
+			}
+		}
+		return;
+	}
+#endif
 	// Launches reuse all three slots; sorting must leave their registers intact.
 	for (int y = top; y <= bottom; ++y)
-		for (int x = left; x <= right; ++x)
+	{
+		int span_left, span_right;
+		row_span(y, span_left, span_right);
+		for (int x = span_left; x <= span_right; ++x)
 		{
 			const double ea = edge(b, c, x + 0.5, y + 0.5),
 				eb = edge(c, a, x + 0.5, y + 0.5), ec = edge(a, b, x + 0.5, y + 0.5);
@@ -1258,14 +1428,15 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 			destination = (destination & 0xff000000u) | color;
 			auxiliary = (auxiliary & ~0x0fff0fffu) | (z & 0xfff) | ((z & 0xfff000) << 4);
 		}
+	}
 }
 
 // RGB565, linear/repeat sampling, RGB decal mode.
 uint32_t CRealImage2100::texture_color(double s, double t, uint32_t base,
 	uint32_t width, uint32_t height, unsigned row_shift) const
 {
-	const double u = std::fmod(s, 1.0) * width - 0.5,
-		v = std::fmod(t, 1.0) * height - 0.5;
+	const double u = realimage_repeat_fraction(s) * width - 0.5,
+		v = realimage_repeat_fraction(t) * height - 0.5;
 	const int x = int(std::floor(u)), y = int(std::floor(v));
 	const double fx = u - x, fy = v - y;
 	auto texel = [&](int tx, int ty) {
@@ -1692,12 +1863,15 @@ CRealImage2100::Frame CRealImage2100::scanout(std::string* error) const
 	frame.width = width;
 	frame.height = height;
 	frame.argb.resize(size_t(width) * height);
-	// This profile displays bank 1; page flips and overlays are unmodeled.
-	if (std::all_of(supported_windows.begin(), supported_windows.end(), [](bool v) { return v; }))
+	// Board I/O bits 8..23 select the color bank for each WID.
+	const uint32_t bank_select = (m_board_io >> 8) & 0xffff;
+	if ((bank_select == 0 || bank_select == 0xffff) &&
+		std::all_of(supported_windows.begin(), supported_windows.end(), [](bool v) { return v; }))
 	{
 		for (uint32_t y = 0; y < height; ++y)
 		{
-			const uint32_t* source = m_color.data() + size_t(y) * m_color_width;
+			const uint32_t* source = m_color.data() +
+				(bank_select ? m_color_pixels : 0) + size_t(y) * m_color_width;
 			uint32_t* destination = frame.argb.data() + size_t(y) * width;
 			for (uint32_t x = 0; x < width; ++x)
 				destination[x] = 0xff000000 | source[x];
@@ -1708,10 +1882,13 @@ CRealImage2100::Frame CRealImage2100::scanout(std::string* error) const
 	for (uint32_t y = 0; y < height; ++y)
 		for (uint32_t x = 0; x < width; ++x)
 		{
-			if (!supported_windows[(m_auxiliary[size_t(y) * m_color_width + x] >> 12) & 15])
+			const size_t offset = size_t(y) * m_color_width + x;
+			const unsigned wid = (m_auxiliary[offset] >> 12) & 15;
+			if (!supported_windows[wid])
 				return reject("Native DAC window format unsupported");
+			const size_t bank = (bank_select >> wid) & 1;
 			frame.argb[size_t(y) * width + x] =
-				0xff000000 | m_color[size_t(y) * m_color_width + x];
+				0xff000000 | m_color[bank * m_color_pixels + offset];
 		}
 	composite_cursor(frame);
 	return frame;

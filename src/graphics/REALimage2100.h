@@ -80,7 +80,7 @@ public:
   static constexpr uint32_t BoardStatus = 0x008380bc;
   // Code 0 = 12 3D-RAM chips (15 MB), the PowerStorm 300 complement.
   static constexpr uint8_t BoardStraps = 0;
-  // Bytes 0-2 read back as written (1-2 are GPIO). Byte 3 reads the board ID;
+  // Bytes 1-2 select the displayed bank per WID. Byte 3 reads the board ID;
   // mode sets write timing there, which must not change later ID reads.
   static constexpr uint32_t BoardIO = 0x008380b0;
   // PCGA3, which the Compaq PowerStorm 300 driver reports as "PC3".
