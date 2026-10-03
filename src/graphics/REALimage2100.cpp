@@ -668,10 +668,10 @@ void CRealImage2100::block_command(uint32_t v)
 		unimplemented_once(
 			"REALimage block command/profile (command rejected)", BlockCommand, v, true);
 	};
-	const uint32_t control_fields = 0x0400ff01u | (!copy ? 0x000f0000u : 0);
+	const uint32_t control_fields = 0x040fff01u;
 	if ((control & ~control_fields) != 0x81000002 || !banks || (banks & ~7u) ||
 		v != (((banks ^ 7u) << 18) | (copy ? 0x30000u : 0x10000u)) ||
-		!native_copy_control_profile(!copy) || m_pending.width || m_readback.width ||
+		!native_copy_control_profile(true) || m_pending.width || m_readback.width ||
 		((source | destination | extent) & ~0x07ff07ffu) ||
 		(!copy && source) || (copy && !configuration) ||
 		((banks & 4) && auxiliary_mask && !auxiliary_clear))
@@ -729,15 +729,16 @@ void CRealImage2100::block_command(uint32_t v)
 		}
 	}
 	std::array<uint32_t, 2> colors{};
-	std::array<bool, 2> blend_clear{};
+	std::array<bool, 2> replace_color{};
 	for (unsigned bank = 0; bank < 2; ++bank)
 	{
 		const uint32_t mask = plane_value(bank, 0, 0xffffffff) & 0xffffff,
 			rops = plane_value(bank, 4, 0x03030303);
 		if (!(banks & (1u << bank)) || !mask)
 			continue;
-		blend_clear[bank] = !copy && rops == 0xd0d0d0d0;
-		if (!plane_profile(bank, 0x100, blend_clear[bank] ? rops : 0) ||
+		const bool blend = rops == 0xd0d0d0d0;
+		replace_color[bank] = blend || (!copy && (rops & 0xffffff) == 0x060606);
+		if (!plane_profile(bank, 0x100, blend ? rops : 0) ||
 			m_planes[bank].unknown_masks)
 		{
 			reject();
@@ -768,9 +769,9 @@ void CRealImage2100::block_command(uint32_t v)
 					return;
 				}
 		}
-		// Seeds and neutral-pipeline clears bypass retained blending.
+		// Block clears bypass retained XOR and blend operations.
 		for (unsigned shift = 0; shift < 24; shift += 8)
-			if (!seed && !blend_clear[bank] &&
+			if (!seed && !replace_color[bank] &&
 				(mask & (0xffu << shift)) && ((rops >> shift) & 15) != 3 &&
 				(((rops >> shift) & 15) != 0 ||
 					(colors[bank] & mask & (0xffu << shift))))
@@ -830,7 +831,7 @@ void CRealImage2100::block_command(uint32_t v)
 						bit = 2 * (row & 3) + ((col / groups) & 1);
 					if (bits & (1u << bit))
 					{
-						if (blend_clear[bank])
+						if (replace_color[bank])
 						{
 							const uint32_t mask = plane_value(bank, 0, 0xffffffff) & 0xffffff;
 							auto& pixel = m_color[size_t(bank) * m_color_pixels +
