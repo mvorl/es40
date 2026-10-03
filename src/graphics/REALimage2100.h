@@ -271,7 +271,7 @@ private:
   static int plane_register(uint32_t address);
   bool plane_write(uint32_t address, uint32_t lanes, uint32_t value);
   uint32_t plane_value(unsigned bank, unsigned index, uint32_t fallback) const;
-  bool plane_profile(unsigned bank, uint32_t format = 0x100) const;
+  bool plane_profile(unsigned bank, uint32_t format = 0x100, uint32_t rop_high = 0) const;
   bool native_pixel_profile() const;
   uint32_t block_width() const;
   bool native_copy_control_profile(bool clear = false) const;
