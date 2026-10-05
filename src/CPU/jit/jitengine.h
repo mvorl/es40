@@ -105,6 +105,7 @@ public:
   // Compiled block entry point. Runs the prefix on regs[0..31], calling back into
   // cpu for memory accesses; returns the number of instructions fully completed
   typedef uint32_t (*JitFn)(CAlphaCPU* cpu, uint64_t* regs);
+  typedef uint32_t (*JitEnterFn)(CAlphaCPU* cpu, uint64_t* regs, void* body);   // shared prologue -> body
 
   static constexpr int kLinkSlots = 2;   // cached direct successors per block (poly-link). Instrumentation
                                          // showed the thrashing fanout is EXACTLY 2; bump only if f3/f4 appear.
@@ -229,6 +230,7 @@ public:
     uint32_t dpc_valid, dpc_virt_page, dpc_phys_base, dpc_host_bias, dpc_cm, dpc_asn;  // offsets of READ slot [0][0]
     uint32_t dpc_stride, dpc_mask;   // direct-mapped page cache: per-slot byte stride, index mask
     uint32_t dpc_write_row;          // byte distance from read cache [0] to write cache [1] (store fast path)
+    uint32_t dpc_bank;               // u32 byte offset of the current CM's bank (added to the slot index)
     uint32_t state_cm, state_asn0, state_asn, dram_ptr, dram_size, state_pc, state_current_pc;
     uint32_t fpen, exc_sum, fpcr, f_base;   // FP inline path: FPSTART gate + FPCR (rounding/INE) + f[] base (f[i] = f_base + i*8)
     // For chaining: the budget ceiling and the interrupt-poll flags the compiled epilogue
@@ -236,6 +238,7 @@ public:
     uint32_t jit_budget, check_int, check_timers, link_from;
     uint32_t exc_addr, pal_base, sde;   // CALL_PAL: exc_addr save, PAL entry base, PALshadow enable
     uint32_t helpers;   // CPU-resident helper fn table 
+    uint32_t jit_exit;  // CPU-resident pointer to the shared epilogue (blocks `jmp [cpu+jit_exit]`)
     uint32_t mm_stat, fault_va;   // pure HW_MFPR fault-reporting fields
   };
   void set_offsets(const JitOffsets& o) { m_off = o; }
@@ -368,6 +371,28 @@ public:
   inline void     note_asn_change()     { invalidate_links_global(); }
   // Combined validation epoch, maintained (not summed) so the emitted chain guard reads ONE qword.
   inline uint64_t vgen() const          { return m_vgen_cur; }
+  // One prologue/epilogue per engine instead of per block (x64); A64 blocks keep their own.
+  void build_trampolines();
+  void set_exit_slot(void** slot) { m_exit_slot = slot; if (slot) *slot = m_exit; }
+  inline uint32_t run_block(CAlphaCPU* cpu, uint64_t* regs, JitBlock* b)
+  {
+#if defined(ES40_JIT_X64)
+    return m_enter(cpu, regs, b->jit_body);
+#else
+    return b->code(cpu, regs);
+#endif
+  }
+#ifdef JIT_REGPROF
+  struct HostRange { uint64_t start; uint32_t size; uint32_t idx; };
+  void host_code_table(std::vector<HostRange>& out) const
+  {
+    out.clear();
+    for (int i = 0; i < kCacheEntries; ++i)
+      if (m_blocks[i].code && m_blocks[i].rp_csz)
+        out.push_back({ (uint64_t) (uintptr_t) (void*) m_blocks[i].code, m_blocks[i].rp_csz, (uint32_t) i });
+  }
+  const JitBlock& block_at(uint32_t idx) const { return m_blocks[idx]; }
+#endif
   // Tagged request pointer: bit 1 = PatchSite (else LinkSlot[]), bit 0 = non-global source.
   // target_global: a global-source edge is ASN-sensitive only when its target is not global.
   void patch_edge(void* tagged, uint64_t tag, uint64_t vgen_bits, void* body,
@@ -437,6 +462,12 @@ private:
   uint64_t m_vgen_cur = 0;  // maintained epoch = itb + flush + non-global-flush bumps 
   JumpCacheEntry m_jcache[kJumpCacheEntries] = {};   // computed-jump cache (per CPU)
   uint64_t m_jc_gen = 1;    // every invalidate_links() retires all jump-cache entries
+  JitEnterFn m_enter = nullptr;   // shared prologue (x64)
+  void*      m_exit = nullptr;    // shared epilogue (x64)
+  void**     m_exit_slot = nullptr;   // CPU field that compiled code jumps through
+#ifdef JIT_REGPROF
+  const uint8_t* m_dbg_dram = nullptr;   // guest RAM base, for the hot-block dump
+#endif
   std::unordered_set<void*> m_active_links;     // patched edges, bit 1 = PatchSite
   std::unordered_set<void*> m_global_src_links; // subset with global sources
   std::unordered_map<uint64_t, std::unordered_set<void*>> m_edges_by_page;   // target page -> patched edges

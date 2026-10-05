@@ -732,8 +732,7 @@ CRealImage2100::Frame CPowerStorm3xx::render_frame()
 	frame.height = vga.crtc.vert_disp_end + 1;
 	if (!frame.width || frame.width > 4096 || frame.height > 1024)
 		return {};
-	// CVGA can write repeated scanlines past the visible-area bottom. Cover CGA
-	// double-scan plus one character row; only the visible rectangle is used.
+	// Allow CVGA double-scan and one extra character row below the visible area.
 	m_render_bitmap.resize(frame.width, frame.height * 2 + 64);
 	screen().set_visible_area(frame.width, frame.height);
 	screen().tick_frame();
@@ -949,8 +948,7 @@ try
 	m_board_vga_enabled = cfg->get_bool_value("vga_enabled", true);
 	m_trace_apertures = cfg->get_bool_value("trace_apertures", false);
 	m_profile.revision = u8(powerstorm_setting(cfg, "revision", 0, 255));
-	// SRM's probe table (PROBE_IO.C) names the boards by subsystem ID, and the
-	// NT miniport treats 4D35 differently from the 300.
+	// SRM (PROBE_IO.C) identifies boards by subsystem; NT distinguishes 4D35.
 	const bool compaq = m_model == 300;
 	m_profile.subsystem_vendor = u16(powerstorm_setting(
 		cfg, "subsystem_vendor", compaq ? 0x0e11 : 0x1011, 65535));
@@ -1176,8 +1174,7 @@ bool CPowerStorm3xx::decodes_memory_access(
 	{
 		if (!legacy_enabled(false) || address >= 0x30 || bytes > 0x30 - address)
 			return false;
-		// Claim an access only when every byte belongs to this device; reserved
-		// port bytes must not make us a competing positive decoder.
+		// Claim only accesses whose every byte decodes to this device.
 		for (unsigned i = 0; i < bytes; ++i)
 			if (!vga_port_enabled(0x3b0 + u32(address) + i))
 				return false;
@@ -1469,8 +1466,7 @@ std::string CPowerStorm3xx::snapshot_identity() const
 		<< ':' << m_profile.subsystem_device << ':' << m_profile.bar0_size
 		<< ':' << m_profile.bar1_size << ':' << m_board_vga_enabled << ':'
 		<< m_rom_layout << ':' << m_rom.size();
-	// ROM content, not just filename, belongs to saved-device identity. This is
-	// an identity checksum, not a security/authenticity signature.
+	// Include ROM content in identity using a non-security checksum.
 	uint64_t hash = 14695981039346656037ULL;
 	for (uint8_t b : m_rom)
 	{
@@ -1637,8 +1633,7 @@ int CPowerStorm3xx::RestoreState(FILE* f)
 		cSystem->get_device_bus_mutex());
 	try
 	{
-		// PCI state is restored first, following the other ES40 devices.
-		// A failure aborts the whole system restore; it must not resume the VM.
+		// Restore PCI first; any restore failure must abort the VM restore.
 		struct ReplayGuard
 		{
 			bool& flag;
@@ -1699,8 +1694,7 @@ void CPowerStorm3xx::advance_vga_scanlines(u32 lines)
 u8 CPowerStorm3xx::input_status()
 {
 	vga.attribute.state = 0;
-	// Deterministic compatibility timing: 32 status reads per synthetic
-	// scanline. Decode probes and host frame delivery do not clock it.
+	// Synthetic scanlines advance every 32 status reads, never on probes or frames.
 	if (++m_vga_status_phase == 32)
 	{
 		m_vga_status_phase = 0;
@@ -1890,8 +1884,7 @@ void CPowerStorm3xx::trace_unimplemented(const std::string& text)
 	}
 }
 
-// Trace lines: sequence OP region 0xOFFSET BITS 0xVALUE. Legacy video-memory
-// traffic still advances the sequence when trace_apertures is off.
+// Trace uses sequence/op/region/offset/bits/value; filtered apertures still count.
 void CPowerStorm3xx::trace(
 	const char* op, int region, u32 address, int bits, u32 value)
 {

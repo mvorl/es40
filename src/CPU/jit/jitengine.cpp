@@ -135,6 +135,7 @@ CJitEngine::CJitEngine(int cpu_id) : m_cpu_id(cpu_id), m_recorded(0), m_code_byt
   m_traces_enabled = false;
 #endif
   m_rt = new asmjit::JitRuntime(jit_rt_params());
+  build_trampolines();
 #ifdef JIT_VERIFY
   m_v_exec = m_v_fail = 0;
   m_tv_cnt[0] = m_tv_cnt[1] = m_tv_cnt[2] = m_tv_cnt[3] = 0;
@@ -405,6 +406,7 @@ void CJitEngine::reclaim_code()
 #endif
   delete (asmjit::JitRuntime*) m_rt;
   m_rt = new asmjit::JitRuntime(jit_rt_params());
+  build_trampolines();
   m_code_bytes = 0;
   m_reclaim_pending = false;   // a reclaim (cold-path or deferred) satisfies any pending request
   for (int i = 0; i < kCacheEntries; ++i) {
@@ -879,6 +881,36 @@ void CJitEngine::regprof_report()
     hist[best] = 0;
   }
   printf("%s   (* = not pin-eligible)\n", buf);
+  // Hot-block dump every 16th report: the top blocks by executed host bytes, guest words + host
+  // code as hex, for offline disassembly (scratch tool: hotblocks.py).
+  static int report_n = 0;
+  if (++report_n % 16 == 0 && m_dbg_dram) {
+    char name[64]; snprintf(name, sizeof(name), "jit-hot-cpu%d.txt", m_cpu_id);
+    FILE* f = fopen(name, "a");
+    if (f) {
+      const int K = 24; int top[K]; uint64_t topw[K]; int n = 0;
+      for (int s2 = 0; s2 < kCacheEntries; ++s2) {
+        const JitBlock& b = m_blocks[s2];
+        if (!b.valid || !b.code || b.rp_hits == 0) continue;
+        const uint64_t w = b.rp_hits * (uint64_t) b.rp_csz;
+        if (n == K && w <= topw[K - 1]) continue;
+        int k = n < K ? n++ : K - 1;
+        while (k > 0 && topw[k - 1] < w) { top[k] = top[k - 1]; topw[k] = topw[k - 1]; --k; }
+        top[k] = s2; topw[k] = w;
+      }
+      fprintf(f, "== report %d\n", report_n);
+      for (int k = 0; k < n; ++k) {
+        const JitBlock& b = m_blocks[top[k]];
+        fprintf(f, "block tag=%016llx phys=%llx asn=%u hits=%llu prefix=%u hash_len=%u csz=%u\nguest:", (unsigned long long) b.tag,
+                (unsigned long long) b.phys, b.asn, (unsigned long long) b.rp_hits, b.prefix_len, b.hash_len, b.rp_csz);
+        for (uint32_t i = 0; i < b.hash_len; ++i) fprintf(f, " %08x", *(const uint32_t*) (m_dbg_dram + b.phys + i * 4));
+        fprintf(f, "\nhost:");
+        for (uint32_t i = 0; i < b.rp_csz; ++i) fprintf(f, "%02x", ((const uint8_t*) (void*) b.code)[i]);
+        fprintf(f, "\n");
+      }
+      fclose(f);
+    }
+  }
 }
 #endif
 

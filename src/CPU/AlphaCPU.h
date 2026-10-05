@@ -219,6 +219,7 @@
 #define INCLUDED_ALPHACPU_H
 
 #include <atomic>
+#include <thread>
 #include <chrono>
 
 #include "emu/SystemComponent.h"
@@ -541,7 +542,11 @@ private:
   
   // Data page translation cache: direct-mapped by virtual page (kDpcEntries slots/dir) so a
   // multi-page access pattern doesn't thrash a single slot. The inline load checks one slot.
-  static constexpr int kDpcBits    = 6;                  // 64 slots/dir (8KB pages -> 512KB)
+  static constexpr int kDpcBits    = 7;                  // 128 slots per mode bank (8KB pages -> 1 MB)
+  // Page-indexed hint into state.tb[]: FindTBEntry probes it before the linear scan. Not
+  // architectural state; cleared on every TB write or invalidate.
+  u8 m_tb_idx[2][256] = {};
+  inline void tb_index_clear(int t) { memset(m_tb_idx[t], 0, sizeof(m_tb_idx[t])); }
   static constexpr int kDpcEntries = 1 << kDpcBits;
   static constexpr u64 kDpcMask    = (u64) kDpcEntries - 1;
   static inline u64 dpc_index(u64 va) { return (va >> 13) & kDpcMask; }
@@ -552,10 +557,18 @@ private:
     u8   cm;          // current mode (CM) at fill time
     u8   asn;         // data ASN (asn0) at fill time
     bool valid;
-  } data_page_cache[2][kDpcEntries];  // [rw][dpc_index(va)]; [0]=read, [1]=write
+  } data_page_cache[2][4 * kDpcEntries];  // [rw][cm bank | dpc_index(va)]; [0]=read, [1]=write
+  // Byte offset of the current mode's bank; compiled code adds it to the slot index, so a CM
+  // change selects another bank instead of flushing. Kept in step by dpc_sync_bank().
+  u32 m_dpc_bank = 0;
+  inline void dpc_sync_bank() { m_dpc_bank = (u32) (state.cm & 3) * kDpcEntries * (u32) sizeof(SDataPageCache); }
+  inline SDataPageCache& dpc_slot(int rw, u64 va) { return data_page_cache[rw][((state.cm & 3) << kDpcBits) | dpc_index(va)]; }
   static_assert(sizeof(SDataPageCache) == 32, "DPC slots stay power-of-two for JIT shift indexing");
 
   inline void flush_data_page_cache() {
+#if defined(JIT_REGPROF) && defined(_WIN32)
+    m_dpc_flushes++;
+#endif
     // The generated and helper hit paths compare virt_page before using the slot. An all-ones
     // tag cannot equal an 8 KB-aligned virtual page, so a bulk fill invalidates both rows 
     // and avoids excessive stores on native-PAL translation flushes.
@@ -567,13 +580,13 @@ private:
     constexpr u64 gh0_match = U64(0x0000ffffffffe000);
     if (match_mask == gh0_match) {
       const u64 i = dpc_index(virt);
-      data_page_cache[0][i].virt_page = ~U64(0);
-      data_page_cache[1][i].virt_page = ~U64(0);
+      for (int bank = 0; bank < 4; ++bank) data_page_cache[0][(bank << kDpcBits) | i].virt_page = ~U64(0);
+      for (int bank = 0; bank < 4; ++bank) data_page_cache[1][(bank << kDpcBits) | i].virt_page = ~U64(0);
       return;
     }
     // A granularity-hint entry can cover multiple cache indices. 
     for (int rw = 0; rw < 2; ++rw)
-      for (int i = 0; i < kDpcEntries; ++i)
+      for (int i = 0; i < 4 * kDpcEntries; ++i)
         if (!((data_page_cache[rw][i].virt_page ^ virt) & match_mask))
           data_page_cache[rw][i].virt_page = ~U64(0);
   }
@@ -588,6 +601,18 @@ private:
   s64  m_jit_budget = 0;       // instruction ceiling for a compiled chain
   void* m_link_from = nullptr; // LinkSlot* array the dispatcher should patch
   void* m_jit_helper_tab[19] = {}; // helper fn table
+  void* m_jit_exit = nullptr;      // shared epilogue, jumped through by compiled code
+#if defined(JIT_REGPROF) && defined(_WIN32)
+  // In-process RIP sampler (ES40_JIT_SAMPLER=1): attributes CPU0's host time to JIT blocks / C++ symbols.
+  void*                  m_host_thread = nullptr;
+  uint64_t*              m_samples = nullptr;
+  std::atomic<uint32_t>  m_nsamples{0};
+  std::thread            m_sampler;
+  uint64_t               m_dpc_miss[3] = {};   // helper-path page-cache misses: empty / tag conflict / cm-asn
+  uint64_t               m_dpc_flushes = 0;
+  void jit_sampler_start();
+  void jit_sampler_report();
+#endif
   void jit_run(int budget);    // drives the ES40_JIT lane via the interpreter
   void jit_flush_blocks();     // invalidate all discovered JIT blocks
   void jit_flush_blocks_asm(); // invalidate only !asm_global blocks (preserve global PAL across ASN flush)

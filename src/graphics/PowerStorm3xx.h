@@ -37,17 +37,14 @@
 #include <string>
 #include <vector>
 
-/** Digital PowerStorm 300/350 PCI video card with a REALimage 2100.
- * Standard VGA and a limited native 24-bit 2D path are implemented.
- */
+// PowerStorm 300/350 PCI board with VGA and REALimage 2100 native display.
 class CPowerStorm3xx :
   public CVGA,
   public CRunnable,
   public CDisplayOutputProvider
 {
 public:
-  // Board identity is owned by the card, not the chip. The ROM identifies
-  // 10BA:0304; the revision is unmeasured.
+  // ROM identifies the board as 10BA:0304; revision is unmeasured.
   struct PCIConfig
   {
     u16 vendor = 0x10ba, device = 0x0304, subsystem_vendor = 0,

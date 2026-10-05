@@ -3301,6 +3301,10 @@ static asmjit::Error emit_a64_dpc_slot(A64EmitContext& c)
     err = emit_a64_mov_u64(a, RA::kScratch1, stride);
     if (err == Error::kOk) err = a.mul(RA::kScratch5, RA::kScratch5, RA::kScratch1);
   }
+  if (err != Error::kOk) return err;
+  err = emit_a64_load_cpu_u32(a, RA::kScratch1.w(), c.offsets.dpc_bank);   // current mode's bank
+  if (err != Error::kOk) return err;
+  err = a.add(RA::kScratch5, RA::kScratch5, RA::kScratch1);
   return err != Error::kOk ? err : a.add(RA::kScratch6, RA::kCpu, RA::kScratch5);
 }
 
@@ -6529,7 +6533,12 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 #endif
   b->code = fn;
   b->jit_body = jit_body;  // Runnable chain entry publishes last.
+#ifdef JIT_REGPROF
+  m_dbg_dram = dram;
+#endif
 }
+
+void CJitEngine::build_trampolines() {}   // A64 blocks carry their own prologue/epilogue
 
 // Trace tier: stub until X86 variant is improved or removed. 
 void CJitEngine::compile_trace(TraceFragment*, JitBlock**, uint32_t,

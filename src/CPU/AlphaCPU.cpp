@@ -384,6 +384,9 @@ void CAlphaCPU::run()
 			CThread::sleep(1);
 		}
 		printf("*** CPU%d *** STARTING ***\n", get_cpuid());
+#if defined(JIT_REGPROF) && defined(_WIN32)
+		if (get_cpuid() == 0 && getenv("ES40_JIT_SAMPLER")) jit_sampler_start();
+#endif
 
 #if defined(_M_X64) || defined(__x86_64__)
 		// Pin host SSE state for the JIT FP path: round-nearest, exceptions masked,
@@ -579,6 +582,7 @@ void CAlphaCPU::init()
 
 #ifdef ES40_JIT
 	if (!m_jit) m_jit = new CJitEngine((int)state.iProcNum);
+	m_jit->set_exit_slot(&m_jit_exit);
 	{
 		// Tell the JIT the byte offsets (from `this`) of the fields its inline load
 		// fast path reads, so compiled code can address them via [cpu + offset].
@@ -594,6 +598,7 @@ void CAlphaCPU::init()
 		o.dpc_stride = (uint32_t)sizeof(data_page_cache[0][0]);
 		o.dpc_mask = (uint32_t)kDpcMask;
 		o.dpc_write_row = (uint32_t)((char*)&data_page_cache[1][0] - (char*)&data_page_cache[0][0]);
+		o.dpc_bank = (uint32_t)((char*)&m_dpc_bank - (char*)this);
 		o.state_cm = (uint32_t)((char*)&state.cm - (char*)this);
 		o.state_asn0 = (uint32_t)((char*)&state.asn0 - (char*)this);
 		o.state_asn = (uint32_t)((char*)&state.asn - (char*)this);
@@ -605,6 +610,7 @@ void CAlphaCPU::init()
 		o.check_int = (uint32_t)((char*)&state.check_int - (char*)this);
 		o.check_timers = (uint32_t)((char*)&state.check_timers - (char*)this);
 		o.link_from = (uint32_t)((char*)&m_link_from - (char*)this);
+		o.jit_exit = (uint32_t)((char*)&m_jit_exit - (char*)this);
 		o.fpen = (uint32_t)((char*)&state.fpen - (char*)this);
 		o.exc_sum = (uint32_t)((char*)&state.exc_sum - (char*)this);
 		o.f_base = (uint32_t)((char*)&state.f[0] - (char*)this);
@@ -911,6 +917,120 @@ void CAlphaCPU::jit_step(int budget)
 {
 	jit_run(budget);
 }
+
+#if defined(JIT_REGPROF) && defined(_WIN32)
+#include <dbghelp.h>
+#pragma comment(lib, "dbghelp.lib")
+#include <algorithm>
+#include <map>
+#include <string>
+
+void CAlphaCPU::jit_sampler_start()
+{
+	DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &m_host_thread, 0, FALSE, DUPLICATE_SAME_ACCESS);
+	m_samples = new uint64_t[5u * (1u << 18)];
+	SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+	SymInitialize(GetCurrentProcess(), nullptr, TRUE);
+	HANDLE h = (HANDLE) m_host_thread;
+	m_sampler = std::thread([this, h]() {
+		for (;;)
+		{
+			Sleep(1);
+			if (SuspendThread(h) == (DWORD) -1) continue;
+			CONTEXT ctx; ctx.ContextFlags = CONTEXT_CONTROL;
+			if (GetThreadContext(h, &ctx))
+			{
+				const uint32_t n = m_nsamples.load(std::memory_order_relaxed);
+				if (n < (1u << 18))
+				{
+					uint64_t* rec = &m_samples[5u * n];
+					rec[0] = ctx.Rip;
+					SIZE_T got = 0;
+					if (!ReadProcessMemory(GetCurrentProcess(), (LPCVOID) ctx.Rsp, &rec[1], 4 * sizeof(uint64_t), &got) || got < 4 * sizeof(uint64_t))
+						rec[1] = rec[2] = rec[3] = rec[4] = 0;
+					m_nsamples.store(n + 1, std::memory_order_relaxed);
+				}
+			}
+			ResumeThread(h);
+		}
+	});
+	m_sampler.detach();
+	printf("[JIT][SAMPLER][CPU%d] host RIP sampler on (1 kHz)\n", get_cpuid());
+}
+
+void CAlphaCPU::jit_sampler_report()
+{
+	const uint32_t n = m_nsamples.load(std::memory_order_relaxed);
+	if (n < 100) return;
+	std::vector<CJitEngine::HostRange> tab;
+	m_jit->host_code_table(tab);
+	std::sort(tab.begin(), tab.end(), [](const CJitEngine::HostRange& a, const CJitEngine::HostRange& b) { return a.start < b.start; });
+	std::map<uint32_t, uint32_t> blk;                 // block idx -> samples
+	std::map<uint64_t, uint32_t> blk_off;             // (idx<<20 | offset) -> samples
+	std::map<std::string, uint32_t> sym;              // symbol -> samples
+	std::map<std::string, uint32_t> symc;             // symbol <- caller -> samples
+	uint32_t in_jit = 0, other = 0;
+	auto name_of = [](uint64_t addr, char* out, size_t cap) -> bool {
+		char buf[sizeof(SYMBOL_INFO) + 256]; SYMBOL_INFO* si = (SYMBOL_INFO*) buf;
+		si->SizeOfStruct = sizeof(SYMBOL_INFO); si->MaxNameLen = 255;
+		DWORD64 disp = 0;
+		if (!SymFromAddr(GetCurrentProcess(), addr, &disp, si)) return false;
+		snprintf(out, cap, "%s", si->Name); return true;
+	};
+	for (uint32_t i = 0; i < n; ++i)
+	{
+		const uint64_t* rec = &m_samples[5u * i];
+		const uint64_t rip = rec[0];
+		auto it = std::upper_bound(tab.begin(), tab.end(), rip, [](uint64_t v, const CJitEngine::HostRange& r) { return v < r.start; });
+		if (it != tab.begin() && (--it)->start <= rip && rip < it->start + it->size)
+		{
+			in_jit++; blk[it->idx]++; blk_off[((uint64_t) it->idx << 20) | (rip - it->start)]++;
+			continue;
+		}
+		other++;
+		char nm[256];
+		if (!name_of(rip, nm, sizeof(nm))) snprintf(nm, sizeof(nm), "?%llx", (unsigned long long) (rip >> 12));
+		sym[nm]++;
+		char caller[256] = "?";
+		for (int k = 1; k <= 4; ++k)   // first stack word that names a different function
+		{
+			char c[256];
+			if (rec[k] && name_of(rec[k], c, sizeof(c)) && strcmp(c, nm) != 0) { snprintf(caller, sizeof(caller), "%s", c); break; }
+		}
+		char key[520]; snprintf(key, sizeof(key), "%s <- %s", nm, caller);
+		symc[key]++;
+	}
+	m_nsamples.store(0, std::memory_order_relaxed);
+	printf("[JIT][SAMPLER][CPU%d] %u samples: JIT code %.1f%% | C++ %.1f%%\n", get_cpuid(), n, 100.0 * in_jit / n, 100.0 * other / n);
+	std::vector<std::pair<uint32_t, std::string>> rows;
+	for (auto& kv : sym) rows.push_back({ kv.second, kv.first });
+	std::sort(rows.begin(), rows.end(), [](auto& a, auto& b) { return a.first > b.first; });
+	for (size_t i = 0; i < rows.size() && i < 14; ++i)
+		printf("[JIT][SAMPLER][CPU%d]   %5.1f%%  %s\n", get_cpuid(), 100.0 * rows[i].first / n, rows[i].second.c_str());
+	rows.clear();
+	for (auto& kv : symc) rows.push_back({ kv.second, kv.first });
+	std::sort(rows.begin(), rows.end(), [](auto& a, auto& b) { return a.first > b.first; });
+	for (size_t i = 0; i < rows.size() && i < 10; ++i)
+		printf("[JIT][SAMPLER][CPU%d]   %5.1f%%  %s\n", get_cpuid(), 100.0 * rows[i].first / n, rows[i].second.c_str());
+	printf("[JIT][SAMPLER][CPU%d] dpc: %llu flushes | helper misses empty %llu, conflict %llu, cm/asn %llu\n", get_cpuid(),
+		(unsigned long long) m_dpc_flushes, (unsigned long long) m_dpc_miss[0], (unsigned long long) m_dpc_miss[1], (unsigned long long) m_dpc_miss[2]);
+	m_dpc_flushes = 0; m_dpc_miss[0] = m_dpc_miss[1] = m_dpc_miss[2] = 0;
+	std::vector<std::pair<uint32_t, uint32_t>> brows;
+	for (auto& kv : blk) brows.push_back({ kv.second, kv.first });
+	std::sort(brows.begin(), brows.end(), [](auto& a, auto& b) { return a.first > b.first; });
+	for (size_t i = 0; i < brows.size() && i < 12; ++i)
+	{
+		const CJitEngine::JitBlock& b = m_jit->block_at(brows[i].second);
+		printf("[JIT][SAMPLER][CPU%d]   %5.1f%%  block tag=%016llx prefix=%u csz=%u offs:", get_cpuid(), 100.0 * brows[i].first / n,
+			(unsigned long long) b.tag, b.prefix_len, b.rp_csz);
+		std::vector<std::pair<uint32_t, uint32_t>> offs;
+		for (auto& kv : blk_off) if ((uint32_t) (kv.first >> 20) == brows[i].second) offs.push_back({ kv.second, (uint32_t) (kv.first & 0xfffff) });
+		std::sort(offs.begin(), offs.end(), [](auto& a, auto& b) { return a.first > b.first; });
+		for (size_t k = 0; k < offs.size() && k < 6; ++k) printf(" +%x(%u)", offs[k].second, offs[k].first);
+		printf("\n");
+	}
+}
+#endif
 
 void CAlphaCPU::jit_flush_blocks()
 {
@@ -1447,7 +1567,8 @@ void CAlphaCPU::jit_run(int budget)
 				m_jit_vreplay = true;
 				m_jit_vlog_i = 0;
 				m_jit_slog_i = 0;
-				const u32 done = b->code(this, jr);   // also writes state.pc (the JIT's next PC)
+				dpc_sync_bank();
+				const u32 done = m_jit->run_block(this, jr, b);   // also writes state.pc (the JIT's next PC)
 				m_jit_vreplay = false;
 				if (!vtr && done == b->prefix_len)
 				{
@@ -1582,7 +1703,8 @@ void CAlphaCPU::jit_run(int budget)
 #ifdef JIT_STATS
 			const uint64_t _comp_t0 = jit_rdtsc();
 #endif
-			const u32 done = b->code(this, &state.r[0]);
+			dpc_sync_bank();
+			const u32 done = m_jit->run_block(this, &state.r[0], b);
 #ifdef JIT_STATS
 			const uint64_t _comp_tsc = jit_rdtsc() - _comp_t0;   // host cycles in this compiled chain
 #endif
@@ -1597,7 +1719,13 @@ void CAlphaCPU::jit_run(int budget)
 			cc_large += (u64)done * cc_per_instruction;
 			budget -= done;
 #ifdef JIT_STATS
-			cc_last_sync += std::chrono::nanoseconds(m_jit->note_exec(done, 0, _comp_tsc, 0));   // don't bill the stats-print stall to the wall-clock RPCC
+			{
+				const uint64_t _ns = m_jit->note_exec(done, 0, _comp_tsc, 0);
+				cc_last_sync += std::chrono::nanoseconds(_ns);   // don't bill the stats-print stall to the wall-clock RPCC
+#if defined(JIT_REGPROF) && defined(_WIN32)
+				if (_ns && m_samples) jit_sampler_report();
+#endif
+			}
 #endif
 			if (done > 0) continue;   // progress made; done==0 (faulting first insn) falls through
 #endif
@@ -1704,13 +1832,16 @@ int CAlphaCPU::jit_read(CAlphaCPU* cpu, u64 va, u64 descr, u64* out)
 
 	u64 phys;
 	const u64 vp = va & ~U64(0x1FFF);
-	SDataPageCache& dpc = cpu->data_page_cache[0][dpc_index(va)];
+	SDataPageCache& dpc = cpu->dpc_slot(0, va);
 	if (dpc.virt_page == vp && dpc.valid && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
 	{
 		phys = dpc.phys_base | (va & U64(0x1FFF));
 	}
 	else
 	{
+#if defined(JIT_REGPROF) && defined(_WIN32)
+		cpu->m_dpc_miss[dpc.virt_page == ~U64(0) ? 0 : dpc.virt_page != vp ? 1 : 2]++;
+#endif
 		if (ins && !cpu->m_jit_vreplay)
 		{
 			// The emitted cold stub installed state.current_pc before this call. 
@@ -1956,13 +2087,16 @@ int CAlphaCPU::jit_read_locked(CAlphaCPU* cpu, u64 va, u64 descr, u64* out)
 
 	u64 phys;
 	const u64 vp = va & ~U64(0x1FFF);
-	SDataPageCache& dpc = cpu->data_page_cache[0][dpc_index(va)];
+	SDataPageCache& dpc = cpu->dpc_slot(0, va);
 	if (dpc.virt_page == vp && dpc.valid && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
 	{
 		phys = dpc.phys_base | (va & U64(0x1FFF));
 	}
 	else
 	{
+#if defined(JIT_REGPROF) && defined(_WIN32)
+		cpu->m_dpc_miss[dpc.virt_page == ~U64(0) ? 0 : dpc.virt_page != vp ? 1 : 2]++;
+#endif
 		if (ins && !cpu->m_jit_vreplay)
 		{
 			// The emitter installed current_pc. Translation faults enter native PAL here.
@@ -2170,13 +2304,16 @@ int CAlphaCPU::jit_write(CAlphaCPU* cpu, u64 va, u64 descr, u64 value)
 
 	u64 phys;
 	const u64 vp = va & ~U64(0x1FFF);
-	SDataPageCache& dpc = cpu->data_page_cache[1][dpc_index(va)];
+	SDataPageCache& dpc = cpu->dpc_slot(1, va);
 	if (dpc.virt_page == vp && dpc.valid && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
 	{
 		phys = dpc.phys_base | (va & U64(0x1FFF));
 	}
 	else
 	{
+#if defined(JIT_REGPROF) && defined(_WIN32)
+		cpu->m_dpc_miss[dpc.virt_page == ~U64(0) ? 0 : dpc.virt_page != vp ? 1 : 2]++;
+#endif
 		if (ins && !cpu->m_jit_vreplay)
 		{
 			if (cpu->virt2phys(va, &phys, ACCESS_WRITE, nullptr, ins)) return 2;
@@ -2260,13 +2397,16 @@ u64 CAlphaCPU::jit_stc(CAlphaCPU* cpu, u64 va, u64 descr, u64 value)
 	// miss / protection / fault-on-write so it does the side-effecting translation.
 	u64 phys;
 	const u64 vp = va & ~U64(0x1FFF);
-	SDataPageCache& dpc = cpu->data_page_cache[1][dpc_index(va)];
+	SDataPageCache& dpc = cpu->dpc_slot(1, va);
 	if (dpc.virt_page == vp && dpc.valid && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
 	{
 		phys = dpc.phys_base | (va & U64(0x1FFF));
 	}
 	else
 	{
+#if defined(JIT_REGPROF) && defined(_WIN32)
+		cpu->m_dpc_miss[dpc.virt_page == ~U64(0) ? 0 : dpc.virt_page != vp ? 1 : 2]++;
+#endif
 		const int i = cpu->FindTBEntry(va, ACCESS_WRITE);
 		if (i < 0) return U64(0x100);                                        // TB miss
 		const auto& e = cpu->state.tb[TB_INDEX_DATA][i];
@@ -2381,12 +2521,12 @@ void CAlphaCPU::jit_hw_mtpr(CAlphaCPU* cpu, u32 function, u64 value)
 	case 0x13: cpu->flush_icache(); break;                                      // IC_FLUSH (lazy flush + deferred reclaim)
 	case 0x09:                                                                   // CM (current mode)
 		cpu->state.cm = (int)(value >> 3) & 3;
-		cpu->flush_data_page_cache();
+		cpu->dpc_sync_bank();
 		cpu->kick_int_if_pending();
 		break;
 	case 0x0b:                                                                   // IER_CM: write CM, then fall into IER
 		cpu->state.cm = (int)(value >> 3) & 3;
-		cpu->flush_data_page_cache();
+		cpu->dpc_sync_bank();
 		[[fallthrough]];
 	case 0x0a:                                                                   // IER
 		cpu->state.asten = (int)(value >> 13) & 1;
@@ -3750,6 +3890,8 @@ int CAlphaCPU::RestoreState(FILE* f)
 	printf("%s: %d bytes restored.\n", devid_string, (int)ss);
 	last_dtb_virt[0] = last_dtb_virt[1] = 0;
 	// RAM and TB state now belong to the restored state. Restored icache stays. Rest gets chucked.
+	tb_index_clear(TB_INDEX_DATA);
+	tb_index_clear(TB_INDEX_ITB);
 	flush_data_page_cache();
 	break_seq_icache();
 #ifdef ES40_JIT
@@ -3798,13 +3940,18 @@ int CAlphaCPU::FindTBEntry(u64 virt, int flags)
 #define TB_ASN_MATCH(entry) ((entry).asm_bit || \
 	((entry).asn == ((t == TB_INDEX_ITB) ? asn : state.asn0)))
 
-	// Try last match first; this is a good quess, especially in the ITB
-	int i = state.last_found_tb[t][rw];
-	if (state.tb[t][i].valid
+	// Page-indexed hint first, then the last match, then the linear scan (which refills the hint).
+	const u32 h = (u32)(virt >> 13) & 255;
+	int i = (int)m_tb_idx[t][h] - 1;
+	if (i >= 0 && state.tb[t][i].valid
 		&& !((state.tb[t][i].virt ^ virt) & state.tb[t][i].match_mask)
 		&& TB_ASN_MATCH(state.tb[t][i]))	return i;
 
-	// Otherwise, loop through the TB entries to find a match.
+	i = state.last_found_tb[t][rw];
+	if (state.tb[t][i].valid
+		&& !((state.tb[t][i].virt ^ virt) & state.tb[t][i].match_mask)
+		&& TB_ASN_MATCH(state.tb[t][i]))	{ m_tb_idx[t][h] = (u8)(i + 1); return i; }
+
 	for (i = 0; i < TB_ENTRIES; i++)
 	{
 		if (state.tb[t][i].valid
@@ -3812,6 +3959,7 @@ int CAlphaCPU::FindTBEntry(u64 virt, int flags)
 			&& TB_ASN_MATCH(state.tb[t][i]))
 		{
 			state.last_found_tb[t][rw] = i;
+			m_tb_idx[t][h] = (u8)(i + 1);
 			return i;
 		}
 	}
@@ -4447,6 +4595,7 @@ void CAlphaCPU::add_tb(u64 virt, u64 pte_phys, u64 pte_flags, int flags, int asn
 	state.tb[t][i].asn = asn;
 	state.tb[t][i].valid = true;
 	state.last_found_tb[t][rw] = i;
+	tb_index_clear(t);
 
 #ifdef ES40_JIT
 	if (itb_remap && m_jit) m_jit->note_itb_invalidate(CJitEngine::kBumpRemap);   // code page remapped in place -> chains re-validate
@@ -4545,6 +4694,7 @@ void CAlphaCPU::tbia(int flags)
 	state.last_found_tb[t][0] = 0;
 	state.last_found_tb[t][1] = 0;
 	state.next_tb[t] = 0;
+	tb_index_clear(t);
 	if (t == TB_INDEX_DATA) flush_data_page_cache();
 #ifdef ES40_JIT
 	else if (m_jit) m_jit->note_itb_invalidate(CJitEngine::kBumpTbia);   // whole ITB cleared -> indirect chains re-validate phys
@@ -4566,6 +4716,7 @@ void CAlphaCPU::tbiap(int flags)
 	for (i = 0; i < TB_ENTRIES; i++)
 		if (!state.tb[t][i].asm_bit)
 			state.tb[t][i].valid = false;
+	tb_index_clear(t);
 
 	if (t == TB_INDEX_DATA) flush_data_page_cache();
 #ifdef ES40_JIT
@@ -4594,6 +4745,7 @@ void CAlphaCPU::tbis(u64 virt, int flags)
 	int i = FindTBEntry(virt, flags);
 	if (i >= 0)
 		state.tb[t][i].valid = false;
+	tb_index_clear(t);
 #ifdef ES40_JIT
 	// Chains into this page must re-validate their physical before running again, cached
 	// entry or not. One 8 KB page clears only the edges targeting it; a granularity-hint
@@ -4625,6 +4777,7 @@ void CAlphaCPU::tbis_d(u64 virt, int asn)
 		}
 	}
 
+	tb_index_clear(TB_INDEX_DATA);
 	// If the architectural TB entry was already evicted, an old GH=0 DPC line for this page can
 	// still exist. Retire its direct slot as well.
 	if (!found)

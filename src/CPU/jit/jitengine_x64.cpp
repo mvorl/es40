@@ -666,6 +666,7 @@ static void emit_cold_mem_stub(asmjit::x86::Assembler& a, const uint8_t* gpa,
       a.shr(x86::r11, imm(13)); a.and_(x86::r11, imm(off.dpc_mask));
       a.imul(x86::r11, x86::r11, imm(off.dpc_stride));
     }
+    a.add(x86::r11d, x86::dword_ptr(x86::rbp, (int32_t) off.dpc_bank));   // current mode's bank
     const int row = (s.kind == ColdMemStub::STORE) ? (int)off.dpc_write_row : 0;
     a.mov(x86::r10, x86::qword_ptr(x86::rbp, x86::r11, 0, row + (int)off.dpc_host_bias));
 
@@ -835,6 +836,10 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             };
         auto test_ra = [&](bool low_bit) {
             if (ra == 31) { a.xor_(x86::eax, x86::eax); return; } // ZF=1, SF=OF=0
+            if (prev_rax == ra) {                                  // value-forward: rax holds Ra
+                if (low_bit) a.test(x86::al, imm(1)); else a.test(x86::rax, x86::rax);
+                return;
+            }
             const int p = pin_id(ra);
             if (p >= 0) {
                 const x86::Gp src = x86::gpq((uint32_t)p);
@@ -974,6 +979,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 a.and_(x86::r11, imm(m_off.dpc_mask));
                 a.imul(x86::r11, x86::r11, imm(m_off.dpc_stride));
             }
+            a.add(x86::r11d, x86::dword_ptr(x86::rbp, (int32_t) m_off.dpc_bank));   // current mode's bank
             };
         auto emit_address = [&](int disp) {
             if (rb == 31) {
@@ -2208,7 +2214,29 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
         case OP_ADDQ:  emit_alu2(x86::Inst::kIdAdd); break;
         case OP_SUBQ:  emit_alu2(x86::Inst::kIdSub); break;
         case OP_AND:   emit_alu2(x86::Inst::kIdAnd); break;
-        case OP_BIS:   emit_alu2(x86::Inst::kIdOr);  break;
+        case OP_BIS:
+            if (rc != 31 && (ra == 31 || (!islit && rb == 31))) {   // MOV: Rc = the other source
+                const int dp = pin_id(rc);
+                const int src = (ra == 31) ? rb : ra;                  // rb may be a literal (ra == 31)
+                const bool lit_src = (ra == 31) && islit;
+                if (dp >= 0) {
+                    const x86::Gp dst = x86::gpq((uint32_t) dp);
+                    if (lit_src)        a.mov(dst, imm(lit));
+                    else if (src == 31) a.xor_(x86::gpd((uint32_t) dp), x86::gpd((uint32_t) dp));
+                    else if (pin_id(src) != dp) mov_from_reg(dst, src);
+                } else if (lit_src || src == 31) {
+                    a.mov(reg(rc), imm(lit_src ? (uint64_t) lit : 0));
+                } else if (pin_id(src) >= 0) {
+                    a.mov(reg(rc), x86::gpq((uint32_t) pin_id(src)));
+                } else {
+                    mov_from_reg(x86::rax, src);
+                    mov_to_reg(rc, x86::rax);
+                }
+                result_in_dest = true;
+                break;
+            }
+            emit_alu2(x86::Inst::kIdOr);
+            break;
         case OP_XOR:   emit_alu2(x86::Inst::kIdXor); break;
         case OP_BIC:   op1_rax(); op2_rcx(); a.not_(x86::rcx); a.and_(x86::rax, x86::rcx); break;
         case OP_ORNOT: op1_rax(); op2_rcx(); a.not_(x86::rcx); a.or_(x86::rax, x86::rcx); break;
@@ -2232,9 +2260,9 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
         case OP_S4SUBQ: op1_rax(); a.shl(x86::rax, imm(2)); op2_rcx(); a.sub(x86::rax, x86::rcx); break;
         case OP_S8SUBQ: op1_rax(); a.shl(x86::rax, imm(3)); op2_rcx(); a.sub(x86::rax, x86::rcx); break;
 
-        case OP_SLL: op1_rax(); op2_rcx(); a.shl(x86::rax, x86::cl); break;
-        case OP_SRL: op1_rax(); op2_rcx(); a.shr(x86::rax, x86::cl); break;
-        case OP_SRA: op1_rax(); op2_rcx(); a.sar(x86::rax, x86::cl); break;
+        case OP_SLL: op1_rax(); if (islit) a.shl(x86::rax, imm(lit & 63)); else { op2_rcx(); a.shl(x86::rax, x86::cl); } break;
+        case OP_SRL: op1_rax(); if (islit) a.shr(x86::rax, imm(lit & 63)); else { op2_rcx(); a.shr(x86::rax, x86::cl); } break;
+        case OP_SRA: op1_rax(); if (islit) a.sar(x86::rax, imm(lit & 63)); else { op2_rcx(); a.sar(x86::rax, x86::cl); } break;
 
         case OP_SEXTB: op2_rcx(); a.movsx(x86::rax, x86::cl); break;   // Rc = sign-extend low byte of op2 (V_2)
         case OP_SEXTW: op2_rcx(); a.movsx(x86::rax, x86::cx); break;   // Rc = sign-extend low word of op2 (V_2)
@@ -2291,6 +2319,24 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             const int  sh = (op == OP_S4ADDL || op == OP_S4SUBL) ? 2     // Ra*4
                 : (op == OP_S8ADDL || op == OP_S8SUBL) ? 3     // Ra*8
                 : 0;
+            {
+                const int dp = pin_id(rc);
+                const bool op2_is_rc = !islit && rb != 31 && rb == rc;
+                if (rc != 31 && dp >= 0 && sh == 0 && !op2_is_rc) {
+                    const x86::Gp dd = x86::gpd((uint32_t) dp);
+                    if (ra == 31) a.xor_(dd, dd);
+                    else if (pin_id(ra) != dp) mov_from_reg32(dd, ra);
+                    if (islit) { if (issub) a.sub(dd, imm(lit)); else a.add(dd, imm(lit)); }
+                    else if (rb != 31) {
+                        const int bp = pin_id(rb);
+                        const Operand o2 = (bp >= 0) ? Operand(x86::gpd((uint32_t) bp)) : Operand(reg32(rb));
+                        a.emit(issub ? x86::Inst::kIdSub : x86::Inst::kIdAdd, dd, o2);
+                    }
+                    a.movsxd(x86::gpq((uint32_t) dp), dd);
+                    result_in_dest = true;
+                    break;
+                }
+            }
             if (ra == 31) a.xor_(x86::eax, x86::eax);
             else          mov_from_reg32(x86::eax, ra);   // shadow-remapped (was a raw rbx read)
             if (sh) a.shl(x86::eax, imm(sh));            // scale in 32-bit: (Ra<<sh)[31:0] == ((RAV<<sh)+..)[31:0]
@@ -2314,6 +2360,79 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             && rc != prev_dpc_base)
             preserve_dpc();
     } while (0);
+}
+
+// Shared entry: set up the frame, load the pins, jump to the block body. Shared exit: sync the pins
+// back to regs[], tear the frame down, return EAX (instructions completed). Rebuilt with the runtime.
+void CJitEngine::build_trampolines()
+{
+  using namespace asmjit;
+  JitRuntime* rt = (JitRuntime*) m_rt;
+  CallConv cc;
+  if (cc.init(CallConvId::kCDecl, rt->environment()) != Error::kOk) return;
+  const uint8_t* gpa = cc.passed_order(RegGroup::kGp);
+  auto aq = [&](int i) { return x86::gpq(gpa[i]); };
+  {
+    CodeHolder code; code.init(rt->environment());
+    x86::Assembler a(&code);
+    a.push(x86::rbx);
+    a.push(x86::rbp);
+    a.push(x86::r14);            // callee-saved pin for Alpha R30 (SP)
+    a.push(x86::r12);            // callee-saved guest-register pins
+    a.push(x86::r13);            // chain instruction count
+    a.push(x86::r15);
+#ifdef _WIN32
+    a.push(x86::rsi);            // callee-saved on Win64: pin for Alpha R27 (PV)
+    a.push(x86::rdi);            // callee-saved on Win64: pin for Alpha R0 (v0)
+#endif
+    a.sub(x86::rsp, imm(56));    // 32 shadow + helper scratch/out slots; 6/8 pushes -> 16-byte alignment
+    a.mov(x86::rax, aq(2));      // body (arg 2), before the pins claim r8/r9
+    a.mov(x86::rbp, aq(0));      // cpu  (arg 0)
+    a.mov(x86::rbx, aq(1));      // regs (arg 1)
+    a.xor_(x86::r13d, x86::r13d);                 // chain instruction count := 0
+    a.mov(x86::r12, x86::qword_ptr(x86::rbx,  1 * 8));   // R1
+    a.mov(x86::r15, x86::qword_ptr(x86::rbx, 16 * 8));   // R16 (a0)
+    a.mov(x86::r14, x86::qword_ptr(x86::rbx, 30 * 8));   // R30 (SP)
+    a.mov(x86::r8,  x86::qword_ptr(x86::rbx, 22 * 8));   // R22, caller-saved global pin
+    a.mov(x86::r9,  x86::qword_ptr(x86::rbx, 23 * 8));   // R23, caller-saved global pin
+#ifdef _WIN32
+    a.mov(x86::rsi, x86::qword_ptr(x86::rbx, 27 * 8));   // R27 (PV)
+    a.mov(x86::rdi, x86::qword_ptr(x86::rbx,  0 * 8));   // R0 (v0)
+#endif
+    a.jmp(x86::rax);
+    JitEnterFn fn = nullptr;
+    if (rt->add(&fn, &code) != Error::kOk) { fprintf(stderr, "[JIT][CPU%d] FATAL: entry trampoline\n", m_cpu_id); abort(); }
+    m_enter = fn;
+  }
+  {
+    CodeHolder code; code.init(rt->environment());
+    x86::Assembler a(&code);
+    a.mov(x86::qword_ptr(x86::rbx,  1 * 8), x86::r12);   // R1
+    a.mov(x86::qword_ptr(x86::rbx, 16 * 8), x86::r15);   // R16 (a0)
+    a.mov(x86::qword_ptr(x86::rbx, 30 * 8), x86::r14);   // R30 (SP)
+    a.mov(x86::qword_ptr(x86::rbx, 22 * 8), x86::r8);    // caller-saved global pins
+    a.mov(x86::qword_ptr(x86::rbx, 23 * 8), x86::r9);
+#ifdef _WIN32
+    a.mov(x86::qword_ptr(x86::rbx, 27 * 8), x86::rsi);   // R27 (PV)
+    a.mov(x86::qword_ptr(x86::rbx,  0 * 8), x86::rdi);   // R0 (v0)
+#endif
+    a.add(x86::rsp, imm(56));
+#ifdef _WIN32
+    a.pop(x86::rdi);
+    a.pop(x86::rsi);
+#endif
+    a.pop(x86::r15);
+    a.pop(x86::r13);
+    a.pop(x86::r12);
+    a.pop(x86::r14);
+    a.pop(x86::rbp);
+    a.pop(x86::rbx);
+    a.ret();
+    void* fn = nullptr;
+    if (rt->add(&fn, &code) != Error::kOk) { fprintf(stderr, "[JIT][CPU%d] FATAL: exit trampoline\n", m_cpu_id); abort(); }
+    m_exit = fn;
+    if (m_exit_slot) *m_exit_slot = m_exit;
+  }
 }
 
 void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_size, void* read_helper, void* write_helper, void* opcdec_helper, void* hw_mfpr_helper, void* hw_ld_helper, void* hw_mtpr_helper, void* hw_st_helper, void* indirect_helper, void* read_locked_helper, void* stc_helper, void* misc_helper, void* read_vpte_helper, void* read_wchk_helper, void* itof_helper, void* ftoi_helper, void* fltl_helper, void* fp_read_helper, void* fp_write_helper, void* fltv_helper)
@@ -2515,34 +2634,10 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     ;
   assert((((uint32_t) cc.preserved_regs(RegGroup::kGp)) & kPinnedGp) == kPinnedGp);
 
-  a.push(x86::rbx);
-  a.push(x86::rbp);
-  a.push(x86::r14);            // callee-saved pin for Alpha R30 (SP)
-  a.push(x86::r12);            // callee-saved guest-register pins
-  a.push(x86::r13);            // chain instruction count
-  a.push(x86::r15);
-#ifdef _WIN32
-  a.push(x86::rsi);            // callee-saved on Win64: pin for Alpha R27 (PV)
-  a.push(x86::rdi);            // callee-saved on Win64: pin for Alpha R0 (v0)
-#endif
-  a.sub(x86::rsp, imm(56));    // 32 shadow + helper scratch/out slots; 6/8 pushes -> 16-byte alignment
-  a.mov(x86::rbp, aq(0));      // cpu  (arg 0)
-  a.mov(x86::rbx, aq(1));      // regs (arg 1)
-  a.xor_(x86::r13d, x86::r13d);                 // chain instruction count := 0
-  // Load the global pins from regs[] on cold entry. Chained re-entry jumps to `body` below,
-  // skipping this -- the pins stay live in x86 across the whole chain, synced back at `done`.
-  a.mov(x86::r12, x86::qword_ptr(x86::rbx,  1 * 8));   // R1
-  a.mov(x86::r15, x86::qword_ptr(x86::rbx, 16 * 8));   // R16 (a0)
-  a.mov(x86::r14, x86::qword_ptr(x86::rbx, 30 * 8));   // R30 (SP) -- reclaimed r14
-  a.mov(x86::r8,  x86::qword_ptr(x86::rbx, 22 * 8));   // R22, caller-saved global pin
-  a.mov(x86::r9,  x86::qword_ptr(x86::rbx, 23 * 8));   // R23, caller-saved global pin
-#ifdef _WIN32
-  a.mov(x86::rsi, x86::qword_ptr(x86::rbx, 27 * 8));   // R27 (PV)
-  a.mov(x86::rdi, x86::qword_ptr(x86::rbx,  0 * 8));   // R0 (v0)
-#endif
-
-  Label done = a.new_label();  // shared exit: restore frame + ret (EAX preset by caller)
-  Label body = a.new_label();  // chained re-entry (after the prologue; preserves R14)
+  // The frame (pushes, 56-byte scratch, pins in r12/r15/r14/r8/r9[/rsi/rdi]) is set up by the
+  // engine's shared entry trampoline (build_trampolines); every exit jumps to the shared epilogue.
+  Label done = a.new_label();  // shared exit: `jmp [cpu + jit_exit]` (EAX preset by caller)
+  Label body = a.new_label();  // chained re-entry
   a.bind(body);
   const size_t body_off = code.code_size();   // byte offset of the chained entry from fn
 #ifdef JIT_REGPROF
@@ -3113,29 +3208,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   }
   a.mov(x86::eax, x86::r13d);                      // total instructions completed across the chain
   a.bind(done);                 // bail jumps here with EAX already set
-  // Sync the pins back to regs[] -- rbx still = regs (restored last), and every dispatcher exit
-  // (fall-through or mid-block bail) reaches here, so regs[] is live when we return.
-  a.mov(x86::qword_ptr(x86::rbx,  1 * 8), x86::r12);   // R1
-  a.mov(x86::qword_ptr(x86::rbx, 16 * 8), x86::r15);   // R16 (a0)
-  a.mov(x86::qword_ptr(x86::rbx, 30 * 8), x86::r14);   // R30 (SP)
-  a.mov(x86::qword_ptr(x86::rbx, 22 * 8), x86::r8);    // caller-saved global pins
-  a.mov(x86::qword_ptr(x86::rbx, 23 * 8), x86::r9);
-#ifdef _WIN32
-  a.mov(x86::qword_ptr(x86::rbx, 27 * 8), x86::rsi);   // R27 (PV)
-  a.mov(x86::qword_ptr(x86::rbx,  0 * 8), x86::rdi);   // R0 (v0)
-#endif
-  a.add(x86::rsp, imm(56));
-#ifdef _WIN32
-  a.pop(x86::rdi);             // Win64 pins pop first (reverse push order)
-  a.pop(x86::rsi);
-#endif
-  a.pop(x86::r15);              // pins pop in reverse push order
-  a.pop(x86::r13);
-  a.pop(x86::r12);
-  a.pop(x86::r14);
-  a.pop(x86::rbp);
-  a.pop(x86::rbx);
-  a.ret();
+  a.jmp(x86::qword_ptr(x86::rbp, (int32_t) m_off.jit_exit));   // shared epilogue: sync pins, restore frame, ret
 
   // Cold tail: the outlined memop slow paths (dead 99.8% of the time -- dpc hit rate).
   for (const ColdMemStub& s : cold)
@@ -3227,6 +3300,9 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 #endif
   b->code = fn;
   b->jit_body = jit_body;                                     // runnable chain entry publishes last
+#ifdef JIT_REGPROF
+  m_dbg_dram = dram;
+#endif
 }
 
 // Compile an N-block trace. Reuses the shared emit_op for each block's per-op codegen (so the body
