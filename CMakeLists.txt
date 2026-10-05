@@ -194,7 +194,7 @@ set(ES40_CFG_LIBRARIES)
 set(ES40_CFG_DEFINITIONS)
 
 list(APPEND ES40_CFG_SOURCES
-    src/es40-cfg.cpp
+    src/config/es40-cfg.cpp
     src/base/Exception.cpp
     )
 
@@ -244,8 +244,8 @@ if (ES40_ENABLE_CFG_TUI)
 	set(ES40_CFG_TUI_LIBRARIES)
 	
 	list(APPEND ES40_CFG_TUI_SOURCES
-	    src/es40-cfg-tui.cpp
-		src/Configurator.cpp
+	    src/config/es40-cfg-tui.cpp
+		src/config/Configurator.cpp
 	    src/base/Exception.cpp
 	    )
 
@@ -366,35 +366,35 @@ list(APPEND ES40_SOURCES
 	src/gui/gui.cpp
     src/gui/keymap.cpp
     src/gui/scancodes.cpp
-    src/AliM1543C_ide.cpp
-    src/AliM1543C_pmu.cpp
-    src/AliM1543C_usb.cpp
-    src/AliM1543C.cpp
+    src/chipset/AliM1543C_ide.cpp
+    src/chipset/AliM1543C_pmu.cpp
+    src/chipset/AliM1543C_usb.cpp
+    src/chipset/AliM1543C.cpp
     src/CPU/AlphaCPU_ieeefloat.cpp
     src/CPU/AlphaCPU_vaxfloat.cpp
     src/CPU/AlphaCPU_vmspal.cpp
     src/CPU/AlphaCPU.cpp
     src/AlphaSim.cpp
     # src/graphics/Cirrus.cpp
-    src/Configurator.cpp
-    src/DEC21143.cpp
-    src/Disk.cpp
-    src/DiskController.cpp
-    src/DiskDevice.cpp
-    src/DiskFile.cpp
-    src/DiskRam.cpp
-    src/DMA.cpp
+    src/config/Configurator.cpp
+    src/network/DEC21143.cpp
+    src/storage/Disk.cpp
+    src/storage/DiskController.cpp
+    src/storage/DiskDevice.cpp
+    src/storage/DiskFile.cpp
+    src/storage/DiskRam.cpp
+    src/chipset/DMA.cpp
     src/dox.cpp
-    src/DPR.cpp
+    src/system/DPR.cpp
     src/es40_debug.cpp
     src/audio/ES1370.cpp
     src/network/Ethernet.cpp
-    src/Flash.cpp
-    src/FloppyController.cpp
+    src/system/Flash.cpp
+    src/storage/FloppyController.cpp
     src/graphics/GloriaSynergy.cpp
-    src/i2c_spd.cpp
+    src/system/i2c_spd.cpp
     src/graphics/ibm8514a.cpp
-    src/Keyboard.cpp
+    src/io/Keyboard.cpp
     src/network/lockstep.cpp
     src/audio/MPU401.cpp
     src/network/NetworkBackend.cpp
@@ -402,25 +402,25 @@ list(APPEND ES40_SOURCES
     src/network/NetworkTap.cpp
     src/network/NetworkVmnet.cpp
     src/network/NetworkVmnetIPC.cpp
-    src/PCIDevice.cpp
+    src/emu/PCIDevice.cpp
     src/graphics/Permedia2.cpp
-    src/Port80.cpp
+    src/io/Port80.cpp
     src/graphics/PowerStorm3xx.cpp
     src/graphics/Radeon7500.cpp
     src/graphics/REALimage2100.cpp
     src/graphics/RV200.cpp
     src/graphics/S3Trio64.cpp
-    src/SCSIBus.cpp
-    src/SCSIDevice.cpp
-    src/Serial.cpp
+    src/storage/SCSIBus.cpp
+    src/storage/SCSIDevice.cpp
+    src/io/Serial.cpp
     src/StdAfx.cpp
-    src/LSI53C1020.cpp
-    src/Sym53C810.cpp
-    src/Sym53C895.cpp
-    src/System.cpp
-    src/System_es40.cpp
-    src/System_tsunami.cpp
-    src/SystemComponent.cpp
+    src/storage/LSI53C1020.cpp
+    src/storage/Sym53C810.cpp
+    src/storage/Sym53C895.cpp
+    src/system/System.cpp
+    src/system/System_es40.cpp
+    src/system/System_tsunami.cpp
+    src/emu/SystemComponent.cpp
     src/CPU/TraceEngine.cpp
     src/graphics/VGA.cpp
     src/CPU/jit/jitengine.cpp

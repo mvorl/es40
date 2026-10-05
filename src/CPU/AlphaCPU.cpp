@@ -338,7 +338,7 @@
 #include "StdAfx.h"
 #include "AlphaCPU.h"
 #include "jit/jitengine.h"
-#include "AliM1543C.h"
+#include "chipset/AliM1543C.h"
 #include "TraceEngine.h"
 #include "network/lockstep.h"
 #include "cpu_memory.h"

@@ -27,7 +27,7 @@
 #if !defined(INCLUDED_REALimage2100_H_)
 #define INCLUDED_REALimage2100_H_
 
-#include "address_map.h"
+#include "emu/address_map.h"
 #include <array>
 #include <cstdint>
 #include <functional>

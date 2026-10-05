@@ -180,7 +180,7 @@
   <ItemDefinitionGroup Condition="'$(Es40NoNetwork)'!='true'">
     <ClCompile>
       <PreprocessorDefinitions>HAVE_PCAP;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..;c:\dev\npcap-sdk\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <AdditionalDependencies>wpcap.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -226,18 +226,18 @@
     </Bscmake>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="..\es40-cfg.cpp" />
+    <ClCompile Include="..\config\es40-cfg.cpp" />
     <ClCompile Include="..\base\Exception.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\banner.h" />
     <ClInclude Include="..\datatypes.h" />
-    <ClInclude Include="..\FreeTextQuestion.h" />
-    <ClInclude Include="..\MultipleChoiceQuestion.h" />
-    <ClInclude Include="..\NumberQuestion.h" />
-    <ClInclude Include="..\Question.h" />
-    <ClInclude Include="..\SerialListenAddress.h" />
-    <ClInclude Include="..\ShrinkingChoiceQuestion.h" />
+    <ClInclude Include="..\config\FreeTextQuestion.h" />
+    <ClInclude Include="..\config\MultipleChoiceQuestion.h" />
+    <ClInclude Include="..\config\NumberQuestion.h" />
+    <ClInclude Include="..\config\Question.h" />
+    <ClInclude Include="..\io\SerialListenAddress.h" />
+    <ClInclude Include="..\config\ShrinkingChoiceQuestion.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

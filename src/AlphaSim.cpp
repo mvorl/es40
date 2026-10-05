@@ -197,10 +197,10 @@
   * \Initial author Camiel Vanderhoeven
   **/
 #include "StdAfx.h"
-#include "System.h"
-#include "Flash.h"
-#include "DPR.h"
-#include "AliM1543C.h"
+#include "system/System.h"
+#include "system/Flash.h"
+#include "system/DPR.h"
+#include "chipset/AliM1543C.h"
 #include "banner.h"
 
 #include "network/lockstep.h"

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Windows curses stack for es40-cfg-tui: PDCursesMod (curses + panel, wincon port) and
-     NetBSD libform/libmenu from the sabotage netbsd-curses port, plus MSVC shims in src\tui_win32. -->
+     NetBSD libform/libmenu from the sabotage netbsd-curses port, plus MSVC shims in src\config\tui_win32. -->
 <Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -149,7 +149,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>WIN32;_LIB;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>..\tui_win32\include;..\..\third_party\PDCursesMod;..\..\third_party\PDCursesMod\wincon;..\..\third_party\netbsd-curses;..\..\third_party\netbsd-curses\libform;..\..\third_party\netbsd-curses\libmenu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\config\tui_win32\include;..\..\third_party\PDCursesMod;..\..\third_party\PDCursesMod\wincon;..\..\third_party\netbsd-curses;..\..\third_party\netbsd-curses\libform;..\..\third_party\netbsd-curses\libmenu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <ForcedIncludeFiles>bsd_compat.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
@@ -277,14 +277,14 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup Label="MSVC shims">
-    <ClCompile Include="..\tui_win32\bsd_compat.c" />
-    <ClCompile Include="..\tui_win32\regex_std.cpp" />
-    <ClInclude Include="..\tui_win32\include\bsd_compat.h" />
-    <ClInclude Include="..\tui_win32\include\err.h" />
-    <ClInclude Include="..\tui_win32\include\netbsd_sys\queue.h" />
-    <ClInclude Include="..\tui_win32\include\regex.h" />
-    <ClInclude Include="..\tui_win32\include\strings.h" />
-    <ClInclude Include="..\tui_win32\include\sys\param.h" />
+    <ClCompile Include="..\config\tui_win32\bsd_compat.c" />
+    <ClCompile Include="..\config\tui_win32\regex_std.cpp" />
+    <ClInclude Include="..\config\tui_win32\include\bsd_compat.h" />
+    <ClInclude Include="..\config\tui_win32\include\err.h" />
+    <ClInclude Include="..\config\tui_win32\include\netbsd_sys\queue.h" />
+    <ClInclude Include="..\config\tui_win32\include\regex.h" />
+    <ClInclude Include="..\config\tui_win32\include\strings.h" />
+    <ClInclude Include="..\config\tui_win32\include\sys\param.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

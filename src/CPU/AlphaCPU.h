@@ -221,8 +221,8 @@
 #include <atomic>
 #include <chrono>
 
-#include "SystemComponent.h"
-#include "System.h"
+#include "emu/SystemComponent.h"
+#include "system/System.h"
 #include "cpu_defs.h"
 class CJitEngine;   // JIT block-cache engine (ES40_JIT builds)
 

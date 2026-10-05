@@ -83,11 +83,11 @@
 #include "keymap.h"
 #include "sdl_media.h"
 #include "../graphics/VGA.h"
-#include "../System.h"
+#include "system/System.h"
 
-  //#include "../AliM1543C.h"
-#include "../Keyboard.h"
-#include "../Configurator.h"
+  //#include "chipset/AliM1543C.h"
+#include "io/Keyboard.h"
+#include "config/Configurator.h"
 
 #define _MULTI_THREAD
 

@@ -39,10 +39,10 @@
 #include "VGA.h"
 #include "gui/gui.h"
 #include <atomic>
-#include "coretmpl.h"
-#include "attotime.h"
-#include "mame_shims.h"
-#include "address_map.h"
+#include "emu/coretmpl.h"
+#include "emu/attotime.h"
+#include "emu/mame_shims.h"
+#include "emu/address_map.h"
 #include "ibm8514a.h"
 
   /* video card has 4M of ram */

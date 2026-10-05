@@ -8,7 +8,7 @@ rewritten ones be licensed under BSD-1-Clause to allow for permissive usage
 in advancing other emulation projects.  
   
 - **New files:** The preference here would be BSD-1-Clause, an example header  
-  is used in `src/i2c_spd.cpp`, with your own copyright line.  
+  is used in `src/system/i2c_spd.cpp`, with your own copyright line.
   The license in a file's header is the one that applies to that file's code.  
 - **Changes to existing files** are contributed under that file's license,  
   as stated in its header.  

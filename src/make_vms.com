@@ -76,7 +76,7 @@ $ SAY "Compiling es40..."
 $!
 $! Check if es40_AliM1543C.obj is up-to-date...
 $!
-$ SRCTIME = F$CVTIME(F$FILE_ATTRIBUTES("AliM1543C.cpp","RDT"),"COMPARISON")
+$ SRCTIME = F$CVTIME(F$FILE_ATTRIBUTES("[.chipset]AliM1543C.cpp","RDT"),"COMPARISON")
 $ OBJFILE = F$SEARCH("es40_AliM1543C.obj")
 $ IF OBJFILE .NES. ""
 $ THEN
@@ -85,10 +85,10 @@ $ ELSE
 $   OBJTIME = F$CVTIME("01-JAN-1970 00:00:00.00","COMPARISON")
 $ ENDIF
 $!
-$! Compile AliM1543C.cpp to es40_AliM1543C.obj
+$! Compile [.chipset]AliM1543C.cpp to es40_AliM1543C.obj
 $ IF SRCTIME .GTS. OBJTIME
 $ THEN
-$   CXX AliM1543C.cpp -
+$   CXX [.chipset]AliM1543C.cpp -
          /DEFINE=(ES40,__USE_STD_IOSTREAM'X11_DEF') -
          /INCLUDE=("''ES40_ROOT'","''ES40_ROOT'/GUI","''ES40_ROOT'/BASE'") -
          /STANDARD=GNU -
@@ -112,7 +112,7 @@ $ SAY "Compiling es40_idb..."
 $!
 $! Check if es40_idb_AliM1543C.obj is up-to-date...
 $!
-$ SRCTIME = F$CVTIME(F$FILE_ATTRIBUTES("AliM1543C.cpp","RDT"),"COMPARISON")
+$ SRCTIME = F$CVTIME(F$FILE_ATTRIBUTES("[.chipset]AliM1543C.cpp","RDT"),"COMPARISON")
 $ OBJFILE = F$SEARCH("es40_idb_AliM1543C.obj")
 $ IF OBJFILE .NES. ""
 $ THEN
@@ -121,10 +121,10 @@ $ ELSE
 $   OBJTIME = F$CVTIME("01-JAN-1970 00:00:00.00","COMPARISON")
 $ ENDIF
 $!
-$! Compile AliM1543C.cpp to es40_idb_AliM1543C.obj
+$! Compile [.chipset]AliM1543C.cpp to es40_idb_AliM1543C.obj
 $ IF SRCTIME .GTS. OBJTIME
 $ THEN
-$   CXX AliM1543C.cpp -
+$   CXX [.chipset]AliM1543C.cpp -
          /DEFINE=(ES40,__USE_STD_IOSTREAM,IDB'X11_DEF') -
          /INCLUDE=("''ES40_ROOT'","''ES40_ROOT'/GUI","''ES40_ROOT'/BASE'") -
          /STANDARD=GNU -
@@ -148,7 +148,7 @@ $ SAY "Compiling es40_lss..."
 $!
 $! Check if es40_lss_AliM1543C.obj is up-to-date...
 $!
-$ SRCTIME = F$CVTIME(F$FILE_ATTRIBUTES("AliM1543C.cpp","RDT"),"COMPARISON")
+$ SRCTIME = F$CVTIME(F$FILE_ATTRIBUTES("[.chipset]AliM1543C.cpp","RDT"),"COMPARISON")
 $ OBJFILE = F$SEARCH("es40_lss_AliM1543C.obj")
 $ IF OBJFILE .NES. ""
 $ THEN
@@ -157,10 +157,10 @@ $ ELSE
 $   OBJTIME = F$CVTIME("01-JAN-1970 00:00:00.00","COMPARISON")
 $ ENDIF
 $!
-$! Compile AliM1543C.cpp to es40_lss_AliM1543C.obj
+$! Compile [.chipset]AliM1543C.cpp to es40_lss_AliM1543C.obj
 $ IF SRCTIME .GTS. OBJTIME
 $ THEN
-$   CXX AliM1543C.cpp -
+$   CXX [.chipset]AliM1543C.cpp -
          /DEFINE=(ES40,__USE_STD_IOSTREAM,IDB,LSS'X11_DEF') -
          /INCLUDE=("''ES40_ROOT'","''ES40_ROOT'/GUI","''ES40_ROOT'/BASE'") -
          /STANDARD=GNU -
@@ -184,7 +184,7 @@ $ SAY "Compiling es40_lsm..."
 $!
 $! Check if es40_lsm_AliM1543C.obj is up-to-date...
 $!
-$ SRCTIME = F$CVTIME(F$FILE_ATTRIBUTES("AliM1543C.cpp","RDT"),"COMPARISON")
+$ SRCTIME = F$CVTIME(F$FILE_ATTRIBUTES("[.chipset]AliM1543C.cpp","RDT"),"COMPARISON")
 $ OBJFILE = F$SEARCH("es40_lsm_AliM1543C.obj")
 $ IF OBJFILE .NES. ""
 $ THEN
@@ -193,10 +193,10 @@ $ ELSE
 $   OBJTIME = F$CVTIME("01-JAN-1970 00:00:00.00","COMPARISON")
 $ ENDIF
 $!
-$! Compile AliM1543C.cpp to es40_lsm_AliM1543C.obj
+$! Compile [.chipset]AliM1543C.cpp to es40_lsm_AliM1543C.obj
 $ IF SRCTIME .GTS. OBJTIME
 $ THEN
-$   CXX AliM1543C.cpp -
+$   CXX [.chipset]AliM1543C.cpp -
          /DEFINE=(ES40,__USE_STD_IOSTREAM,IDB,LSM'X11_DEF') -
          /INCLUDE=("''ES40_ROOT'","''ES40_ROOT'/GUI","''ES40_ROOT'/BASE'") -
          /STANDARD=GNU -
@@ -220,7 +220,7 @@ $ SAY "Compiling es40_cfg..."
 $!
 $! Check if es40_cfg_es40-cfg.obj is up-to-date...
 $!
-$ SRCTIME = F$CVTIME(F$FILE_ATTRIBUTES("es40-cfg.cpp","RDT"),"COMPARISON")
+$ SRCTIME = F$CVTIME(F$FILE_ATTRIBUTES("[.config]es40-cfg.cpp","RDT"),"COMPARISON")
 $ OBJFILE = F$SEARCH("es40_cfg_es40-cfg.obj")
 $ IF OBJFILE .NES. ""
 $ THEN
@@ -229,10 +229,10 @@ $ ELSE
 $   OBJTIME = F$CVTIME("01-JAN-1970 00:00:00.00","COMPARISON")
 $ ENDIF
 $!
-$! Compile es40-cfg.cpp to es40_cfg_es40-cfg.obj
+$! Compile [.config]es40-cfg.cpp to es40_cfg_es40-cfg.obj
 $ IF SRCTIME .GTS. OBJTIME
 $ THEN
-$   CXX es40-cfg.cpp -
+$   CXX [.config]es40-cfg.cpp -
          /DEFINE=(ES40,__USE_STD_IOSTREAM'X11_DEF') -
          /INCLUDE=("''ES40_ROOT'","''ES40_ROOT'/GUI","''ES40_ROOT'/BASE'") -
          /STANDARD=GNU -

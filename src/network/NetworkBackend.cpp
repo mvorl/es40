@@ -29,7 +29,7 @@
 #if defined(HAVE_PCAP) || defined(HAVE_TAP_NET) || defined(HAVE_VMNET)
 
 #include "NetworkBackend.h"
-#include "../Configurator.h"
+#include "config/Configurator.h"
 
 #if defined(HAVE_PCAP)
 #include "NetworkPcap.h"

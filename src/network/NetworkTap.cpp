@@ -28,7 +28,7 @@
 #if defined(HAVE_TAP_NET)
 
 #include "NetworkTap.h"
-#include "../Configurator.h"
+#include "config/Configurator.h"
 
 #include <arpa/inet.h>
 #include <errno.h>

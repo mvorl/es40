@@ -59,9 +59,9 @@
 #if defined(HAVE_X11)
 #include "gui.h"
 #include "keymap.h"
-#include "../Configurator.h"
+#include "config/Configurator.h"
 #include "../graphics/VGA.h"
-#include "../Keyboard.h"
+#include "io/Keyboard.h"
 
 extern "C"
 {

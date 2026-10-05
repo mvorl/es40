@@ -24,7 +24,7 @@
 #include <vector>
 
 #ifdef _WIN32
-#include "AliM1543C.h"
+#include "chipset/AliM1543C.h"
 #pragma comment(lib, "winmm.lib")
 
 const CSystemComponent* CMPU401::memory_decode_owner() const noexcept

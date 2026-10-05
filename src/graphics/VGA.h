@@ -38,10 +38,10 @@
 #if !defined(__VGA_H__)
 #define __VGA_H__
 
-#include "PCIDevice.h"
-#include "mame_shims.h"
-#include "address_map.h"
-#include "coretmpl.h"
+#include "emu/PCIDevice.h"
+#include "emu/mame_shims.h"
+#include "emu/address_map.h"
+#include "emu/coretmpl.h"
 #include "ibm8514a.h"
 #include <set>
 #include <string>

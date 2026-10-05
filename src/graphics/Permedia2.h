@@ -27,7 +27,7 @@
 #if !defined(INCLUDED_Permedia2_H_)
 #define INCLUDED_Permedia2_H_
 
-#include "address_map.h"
+#include "emu/address_map.h"
 #include <array>
 #include <cstddef>
 #include <cstdint>

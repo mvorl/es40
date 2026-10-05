@@ -43,7 +43,7 @@
 
 //#include "screen.h"
 //#include "video/pc_vga.h"
-#include "mame_shims.h" // ES40 adaptation
+#include "emu/mame_shims.h" // ES40 adaptation
 
 //class svga_device;
 class CVGA;

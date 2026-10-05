@@ -26,8 +26,8 @@
 
 #include "StdAfx.h"
 #include "GloriaSynergy.h"
-#include "Configurator.h"
-#include "System.h"
+#include "config/Configurator.h"
+#include "system/System.h"
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>

@@ -42,7 +42,7 @@
 
 AC_PREREQ([2.71])
 AC_INIT([es40],[0.88],[https://github.com/ES40-Emu/es40/issues/new],[],[https://github.com/ES40-Emu/es40/issues])
-AC_CONFIG_SRCDIR([src/Flash.cpp])
+AC_CONFIG_SRCDIR([src/system/Flash.cpp])
 AC_CONFIG_MACRO_DIRS([m4])
 AC_CONFIG_HEADERS([src/config.h])
 AM_INIT_AUTOMAKE([foreign subdir-objects])

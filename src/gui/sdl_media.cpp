@@ -37,8 +37,8 @@
 #endif
 
 #include "sdl_media.h"
-#include "../DiskFile.h"
-#include "../System.h"
+#include "storage/DiskFile.h"
+#include "system/System.h"
 
 #include <SDL3/SDL.h>
 #include <algorithm>

@@ -57,7 +57,7 @@
 #include "../StdAfx.h"
 #include "gui.h"
 #include "keymap.h"
-#include "../System.h"
+#include "system/System.h"
 
 const char* bx_key_symbol[BX_KEY_NBKEYS] = {
   "BX_KEY_CTRL_L",         "BX_KEY_SHIFT_L",        "BX_KEY_F1",

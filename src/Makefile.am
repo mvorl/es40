@@ -98,6 +98,48 @@ noinst_HEADERS = CPU/AlphaCPU.h \
 
 noinst_HEADERS += audio/ES1370.h audio/MPU401.h
 
+noinst_HEADERS += storage/Disk.h \
+       storage/DiskController.h \
+       storage/DiskDevice.h \
+       storage/DiskFile.h \
+       storage/DiskFileBinCue.h \
+       storage/DiskRam.h \
+       storage/FloppyController.h \
+       storage/LSI53C1020.h \
+       storage/SCSIBus.h \
+       storage/SCSIDevice.h \
+       storage/Sym53C810.h \
+       storage/Sym53C895.h \
+       chipset/AliM1543C.h \
+       chipset/AliM1543C_ide.h \
+       chipset/AliM1543C_pmu.h \
+       chipset/AliM1543C_usb.h \
+       chipset/DMA.h \
+       system/DPR.h \
+       system/Flash.h \
+       system/System.h \
+       system/i2c_spd.h \
+       io/Keyboard.h \
+       io/Port80.h \
+       io/Serial.h \
+       io/SerialListenAddress.h \
+       config/Configurator.h \
+       config/FreeTextQuestion.h \
+       config/MultipleChoiceQuestion.h \
+       config/NumberQuestion.h \
+       config/Question.h \
+       config/ShrinkingChoiceQuestion.h \
+       network/DEC21143.h \
+       network/DEC21143_mii.h \
+       network/DEC21143_tulipreg.h \
+       emu/SystemComponent.h \
+       emu/PCIDevice.h \
+       emu/address_map.h \
+       emu/mame_shims.h \
+       emu/attotime.h \
+       emu/xtal.h \
+       emu/coretmpl.h
+
 es40_LDADD = $(ASMJIT_LDADD) $(ES40_LIBS)
 es40_cfg_LDADD = $(ES40_LIBS)
 es40_idb_LDADD = $(ASMJIT_LDADD) $(ES40_LIBS)
@@ -106,31 +148,31 @@ es40_lsm_LDADD = $(ASMJIT_LDADD) $(ES40_LIBS)
 
 #       graphics/Cirrus.cpp  - readd this to the sources line below when it's fixed
 
-es40_SOURCES = AliM1543C.cpp \
-       AliM1543C_ide.cpp \
-       AliM1543C_usb.cpp \
-       AliM1543C_pmu.cpp \
+es40_SOURCES = chipset/AliM1543C.cpp \
+       chipset/AliM1543C_ide.cpp \
+       chipset/AliM1543C_usb.cpp \
+       chipset/AliM1543C_pmu.cpp \
        CPU/AlphaCPU.cpp \
        CPU/AlphaCPU_ieeefloat.cpp \
        CPU/AlphaCPU_vaxfloat.cpp \
        CPU/AlphaCPU_vmspal.cpp \
        AlphaSim.cpp \
-       Configurator.cpp \
-       DEC21143.cpp \
-       Disk.cpp \
-       DiskController.cpp \
-       DiskDevice.cpp \
-       DiskFile.cpp \
-       DiskRam.cpp \
+       config/Configurator.cpp \
+       network/DEC21143.cpp \
+       storage/Disk.cpp \
+       storage/DiskController.cpp \
+       storage/DiskDevice.cpp \
+       storage/DiskFile.cpp \
+       storage/DiskRam.cpp \
        graphics/ibm8514a.cpp \
-       DMA.cpp \
-       DPR.cpp \
+       chipset/DMA.cpp \
+       system/DPR.cpp \
        es40_debug.cpp \
        audio/ES1370.cpp \
        network/Ethernet.cpp \
-       Flash.cpp \
-       FloppyController.cpp \
-       Keyboard.cpp \
+       system/Flash.cpp \
+       storage/FloppyController.cpp \
+       io/Keyboard.cpp \
        network/lockstep.cpp \
        network/NetworkBackend.cpp \
        network/NetworkPcap.cpp \
@@ -138,8 +180,8 @@ es40_SOURCES = AliM1543C.cpp \
        network/NetworkVmnet.cpp \
        network/NetworkVmnetIPC.cpp \
        network/NetworkVmnetIPC.h \
-       PCIDevice.cpp \
-       Port80.cpp \
+       emu/PCIDevice.cpp \
+       io/Port80.cpp \
        graphics/S3Trio64.cpp \
        graphics/GloriaSynergy.cpp \
        graphics/GloriaSynergy.h \
@@ -153,22 +195,22 @@ es40_SOURCES = AliM1543C.cpp \
        graphics/PowerStorm3xx.h \
        graphics/REALimage2100.cpp \
        graphics/REALimage2100.h \
-       SCSIBus.cpp \
-       SCSIDevice.cpp \
-       Serial.cpp \
-       SerialListenAddress.h \
+       storage/SCSIBus.cpp \
+       storage/SCSIDevice.cpp \
+       io/Serial.cpp \
+       io/SerialListenAddress.h \
        StdAfx.cpp \
-       LSI53C1020.cpp \
-       Sym53C810.cpp \
-       Sym53C895.cpp \
-       SystemComponent.cpp \
-       System.cpp \
-       System_es40.cpp \
-       System_tsunami.cpp \
+       storage/LSI53C1020.cpp \
+       storage/Sym53C810.cpp \
+       storage/Sym53C895.cpp \
+       emu/SystemComponent.cpp \
+       system/System.cpp \
+       system/System_es40.cpp \
+       system/System_tsunami.cpp \
        SnapshotFile.h \
        CPU/TraceEngine.cpp \
        graphics/VGA.cpp \
-       i2c_spd.cpp \
+       system/i2c_spd.cpp \
 	base/ThreadTLS.cpp \
        gui/gui.cpp \
        gui/gui_x11.cpp \
@@ -208,13 +250,13 @@ es40_idb_CXXFLAGS = -DIDB
 es40_lss_CXXFLAGS = -DIDB -DLS_SLAVE
 es40_lsm_CXXFLAGS = -DIDB -DLS_MASTER
 
-es40_cfg_SOURCES = es40-cfg.cpp \
+es40_cfg_SOURCES = config/es40-cfg.cpp \
     base/Exception.cpp
 
-# CONFIGURATION_ONLY strips device code out of Configurator.cpp; the per-target
+# CONFIGURATION_ONLY strips device code out of config/Configurator.cpp; the per-target
 # flags also keep these objects separate from es40's Configurator.o.
 es40_cfg_tui_CPPFLAGS = $(AM_CPPFLAGS) $(TUI_CFLAGS) -DCONFIGURATION_ONLY
 es40_cfg_tui_LDADD = $(TUI_LIBS) $(PCAP_LIBS)
-es40_cfg_tui_SOURCES = es40-cfg-tui.cpp \
-    Configurator.cpp \
+es40_cfg_tui_SOURCES = config/es40-cfg-tui.cpp \
+    config/Configurator.cpp \
     base/Exception.cpp

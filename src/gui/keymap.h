@@ -54,7 +54,7 @@
   *      Initial version for ES40 emulator.
   *
   **/
-#include "../Configurator.h"
+#include "config/Configurator.h"
 
   // In case of unknown symbol
 #define BX_KEYMAP_UNKNOWN 0xFFFFFFFF

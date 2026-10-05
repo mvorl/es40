@@ -105,8 +105,8 @@
   **/
 #include "StdAfx.h"
 #include "Cirrus.h"
-#include "System.h"
-#include "AliM1543C.h"
+#include "system/System.h"
+#include "chipset/AliM1543C.h"
 #include "gui/gui.h"
 
 static unsigned old_iHeight = 0, old_iWidth = 0, old_MSL = 0;

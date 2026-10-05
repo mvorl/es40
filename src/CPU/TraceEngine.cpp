@@ -162,9 +162,9 @@
 #if defined(IDB)
 #include "TraceEngine.h"
 #include "AlphaCPU.h"
-#include "System.h"
-#include "DPR.h"
-#include "Flash.h"
+#include "system/System.h"
+#include "system/DPR.h"
+#include "system/Flash.h"
 #include "network/lockstep.h"
 #include <signal.h>
 

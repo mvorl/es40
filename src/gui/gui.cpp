@@ -75,7 +75,7 @@
 
 #include "gui.h"
 
-#include "../Keyboard.h"
+#include "io/Keyboard.h"
 
 bx_gui_c* bx_gui = NULL;
 

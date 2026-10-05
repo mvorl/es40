@@ -28,9 +28,9 @@
 // Straight port to es40 by Cacodemon345.
 #ifdef HAVE_SDL
 #include "StdAfx.h"
-#include "System.h"
-#include "SystemComponent.h"
-#include "PCIDevice.h"
+#include "system/System.h"
+#include "emu/SystemComponent.h"
+#include "emu/PCIDevice.h"
 
 #include <SDL3/SDL.h>
 #include <atomic>

@@ -31,7 +31,7 @@
 
 #include "NetworkVmnet.h"
 #include "NetworkVmnetIPC.h"
-#include "../Configurator.h"
+#include "config/Configurator.h"
 
 #include <vmnet/vmnet.h>
 #include <xpc/xpc.h>

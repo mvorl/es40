@@ -24,8 +24,8 @@
 
 #ifdef _WIN32
 #include "StdAfx.h"
-#include "System.h"
-#include "SystemComponent.h"
+#include "system/System.h"
+#include "emu/SystemComponent.h"
 
 #include <windows.h>
 #include <mmsystem.h>

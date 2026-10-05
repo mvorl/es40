@@ -13,33 +13,42 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav</Extensions>
     </Filter>
+    <Filter Include="Header Files\config">
+      <UniqueIdentifier>{cbd1d662-0b47-44bc-9a1f-d21b31404073}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\io">
+      <UniqueIdentifier>{5592d211-9e8e-412f-95cf-4e813e29e057}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\config">
+      <UniqueIdentifier>{07d43cee-f871-4ea7-90f7-45ba04f189ca}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\es40-cfg.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\config\es40-cfg.cpp">
+      <Filter>Source Files\config</Filter>
     </ClCompile>
     <ClCompile Include="..\base\Exception.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\FreeTextQuestion.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\config\FreeTextQuestion.h">
+      <Filter>Header Files\config</Filter>
     </ClInclude>
-    <ClInclude Include="..\MultipleChoiceQuestion.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\config\MultipleChoiceQuestion.h">
+      <Filter>Header Files\config</Filter>
     </ClInclude>
-    <ClInclude Include="..\NumberQuestion.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\config\NumberQuestion.h">
+      <Filter>Header Files\config</Filter>
     </ClInclude>
-    <ClInclude Include="..\Question.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\config\Question.h">
+      <Filter>Header Files\config</Filter>
     </ClInclude>
-    <ClInclude Include="..\SerialListenAddress.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\io\SerialListenAddress.h">
+      <Filter>Header Files\io</Filter>
     </ClInclude>
-    <ClInclude Include="..\ShrinkingChoiceQuestion.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\config\ShrinkingChoiceQuestion.h">
+      <Filter>Header Files\config</Filter>
     </ClInclude>
     <ClInclude Include="..\datatypes.h">
       <Filter>Header Files</Filter>

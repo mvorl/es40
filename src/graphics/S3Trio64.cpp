@@ -40,14 +40,14 @@
 #include "StdAfx.h"
 #include "S3Trio64.h"
 #include <cmath>
-#include "System.h"
-#include "AliM1543C.h"
+#include "system/System.h"
+#include "chipset/AliM1543C.h"
 #include <algorithm>
 #include <chrono>
 #include <type_traits>
 #include <vector>
 #include "gui/gui.h"
-#include "xtal.h"
+#include "emu/xtal.h"
 #include "emu.h"
 
 // begin MAME code

@@ -31,7 +31,7 @@
 #if defined(HAVE_PCAP)
 
 #include "NetworkPcap.h"
-#include "../Configurator.h"
+#include "config/Configurator.h"
 
 #ifdef _WIN32
 /* Pointers to the real functions, resolved at runtime from wpcap.dll. */

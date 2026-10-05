@@ -82,9 +82,9 @@
 #include "StdAfx.h"
 #include "AlphaCPU.h"
 
-#include "Serial.h"
-#include "AliM1543C_ide.h"
-#include "Disk.h"
+#include "io/Serial.h"
+#include "chipset/AliM1543C_ide.h"
+#include "storage/Disk.h"
 
   /***********************************************************
    *                                                         *

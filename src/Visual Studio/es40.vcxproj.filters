@@ -67,19 +67,52 @@
     <Filter Include="Header Files\audio">
       <UniqueIdentifier>{afaad88e-def1-4a16-b595-470c04cde112}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\chipset">
+      <UniqueIdentifier>{37de51f5-df63-4023-b973-2d0c40e25ef3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\config">
+      <UniqueIdentifier>{12368852-6e43-4098-8a6c-89d018917bdd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\io">
+      <UniqueIdentifier>{163dd376-d4d0-4c79-abcc-c564f217b04d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\storage">
+      <UniqueIdentifier>{b49776bf-530a-41c2-974f-77fdd96c4bcd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\system">
+      <UniqueIdentifier>{f1060804-ee26-4138-ad57-0651ec6dc675}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\chipset">
+      <UniqueIdentifier>{edea5d98-695d-4967-9e4a-a7ab70754e2b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\config">
+      <UniqueIdentifier>{1a190f9f-0503-472f-8287-13d0841113c4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\emu">
+      <UniqueIdentifier>{548c69d6-5852-4a99-993e-6241d16297e2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\io">
+      <UniqueIdentifier>{f184a3ab-9352-4dba-869d-6bd61f5b4be3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\storage">
+      <UniqueIdentifier>{bac5e1dc-0c10-4b62-a579-77fe4823705a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\system">
+      <UniqueIdentifier>{4fd068ce-2ed0-474a-bd5f-f692708f266f}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\AliM1543C.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\chipset\AliM1543C.cpp">
+      <Filter>Source Files\chipset</Filter>
     </ClCompile>
-    <ClCompile Include="..\AliM1543C_ide.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\chipset\AliM1543C_ide.cpp">
+      <Filter>Source Files\chipset</Filter>
     </ClCompile>
-    <ClCompile Include="..\AliM1543C_usb.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\chipset\AliM1543C_usb.cpp">
+      <Filter>Source Files\chipset</Filter>
     </ClCompile>
-    <ClCompile Include="..\AliM1543C_pmu.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\chipset\AliM1543C_pmu.cpp">
+      <Filter>Source Files\chipset</Filter>
     </ClCompile>
     <ClCompile Include="..\CPU\AlphaCPU.cpp">
       <Filter>Source Files\CPU</Filter>
@@ -99,11 +132,11 @@
     <ClCompile Include="..\graphics\Cirrus.cpp">
       <Filter>Source Files\graphics</Filter>
     </ClCompile>
-    <ClCompile Include="..\Configurator.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\config\Configurator.cpp">
+      <Filter>Source Files\config</Filter>
     </ClCompile>
-    <ClCompile Include="..\DEC21143.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\network\DEC21143.cpp">
+      <Filter>Source Files\network</Filter>
     </ClCompile>
     <ClCompile Include="..\network\NetworkBackend.cpp">
       <Filter>Source Files\network</Filter>
@@ -123,26 +156,26 @@
     <ClCompile Include="..\network\es40_vmnet_helper.cpp">
       <Filter>Source Files\network</Filter>
     </ClCompile>
-    <ClCompile Include="..\Disk.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\storage\Disk.cpp">
+      <Filter>Source Files\storage</Filter>
     </ClCompile>
-    <ClCompile Include="..\DiskController.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\storage\DiskController.cpp">
+      <Filter>Source Files\storage</Filter>
     </ClCompile>
-    <ClCompile Include="..\DiskDevice.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\storage\DiskDevice.cpp">
+      <Filter>Source Files\storage</Filter>
     </ClCompile>
-    <ClCompile Include="..\DiskFile.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\storage\DiskFile.cpp">
+      <Filter>Source Files\storage</Filter>
     </ClCompile>
-    <ClCompile Include="..\DiskRam.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\storage\DiskRam.cpp">
+      <Filter>Source Files\storage</Filter>
     </ClCompile>
-    <ClCompile Include="..\DMA.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\chipset\DMA.cpp">
+      <Filter>Source Files\chipset</Filter>
     </ClCompile>
-    <ClCompile Include="..\DPR.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\system\DPR.cpp">
+      <Filter>Source Files\system</Filter>
     </ClCompile>
     <ClCompile Include="..\es40_debug.cpp">
       <Filter>Source Files</Filter>
@@ -150,23 +183,23 @@
     <ClCompile Include="..\network\Ethernet.cpp">
       <Filter>Source Files\network</Filter>
     </ClCompile>
-    <ClCompile Include="..\Flash.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\system\Flash.cpp">
+      <Filter>Source Files\system</Filter>
     </ClCompile>
-    <ClCompile Include="..\FloppyController.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\storage\FloppyController.cpp">
+      <Filter>Source Files\storage</Filter>
     </ClCompile>
-    <ClCompile Include="..\Keyboard.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\io\Keyboard.cpp">
+      <Filter>Source Files\io</Filter>
     </ClCompile>
     <ClCompile Include="..\network\lockstep.cpp">
       <Filter>Source Files\network</Filter>
     </ClCompile>
-    <ClCompile Include="..\PCIDevice.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\emu\PCIDevice.cpp">
+      <Filter>Source Files\emu</Filter>
     </ClCompile>
-    <ClCompile Include="..\Port80.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\io\Port80.cpp">
+      <Filter>Source Files\io</Filter>
     </ClCompile>
     <ClCompile Include="..\graphics\S3Trio64.cpp">
       <Filter>Source Files\graphics</Filter>
@@ -189,38 +222,38 @@
     <ClCompile Include="..\graphics\REALimage2100.cpp">
       <Filter>Source Files\graphics</Filter>
     </ClCompile>
-    <ClCompile Include="..\SCSIBus.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\storage\SCSIBus.cpp">
+      <Filter>Source Files\storage</Filter>
     </ClCompile>
-    <ClCompile Include="..\SCSIDevice.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\storage\SCSIDevice.cpp">
+      <Filter>Source Files\storage</Filter>
     </ClCompile>
-    <ClCompile Include="..\Serial.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\io\Serial.cpp">
+      <Filter>Source Files\io</Filter>
     </ClCompile>
     <ClCompile Include="..\StdAfx.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\LSI53C1020.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\storage\LSI53C1020.cpp">
+      <Filter>Source Files\storage</Filter>
     </ClCompile>
-    <ClCompile Include="..\Sym53C810.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\storage\Sym53C810.cpp">
+      <Filter>Source Files\storage</Filter>
     </ClCompile>
-    <ClCompile Include="..\Sym53C895.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\storage\Sym53C895.cpp">
+      <Filter>Source Files\storage</Filter>
     </ClCompile>
-    <ClCompile Include="..\System.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\system\System.cpp">
+      <Filter>Source Files\system</Filter>
     </ClCompile>
-    <ClCompile Include="..\System_es40.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\system\System_es40.cpp">
+      <Filter>Source Files\system</Filter>
     </ClCompile>
-    <ClCompile Include="..\System_tsunami.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\system\System_tsunami.cpp">
+      <Filter>Source Files\system</Filter>
     </ClCompile>
-    <ClCompile Include="..\SystemComponent.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\emu\SystemComponent.cpp">
+      <Filter>Source Files\emu</Filter>
     </ClCompile>
     <ClCompile Include="..\CPU\TraceEngine.cpp">
       <Filter>Source Files\CPU</Filter>
@@ -228,8 +261,8 @@
     <ClCompile Include="..\graphics\VGA.cpp">
       <Filter>Source Files\graphics</Filter>
     </ClCompile>
-    <ClCompile Include="..\i2c_spd.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\system\i2c_spd.cpp">
+      <Filter>Source Files\system</Filter>
     </ClCompile>
     <ClCompile Include="..\graphics\ibm8514a.cpp">
       <Filter>Source Files\graphics</Filter>
@@ -275,17 +308,17 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\AliM1543C.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\chipset\AliM1543C.h">
+      <Filter>Header Files\chipset</Filter>
     </ClInclude>
-    <ClInclude Include="..\AliM1543C_ide.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\chipset\AliM1543C_ide.h">
+      <Filter>Header Files\chipset</Filter>
     </ClInclude>
-    <ClInclude Include="..\AliM1543C_usb.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\chipset\AliM1543C_usb.h">
+      <Filter>Header Files\chipset</Filter>
     </ClInclude>
-    <ClInclude Include="..\AliM1543C_pmu.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\chipset\AliM1543C_pmu.h">
+      <Filter>Header Files\chipset</Filter>
     </ClInclude>
     <ClInclude Include="..\CPU\AlphaCPU.h">
       <Filter>Header Files\CPU</Filter>
@@ -299,8 +332,8 @@
     <ClInclude Include="..\config_win32.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\Configurator.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\config\Configurator.h">
+      <Filter>Header Files\config</Filter>
     </ClInclude>
     <ClInclude Include="..\CPU\cpu_arith.h">
       <Filter>Header Files\CPU</Filter>
@@ -347,35 +380,35 @@
     <ClInclude Include="..\datatypes.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\DEC21143.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\network\DEC21143.h">
+      <Filter>Header Files\network</Filter>
     </ClInclude>
-    <ClInclude Include="..\DEC21143_mii.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\network\DEC21143_mii.h">
+      <Filter>Header Files\network</Filter>
     </ClInclude>
-    <ClInclude Include="..\DEC21143_tulipreg.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\network\DEC21143_tulipreg.h">
+      <Filter>Header Files\network</Filter>
     </ClInclude>
-    <ClInclude Include="..\Disk.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\storage\Disk.h">
+      <Filter>Header Files\storage</Filter>
     </ClInclude>
-    <ClInclude Include="..\DiskController.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\storage\DiskController.h">
+      <Filter>Header Files\storage</Filter>
     </ClInclude>
-    <ClInclude Include="..\DiskDevice.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\storage\DiskDevice.h">
+      <Filter>Header Files\storage</Filter>
     </ClInclude>
-    <ClInclude Include="..\DiskFile.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\storage\DiskFile.h">
+      <Filter>Header Files\storage</Filter>
     </ClInclude>
-    <ClInclude Include="..\DiskRam.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\storage\DiskRam.h">
+      <Filter>Header Files\storage</Filter>
     </ClInclude>
-    <ClInclude Include="..\DMA.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\chipset\DMA.h">
+      <Filter>Header Files\chipset</Filter>
     </ClInclude>
-    <ClInclude Include="..\DPR.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\system\DPR.h">
+      <Filter>Header Files\system</Filter>
     </ClInclude>
     <ClInclude Include="..\es40_debug.h">
       <Filter>Header Files</Filter>
@@ -404,23 +437,23 @@
     <ClInclude Include="..\network\NetworkVmnetProto.h">
       <Filter>Header Files\network</Filter>
     </ClInclude>
-    <ClInclude Include="..\Flash.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\system\Flash.h">
+      <Filter>Header Files\system</Filter>
     </ClInclude>
-    <ClInclude Include="..\FloppyController.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\storage\FloppyController.h">
+      <Filter>Header Files\storage</Filter>
     </ClInclude>
-    <ClInclude Include="..\Keyboard.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\io\Keyboard.h">
+      <Filter>Header Files\io</Filter>
     </ClInclude>
     <ClInclude Include="..\network\lockstep.h">
       <Filter>Header Files\network</Filter>
     </ClInclude>
-    <ClInclude Include="..\PCIDevice.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\emu\PCIDevice.h">
+      <Filter>Header Files\emu</Filter>
     </ClInclude>
-    <ClInclude Include="..\Port80.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\io\Port80.h">
+      <Filter>Header Files\io</Filter>
     </ClInclude>
     <ClInclude Include="..\graphics\S3Trio64.h">
       <Filter>Header Files\graphics</Filter>
@@ -443,38 +476,38 @@
     <ClInclude Include="..\graphics\REALimage2100.h">
       <Filter>Header Files\graphics</Filter>
     </ClInclude>
-    <ClInclude Include="..\SCSIBus.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\storage\SCSIBus.h">
+      <Filter>Header Files\storage</Filter>
     </ClInclude>
-    <ClInclude Include="..\SCSIDevice.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\storage\SCSIDevice.h">
+      <Filter>Header Files\storage</Filter>
     </ClInclude>
-    <ClInclude Include="..\Serial.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\io\Serial.h">
+      <Filter>Header Files\io</Filter>
     </ClInclude>
-    <ClInclude Include="..\SerialListenAddress.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\io\SerialListenAddress.h">
+      <Filter>Header Files\io</Filter>
     </ClInclude>
     <ClInclude Include="..\StdAfx.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\LSI53C1020.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\storage\LSI53C1020.h">
+      <Filter>Header Files\storage</Filter>
     </ClInclude>
-    <ClInclude Include="..\Sym53C810.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\storage\Sym53C810.h">
+      <Filter>Header Files\storage</Filter>
     </ClInclude>
-    <ClInclude Include="..\Sym53C895.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\storage\Sym53C895.h">
+      <Filter>Header Files\storage</Filter>
     </ClInclude>
-    <ClInclude Include="..\System.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\system\System.h">
+      <Filter>Header Files\system</Filter>
     </ClInclude>
     <ClInclude Include="..\SnapshotFile.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\SystemComponent.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\emu\SystemComponent.h">
+      <Filter>Header Files\emu</Filter>
     </ClInclude>
     <ClInclude Include="..\network\telnet.h">
       <Filter>Header Files\network</Filter>
@@ -485,26 +518,26 @@
     <ClInclude Include="..\graphics\VGA.h">
       <Filter>Header Files\graphics</Filter>
     </ClInclude>
-    <ClInclude Include="..\i2c_spd.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\system\i2c_spd.h">
+      <Filter>Header Files\system</Filter>
     </ClInclude>
-    <ClInclude Include="..\xtal.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\emu\xtal.h">
+      <Filter>Header Files\emu</Filter>
     </ClInclude>
     <ClInclude Include="..\logmacro.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\coretmpl.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\emu\coretmpl.h">
+      <Filter>Header Files\emu</Filter>
     </ClInclude>
-    <ClInclude Include="..\attotime.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\emu\attotime.h">
+      <Filter>Header Files\emu</Filter>
     </ClInclude>
-    <ClInclude Include="..\address_map.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\emu\address_map.h">
+      <Filter>Header Files\emu</Filter>
     </ClInclude>
-    <ClInclude Include="..\mame_shims.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\emu\mame_shims.h">
+      <Filter>Header Files\emu</Filter>
     </ClInclude>
     <ClInclude Include="..\graphics\ibm8514a.h">
       <Filter>Header Files\graphics</Filter>
@@ -572,8 +605,8 @@
     <ClInclude Include="..\CPU\diag_rpcc.h">
       <Filter>Header Files\CPU</Filter>
     </ClInclude>
-    <ClInclude Include="..\DiskFileBinCue.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\storage\DiskFileBinCue.h">
+      <Filter>Header Files\storage</Filter>
     </ClInclude>
     <ClInclude Include="..\banner.h">
       <Filter>Header Files</Filter>

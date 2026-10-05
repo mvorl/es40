@@ -222,18 +222,18 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="..\es40-cfg-tui.cpp" />
-    <ClCompile Include="..\Configurator.cpp" />
+    <ClCompile Include="..\config\es40-cfg-tui.cpp" />
+    <ClCompile Include="..\config\Configurator.cpp" />
     <ClCompile Include="..\base\Exception.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\Configurator.h" />
-    <ClInclude Include="..\SerialListenAddress.h" />
+    <ClInclude Include="..\config\Configurator.h" />
+    <ClInclude Include="..\io\SerialListenAddress.h" />
     <ClInclude Include="..\StdAfx.h" />
   </ItemGroup>
   <ItemGroup>
     <!-- Third-party notices (the BSD queue.h license requires one with binaries) ship next to the exe. -->
-    <CopyFileToFolders Include="..\tui_win32\es40-cfg-tui-NOTICES.txt">
+    <CopyFileToFolders Include="..\config\tui_win32\es40-cfg-tui-NOTICES.txt">
       <DestinationFolders>$(OutDir)</DestinationFolders>
     </CopyFileToFolders>
   </ItemGroup>
