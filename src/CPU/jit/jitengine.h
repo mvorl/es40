@@ -43,6 +43,7 @@
 
 #include <cstdint>
 #include <vector>
+#include <unordered_map>
 #include <unordered_set>
 #include "../../config_debug.h"   // JIT_VERIFY
 #ifdef JIT_STATS
@@ -99,7 +100,7 @@ public:
 
   // Reclaim executable memory once compiled code passes this many bytes, rather
   // than tearing down the asmjit runtime on every flush (see flush()).
-  static constexpr uint64_t kReclaimBytes = 32 * 1024 * 1024;
+  static constexpr uint64_t kReclaimBytes = 128 * 1024 * 1024;   // a VMS boot alone passes 32 MB six times
 
   // Compiled block entry point. Runs the prefix on regs[0..31], calling back into
   // cpu for memory accesses; returns the number of instructions fully completed
@@ -110,6 +111,7 @@ public:
 
   // Chain instructions before a gated exit returns; a constant so the gate loads nothing.
   static constexpr uint32_t kChainCeiling = 8192;
+  static constexpr bool     kJumpCache = true;   // probe the target-keyed jump cache on a PIC miss
 
   // Packed successor snapshot for the poly-link chain guard: everything the emitted guard reads
   // lives in the SOURCE block's cache line meaning no dereference into the successor's JitBlock on the
@@ -120,6 +122,22 @@ public:
     uint64_t vgen;   // low 63 bits: validation epoch; bit 63: target PAL shadow variant
     void*    body;   // successor's chained entry point at patch time; null = empty slot
   };
+
+  // Target-keyed computed-jump cache, probed on a per-site PIC miss before the resolver.
+  struct JumpCacheEntry
+  {
+    uint64_t tag;    // target virtual PC (bit 0 = PALmode)
+    uint64_t gen;    // low 63 bits: m_jc_gen at fill; bit 63: target PAL shadow variant
+    void*    body;   // target's chained entry point
+    uint64_t asn;    // I-stream ASN the body was resolved under
+  };
+  static constexpr int kJumpCacheEntries = 4096;
+  static inline uint32_t jcache_index(uint64_t target) { return (uint32_t) (target >> 2) & (kJumpCacheEntries - 1); }
+  inline void jcache_fill(uint64_t target, bool shadow, void* body, uint32_t asn)
+  {
+    JumpCacheEntry& e = m_jcache[jcache_index(target)];
+    e.tag = target; e.gen = m_jc_gen | (shadow ? (uint64_t) 1 << 63 : 0); e.body = body; e.asn = asn;
+  }
 
   // Direct exit: a `jmp rel32` in the code allocation, retargeted by the dispatcher.
   struct PatchSite
@@ -211,7 +229,7 @@ public:
     uint32_t dpc_valid, dpc_virt_page, dpc_phys_base, dpc_host_bias, dpc_cm, dpc_asn;  // offsets of READ slot [0][0]
     uint32_t dpc_stride, dpc_mask;   // direct-mapped page cache: per-slot byte stride, index mask
     uint32_t dpc_write_row;          // byte distance from read cache [0] to write cache [1] (store fast path)
-    uint32_t state_cm, state_asn0, dram_ptr, dram_size, state_pc, state_current_pc;
+    uint32_t state_cm, state_asn0, state_asn, dram_ptr, dram_size, state_pc, state_current_pc;
     uint32_t fpen, exc_sum, fpcr, f_base;   // FP inline path: FPSTART gate + FPCR (rounding/INE) + f[] base (f[i] = f_base + i*8)
     // For chaining: the budget ceiling and the interrupt-poll flags the compiled epilogue
     // checks before jumping on; link_from is where the epilogue records a link-patch request.
@@ -344,15 +362,20 @@ public:
   // ITB-generation counter for the indirect-chain staleness check (jit_indirect). Bumped on every
   // I-stream TB invalidate (tbia/tbiap/tbis, ACCESS_EXEC) ... those can remap a code page WITHOUT
   // flushing the JIT, so a chained block could run stale bytes.
-  inline void     note_itb_invalidate() { ++m_itb_gen; ++m_vgen_cur; invalidate_links(); }
+  enum BumpCause { kBumpRemap, kBumpTbia, kBumpTbiap, kBumpTbisGh, kBumpFlush, kBumpFlushAsm, kBumpEvict, kBumpReclaim, kBumpCauses };
+  inline void     note_itb_invalidate(int cause = kBumpTbia) { ++m_itb_gen; ++m_vgen_cur; invalidate_links(cause); }
   // ASN switch: only global-source edges can hold a wrong-ASN successor.
   inline void     note_asn_change()     { invalidate_links_global(); }
   // Combined validation epoch, maintained (not summed) so the emitted chain guard reads ONE qword.
   inline uint64_t vgen() const          { return m_vgen_cur; }
   // Tagged request pointer: bit 1 = PatchSite (else LinkSlot[]), bit 0 = non-global source.
-  void patch_edge(void* tagged, uint64_t tag, uint64_t vgen_bits, void* body);
-  void invalidate_links();          // every patched edge (epoch change)
+  // target_global: a global-source edge is ASN-sensitive only when its target is not global.
+  void patch_edge(void* tagged, uint64_t tag, uint64_t vgen_bits, void* body,
+                  bool target_global = false);
+  void invalidate_links(int cause = kBumpFlush);          // every patched edge (epoch change)
   void invalidate_links_global();   // only edges out of global-source blocks (ASN change)
+  // Single-page ITB invalidate: only edges whose target is on that page; no epoch bump.
+  void invalidate_links_page(uint64_t virt_page);
 #ifdef JIT_STATS
   inline void note_interp_breaker(uint32_t ins) { m_rt_break_op[ins >> 26]++; }   // first interpreted op
 #else
@@ -390,6 +413,7 @@ public:
   // Returns the wall-clock ns spent in this call's stats-print I/O (0 when it doesn't report),
   // so the dispatcher can exclude that stall from the wall-clock-pinned RPCC.
   uint64_t note_exec(uint32_t native_instr, uint32_t interp_instr, uint64_t comp_tsc = 0, uint64_t interp_tsc = 0);
+  inline void note_resolver_tsc(uint64_t t) { m_tsc_resolver += t; }
 #endif
 
 #ifdef JIT_REGPROF
@@ -411,8 +435,11 @@ private:
   uint64_t m_itb_gen = 0; // current ITB generation (bumped on every I-stream TB invalidate)
   uint64_t m_flush_gen = 0; // current icache-flush generation (bumped by flush(); lazy IC_FLUSH/IMB)
   uint64_t m_vgen_cur = 0;  // maintained epoch = itb + flush + non-global-flush bumps 
+  JumpCacheEntry m_jcache[kJumpCacheEntries] = {};   // computed-jump cache (per CPU)
+  uint64_t m_jc_gen = 1;    // every invalidate_links() retires all jump-cache entries
   std::unordered_set<void*> m_active_links;     // patched edges, bit 1 = PatchSite
   std::unordered_set<void*> m_global_src_links; // subset with global sources
+  std::unordered_map<uint64_t, std::unordered_set<void*>> m_edges_by_page;   // target page -> patched edges
   static void clear_edge(void* key);            // un-patch a site or empty a LinkSlot array
   uint64_t m_code_bytes;  // compiled bytes since last reclaim (see flush())
   bool     m_reclaim_pending = false;   // flush() hit kReclaimBytes; reclaim at the next dispatch boundary
@@ -432,6 +459,7 @@ private:
   uint64_t m_stat_code_bytes;                   // cumulative: emitted host-code bytes (code expansion = /plen_sum)
   uint64_t m_stat_wall_last_ns;                 // steady_clock ns at the last window report (throughput delta)
   uint64_t m_tsc_compiled, m_tsc_interp;        // windowed: host TSC cycles in b->code() vs interp fallback
+  uint64_t m_tsc_resolver;                      // windowed: host TSC cycles inside jit_indirect (billed under compiled)
   uint64_t m_tsc_window_start;                  // host TSC at window start (the time-split denominator)
   uint64_t m_bail_link, m_jmp_attempt, m_jmp_hit;   // windowed: link-miss bails, jit_indirect attempts/hits
   uint64_t m_fresh_cold, m_fresh_tag, m_fresh_asn, m_fresh_phys, m_fresh_hash;  // windowed: record() step-4 fresh-compile reason
@@ -439,9 +467,12 @@ private:
   uint64_t m_link_invalidations, m_links_cleared;      // windowed: epoch bumps / edges cleared
   uint64_t m_asn_link_clears, m_asn_links_cleared;     // windowed: ASN switches / global-source edges cleared
   uint64_t m_evict_link_clears;                        // windowed: clears forced by cross-ASN evictions
+  uint64_t m_bump_cause[kBumpCauses];                  // windowed: epoch bumps by cause
+  uint64_t m_page_clears, m_page_links_cleared;        // windowed: single-page ITB invalidates / edges they cleared
   uint64_t m_direct_patches, m_patch_unreachable;      // windowed: sites patched / beyond rel32 reach
   uint64_t m_reclaims;                                 // cumulative: code reclaims
   uint64_t m_jmp_exits;                                // windowed: computed-jump exits
+  uint64_t m_jc_hits;                                  // windowed: computed exits served by the jump cache
   uint64_t m_mb_exec;                                  // windowed: MB fences executed
   uint64_t m_rt_break_op[64];                          // windowed: interp dispatches by breaking opcode
   uint64_t m_licm_same, m_licm_diff;   // region memops hitting the same page as last time

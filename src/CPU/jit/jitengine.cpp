@@ -144,7 +144,7 @@ CJitEngine::CJitEngine(int cpu_id) : m_cpu_id(cpu_id), m_recorded(0), m_code_byt
   m_stat_compiled = m_stat_plen_sum = m_stat_code_bytes = 0;
   m_stat_wall_last_ns = (uint64_t) std::chrono::duration_cast<std::chrono::nanoseconds>(
       std::chrono::steady_clock::now().time_since_epoch()).count();
-  m_tsc_compiled = m_tsc_interp = 0;
+  m_tsc_compiled = m_tsc_interp = m_tsc_resolver = 0;
   m_tsc_window_start = jit_rdtsc();
   m_bail_link = m_jmp_attempt = m_jmp_hit = 0;
   m_fresh_cold = m_fresh_tag = m_fresh_asn = m_fresh_phys = m_fresh_hash = 0;
@@ -152,8 +152,10 @@ CJitEngine::CJitEngine(int cpu_id) : m_cpu_id(cpu_id), m_recorded(0), m_code_byt
   m_licm_same = m_licm_diff = 0; m_licm_next = 0;
   memset(m_licm_pool, 0, sizeof(m_licm_pool));
   m_link_invalidations = m_links_cleared = m_asn_link_clears = m_asn_links_cleared = 0;
-  m_evict_link_clears = m_reclaims = m_jmp_exits = m_mb_exec = 0;
+  m_evict_link_clears = m_reclaims = m_jmp_exits = m_jc_hits = m_mb_exec = 0;
+  memset(m_bump_cause, 0, sizeof(m_bump_cause));
   m_direct_patches = m_patch_unreachable = 0;
+  m_page_clears = m_page_links_cleared = 0;
   memset(m_rt_break_op, 0, sizeof(m_rt_break_op));
   memset(m_term_op, 0, sizeof(m_term_op));
   memset(m_pal_func, 0, sizeof(m_pal_func));
@@ -235,7 +237,7 @@ CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uin
 #ifdef JIT_STATS
       m_evict_link_clears++;
 #endif
-      invalidate_links();
+      invalidate_links(kBumpEvict);
     }
   }
   JitBlock& b = *victim;
@@ -395,7 +397,7 @@ void CJitEngine::trace_selftest()
 // (never while its compiled code could be executing); runtimes are per-CPU.
 void CJitEngine::reclaim_code()
 {
-  invalidate_links();
+  invalidate_links(kBumpReclaim);
 #ifdef JIT_STATS
   m_reclaims++;
   printf("[JIT][STATS][CPU%d] code reclaim #%llu: %llu MB freed (every block recompiles)\n", m_cpu_id,
@@ -429,7 +431,7 @@ void CJitEngine::flush()
   // lookup() and revalidate_flushed() re-hashes their source bytes before they run again.
   ++m_flush_gen;
   ++m_vgen_cur;
-  invalidate_links();
+  invalidate_links(kBumpFlush);
   if (m_rt && m_code_bytes >= kReclaimBytes)
     m_reclaim_pending = true;   // DEFER: reclaim frees all code -- unsafe from a compiled IC_FLUSH;
                                 // reclaim_if_pending() does it at the next dispatch boundary.
@@ -445,7 +447,7 @@ void CJitEngine::flush_non_global()
   // The chain guard reads link SNAPSHOTS, not the successor's live jit_body, so the soft drop
   // below is invisible to it so need to invalidate every cached edge by epoch instead. 
   ++m_vgen_cur;
-  invalidate_links();
+  invalidate_links(kBumpFlushAsm);
   for (int i = 0; i < kCacheEntries; ++i) {
     if (!m_blocks[i].asm_global) {
       m_blocks[i].valid = false;
@@ -496,11 +498,13 @@ void CJitEngine::clear_edge(void* key)
   }
 }
 
-void CJitEngine::patch_edge(void* tagged, uint64_t tag, uint64_t vgen_bits, void* body)
+void CJitEngine::patch_edge(void* tagged, uint64_t tag, uint64_t vgen_bits, void* body,
+                            bool target_global)
 {
   const uintptr_t raw = (uintptr_t) tagged;
   const bool global_src = (raw & 1) == 0;
   void* const key = (void*) (raw & ~(uintptr_t) 1);   // keeps the kind bit
+  bool register_sets = true;
   if (raw & 2) {
     PatchSite* s = (PatchSite*) (raw & ~(uintptr_t) 3);
     if (s->tag != tag) return;                        // a site resolves exactly one static PC
@@ -518,26 +522,51 @@ void CJitEngine::patch_edge(void* tagged, uint64_t tag, uint64_t vgen_bits, void
     LinkSlot* lf = (LinkSlot*) key;
     const LinkSlot snap = { tag, vgen_bits, body };
     int found = -1, empty = -1;
+    bool was_live = false;
     for (int i = 0; i < kLinkSlots; ++i)
-      if (lf[i].body) { if (lf[i].tag == tag) found = i; }
+      if (lf[i].body) { was_live = true; if (lf[i].tag == tag) found = i; }
       else if (empty < 0) empty = i;
-    if (found >= 0) lf[found] = snap;
-    else if (empty >= 0) lf[empty] = snap;
+    if (found >= 0) { lf[found] = snap; return; }   // refreshed in place: already registered and indexed
+    if (empty >= 0) lf[empty] = snap;
     else { for (int i = kLinkSlots - 1; i > 0; --i) lf[i] = lf[i - 1]; lf[0] = snap; }
+    register_sets = !was_live;                       // a live array is already in the registries
   }
-  m_active_links.insert(key);
-  if (global_src) m_global_src_links.insert(key);
+  if (register_sets) {
+    m_active_links.insert(key);
+    if (global_src && !target_global) m_global_src_links.insert(key);   // global->global never goes stale on ASN
+  }
+  m_edges_by_page[(tag & ~uint64_t(1)) >> 13].insert(key);
 }
 
-void CJitEngine::invalidate_links()
+void CJitEngine::invalidate_links_page(uint64_t virt_page)
+{
+  for (int i = 0; i < kJumpCacheEntries; ++i)
+    if (m_jcache[i].body && ((m_jcache[i].tag & ~uint64_t(1)) >> 13) == (virt_page >> 13))
+      m_jcache[i].body = nullptr, m_jcache[i].tag = ~uint64_t(0);
+  auto it = m_edges_by_page.find((virt_page & ~uint64_t(1)) >> 13);
+  if (it == m_edges_by_page.end()) return;
+#ifdef JIT_STATS
+  m_page_clears++;
+  m_page_links_cleared += it->second.size();
+#endif
+  for (void* key : it->second) clear_edge(key);   // a cleared edge re-registers when re-patched
+  m_edges_by_page.erase(it);
+}
+
+void CJitEngine::invalidate_links(int cause)
 {
 #ifdef JIT_STATS
   m_link_invalidations++;
+  m_bump_cause[cause]++;
   m_links_cleared += m_active_links.size();
+#else
+  (void) cause;
 #endif
+  ++m_jc_gen;
   for (void* key : m_active_links) clear_edge(key);
   m_active_links.clear();
   m_global_src_links.clear();
+  m_edges_by_page.clear();
 }
 
 // ASN switch: global-source edges only; they stay registered for the next epoch bump.
@@ -664,8 +693,9 @@ uint64_t CJitEngine::note_exec(uint32_t native_instr, uint32_t interp_instr, uin
   if (win_tsc) {
     const double cf  = 100.0 * (double) m_tsc_compiled / (double) win_tsc;
     const double itf = 100.0 * (double) m_tsc_interp   / (double) win_tsc;
-    printf("[JIT][STATS][CPU%d] time-split: compiled %.1f%% | interp %.1f%% | dispatch %.1f%%\n",
-           m_cpu_id, cf, itf, (cf + itf < 100.0) ? (100.0 - cf - itf) : 0.0);
+    printf("[JIT][STATS][CPU%d] time-split: compiled %.1f%% | interp %.1f%% | dispatch %.1f%% | resolver %.1f%% (inside compiled)\n",
+           m_cpu_id, cf, itf, (cf + itf < 100.0) ? (100.0 - cf - itf) : 0.0,
+           100.0 * (double) m_tsc_resolver / (double) win_tsc);
   }
   // Bail-cause: of the compiled-chain dispatches (m_stat_hot), how many bailed via a cached-link miss
   // (branches/fall-through) vs a jit_indirect miss (computed jumps) vs gate/other (budget/interrupt/
@@ -697,19 +727,27 @@ uint64_t CJitEngine::note_exec(uint32_t native_instr, uint32_t interp_instr, uin
            100.0 * (double) m_licm_same / (double) (m_licm_same + m_licm_diff));
   // Each cleared edge costs one dispatcher round trip to re-link.
   if (m_link_invalidations || m_asn_link_clears)
-    printf("[JIT][STATS][CPU%d] link-churn: %llu epoch bumps cleared %llu edges (%llu from cross-ASN evictions) | %llu ASN switches cleared %llu global-source edges | %llu reclaims total\n",
+    printf("[JIT][STATS][CPU%d] link-churn: %llu epoch bumps cleared %llu edges (%llu from cross-ASN evictions) | %llu ASN switches cleared %llu global-source edges | %llu page invalidates cleared %llu edges | %llu reclaims total\n",
            m_cpu_id, (unsigned long long) m_link_invalidations, (unsigned long long) m_links_cleared,
            (unsigned long long) m_evict_link_clears,
            (unsigned long long) m_asn_link_clears, (unsigned long long) m_asn_links_cleared,
+           (unsigned long long) m_page_clears, (unsigned long long) m_page_links_cleared,
            (unsigned long long) m_reclaims);
+  if (m_link_invalidations)
+    printf("[JIT][STATS][CPU%d] bump-cause: remap %llu | tbia %llu | tbiap %llu | tbis-gh %llu | flush %llu | flush-asm %llu | evict %llu | reclaim %llu\n",
+           m_cpu_id, (unsigned long long) m_bump_cause[kBumpRemap], (unsigned long long) m_bump_cause[kBumpTbia],
+           (unsigned long long) m_bump_cause[kBumpTbiap], (unsigned long long) m_bump_cause[kBumpTbisGh],
+           (unsigned long long) m_bump_cause[kBumpFlush], (unsigned long long) m_bump_cause[kBumpFlushAsm],
+           (unsigned long long) m_bump_cause[kBumpEvict], (unsigned long long) m_bump_cause[kBumpReclaim]);
   if (m_direct_patches || m_patch_unreachable)
     printf("[JIT][STATS][CPU%d] direct-patch: %llu sites patched | %llu beyond rel32 reach (left unpatched)\n",
            m_cpu_id, (unsigned long long) m_direct_patches, (unsigned long long) m_patch_unreachable);
   // PIC hits never reach the resolver.
   if (m_jmp_exits || m_mb_exec)
-    printf("[JIT][STATS][CPU%d] computed exits %llu | PIC hit %.1f%% | resolver calls %llu (chained %llu) | MB fences %llu\n",
+    printf("[JIT][STATS][CPU%d] computed exits %llu | PIC hit %.1f%% | jcache hits %llu | resolver calls %llu (chained %llu) | MB fences %llu\n",
            m_cpu_id, (unsigned long long) m_jmp_exits,
-           m_jmp_exits ? 100.0 * (double) (m_jmp_exits > m_jmp_attempt ? m_jmp_exits - m_jmp_attempt : 0) / (double) m_jmp_exits : 0.0,
+           m_jmp_exits ? 100.0 * (double) (m_jmp_exits > m_jmp_attempt + m_jc_hits ? m_jmp_exits - m_jmp_attempt - m_jc_hits : 0) / (double) m_jmp_exits : 0.0,
+           (unsigned long long) m_jc_hits,
            (unsigned long long) m_jmp_attempt, (unsigned long long) m_jmp_hit, (unsigned long long) m_mb_exec);
   // First interpreted opcode per interp dispatch.
   { uint64_t rb[64]; memcpy(rb, m_rt_break_op, sizeof(rb));
@@ -790,15 +828,17 @@ uint64_t CJitEngine::note_exec(uint32_t native_instr, uint32_t interp_instr, uin
            (unsigned long long) m_misc_func[0xf]);
   }
   m_stat_native = m_stat_interp = m_stat_hot = m_stat_miss = 0;   // reset the window
-  m_tsc_compiled = m_tsc_interp = 0;
+  m_tsc_compiled = m_tsc_interp = m_tsc_resolver = 0;
   m_tsc_window_start = jit_rdtsc();   // next window's split denominator starts after this report's I/O
   m_bail_link = m_jmp_attempt = m_jmp_hit = 0;
   m_fresh_cold = m_fresh_tag = m_fresh_asn = m_fresh_phys = m_fresh_hash = 0;
   m_trace_formed = m_trace_entered = m_trace_exits = m_trace_stale = 0;
   m_licm_same = m_licm_diff = 0;
   m_link_invalidations = m_links_cleared = m_asn_link_clears = m_asn_links_cleared = 0;
-  m_evict_link_clears = m_jmp_exits = m_mb_exec = 0;
+  m_evict_link_clears = m_jmp_exits = m_jc_hits = m_mb_exec = 0;
   m_direct_patches = m_patch_unreachable = 0;
+  m_page_clears = m_page_links_cleared = 0;
+  memset(m_bump_cause, 0, sizeof(m_bump_cause));
   memset(m_rt_break_op, 0, sizeof(m_rt_break_op));
   const auto stat_end = std::chrono::steady_clock::now();
   m_stat_wall_last_ns = (uint64_t) std::chrono::duration_cast<std::chrono::nanoseconds>(

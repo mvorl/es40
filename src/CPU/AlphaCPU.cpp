@@ -596,6 +596,7 @@ void CAlphaCPU::init()
 		o.dpc_write_row = (uint32_t)((char*)&data_page_cache[1][0] - (char*)&data_page_cache[0][0]);
 		o.state_cm = (uint32_t)((char*)&state.cm - (char*)this);
 		o.state_asn0 = (uint32_t)((char*)&state.asn0 - (char*)this);
+		o.state_asn = (uint32_t)((char*)&state.asn - (char*)this);
 		o.dram_ptr = (uint32_t)((char*)&dram_ptr - (char*)this);
 		o.dram_size = (uint32_t)((char*)&dram_size - (char*)this);
 		o.state_pc = (uint32_t)((char*)&state.pc - (char*)this);
@@ -1083,7 +1084,7 @@ void CAlphaCPU::jit_run(int budget)
 				// re-stamped) -- patch its slots with the trace's chained entry so the edge lands
 				// in-frame next time. Hook-before-block ordering makes traces win the patch.
 				if (m_link_from && t->chain_entry) { m_jit->note_link_bail();
-					m_jit->patch_edge(m_link_from, t->head_tag, t->vgen, t->chain_entry);
+					m_jit->patch_edge(m_link_from, t->head_tag, t->vgen, t->chain_entry, t->asm_global);
 					m_link_from = nullptr; }
 				m_jit_budget = budget;   // ceiling for the trace (its loads/bails honor it like a block)
 #ifdef JIT_STATS
@@ -1575,7 +1576,7 @@ void CAlphaCPU::jit_run(int budget)
 			// Tag-keyed: an existing entry for this target MUST be refreshed in place.
 			if (m_link_from) { m_jit->note_link_bail();
 				m_jit->patch_edge(m_link_from, b->tag,
-					b->vgen | (b->pal_shadow ? (U64(1) << 63) : 0), b->jit_body);
+					b->vgen | (b->pal_shadow ? (U64(1) << 63) : 0), b->jit_body, b->asm_global);
 				m_link_from = nullptr; }
 			m_jit_budget = budget;   // ceiling for compiled chains (epilogue stops at it)
 #ifdef JIT_STATS
@@ -2428,6 +2429,18 @@ void CAlphaCPU::jit_hw_mtpr(CAlphaCPU* cpu, u32 function, u64 value)
 // any number of distinct targets chain without the old single-slot link thrashing on varying jumps.
 void* CAlphaCPU::jit_indirect(CAlphaCPU* cpu, u64 target, void* link_cache)
 {
+#if defined(JIT_STATS) && defined(JIT_STATS_RESOLVER_TSC)   // two RDTSCs per call: perturbs throughput
+	const uint64_t t0 = jit_rdtsc();
+	void* const r = jit_indirect_impl(cpu, target, link_cache);
+	cpu->m_jit->note_resolver_tsc(jit_rdtsc() - t0);
+	return r;
+#else
+	return jit_indirect_impl(cpu, target, link_cache);
+#endif
+}
+
+void* CAlphaCPU::jit_indirect_impl(CAlphaCPU* cpu, u64 target, void* link_cache)
+{
 	cpu->m_jit->note_jmp_attempt();
 	// PAL reset entry: never chain in - match dispatch/interp
 	if (target == (cpu->state.pal_base | 1))
@@ -2438,7 +2451,8 @@ void* CAlphaCPU::jit_indirect(CAlphaCPU* cpu, u64 target, void* link_cache)
 	auto hit = [&](void* body) -> void* {
 		if (link_cache)
 			cpu->m_jit->patch_edge(link_cache, target,
-				cpu->m_jit->vgen() | (b->pal_shadow ? (U64(1) << 63) : 0), body);
+				cpu->m_jit->vgen() | (b->pal_shadow ? (U64(1) << 63) : 0), body, b->asm_global);
+		cpu->m_jit->jcache_fill(target, b->pal_shadow, body, (u32)cpu->state.asn);
 		cpu->m_jit->note_jmp_hit();
 		return body;
 	};
@@ -2448,21 +2462,24 @@ void* CAlphaCPU::jit_indirect(CAlphaCPU* cpu, u64 target, void* link_cache)
 		// risk. lookup selected the body whose register-bank mapping matches the live SDE state.
 		return hit(b->jit_body);
 	}
-	// Native target. FAST PATH: validated under the current epoch (lookup proved flush-fresh, so a
-	// vgen mismatch here means an ITB invalidate) -- chain with no re-translation.
+	// Native target: validate the live physical every time (a single-page ITB invalidate no
+	// longer bumps the epoch). Icache probe first, else a side-effect-free translation that
+	// also covers superpage targets.
 	const u64 gen = cpu->m_jit->vgen();
-	if (b->vgen == gen)
+	const u64 v = target & ~U64(3);
+	const int li = (int)((v >> 11) & (ICACHE_ENTRIES - 1));
+	u64 live;
+	if (cpu->icache_enabled && cpu->state.icache[li].valid
+		&& (cpu->state.icache[li].asn == cpu->state.asn || cpu->state.icache[li].asm_bit)
+		&& cpu->state.icache[li].address == (v & ICACHE_MATCH_MASK))
+		live = cpu->state.icache[li].p_address + (v & ICACHE_BYTE_MASK);
+	else
 	{
-		return hit(b->jit_body);
+		bool ad;
+		if (cpu->virt2phys(v, &live, ACCESS_EXEC | FAKE, &ad, 0) != 0)
+			return nullptr;                                     // ITB miss: let the dispatcher fault it in
 	}
-	// SLOW PATH (only right after an ITB invalidate): the in-frame chain bypasses the dispatcher's
-	// `b->phys == start_phys` staleness check (see the hot-path). Virtual+ASN keying can't see a 
-	// page remap, so a stale block (same tag+ASN, but the vpage now maps different physical bytes) 
-	// would tail-execute as wrong code -> OPCDEC / garbage. 
-	const int i = cpu->FindTBEntry(target, ACCESS_EXEC);
-	if (i < 0) return nullptr;                                  // ITB miss: let the dispatcher fault it in
-	const auto& e = cpu->state.tb[TB_INDEX_ITB][i];
-	if ((e.phys | (target & e.keep_mask)) != b->phys)
+	if (live != b->phys)
 	{
 		// Caught a stale block: the page was remapped without flushing the JIT cache. Bail so the
 		// dispatcher re-records/recompiles. Rate-limited log -- this firing confirms the stale chain.
@@ -4432,7 +4449,7 @@ void CAlphaCPU::add_tb(u64 virt, u64 pte_phys, u64 pte_flags, int flags, int asn
 	state.last_found_tb[t][rw] = i;
 
 #ifdef ES40_JIT
-	if (itb_remap && m_jit) m_jit->note_itb_invalidate();   // code page remapped in place -> chains re-validate
+	if (itb_remap && m_jit) m_jit->note_itb_invalidate(CJitEngine::kBumpRemap);   // code page remapped in place -> chains re-validate
 #endif
 
 #if defined(DEBUG_TB_)
@@ -4530,7 +4547,7 @@ void CAlphaCPU::tbia(int flags)
 	state.next_tb[t] = 0;
 	if (t == TB_INDEX_DATA) flush_data_page_cache();
 #ifdef ES40_JIT
-	else if (m_jit) m_jit->note_itb_invalidate();   // whole ITB cleared -> indirect chains re-validate phys
+	else if (m_jit) m_jit->note_itb_invalidate(CJitEngine::kBumpTbia);   // whole ITB cleared -> indirect chains re-validate phys
 #endif
 }
 
@@ -4552,7 +4569,7 @@ void CAlphaCPU::tbiap(int flags)
 
 	if (t == TB_INDEX_DATA) flush_data_page_cache();
 #ifdef ES40_JIT
-	else if (m_jit) m_jit->note_itb_invalidate();   // process ITB entries cleared -> chains re-validate phys
+	else if (m_jit) m_jit->note_itb_invalidate(CJitEngine::kBumpTbiap);   // process ITB entries cleared -> chains re-validate phys
 #endif
 }
 
@@ -4578,10 +4595,16 @@ void CAlphaCPU::tbis(u64 virt, int flags)
 	if (i >= 0)
 		state.tb[t][i].valid = false;
 #ifdef ES40_JIT
-	// A TBIS signals the OS is changing this code page's mapping. Bump the JIT generation even when
-	// the entry wasn't currently cached (i<0, already evicted from the TB), a JIT block compiled
-	// from this page is still stale and MUST re-validate before being chained.
-	if (m_jit) m_jit->note_itb_invalidate();
+	// Chains into this page must re-validate their physical before running again, cached
+	// entry or not. One 8 KB page clears only the edges targeting it; a granularity-hint
+	// entry spans several pages, so that case keeps the epoch bump.
+	if (m_jit)
+	{
+		if (i >= 0 && state.tb[t][i].match_mask != U64(0x0000ffffffffe000))
+			m_jit->note_itb_invalidate(CJitEngine::kBumpTbisGh);
+		else
+			m_jit->invalidate_links_page(virt);
+	}
 #endif
 }
 

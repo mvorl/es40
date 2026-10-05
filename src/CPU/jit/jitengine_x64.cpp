@@ -3030,6 +3030,29 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
       }
       a.bind(pic_miss);
     }
+    // Target-keyed jump cache: tag, generation, ASN and (PALmode) register-bank variant must match.
+    // Probed only once this site's PIC is full, so the resolver still fills the PIC first.
+    if (kJumpCache) { Label jc_miss = a.new_label(), jc_mode_ok = a.new_label();
+      a.mov(x86::rax, imm((uint64_t) &b->link[kLinkSlots - 1]));
+      a.cmp(x86::qword_ptr(x86::rax, (int32_t) offsetof(LinkSlot, body)), imm(0)); a.je(jc_miss);
+      a.mov(x86::rax, x86::r10); a.shr(x86::rax, imm(2));
+      a.and_(x86::eax, imm(kJumpCacheEntries - 1)); a.shl(x86::rax, imm(5));
+      a.mov(x86::rcx, imm((uint64_t) &m_jcache[0])); a.add(x86::rax, x86::rcx);
+      a.cmp(x86::qword_ptr(x86::rax, (int32_t) offsetof(JumpCacheEntry, tag)), x86::r10); a.jne(jc_miss);
+      a.mov(x86::rdx, imm((uint64_t) &m_jc_gen)); a.mov(x86::rdx, x86::qword_ptr(x86::rdx));
+      a.mov(x86::rcx, x86::qword_ptr(x86::rax, (int32_t) offsetof(JumpCacheEntry, gen)));
+      a.btr(x86::rcx, imm(63)); a.cmp(x86::rcx, x86::rdx); a.jne(jc_miss);
+      a.mov(x86::ecx, x86::dword_ptr(x86::rbp, m_off.state_asn));
+      a.cmp(x86::qword_ptr(x86::rax, (int32_t) offsetof(JumpCacheEntry, asn)), x86::rcx); a.jne(jc_miss);
+      a.test(x86::r10, imm(1)); a.jz(jc_mode_ok);
+      a.mov(x86::rcx, x86::qword_ptr(x86::rax, (int32_t) offsetof(JumpCacheEntry, gen))); a.shr(x86::rcx, imm(63));
+      a.cmp(x86::cl, x86::byte_ptr(x86::rbp, m_off.sde)); a.jne(jc_miss);
+      a.bind(jc_mode_ok);
+#ifdef JIT_STATS
+      a.mov(x86::rcx, imm((uint64_t) &m_jc_hits)); a.inc(x86::qword_ptr(x86::rcx));
+#endif
+      a.jmp(x86::qword_ptr(x86::rax, (int32_t) offsetof(JumpCacheEntry, body)));
+      a.bind(jc_miss); }
     // The resolver is a helper boundary and may clobber R10. A hot PIC hit above
     // chains without touching architectural state.pc.
     a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);

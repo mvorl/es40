@@ -2390,6 +2390,19 @@ static asmjit::Error emit_a64_load_cpu_u16(asmjit::a64::Assembler& a,
                  : a.ldrh(dst, a64::ptr(address));
 }
 
+static asmjit::Error emit_a64_load_cpu_u32(asmjit::a64::Assembler& a,
+    const asmjit::a64::Gp& dst, uint32_t offset)
+{
+  using namespace asmjit;
+  if (!dst.is_gp32() || !a64_is_tail_scratch(dst)) return Error::kInvalidArgument;
+  const a64::Gp address = a64::x(dst.id());
+  const a64::Gp expansion = a64_tail_scratch_avoiding(dst.id());
+  Error err = emit_a64_add_offset(a, address, CJitEngine::RegAlloc::kCpu,
+                                  static_cast<int64_t>(offset), expansion);
+  if (err != Error::kOk) return err;
+  return a.ldr(dst, a64::ptr(address));
+}
+
 static asmjit::Error emit_a64_store_cpu_u64(asmjit::a64::Assembler& a,
     const asmjit::a64::Gp& src, uint32_t offset)
 {
@@ -5691,11 +5704,100 @@ static asmjit::Error emit_a64_direct_chain_tail(asmjit::a64::Assembler& a,
 #endif
 }
 
+struct A64JumpCache {
+  const void* base = nullptr;      // &m_jcache[0]; null = no probe (harness)
+  const uint64_t* gen = nullptr;   // &m_jc_gen
+  uint64_t* hits = nullptr;        // &m_jc_hits (JIT_STATS)
+};
+
+// Target-keyed jump cache: tag, generation, ASN and (PALmode) register-bank variant must match.
+// Probed only once this site's PIC is full, so the resolver still fills the PIC first.
+static asmjit::Error emit_a64_jump_cache_probe(asmjit::a64::Assembler& a,
+    const CJitEngine::JitOffsets& offsets, const A64JumpCache& jc,
+    const CJitEngine::LinkSlot* slots, const asmjit::Label& miss)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  using E = CJitEngine::JumpCacheEntry;
+  static_assert(sizeof(E) == 32 && CJitEngine::kJumpCacheEntries == 4096,
+                "A64 jump-cache probe indexes 32-byte entries by (pc >> 2) & 4095");
+  Error err = emit_a64_mov_u64(a, RA::kScratch1,
+      reinterpret_cast<uintptr_t>(&slots[CJitEngine::kLinkSlots - 1].body));
+  if (err != Error::kOk) return err;
+  err = a.ldr(RA::kScratch2, a64::ptr(RA::kScratch1));
+  if (err != Error::kOk) return err;
+  err = a.cbz(RA::kScratch2, miss);
+  if (err != Error::kOk) return err;
+  err = emit_a64_mov_u64(a, RA::kScratch1, reinterpret_cast<uintptr_t>(jc.base));
+  if (err != Error::kOk) return err;
+  err = a.ubfx(RA::kScratch2, RA::kNextPc, 2, 12);
+  if (err != Error::kOk) return err;
+  err = a.lsl(RA::kScratch2, RA::kScratch2, 5);
+  if (err != Error::kOk) return err;
+  err = a.add(RA::kScratch1, RA::kScratch1, RA::kScratch2);
+  if (err != Error::kOk) return err;
+  err = a.ldr(RA::kScratch2, a64::ptr(RA::kScratch1, (int32_t) offsetof(E, tag)));
+  if (err != Error::kOk) return err;
+  err = a.cmp(RA::kScratch2, RA::kNextPc);
+  if (err != Error::kOk) return err;
+  err = a.b_ne(miss);
+  if (err != Error::kOk) return err;
+  err = emit_a64_mov_u64(a, RA::kScratch3, reinterpret_cast<uintptr_t>(jc.gen));
+  if (err != Error::kOk) return err;
+  err = a.ldr(RA::kScratch3, a64::ptr(RA::kScratch3));
+  if (err != Error::kOk) return err;
+  err = a.ldr(RA::kScratch2, a64::ptr(RA::kScratch1, (int32_t) offsetof(E, gen)));
+  if (err != Error::kOk) return err;
+  err = a.ubfx(RA::kScratch4, RA::kScratch2, 0, 63);
+  if (err != Error::kOk) return err;
+  err = a.cmp(RA::kScratch4, RA::kScratch3);
+  if (err != Error::kOk) return err;
+  err = a.b_ne(miss);
+  if (err != Error::kOk) return err;
+  err = emit_a64_load_cpu_u32(a, RA::kScratch4.w(), offsets.state_asn);
+  if (err != Error::kOk) return err;
+  err = a.ldr(RA::kScratch3, a64::ptr(RA::kScratch1, (int32_t) offsetof(E, asn)));
+  if (err != Error::kOk) return err;
+  err = a.cmp(RA::kScratch3, RA::kScratch4);
+  if (err != Error::kOk) return err;
+  err = a.b_ne(miss);
+  if (err != Error::kOk) return err;
+  const Label mode_ok = a.new_label();
+  err = a.tbz(RA::kNextPc, 0, mode_ok);
+  if (err != Error::kOk) return err;
+  err = a.lsr(RA::kScratch2, RA::kScratch2, 63);
+  if (err != Error::kOk) return err;
+  err = emit_a64_load_cpu_u8(a, RA::kScratch4.w(), offsets.sde, false);
+  if (err != Error::kOk) return err;
+  err = a.cmp(RA::kScratch2.w(), RA::kScratch4.w());
+  if (err != Error::kOk) return err;
+  err = a.b_ne(miss);
+  if (err != Error::kOk) return err;
+  err = a.bind(mode_ok);
+  if (err != Error::kOk) return err;
+#ifdef JIT_STATS
+  if (jc.hits) {
+    err = emit_a64_mov_u64(a, RA::kScratch3, reinterpret_cast<uintptr_t>(jc.hits));
+    if (err != Error::kOk) return err;
+    err = a.ldr(RA::kScratch4, a64::ptr(RA::kScratch3));
+    if (err != Error::kOk) return err;
+    err = a.add(RA::kScratch4, RA::kScratch4, imm(1));
+    if (err != Error::kOk) return err;
+    err = a.str(RA::kScratch4, a64::ptr(RA::kScratch3));
+    if (err != Error::kOk) return err;
+  }
+#endif
+  err = a.ldr(RA::kScratch2, a64::ptr(RA::kScratch1, (int32_t) offsetof(E, body)));
+  if (err != Error::kOk) return err;
+  return a.br(RA::kScratch2);
+}
+
 static asmjit::Error emit_a64_indirect_chain_tail(asmjit::a64::Assembler& a,
     const CJitEngine::JitOffsets& offsets, const CJitEngine::HelperSet& helpers,
     const CJitEngine::RegAlloc& regs,
     const A64IndirectChainContract& contract, CJitEngine::LinkSlot* slots,
-    const asmjit::Label& done, bool source_global = true)
+    const asmjit::Label& done, bool source_global = true,
+    const A64JumpCache& jc = A64JumpCache())
 {
   using RA = CJitEngine::RegAlloc;
   using namespace asmjit;
@@ -5731,6 +5833,10 @@ static asmjit::Error emit_a64_indirect_chain_tail(asmjit::a64::Assembler& a,
   err = emit_a64_link_slots_probe(a, offsets, slots,
                                   contract.target_variant, resolver);
   if (err != Error::kOk) return err;
+  if (jc.base && CJitEngine::kJumpCache) {
+    err = emit_a64_jump_cache_probe(a, offsets, jc, slots, resolver);
+    if (err != Error::kOk) return err;
+  }
 
   err = a.bind(resolver);
   if (err != Error::kOk) return err;
@@ -6315,7 +6421,14 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
       ? emit_a64_direct_chain_tail(a, m_off, chain, &b->link[0],
                                   b->tag, body, done, b->asm_global)
       : emit_a64_indirect_chain_tail(a, m_off, helpers, regalloc, indirect,
-                                    &b->link[0], done, b->asm_global);
+                                    &b->link[0], done, b->asm_global,
+                                    A64JumpCache{&m_jcache[0], &m_jc_gen,
+#ifdef JIT_STATS
+                                                 &m_jc_hits
+#else
+                                                 nullptr
+#endif
+                                    });
   if (tail_err != asmjit::Error::kOk) return;
 
   if (a.bind(done) != asmjit::Error::kOk) return;
