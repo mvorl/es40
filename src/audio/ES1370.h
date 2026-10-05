@@ -34,6 +34,7 @@
 
 #include <SDL3/SDL.h>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 /* Start blatant GPL violation */
@@ -168,6 +169,9 @@ private:
     uint32_t scount;
     uint32_t frame_addr;
     uint32_t frame_cnt;
+    // Worker-only refill pacing: unspent byte budget (16.16) and last accrual time.
+    int64_t credit_q16;
+    std::chrono::steady_clock::time_point pace_last;
   };
 
   struct ES1370State {
@@ -190,13 +194,24 @@ private:
   CThread* m_audio_thread = nullptr;
   std::atomic<bool> m_audio_stop{true}, m_audio_failed{false}, m_audio_wake{false};
   std::atomic<bool> m_audio_enabled[NB_CHANNELS]{};
-  std::atomic<int> m_audio_target[2]{};
   std::mutex m_audio_wait_mutex;
   std::condition_variable m_audio_wait;
 
+  // Host playback device: one SDL pull is m_out_period_frames at m_out_freq Hz.
+  int m_out_freq = 0;
+  int m_out_period_frames = 0;
+  // Playback lead kept queued in SDL (config "latency_ms").
+  unsigned m_latency_ms = 40;
+
+  enum ServiceResult { SERVICE_IDLE, SERVICE_MORE, SERVICE_BUSY };
+
   void reset_audio_request(size_t channel, bool enabled, bool clear);
-  void request_audio(size_t channel, int total_amount);
-  bool service_audio_channel(size_t channel);
+  void request_audio(size_t channel);
+  ServiceResult service_audio_channel(size_t channel,
+    std::chrono::steady_clock::time_point now);
+  uint32_t chan_rate_bps(size_t channel) const;
+  int dac_pull_bytes(uint32_t rate_bps) const;
+  int dac_lead_bytes(size_t channel, uint32_t rate_bps) const;
 
   struct ES1370SavedState {
     uint32_t ctl, status, mempage, codec, sctl;
@@ -247,8 +262,8 @@ private:
   uint32_t es1370_fixup(ES1370State* s, uint32_t addr);
   void es1370_write(void* opaque, u64 addr, uint64_t val, unsigned size);
   uint64_t es1370_read(void* opaque, u64 addr, unsigned size);
-  void es1370_transfer_audio(ES1370State* s, struct chan* d, int loop_sel, int max, bool* irq);
-  void es1370_run_channel(ES1370State* s, size_t chan, int free_or_avail);
+  int es1370_transfer_audio(ES1370State* s, struct chan* d, int loop_sel, int max, bool* irq);
+  int es1370_run_channel(ES1370State* s, size_t chan, int free_or_avail);
 
   static void es1370_dac_callback_dac1(void* userdata, SDL_AudioStream* stream, int additional_amount, int total_amount);
   static void es1370_dac_callback_dac2(void* userdata, SDL_AudioStream* stream, int additional_amount, int total_amount);

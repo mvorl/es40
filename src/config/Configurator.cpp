@@ -753,6 +753,7 @@ static const char* const kv_powerstorm[] = {
   "subsystem_device", "bar0_size", "bar1_size", "trace", "trace_apertures",
   "frame_file", 0 };
 static const char* const kv_lsi53c1020[] = { "flash", "rom", "firmware", 0 };
+static const char* const kv_es1370[] = { "latency_ms", 0 };
 static const char* const kv_dec21143[] = {
   "adapter", "mac", "queue", "crc", "trace_packets",
   "type", "autonegotiate_delay", "drop_privileges", 0 };
@@ -800,7 +801,7 @@ classinfo classes[] = {
   {"win32", c_sdl, N_P | IS_GUI, kv_gui_sdl},
   {"X11", c_x11, N_P | IS_GUI, kv_gui_x11},
   {"mpu401", c_mpu401, ON_CS, kv_mpu401},
-  {"es1370", c_es1370, IS_PCI, kv_none},
+  {"es1370", c_es1370, IS_PCI, kv_es1370},
   {0, c_none, 0, 0}
 };
 

@@ -109,9 +109,13 @@ CES1370::CES1370(CConfigurator* cfg, class CSystem* c, int pcibus, int pcidev) :
     as.channels = 2;
     as.format = SDL_AUDIO_S16LE;
 	memset((void*)&state, 0, sizeof(state));
+    const u64 latency = cfg->get_num_value("latency_ms", true, 40);
+    m_latency_ms = (unsigned)(std::min)((std::max)(latency, (u64)10), (u64)500);
     if (!SDL_Init(SDL_INIT_AUDIO)) {
 		FAILURE_1(SDL, "Failed to initialize SDL audio: %s", SDL_GetError());
     }
+    // ~10ms host pulls; the SDL_AUDIO_DEVICE_SAMPLE_FRAMES env var still wins.
+    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
 	state.audio_be_in = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_RECORDING, nullptr);
     if (!state.audio_be_in) {
         FAILURE_1(SDL, "Failed to initialize SDL audio input: %s", SDL_GetError());
@@ -119,6 +123,14 @@ CES1370::CES1370(CConfigurator* cfg, class CSystem* c, int pcibus, int pcidev) :
     state.audio_be_out = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, nullptr);
     if (!state.audio_be_out) {
         FAILURE_1(SDL, "Failed to initialize SDL audio output: %s", SDL_GetError());
+    }
+    {
+        SDL_AudioSpec out_spec;
+        int out_frames = 0;
+        if (!SDL_GetAudioDeviceFormat(state.audio_be_out, &out_spec, &out_frames))
+            FAILURE_1(SDL, "Failed to query SDL audio output: %s", SDL_GetError());
+        m_out_freq = out_spec.freq > 0 ? out_spec.freq : 48000;
+        m_out_period_frames = out_frames > 0 ? out_frames : 512;
     }
     state.adc_voice = SDL_CreateAudioStream(NULL, &as);
 	state.dac_voice[0] = SDL_CreateAudioStream(&as, NULL);
@@ -176,8 +188,8 @@ void CES1370::reset_audio_request(size_t channel, bool enabled, bool clear)
         ? state.adc_voice : state.dac_voice[channel];
     CES1370StreamLock stream_lock(voice);
     m_audio_enabled[channel].store(false);
-    if (channel != ADC_CHANNEL)
-        m_audio_target[channel].store(0);
+    state.chan[channel].credit_q16 = 0;
+    state.chan[channel].pace_last = std::chrono::steady_clock::now();
     if (clear && !SDL_ClearAudioStream(voice))
         FAILURE_1(SDL, "Unable to clear audio stream: %s", SDL_GetError());
     m_audio_enabled[channel].store(enabled);
@@ -242,54 +254,127 @@ void CES1370::check_state()
         FAILURE(Thread, "ES1370 audio refill thread failed");
 }
 
-bool CES1370::service_audio_channel(size_t channel)
+// Guest-format bytes per second at the channel's programmed rate.
+uint32_t CES1370::chan_rate_bps(size_t channel) const
+{
+    uint32_t freq = 0, unused = 0;
+    es1370_chan_bits[channel].calc_freq(const_cast<ES1370State*>(&state),
+        state.ctl, &unused, &freq);
+    return freq << state.chan[channel].shift;
+}
+
+// Guest-format bytes one host device pull removes from the stream.
+int CES1370::dac_pull_bytes(uint32_t rate_bps) const
+{
+    return (int)(std::min)((u64)rate_bps * m_out_period_frames / m_out_freq,
+        (u64)(1 << 20));
+}
+
+// Lead to keep queued: configured latency, never under three host pulls.
+int CES1370::dac_lead_bytes(size_t channel, uint32_t rate_bps) const
+{
+    const u64 by_latency = (u64)rate_bps * m_latency_ms / 1000;
+    const u64 by_period = (u64)dac_pull_bytes(rate_bps) * 3;
+    return (int)(std::min)((std::max)(by_latency, by_period), (u64)(1 << 20));
+}
+
+// One worker tick: playback is paced at the sample rate against a fixed SDL lead.
+CES1370::ServiceResult CES1370::service_audio_channel(size_t channel,
+    std::chrono::steady_clock::time_point now)
 {
     std::unique_lock<std::recursive_mutex> bus_lock(
         cSystem->get_device_bus_mutex(), std::try_to_lock);
-    if (!bus_lock.owns_lock() || !audio_running || m_audio_stop.load())
-        return false;
+    if (!bus_lock.owns_lock())
+        return SERVICE_BUSY;
+    if (!audio_running || m_audio_stop.load())
+        return SERVICE_IDLE;
     const chan_bits& bits = es1370_chan_bits[channel];
     if (!(state.ctl & bits.ctl_en) || (state.sctl & bits.sctl_pause))
-        return false;
+        return SERVICE_IDLE;
 
+    struct chan* d = &state.chan[channel];
     SDL_AudioStream* voice = channel == ADC_CHANNEL
         ? state.adc_voice : state.dac_voice[channel];
     CES1370StreamLock stream_lock(voice);
-    const int queued = channel == ADC_CHANNEL
-        ? SDL_GetAudioStreamAvailable(voice) : SDL_GetAudioStreamQueued(voice);
+
+    if (channel == ADC_CHANNEL)
+    {
+        const int avail = SDL_GetAudioStreamAvailable(voice);
+        if (avail < 0)
+            FAILURE_1(SDL, "Unable to query audio stream: %s", SDL_GetError());
+        if (avail <= 0)
+            return SERVICE_IDLE;
+        const int moved = es1370_run_channel(&state, channel, (std::min)(avail, 4096));
+        return moved > 0 && moved < avail ? SERVICE_MORE : SERVICE_IDLE;
+    }
+
+    const uint32_t rate = chan_rate_bps(channel);
+    if (!rate)
+        return SERVICE_IDLE;
+    const int queued = SDL_GetAudioStreamQueued(voice);
     if (queued < 0)
         FAILURE_1(SDL, "Unable to query audio stream: %s", SDL_GetError());
-    const int requested = channel == ADC_CHANNEL
-        ? queued : m_audio_target[channel].load() - queued;
-    if (requested <= 0)
-        return false;
-    const int amount = (std::min)(requested, 4096);
-    es1370_run_channel(&state, channel, amount);
-    if (requested <= amount)
-        return false;
-    const int after = channel == ADC_CHANNEL
-        ? SDL_GetAudioStreamAvailable(voice) : SDL_GetAudioStreamQueued(voice);
-    if (after < 0)
-        FAILURE_1(SDL, "Unable to query audio stream: %s", SDL_GetError());
-    return after != queued;
+    const int lead = dac_lead_bytes(channel, rate);
+    const int deficit = lead - queued;
+
+    auto elapsed = now - d->pace_last;
+    d->pace_last = now;
+    if (deficit <= 0)
+    {
+        d->credit_q16 = 0;
+        return SERVICE_IDLE;
+    }
+    const int64_t dt_ns = (std::min)((int64_t)
+        std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count(),
+        (int64_t)50000000);
+    // 2x when more than a pull behind (start-up/stall), else 2% over-rate.
+    const int pull = dac_pull_bytes(rate);
+    const int rate_q8 = deficit > pull + pull / 4 ? 512 : 261;
+    if (dt_ns > 0)
+        d->credit_q16 += ((int64_t)rate * dt_ns * rate_q8 << 8) / 1000000000;
+
+    // Step cap of half a period (2..8ms) so a tick crosses at most one IRQ boundary.
+    const int sc_bytes = ((d->scount & 0xffff) + 1) << d->shift;
+    const int ms2 = (int)((u64)rate * 2 / 1000);
+    const int ms8 = (int)((u64)rate * 8 / 1000);
+    const int step_cap = (std::min)((std::max)(sc_bytes / 2, ms2), ms8);
+    if (d->credit_q16 > ((int64_t)step_cap << 16))
+        d->credit_q16 = (int64_t)step_cap << 16;
+
+    const int budget = (std::min)((int)(d->credit_q16 >> 16), deficit);
+    if (budget <= 0)
+        return SERVICE_IDLE;
+    const int moved = es1370_run_channel(&state, channel, budget);
+    d->credit_q16 -= (int64_t)moved << 16;
+    if (d->credit_q16 < 0)
+        d->credit_q16 = 0;
+    return SERVICE_IDLE;
 }
 
 void CES1370::run()
 {
     try
     {
+        int busy_spins = 0;
         while (!m_audio_stop.load())
         {
-            bool more = false;
+            const auto now = std::chrono::steady_clock::now();
+            bool more = false, busy = false;
             for (size_t i = 0; i < NB_CHANNELS; ++i)
-                more = service_audio_channel(i) || more;
-            if (more)
+            {
+                const ServiceResult r = service_audio_channel(i, now);
+                more = more || r == SERVICE_MORE;
+                busy = busy || r == SERVICE_BUSY;
+            }
+            // Bus collisions are short; retry a few times before sleeping.
+            if (more || (busy && ++busy_spins < 16))
             {
                 std::this_thread::yield();
                 continue;
             }
+            busy_spins = 0;
             std::unique_lock<std::mutex> wait_lock(m_audio_wait_mutex);
-            m_audio_wait.wait_for(wait_lock, std::chrono::milliseconds(2), [this] {
+            m_audio_wait.wait_for(wait_lock, std::chrono::milliseconds(1), [this] {
                 return m_audio_stop.load() || m_audio_wake.exchange(false);
             });
         }
@@ -742,7 +827,7 @@ void CES1370::WriteMem_Bar(int func, int bar, u32 address, int dsize, u32 data)
     }
 }
 
-void CES1370::es1370_transfer_audio(ES1370State* s, struct chan* d, int loop_sel,
+int CES1370::es1370_transfer_audio(ES1370State* s, struct chan* d, int loop_sel,
     int maxb, bool* irq)
 {
     uint8_t tmpbuf[4096];
@@ -751,10 +836,10 @@ void CES1370::es1370_transfer_audio(ES1370State* s, struct chan* d, int loop_sel
     int csc_bytes = ((d->scount >> 16) + 1) << d->shift;
     const bool nonloop = (s->sctl & loop_sel) != 0;
     int remaining = maxb;
+    bool period_done = false;
 
-    // SDL asks once for this refill. 
-    // A sample period or DMA updates the device counters, but doesn't finish..... 
-    while (remaining > 0) {
+    // Loop only to wrap the frame buffer; one sample-count period (IRQ) per call.
+    while (remaining > 0 && !period_done) {
         int cnt = d->frame_cnt >> 16;
         const int size = d->frame_cnt & 0xffff;
         if (size < cnt) break;
@@ -783,8 +868,8 @@ void CES1370::es1370_transfer_audio(ES1370State* s, struct chan* d, int loop_sel
         remaining -= transferred;
         csc_bytes -= transferred;
         if (!csc_bytes) {
-            // Keep a completed period latched even if the next segment ends or fails to reach SDL
             *irq = true;
+            period_done = true;
             csc_bytes = (sc + 1) << d->shift;
         }
         d->scount = sc | (((csc_bytes - 1) >> d->shift) << 16);
@@ -799,9 +884,10 @@ void CES1370::es1370_transfer_audio(ES1370State* s, struct chan* d, int loop_sel
         // Stop on an SDL failure/empty capture queue.
         if (transferred < target || nonloop) break;
     }
+    return maxb - remaining;
 }
 
-void CES1370::es1370_run_channel(ES1370State* s, size_t chan, int free_or_avail)
+int CES1370::es1370_run_channel(ES1370State* s, size_t chan, int free_or_avail)
 {
     uint32_t new_status = s->status;
     int max_bytes;
@@ -810,18 +896,18 @@ void CES1370::es1370_run_channel(ES1370State* s, size_t chan, int free_or_avail)
     const struct chan_bits* b = &es1370_chan_bits[chan];
 
     if (!(s->ctl & b->ctl_en) || (s->sctl & b->sctl_pause)) {
-        return;
+        return 0;
     }
 
     max_bytes = free_or_avail;
     max_bytes &= ~((1 << d->shift) - 1);
     if (max_bytes <= 0) {
-        return;
+        return 0;
     }
 
     irq = s->sctl & b->sctl_inten && s->status & b->stat_int;
 
-    es1370_transfer_audio(s, d, b->sctl_loopsel, max_bytes, &irq);
+    const int moved = es1370_transfer_audio(s, d, b->sctl_loopsel, max_bytes, &irq);
 
     if (irq) {
         if (s->sctl & b->sctl_inten) {
@@ -832,16 +918,14 @@ void CES1370::es1370_run_channel(ES1370State* s, size_t chan, int free_or_avail)
     if (new_status != s->status) {
         es1370_update_status(s, new_status);
     }
+    return moved;
 }
 
-// SDL holds its stream lock here. Only publish the current request; device
-// DMA, counters and IRQs belong to the refill worker, outside the callback.
-void CES1370::request_audio(size_t channel, int total_amount)
+// SDL holds its stream lock here; only wake the worker, which owns DMA and IRQs.
+void CES1370::request_audio(size_t channel)
 {
     if (!m_audio_enabled[channel].load())
         return;
-    if (channel != ADC_CHANNEL)
-        m_audio_target[channel].store((std::max)(0, (std::min)(total_amount, 65536)));
     m_audio_wake.store(true);
     m_audio_wait.notify_one();
 }
@@ -849,18 +933,18 @@ void CES1370::request_audio(size_t channel, int total_amount)
 void CES1370::es1370_dac_callback_dac1(void* userdata, SDL_AudioStream* stream, int additional_amount, int total_amount)
 {
     CES1370* dev = (CES1370*)userdata;
-    dev->request_audio(DAC1_CHANNEL, total_amount);
+    dev->request_audio(DAC1_CHANNEL);
 }
 
 void CES1370::es1370_dac_callback_dac2(void* userdata, SDL_AudioStream* stream, int additional_amount, int total_amount)
 {
     CES1370* dev = (CES1370*)userdata;
-    dev->request_audio(DAC2_CHANNEL, total_amount);
+    dev->request_audio(DAC2_CHANNEL);
 }
 
 void CES1370::es1370_dac_callback_adc(void* userdata, SDL_AudioStream* stream, int additional_amount, int total_amount)
 {
     CES1370* dev = (CES1370*)userdata;
-    dev->request_audio(ADC_CHANNEL, total_amount);
+    dev->request_audio(ADC_CHANNEL);
 }
 #endif /* HAVE_SDL */
