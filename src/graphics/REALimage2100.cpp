@@ -1085,7 +1085,7 @@ CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 		extent = peek(BlockExtent), auxiliary_mask = plane_value(2, 0, 0xffffffff),
 		auxiliary_value = plane_value(2, 16, 0);
 	const bool copy = (v & 0x20000) != 0, configuration = (control & 0x04000000) != 0;
-	const bool auxiliary_clear = !copy && (banks & 4) && auxiliary_mask;
+	const bool auxiliary_clear = (banks & 4) && auxiliary_mask;
 	const bool seed = !configuration && !copy;
 	const uint32_t clear_width = block_width(), groups = clear_width / 2,
 		dx = destination & 0x7ff, dy = destination >> 16,
@@ -1110,8 +1110,7 @@ CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 		v != (((banks ^ 7u) << 18) | (copy ? 0x30000u : 0x10000u)) ||
 		!native_copy_control_profile(true) || m_pending.width || m_readback.width ||
 		((source | destination | extent) & ~0x07ff07ffu) ||
-		(!copy && source) || (copy && !configuration) ||
-		((banks & 4) && auxiliary_mask && !auxiliary_clear))
+		(!copy && source) || (copy && !configuration))
 		return op;
 	op.geometry_known = true;
 	if (seed && (extent != 0x00080014 || dx % 10 || dy % 4 ||
@@ -1136,15 +1135,15 @@ CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 		if ((!neutral_clear && !packed_clear) ||
 			plane_value(2, 4, 0x03030303) != 0x03030303 ||
 			m_planes[2].unknown_masks ||
-			(m_planes[2].written & 0x00ff0000) != 0x00ff0000)
+			(!copy && (m_planes[2].written & 0x00ff0000) != 0x00ff0000))
 			return op;
 		for (unsigned i = 17; i < 24; ++i)
-			if ((plane_value(2, i, 0) ^ auxiliary_value) & auxiliary_mask)
+			if (!copy && ((plane_value(2, i, 0) ^ auxiliary_value) & auxiliary_mask))
 				return op;
 		for (unsigned i = 0; i < groups; ++i)
 		{
 			const uint32_t bits = plane_value(2, 24 + i, 0xffffffff);
-			if (bits != (bits & 255) * 0x01010101u)
+			if (bits != (bits & 255) * 0x01010101u || (seed && bits != 0xffffffffu))
 				return op;
 		}
 	}
@@ -1234,6 +1233,17 @@ void CRealImage2100::execute_block(const BlockOperation& op)
 				return;
 			}
 	}
+	uint32_t auxiliary_value = op.auxiliary_value;
+	if (op.copy && op.auxiliary_clear)
+	{
+		const auto& cache = m_clear_cache[2];
+		if (cache.source != op.source || (cache.known & op.auxiliary_mask) != op.auxiliary_mask)
+		{
+			reject();
+			return;
+		}
+		auxiliary_value = cache.color;
+	}
 	if (op.seed)
 	{
 		if (op.auxiliary_clear)
@@ -1265,7 +1275,7 @@ void CRealImage2100::execute_block(const BlockOperation& op)
 		if (bank == 2 ? !op.auxiliary_clear : !(op.banks & (1u << bank)))
 			continue;
 		const uint32_t mask = bank == 2 ? op.auxiliary_mask : op.color.masks[bank] & 0xffffff,
-			value = bank == 2 ? op.auxiliary_value : colors[bank];
+			value = bank == 2 ? auxiliary_value : colors[bank];
 		if (!mask)
 			continue;
 		uint32_t* const pixels = bank == 2 ? m_auxiliary.data() :
@@ -1559,7 +1569,7 @@ bool CRealImage2100::triangle_profile() const
 	if ((pipeline & ~(0x80000000u | texture_fields)) ||
 		(textured && ((pipeline & ~0x00000ff0u) != 0x8a4c2000u ||
 			((pipeline >> 8) & 15) > 10 || ((pipeline >> 4) & 15) > 10 || !no_depth)) ||
-		(blend && (textured || !no_depth)))
+		(blend && textured))
 		return false;
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
 		bank = (banks & 3) == 2 ? 1 : 0,
@@ -1572,7 +1582,7 @@ bool CRealImage2100::triangle_profile() const
 		copy_columns > (m_color_width + 10 * width - 1) / (10 * width) ||
 		m_pending.width || m_readback.width)
 		return false;
-	if (no_depth && global != 0x180)
+	if (textured && global != 0x180)
 		return false;
 	if (textured)
 	{
@@ -1627,7 +1637,7 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 		flat = flat_vertex_register(address), no_depth = plane_value(2, 5, 0) == 0x0a000200,
 		blend = peek(PipelineControl2) == 0x20000080;
 	if (value != 0x13 || !triangle_profile() ||
-		(flat && !no_depth) || (!textured && no_depth && !flat))
+		(!no_depth && (flat || blend) && peek(GlobalControl0) != 0x190))
 	{
 		return TrianglePreparation::Rejected;
 	}
@@ -1636,7 +1646,8 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 	for (unsigned slot = 0; slot < 3; ++slot)
 	{
 		double component[7]{};
-		for (unsigned i = textured || flat ? 4 : 0; i < 7; ++i)
+		for (unsigned i = textured || flat ? 4 : blend ? 0 : 1;
+			i < (no_depth && !textured ? 6u : 7u); ++i)
 		{
 			const auto reg = m_shadow.find(VertexBase + slot * VertexStride + i * 4);
 			if (reg == m_shadow.end())
@@ -1649,7 +1660,7 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 			if (!std::isfinite(input) ||
 				(i == 0 && (input < 0 || input > 256)) ||
 				((i == 4 || i == 5) && (input < -32768 || input >= 32768)) ||
-				(i == 6 && (no_depth ? input == 0 : (input < 0 || input > 1))))
+				(i == 6 && (textured ? input == 0 : (input < 0 || input > 1))))
 			{
 				return TrianglePreparation::Rejected;
 			}
@@ -1754,6 +1765,7 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 	operation.textured = textured;
 	operation.flat = flat;
 	operation.blend = blend;
+	operation.no_depth = no_depth;
 	operation.depth_less = depth_less;
 	operation.wid = wid;
 	operation.bank = bank;
@@ -1790,7 +1802,7 @@ void CRealImage2100::execute_triangle(const TriangleOperation& operation)
 	const int left = operation.left, top = operation.top,
 		right = operation.right, bottom = operation.bottom;
 	const bool textured = operation.textured, flat = operation.flat,
-		blend = operation.blend, depth_less = operation.depth_less,
+		blend = operation.blend, no_depth = operation.no_depth, depth_less = operation.depth_less,
 		include_a = operation.row_edges[0].inclusive,
 		include_b = operation.row_edges[1].inclusive,
 		include_c = operation.row_edges[2].inclusive;
@@ -2089,6 +2101,15 @@ void CRealImage2100::execute_triangle(const TriangleOperation& operation)
 				destination = (destination & 0xff000000u) | color;
 				continue;
 			}
+			if (!no_depth)
+			{
+				const uint32_t z = uint32_t(std::clamp(a.z + wb * (b.z - a.z) + wc * (c.z - a.z),
+					0.0, 1.0) * 16777215),
+					old_z = (auxiliary & 0xfff) | ((auxiliary >> 4) & 0xfff000);
+				if (z > old_z || (depth_less && z == old_z))
+					continue;
+				auxiliary = (auxiliary & ~0x0fff0fffu) | (z & 0xfff) | ((z & 0xfff000) << 4);
+			}
 			if (flat)
 			{
 				uint32_t color = 0;
@@ -2102,18 +2123,15 @@ void CRealImage2100::execute_triangle(const TriangleOperation& operation)
 				destination = (destination & 0xff000000u) | color;
 				continue;
 			}
-			const uint32_t z = uint32_t(std::clamp(a.z + wb * (b.z - a.z) + wc * (c.z - a.z),
-				0.0, 1.0) * 16777215),
-				old_z = (auxiliary & 0xfff) | ((auxiliary >> 4) & 0xfff000);
-			if (z > old_z || (depth_less && z == old_z))
-				continue;
-			auto channel = [&](double av, double bv, double cv) {
-				return uint32_t(std::clamp(av + wb * (bv - av) + wc * (cv - av), 0.0, 255.0));
+			const double alpha = blend ? std::clamp(a.alpha + wb * (b.alpha - a.alpha) +
+				wc * (c.alpha - a.alpha), 0.0, 256.0) / 256.0 : 1.0;
+			auto channel = [&](double av, double bv, double cv, unsigned shift) {
+				const double source = std::clamp(av + wb * (bv - av) + wc * (cv - av), 0.0, 255.0);
+				return uint32_t(blend ? source * alpha + ((destination >> shift) & 255) * (1 - alpha) : source);
 			};
-			const uint32_t color = (channel(a.red, b.red, c.red) << 16) |
-				(channel(a.green, b.green, c.green) << 8) | channel(a.blue, b.blue, c.blue);
+			const uint32_t color = (channel(a.red, b.red, c.red, 16) << 16) |
+				(channel(a.green, b.green, c.green, 8) << 8) | channel(a.blue, b.blue, c.blue, 0);
 			destination = (destination & 0xff000000u) | color;
-			auxiliary = (auxiliary & ~0x0fff0fffu) | (z & 0xfff) | ((z & 0xfff000) << 4);
 		}
 	}
 }

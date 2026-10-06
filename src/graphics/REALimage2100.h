@@ -294,7 +294,7 @@ private:
     double flat_color[4]{}, area = 0;
     RowEdge row_edges[3]{};
     int left = 0, top = 0, right = 0, bottom = 0;
-    bool textured = false, flat = false, blend = false, depth_less = false;
+    bool textured = false, flat = false, blend = false, no_depth = false, depth_less = false;
     uint32_t wid = 0, bank = 0, color_width = 0;
     size_t color_offset = 0;
     uint32_t texture_base = 0, texture_width = 0, texture_height = 0;
