@@ -667,7 +667,7 @@ inline u64 fsqrt64(u64 asig, s32 exp)
 #define TRACE_UNALIGN(flags, align)
 #endif
 
-#define DATA_PHYS(addr, flags, align)                                            \
+#define UNALIGN_CHECK(addr, flags, align)                                        \
   if((addr) & (align))                                                           \
   {                                                                             \
     /* HRM 6.8.2: UNALIGN is a fault regardless of translation page size.       \
@@ -681,7 +681,18 @@ inline u64 fsqrt64(u64 asig, s32 exp)
     TRACE_UNALIGN(flags, align);                                                \
     GO_PAL(UNALIGN);                                                            \
     ES40_EXECUTE_END();                                                         \
-  }                                                                             \
+  }
+
+/* LDx_L / STx_C: misalignment always traps. */
+#define DATA_PHYS_TRAP(addr, flags, align)                                       \
+  UNALIGN_CHECK(addr, flags, align)                                              \
+  DATA_PHYS_NT(addr, flags)
+
+/* unaligned_fixup: a misaligned plain load/store takes the byte-split path (pbc) below the
+ * macro instead of trapping; the first page still translates here. */
+#define DATA_PHYS(addr, flags, align)                                            \
+  if(((addr) & (align)) && m_unaligned_fixup) { pbc = true; }                    \
+  else { UNALIGN_CHECK(addr, flags, align) }                                     \
   DATA_PHYS_NT(addr, flags)
 
 /**
@@ -708,9 +719,10 @@ inline u64 fsqrt64(u64 asig, s32 exp)
   DATA_PHYS(va, ACCESS_READ, (size/8)-1);               \
   LLR;                         \
   if (pbc) {                                            \
+    const u64 _ua_va = (va);                            \
     dest = 0;                                           \
     for (int ii=0; ii<(size/8); ii++) {                 \
-      DATA_PHYS(va+ii, ACCESS_READ,0);                  \
+      DATA_PHYS(_ua_va+ii, ACCESS_READ,0);             \
       dest |= (cSystem->ReadMem(phys_address, 8, this) << (ii*8));  \
     }                                                   \
   } else {                                              \
@@ -719,12 +731,13 @@ inline u64 fsqrt64(u64 asig, s32 exp)
 
 #define READ_VIRT_LOCK(va, size, dest)                  \
   pbc = false;                                          \
-  DATA_PHYS(va, ACCESS_READ, (size/8)-1);               \
+  DATA_PHYS_TRAP(va, ACCESS_READ, (size/8)-1);          \
   LLR;                         \
   if (pbc) {                                            \
+    const u64 _ua_va = (va);                            \
     dest = 0;                                           \
     for (int ii=0; ii<(size/8); ii++) {                 \
-      DATA_PHYS(va+ii, ACCESS_READ,0);                  \
+      DATA_PHYS(_ua_va+ii, ACCESS_READ,0);             \
       dest |= (cSystem->ReadMem(phys_address, 8, this) << (ii*8));  \
     }                                                   \
   } else {                                              \
@@ -749,7 +762,7 @@ inline u64 fsqrt64(u64 asig, s32 exp)
 
 #define READ_VIRT_LOCK_F(va, size, dest, f)               \
   pbc = false;                                            \
-  DATA_PHYS(va, ACCESS_READ, (size/8)-1);                 \
+  DATA_PHYS_TRAP(va, ACCESS_READ, (size/8)-1);            \
   LLR;                           \
   if (pbc) {                                              \
     u64 aa = 0;                                           \
@@ -807,7 +820,7 @@ inline u64 fsqrt64(u64 asig, s32 exp)
     u64 _stc_va = (va);                                     \
     u64 _stc_data = (src);                                  \
     pbc = false;                                            \
-    DATA_PHYS(_stc_va, ACCESS_WRITE, (size/8)-1);           \
+    DATA_PHYS_TRAP(_stc_va, ACCESS_WRITE, (size/8)-1);      \
     if (pbc)                                                \
     {                                                       \
       /* page-crossing STx_C fails; still consumes the lock */ \

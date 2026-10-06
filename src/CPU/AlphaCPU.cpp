@@ -568,6 +568,7 @@ void CAlphaCPU::init()
 
 	cpu_hz = myCfg->get_num_value("speed", true, 500000000);
 	idle_nap_enabled = myCfg->get_bool_value("idle_nap", false);
+	m_unaligned_fixup = myCfg->get_bool_value("unaligned_fixup", true);
 	exit_on_pal_halt = myCfg->get_myParent()->get_bool_value("exit_on_pal_halt", false);
 
 	// Instruction-paced interval-timer cap. 
@@ -715,6 +716,7 @@ void CAlphaCPU::ResetForSystemReset()
 
 	cpu_hz = myCfg->get_num_value("speed", true, 500000000);
 	idle_nap_enabled = myCfg->get_bool_value("idle_nap", false);
+	m_unaligned_fixup = myCfg->get_bool_value("unaligned_fixup", true);
 	exit_on_pal_halt = myCfg->get_myParent()->get_bool_value("exit_on_pal_halt", false);
 	m_max_instr_per_tick = myCfg->get_num_value("timer.max_instr_per_tick", false, 1250000);
 	if (const char* e = getenv("ES40_MAX_INSTR_PER_TICK"))
@@ -1722,6 +1724,26 @@ void CAlphaCPU::jit_run(int budget)
 			{
 				const uint64_t _ns = m_jit->note_exec(done, 0, _comp_tsc, 0);
 				cc_last_sync += std::chrono::nanoseconds(_ns);   // don't bill the stats-print stall to the wall-clock RPCC
+				if (_ns)
+				{
+					printf("[JIT][STATS][CPU%d] int-kicks: eir %llu | sir %llu | ast %llu | irq_h %llu | timer %llu | delivered %llu | masked-at-poll %llu\n",
+						(int)state.iProcNum, (unsigned long long)m_stat_kick[0], (unsigned long long)m_stat_kick[1], (unsigned long long)m_stat_kick[2],
+						(unsigned long long)m_stat_kick[3], (unsigned long long)m_stat_kick[4], (unsigned long long)m_stat_kick[5], (unsigned long long)m_stat_kick[6]);
+					memset(m_stat_kick, 0, sizeof(m_stat_kick));
+					printf("[JIT][STATS][CPU%d] tb: dtbm-single %llu | double %llu | itb-miss %llu | dfault %llu | tbia %llu | tbiap %llu | tbis_d %llu | fills %llu | hint-invalid %llu | hint-other %llu\n",
+						(int)state.iProcNum, (unsigned long long)m_stat_tb[0], (unsigned long long)m_stat_tb[1], (unsigned long long)m_stat_tb[2], (unsigned long long)m_stat_tb[3],
+						(unsigned long long)m_stat_tb[4], (unsigned long long)m_stat_tb[5], (unsigned long long)m_stat_tb[6], (unsigned long long)m_stat_tb[7],
+						(unsigned long long)m_stat_tb[8], (unsigned long long)m_stat_tb[9]);
+					for (int k = 0; k < 6; k++)
+					{
+						int best = -1;
+						for (int sl = 0; sl < 128; sl++) if (m_stat_va[sl][1] && (best < 0 || m_stat_va[sl][1] > m_stat_va[best][1])) best = sl;
+						if (best < 0) break;
+						printf("[JIT][STATS][CPU%d]   miss-page %016llx x%llu\n", (int)state.iProcNum, (unsigned long long)(m_stat_va[best][0] << 13), (unsigned long long)m_stat_va[best][1]);
+						m_stat_va[best][1] = 0;
+					}
+					memset(m_stat_va, 0, sizeof(m_stat_va)); memset(m_stat_tb, 0, sizeof(m_stat_tb));
+				}
 #if defined(JIT_REGPROF) && defined(_WIN32)
 				if (_ns && m_samples) jit_sampler_report();
 #endif
@@ -1820,6 +1842,48 @@ int CAlphaCPU::jit_unalign(u64 va, u32 ins, int flags, int align)
 	return 2;
 }
 
+// unaligned_fixup: perform a misaligned load/store in place. Every page the access touches is
+// translated (and may fault) before any byte moves; MMIO bails to the interpreter.
+int CAlphaCPU::jit_unaligned_rw(CAlphaCPU* cpu, u64 va, int size_bits, u32 ins, int rw, u64* data)
+{
+	if (!ins || cpu->m_jit_vreplay) return 1;
+	const int n = size_bits / 8;
+	const u64 va_last = va + n - 1;
+	const int n1 = (int)(0x2000 - (va & U64(0x1FFF)));   // bytes on the first page
+	u64 phys[2];
+	for (int k = 0; k < 2; ++k)
+	{
+		const u64 a = k ? va_last : va;
+		if (k && ((va ^ va_last) >> 13) == 0) { phys[1] = phys[0] + n - 1; break; }
+		const u64 vp = a & ~U64(0x1FFF);
+		SDataPageCache& dpc = cpu->dpc_slot(rw, a);
+		if (dpc.virt_page == vp && dpc.valid && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
+			phys[k] = dpc.phys_base | (a & U64(0x1FFF));
+		else
+		{
+			if (cpu->virt2phys(a, &phys[k], rw ? ACCESS_WRITE : ACCESS_READ, nullptr, ins)) return 2;
+			dpc.phys_base = phys[k] & ~U64(0x1FFF);
+			dpc.host_bias = ((phys[k] | U64(0x1FFF)) < cpu->dram_size)
+				? ((u64)cpu->dram_ptr + (phys[k] & ~U64(0x1FFF)) - vp) : 0;
+			dpc.virt_page = dpc.host_bias ? vp : ~U64(0);
+			dpc.cm = (u8)cpu->state.cm;
+			dpc.asn = (u8)cpu->state.asn0;
+			dpc.valid = dpc.host_bias != 0;
+		}
+	}
+	if (phys[0] >= cpu->dram_size || phys[1] >= cpu->dram_size) return 1;   // MMIO: interpreter
+	u8* p = (u8*)cpu->dram_ptr;
+	u64 v = rw ? *data : 0;
+	for (int k = 0; k < n; ++k)
+	{
+		const u64 pa = (k < n1) ? phys[0] + k : phys[1] - (n - 1 - k);
+		if (rw) p[pa] = (u8)(v >> (k * 8));
+		else    v |= (u64)p[pa] << (k * 8);
+	}
+	if (!rw) *data = v;
+	return 0;
+}
+
 // JIT load helper (static). descr[7:0] is size_bits; production loads also
 // carry the instruction in descr[63:32]. That lets alignment/translation faults enter PAL
 // exactly once instead of returning to execute() to repeat the faulting instruction.
@@ -1828,7 +1892,9 @@ int CAlphaCPU::jit_read(CAlphaCPU* cpu, u64 va, u64 descr, u64* out)
 	const int size_bits = (int)(descr & 0xff);
 	const u32 ins = (u32)(descr >> 32);
 	const u64 amask = (u64)(size_bits / 8) - 1;
-	if (va & amask) return cpu->jit_unalign(va, ins, ACCESS_READ, (int)amask);
+	if (va & amask)
+		return cpu->m_unaligned_fixup ? jit_unaligned_rw(cpu, va, size_bits, ins, 0, out)
+		                              : cpu->jit_unalign(va, ins, ACCESS_READ, (int)amask);
 
 	u64 phys;
 	const u64 vp = va & ~U64(0x1FFF);
@@ -1904,7 +1970,7 @@ int CAlphaCPU::jit_fp_read(CAlphaCPU* cpu, u64 va, u32 fa, u64 descr)
 	cpu->state.exc_sum = 0;
 	if (fa == 31) return 0;                    // f31 dest: interp skips the read
 	const u64 amask = ((descr & 0xff) / 8) - 1;
-	if (va & amask)
+	if ((va & amask) && !cpu->m_unaligned_fixup)   // fixup: jit_read below splits the access
 		return cpu->jit_unalign(va, (u32)(descr >> 32), ACCESS_READ, (int)amask);
 	if (cpu->m_jit_vreplay)
 	{
@@ -2283,7 +2349,9 @@ int CAlphaCPU::jit_write(CAlphaCPU* cpu, u64 va, u64 descr, u64 value)
 	const int size_bits = (int)(descr & 0xff);
 	const u32 ins = (u32)(descr >> 32);
 	const u64 amask = (u64)(size_bits / 8) - 1;
-	if (va & amask) return cpu->jit_unalign(va, ins, ACCESS_WRITE, (int)amask);
+	if (va & amask)
+		return cpu->m_unaligned_fixup ? jit_unaligned_rw(cpu, va, size_bits, ins, 1, &value)
+		                              : cpu->jit_unalign(va, ins, ACCESS_WRITE, (int)amask);
 
 	// Verify: the interpreter pass already performed (and recorded) this store. Compare
 	// rather than write -- stores change memory, not GPRs, so the differential GPR check
@@ -2927,6 +2995,9 @@ _next_instruction:
 						{
 							state.irq_h_timer[j] = 0;
 							state.eir |= (U64(0x1) << j);
+#ifdef JIT_STATS
+							m_stat_kick[4]++;
+#endif
 							// The timer hasn't reached 0 yet; check on the timers again next clock tick.
 							state.check_int = true;
 						}
@@ -2961,6 +3032,9 @@ _next_instruction:
 					{
 						state.irq_h_timer[ti] = 0;
 						state.eir |= (U64(0x1) << ti);
+#ifdef JIT_STATS
+						m_stat_kick[4]++;
+#endif
 						state.check_int = true;
 					}
 					else
@@ -3033,6 +3107,9 @@ _next_instruction:
 				if ((state.eien & state.eir) || (state.sien & state.sir) || (state.asten
 					&& (state.aster & state.astrr & ((1 << (state.cm + 1)) - 1))))
 				{
+#ifdef JIT_STATS
+					m_stat_kick[5]++;
+#endif
 					GO_PAL(INTERRUPT);
 					seq_remaining = 0;
 #ifndef ES40_JIT
@@ -3041,6 +3118,9 @@ _next_instruction:
 					return;
 #endif
 				}
+#ifdef JIT_STATS
+				else m_stat_kick[6]++;   // flag was set but nothing deliverable at the poll
+#endif
 			}
 
 		}
@@ -3890,8 +3970,6 @@ int CAlphaCPU::RestoreState(FILE* f)
 	printf("%s: %d bytes restored.\n", devid_string, (int)ss);
 	last_dtb_virt[0] = last_dtb_virt[1] = 0;
 	// RAM and TB state now belong to the restored state. Restored icache stays. Rest gets chucked.
-	tb_index_clear(TB_INDEX_DATA);
-	tb_index_clear(TB_INDEX_ITB);
 	flush_data_page_cache();
 	break_seq_icache();
 #ifdef ES40_JIT
@@ -3950,7 +4028,7 @@ int CAlphaCPU::FindTBEntry(u64 virt, int flags)
 	i = state.last_found_tb[t][rw];
 	if (state.tb[t][i].valid
 		&& !((state.tb[t][i].virt ^ virt) & state.tb[t][i].match_mask)
-		&& TB_ASN_MATCH(state.tb[t][i]))	{ m_tb_idx[t][h] = (u8)(i + 1); return i; }
+		&& TB_ASN_MATCH(state.tb[t][i]))	{ m_tb_idx[t][h] = (u16)(i + 1); return i; }
 
 	for (i = 0; i < TB_ENTRIES; i++)
 	{
@@ -3959,7 +4037,7 @@ int CAlphaCPU::FindTBEntry(u64 virt, int flags)
 			&& TB_ASN_MATCH(state.tb[t][i]))
 		{
 			state.last_found_tb[t][rw] = i;
-			m_tb_idx[t][h] = (u8)(i + 1);
+			m_tb_idx[t][h] = (u16)(i + 1);
 			return i;
 		}
 	}
@@ -4211,10 +4289,16 @@ int CAlphaCPU::virt2phys(u64 virt, u64* phys, int flags, bool* asm_bit, u32 ins)
 				 * state.i_ctl_va_mode packs bits [16:15] of I_CTL, so bit 0
 				 * here is the architectural VA_48 bit.
 				 */
+#ifdef JIT_STATS
+				m_stat_tb[1]++;
+#endif
 				set_pc(state.pal_base + ((state.i_ctl_va_mode & 1) ? DTBM_DOUBLE_4 : DTBM_DOUBLE_3) + 1);
 			}
 			else if (flags & ACCESS_EXEC)
 			{
+#ifdef JIT_STATS
+				m_stat_tb[2]++;
+#endif
 				set_pc(state.pal_base + ITB_MISS + 1);
 			}
 			else
@@ -4231,6 +4315,16 @@ int CAlphaCPU::virt2phys(u64 virt, u64* phys, int flags, bool* asm_bit, u32 ins)
 						) <<
 					4 |
 					(flags & ACCESS_WRITE);
+#ifdef JIT_STATS
+				m_stat_tb[0]++;
+				{
+					const int h = (int)m_tb_idx[t][(virt >> 13) & 255] - 1;
+					if (h >= 0) m_stat_tb[state.tb[t][h].valid ? 9 : 8]++;
+					const u64 pg = virt >> 13; const u32 sl = (u32)(pg * 0x9E3779B1u) >> 25;
+					if (m_stat_va[sl][0] != pg) { m_stat_va[sl][0] = pg; m_stat_va[sl][1] = 0; }
+					m_stat_va[sl][1]++;
+				}
+#endif
 				set_pc(state.pal_base + DTBM_SINGLE + 1);
 			}
 
@@ -4369,6 +4463,9 @@ int CAlphaCPU::virt2phys(u64 virt, u64* phys, int flags, bool* asm_bit, u32 ins)
 				}
 				else
 				{
+#ifdef JIT_STATS
+					m_stat_tb[3]++;
+#endif
 					set_pc(state.pal_base + DFAULT + 1);
 					return -1;
 				}
@@ -4449,6 +4546,9 @@ int CAlphaCPU::virt2phys(u64 virt, u64* phys, int flags, bool* asm_bit, u32 ins)
 				}
 				else
 				{
+#ifdef JIT_STATS
+					m_stat_tb[3]++;
+#endif
 					set_pc(state.pal_base + DFAULT + 1);
 					return -1;
 				}
@@ -4539,16 +4639,16 @@ void CAlphaCPU::add_tb(u64 virt, u64 pte_phys, u64 pte_flags, int flags, int asn
 		break;
 	}
 
+	// Refill of a mapped page: the page-indexed hint finds it; otherwise take a fresh entry. A
+	// stale duplicate left behind by a hint collision is harmless: lookups prefer the hint, and
+	// every invalidate scans the whole buffer.
 	i = -1;
-	for (int j = 0; j < TB_ENTRIES; j++)
 	{
-		if (state.tb[t][j].valid
-			&& !((state.tb[t][j].virt ^ virt) & state.tb[t][j].match_mask)
-			&& (state.tb[t][j].asm_bit || state.tb[t][j].asn == asn))
-		{
-			i = j;
-			break;
-		}
+		const int h = (int)m_tb_idx[t][(virt >> 13) & 255] - 1;
+		if (h >= 0 && state.tb[t][h].valid
+			&& !((state.tb[t][h].virt ^ virt) & state.tb[t][h].match_mask)
+			&& (state.tb[t][h].asm_bit || state.tb[t][h].asn == asn))
+			i = h;
 	}
 
 #ifdef ES40_JIT
@@ -4594,8 +4694,11 @@ void CAlphaCPU::add_tb(u64 virt, u64 pte_phys, u64 pte_flags, int flags, int asn
 	state.tb[t][i].asm_bit = (int)pte_flags & 0x10;
 	state.tb[t][i].asn = asn;
 	state.tb[t][i].valid = true;
+#ifdef JIT_STATS
+	if (t == TB_INDEX_DATA) m_stat_tb[7]++;
+#endif
 	state.last_found_tb[t][rw] = i;
-	tb_index_clear(t);
+	m_tb_idx[t][(virt >> 13) & 255] = (u16)(i + 1);
 
 #ifdef ES40_JIT
 	if (itb_remap && m_jit) m_jit->note_itb_invalidate(CJitEngine::kBumpRemap);   // code page remapped in place -> chains re-validate
@@ -4691,10 +4794,12 @@ void CAlphaCPU::tbia(int flags)
 	int i;
 	for (i = 0; i < TB_ENTRIES; i++)
 		state.tb[t][i].valid = false;
+#ifdef JIT_STATS
+	if (t == TB_INDEX_DATA) m_stat_tb[4]++;
+#endif
 	state.last_found_tb[t][0] = 0;
 	state.last_found_tb[t][1] = 0;
 	state.next_tb[t] = 0;
-	tb_index_clear(t);
 	if (t == TB_INDEX_DATA) flush_data_page_cache();
 #ifdef ES40_JIT
 	else if (m_jit) m_jit->note_itb_invalidate(CJitEngine::kBumpTbia);   // whole ITB cleared -> indirect chains re-validate phys
@@ -4716,7 +4821,9 @@ void CAlphaCPU::tbiap(int flags)
 	for (i = 0; i < TB_ENTRIES; i++)
 		if (!state.tb[t][i].asm_bit)
 			state.tb[t][i].valid = false;
-	tb_index_clear(t);
+#ifdef JIT_STATS
+	if (t == TB_INDEX_DATA) m_stat_tb[5]++;
+#endif
 
 	if (t == TB_INDEX_DATA) flush_data_page_cache();
 #ifdef ES40_JIT
@@ -4745,7 +4852,6 @@ void CAlphaCPU::tbis(u64 virt, int flags)
 	int i = FindTBEntry(virt, flags);
 	if (i >= 0)
 		state.tb[t][i].valid = false;
-	tb_index_clear(t);
 #ifdef ES40_JIT
 	// Chains into this page must re-validate their physical before running again, cached
 	// entry or not. One 8 KB page clears only the edges targeting it; a granularity-hint
@@ -4763,6 +4869,9 @@ void CAlphaCPU::tbis(u64 virt, int flags)
 void CAlphaCPU::tbis_d(u64 virt, int asn)
 {
 	bool found = false;
+#ifdef JIT_STATS
+	m_stat_tb[6]++;
+#endif
 
 	for (int i = 0; i < TB_ENTRIES; i++)
 	{
@@ -4777,7 +4886,6 @@ void CAlphaCPU::tbis_d(u64 virt, int asn)
 		}
 	}
 
-	tb_index_clear(TB_INDEX_DATA);
 	// If the architectural TB entry was already evicted, an old GH=0 DPC line for this page can
 	// still exist. Retire its direct slot as well.
 	if (!found)

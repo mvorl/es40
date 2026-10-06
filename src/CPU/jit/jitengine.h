@@ -181,6 +181,9 @@ public:
                           // monotonic, so one compare detects any invalidating event since then
                           // -- the single chain guard (see emit_chain / jit_indirect).
     uint32_t hot;         // dispatches since record; at the promote threshold -> form a trace
+#ifdef JIT_STATS
+    uint64_t st_exit1;    // STATS: dispatcher returns through this block's gate/guard exit (kind 1)
+#endif
 #ifdef JIT_REGPROF
     uint64_t rp_hits;     // REGPROF: block executions since record (body-entry inc -- counts chained runs)
     uint32_t rp_mask;     // REGPROF: Alpha GPRs touched by this block (bit r); compile-time, exec-weighted at report
@@ -371,6 +374,9 @@ public:
   inline void     note_asn_change()     { invalidate_links_global(); }
   // Combined validation epoch, maintained (not summed) so the emitted chain guard reads ONE qword.
   inline uint64_t vgen() const          { return m_vgen_cur; }
+#ifdef JIT_STATS
+  uint64_t* exit_kind_counter(int k) { return &m_exit_kind[k]; }
+#endif
   // One prologue/epilogue per engine instead of per block (x64); A64 blocks keep their own.
   void build_trampolines();
   void set_exit_slot(void** slot) { m_exit_slot = slot; if (slot) *slot = m_exit; }
@@ -504,6 +510,7 @@ private:
   uint64_t m_reclaims;                                 // cumulative: code reclaims
   uint64_t m_jmp_exits;                                // windowed: computed-jump exits
   uint64_t m_jc_hits;                                  // windowed: computed exits served by the jump cache
+  uint64_t m_exit_kind[12];                            // windowed: dispatcher returns by cause (x64 emitter)
   uint64_t m_mb_exec;                                  // windowed: MB fences executed
   uint64_t m_rt_break_op[64];                          // windowed: interp dispatches by breaking opcode
   uint64_t m_licm_same, m_licm_diff;   // region memops hitting the same page as last time

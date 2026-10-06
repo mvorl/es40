@@ -28,6 +28,11 @@
 
 #include "jitengine.h"        // defines ES40_JIT_X64 / ES40_JIT_A64 from the host arch
 #include "jitengine_internal.h"
+#ifdef JIT_STATS
+#define JIT_STAT_EXIT(k) do { a.mov(x86::rax, imm((uint64_t) exit_kind_counter(k))); a.inc(x86::qword_ptr(x86::rax)); } while (0)
+#else
+#define JIT_STAT_EXIT(k) ((void) 0)
+#endif
 
 #ifdef ES40_JIT_X64
 
@@ -482,6 +487,7 @@ static uint32_t regprof_mask(const uint32_t* w, uint32_t n)
 // Callee-saved guest pins; R13 carries the chain instruction count. 
 // Blocks also keep R22/R23 in volatile R8/R9..
 static const int kGlobalPins[2] = { 1, 16 };
+static const int kVolPins[2]    = { 22, 23 };   // caller-saved pins (r8/r9)
 
 // regalloc: compile_trace binds the TRACE'S hottest guest GPRs to the pin registers instead
 // of the fixed global set, deleting their state.r[] traffic across the whole fused span.
@@ -592,6 +598,9 @@ struct ColdMemStub {
 
 // Emit one cold stub. Arg marshalling mirrors emit_call: non-immediate sources are placed before
 // immediates so a size/selector immediate can't overwrite RDX 
+#ifdef JIT_STATS
+static uint64_t* g_cold_stub_counters = nullptr;   // [0] = helper bail, [1] = fault delivered (set per compile_block)
+#endif
 static void emit_cold_mem_stub(asmjit::x86::Assembler& a, const uint8_t* gpa,
                                const CJitEngine::JitOffsets& off, const ColdMemStub& s)
 {
@@ -637,12 +646,18 @@ static void emit_cold_mem_stub(asmjit::x86::Assembler& a, const uint8_t* gpa,
   a.jz(ok);
   a.cmp(x86::eax, imm(2));
   a.je(trapped);
+#ifdef JIT_STATS
+  if (g_cold_stub_counters) { a.mov(x86::rax, imm((uint64_t) &g_cold_stub_counters[0])); a.inc(x86::qword_ptr(x86::rax)); }
+#endif
   a.mov(x86::r10, imm(s.fault_pc));                             // fault: resume at this op
   a.mov(x86::qword_ptr(x86::rbp, off.state_pc), x86::r10);
   a.mov(x86::eax, imm(s.i));                                    // this iteration: i instrs done
   a.add(x86::eax, x86::r13d);                                   // + earlier chained iterations
   a.jmp(s.done);
   a.bind(trapped);                                             // fault delivered: keep PAL entry PC
+#ifdef JIT_STATS
+  if (g_cold_stub_counters) { a.mov(x86::rax, imm((uint64_t) &g_cold_stub_counters[1])); a.inc(x86::qword_ptr(x86::rax)); }
+#endif
   a.mov(x86::eax, imm(s.i + 1));                               // count the faulting instruction once
   a.add(x86::eax, x86::r13d);
   a.jmp(s.done);
@@ -1604,7 +1619,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             a.jmp(cont);
             a.bind(bail);
             set_pc(b->tag + 4 * (uint64_t)i);              // resume this instruction in the interpreter
-            a.mov(x86::eax, imm(i)); a.add(x86::eax, x86::r13d); a.jmp(done);
+            JIT_STAT_EXIT(5); a.mov(x86::eax, imm(i)); a.add(x86::eax, x86::r13d); a.jmp(done);
             a.bind(cont);
             continue;
         }
@@ -1676,7 +1691,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             a.jmp(cont);
             a.bind(bail);
             set_pc(b->tag + 4 * (uint64_t)i);
-            a.mov(x86::eax, imm(i)); a.add(x86::eax, x86::r13d); a.jmp(done);
+            JIT_STAT_EXIT(5); a.mov(x86::eax, imm(i)); a.add(x86::eax, x86::r13d); a.jmp(done);
             a.bind(cont);
             continue;
         }
@@ -1718,7 +1733,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             a.jmp(cont);
             a.bind(bail);
             set_pc(b->tag + 4 * (uint64_t)i);
-            a.mov(x86::eax, imm(i)); a.add(x86::eax, x86::r13d); a.jmp(done);
+            JIT_STAT_EXIT(5); a.mov(x86::eax, imm(i)); a.add(x86::eax, x86::r13d); a.jmp(done);
             a.bind(cont);
             continue;
         }
@@ -1761,7 +1776,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             a.jmp(cont);
             a.bind(bail);
             set_pc(b->tag + 4 * (uint64_t)i);
-            a.mov(x86::eax, imm(i)); a.add(x86::eax, x86::r13d); a.jmp(done);
+            JIT_STAT_EXIT(5); a.mov(x86::eax, imm(i)); a.add(x86::eax, x86::r13d); a.jmp(done);
             a.bind(cont);
             continue;
         }
@@ -1796,7 +1811,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             a.jmp(cont);
             a.bind(bail);
             set_pc(b->tag + 4 * (uint64_t)i);
-            a.mov(x86::eax, imm(i)); a.add(x86::eax, x86::r13d); a.jmp(done);
+            JIT_STAT_EXIT(5); a.mov(x86::eax, imm(i)); a.add(x86::eax, x86::r13d); a.jmp(done);
             a.bind(cont);
             continue;
         }
@@ -1824,7 +1839,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             a.jmp(cont);
             a.bind(bail);
             set_pc(b->tag + 4 * (uint64_t)i);
-            a.mov(x86::eax, imm(i)); a.add(x86::eax, x86::r13d); a.jmp(done);
+            JIT_STAT_EXIT(5); a.mov(x86::eax, imm(i)); a.add(x86::eax, x86::r13d); a.jmp(done);
             a.bind(cont);
             continue;
         }
@@ -1854,7 +1869,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             a.jmp(cont);
             a.bind(bail);
             set_pc(b->tag + 4 * (uint64_t)i);
-            a.mov(x86::eax, imm(i)); a.add(x86::eax, x86::r13d); a.jmp(done);
+            JIT_STAT_EXIT(5); a.mov(x86::eax, imm(i)); a.add(x86::eax, x86::r13d); a.jmp(done);
             a.bind(cont);
             continue;
         }
@@ -1914,7 +1929,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             a.jmp(cont);
             a.bind(bail);
             set_pc(b->tag + 4 * (uint64_t)i);
-            a.mov(x86::eax, imm(i)); a.add(x86::eax, x86::r13d); a.jmp(done);
+            JIT_STAT_EXIT(5); a.mov(x86::eax, imm(i)); a.add(x86::eax, x86::r13d); a.jmp(done);
             a.bind(cont);
             continue;
         }
@@ -2065,7 +2080,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             a.jmp(cont);
             a.bind(bail);
             set_pc(b->tag + 4 * (uint64_t)i);                    // resume this instruction in the interpreter
-            a.mov(x86::eax, imm(i)); a.add(x86::eax, x86::r13d); a.jmp(done);
+            JIT_STAT_EXIT(5); a.mov(x86::eax, imm(i)); a.add(x86::eax, x86::r13d); a.jmp(done);
             a.bind(cont);
             continue;
         }
@@ -2393,8 +2408,8 @@ void CJitEngine::build_trampolines()
     a.mov(x86::r12, x86::qword_ptr(x86::rbx,  1 * 8));   // R1
     a.mov(x86::r15, x86::qword_ptr(x86::rbx, 16 * 8));   // R16 (a0)
     a.mov(x86::r14, x86::qword_ptr(x86::rbx, 30 * 8));   // R30 (SP)
-    a.mov(x86::r8,  x86::qword_ptr(x86::rbx, 22 * 8));   // R22, caller-saved global pin
-    a.mov(x86::r9,  x86::qword_ptr(x86::rbx, 23 * 8));   // R23, caller-saved global pin
+    a.mov(x86::r8,  x86::qword_ptr(x86::rbx, kVolPins[0] * 8));   // R22, caller-saved global pin
+    a.mov(x86::r9,  x86::qword_ptr(x86::rbx, kVolPins[1] * 8));   // R23, caller-saved global pin
 #ifdef _WIN32
     a.mov(x86::rsi, x86::qword_ptr(x86::rbx, 27 * 8));   // R27 (PV)
     a.mov(x86::rdi, x86::qword_ptr(x86::rbx,  0 * 8));   // R0 (v0)
@@ -2410,8 +2425,8 @@ void CJitEngine::build_trampolines()
     a.mov(x86::qword_ptr(x86::rbx,  1 * 8), x86::r12);   // R1
     a.mov(x86::qword_ptr(x86::rbx, 16 * 8), x86::r15);   // R16 (a0)
     a.mov(x86::qword_ptr(x86::rbx, 30 * 8), x86::r14);   // R30 (SP)
-    a.mov(x86::qword_ptr(x86::rbx, 22 * 8), x86::r8);    // caller-saved global pins
-    a.mov(x86::qword_ptr(x86::rbx, 23 * 8), x86::r9);
+    a.mov(x86::qword_ptr(x86::rbx, kVolPins[0] * 8), x86::r8);    // caller-saved global pins
+    a.mov(x86::qword_ptr(x86::rbx, kVolPins[1] * 8), x86::r9);
 #ifdef _WIN32
     a.mov(x86::qword_ptr(x86::rbx, 27 * 8), x86::rsi);   // R27 (PV)
     a.mov(x86::qword_ptr(x86::rbx,  0 * 8), x86::rdi);   // R0 (v0)
@@ -2657,8 +2672,8 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   RegAlloc ra;
   for (int r = 0; r < 32; ++r) ra.host[r] = -1;
   ra.rax_holds = -1;
-  ra.vol_bind = 22;
-  ra.vol_bind2 = 23;
+  ra.vol_bind = kVolPins[0];
+  ra.vol_bind2 = kVolPins[1];
   ra.dpc_live = false;
   ra.dpc_base = ra.dpc_disp = 0;
   ra.dpc_write = ra.dpc_force_align = false;
@@ -2676,8 +2691,8 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   ra.host[kGlobalPins[0]] = (int) x86::r12.id();
   ra.host[kGlobalPins[1]] = (int) x86::r15.id();
   ra.host[30] = (int) x86::r14.id();                  // SP (reclaimed r14), all platforms
-  ra.host[22] = (int) x86::r8.id();                   // volatile pins; helpers spill/reload them
-  ra.host[23] = (int) x86::r9.id();
+  ra.host[kVolPins[0]] = (int) x86::r8.id();                   // volatile pins; helpers spill/reload them
+  ra.host[kVolPins[1]] = (int) x86::r9.id();
 #ifdef _WIN32
   ra.host[27] = (int) x86::rsi.id();                  // PV (Win64)
   ra.host[0]  = (int) x86::rdi.id();                  // v0 (Win64)
@@ -3002,6 +3017,26 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 #ifndef JIT_VERIFY
   // Gate the chain: stop if we've hit the budget ceiling or an interrupt/timer is pending
   // Interrupts are architecturally deferred while the target remains in PALmode.
+  auto stat_exit = [&](int k) {
+#ifdef JIT_STATS
+    a.mov(x86::rax, imm((uint64_t) exit_kind_counter(k))); a.inc(x86::qword_ptr(x86::rax));
+#else
+    (void) k;
+#endif
+  };
+  auto stat_gate_exit = [&]() {   // at an exit_chain label: split ceiling from pending/other
+#ifdef JIT_STATS
+    Label nc = a.new_label(), e = a.new_label();
+    a.cmp(x86::r13, imm(kChainCeiling)); a.jl(nc);
+    stat_exit(0); a.jmp(e);
+    a.bind(nc); stat_exit(1);
+    a.mov(x86::rax, imm((uint64_t) &b->st_exit1)); a.inc(x86::qword_ptr(x86::rax));
+    { Label t1 = a.new_label(), t2 = a.new_label();
+      a.cmp(x86::byte_ptr(x86::rbp, m_off.check_timers), imm(0)); a.je(t1); stat_exit(8); a.bind(t1);
+      a.cmp(x86::byte_ptr(x86::rbp, m_off.check_int), imm(0)); a.je(t2); stat_exit(9); a.bind(t2); }
+    a.bind(e);
+#endif
+  };
   auto emit_gate = [&](Label& lbl) {
     a.cmp(x86::r13, imm(kChainCeiling)); a.jge(lbl);   // constant ceiling: no budget load
     if (!pal_block) {
@@ -3055,6 +3090,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
       if (sl + 1 < kLinkSlots) a.bind(nxt);
     }
     a.bind(miss);
+    stat_exit(7);                                                    // PIC-slot link miss
     // Bit 0: non-global source.
     a.mov(x86::rax, imm((uint64_t) &b->link[0] | (b->asm_global ? 0u : 1u)));
     a.mov(x86::qword_ptr(x86::rbp, m_off.link_from), x86::rax);
@@ -3151,8 +3187,8 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     // The resolver is a helper boundary and may clobber R10. A hot PIC hit above
     // chains without touching architectural state.pc.
     a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
-    a.mov(x86::qword_ptr(x86::rbx, 22 * 8), x86::r8);
-    a.mov(x86::qword_ptr(x86::rbx, 23 * 8), x86::r9);
+    a.mov(x86::qword_ptr(x86::rbx, kVolPins[0] * 8), x86::r8);
+    a.mov(x86::qword_ptr(x86::rbx, kVolPins[1] * 8), x86::r9);
     a.mov(aq(0), x86::rbp);                                       // cpu    (arg 0)
     a.mov(aq(1), x86::r10);                                       // target (arg 1) == state.pc
     a.mov(aq(2), imm((uint64_t) &b->link[0] | (b->asm_global ? 0u : 1u)));   // per-site target cache (bit 0: non-global source)
@@ -3160,13 +3196,18 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
       if (hi >= 0 && m_off.helpers)
         a.call(x86::qword_ptr(x86::rbp, (int32_t) (m_off.helpers + hi * 8)));
       else { a.mov(x86::rax, imm((uint64_t) indirect_helper)); a.call(x86::rax); } }
-    a.mov(x86::r8, x86::qword_ptr(x86::rbx, 22 * 8));
-    a.mov(x86::r9, x86::qword_ptr(x86::rbx, 23 * 8));
+    a.mov(x86::r8, x86::qword_ptr(x86::rbx, kVolPins[0] * 8));
+    a.mov(x86::r9, x86::qword_ptr(x86::rbx, kVolPins[1] * 8));
     a.test(x86::rax, x86::rax);                              a.jz(exit_pc_ready);
     a.jmp(x86::rax);                                              // HIT: tail into the target's body
     a.bind(exit_chain);
+    stat_gate_exit();
     a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
+#ifdef JIT_STATS
+    { Label pr = a.new_label(); a.jmp(pr); a.bind(exit_pc_ready); stat_exit(2); a.bind(pr); }
+#else
     a.bind(exit_pc_ready);
+#endif
 #endif
   } else if (terminator_branch) {
     a.add(x86::r13, imm(plen));   // R10 still holds the branch's next PC
@@ -3192,6 +3233,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     }
     emit_chain(exit_chain);
     a.bind(exit_chain);
+    stat_gate_exit();
 #endif
     a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
   } else {
@@ -3203,6 +3245,10 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     emit_source_pal_guard(exit_chain);
     emit_chain(exit_chain);
     a.bind(exit_chain);
+    stat_exit(1);
+#ifdef JIT_STATS
+    a.mov(x86::rax, imm((uint64_t) &b->st_exit1)); a.inc(x86::qword_ptr(x86::rax));
+#endif
 #endif
     a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
   }
@@ -3211,6 +3257,9 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   a.jmp(x86::qword_ptr(x86::rbp, (int32_t) m_off.jit_exit));   // shared epilogue: sync pins, restore frame, ret
 
   // Cold tail: the outlined memop slow paths (dead 99.8% of the time -- dpc hit rate).
+#ifdef JIT_STATS
+  g_cold_stub_counters = exit_kind_counter(3);   // [3] bail, [4] trapped
+#endif
   for (const ColdMemStub& s : cold)
     emit_cold_mem_stub(a, gpa, m_off, s);
 
@@ -3224,10 +3273,12 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     for (const DirectExit& x : dexits) {
       if (x.gate) {                                     // gate failed: plain exit, no patch request
         a.bind(x.gate_fail);
+        stat_gate_exit();
         a.mov(x86::r10, imm(x.pc));
         a.jmp(exit_common);
       }
       a.bind(x.stub);
+      stat_exit(6);
       a.mov(x86::r10, imm(x.pc));
       a.lea(x86::rax, x86::ptr(x.desc));
       a.or_(x86::rax, imm(2 | (b->asm_global ? 0 : 1)));   // bit 1: PatchSite; bit 0: non-global source
@@ -3421,8 +3472,8 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   a.xor_(x86::r13d, x86::r13d);                       // chain count := 0
   for (int k = 0; k < n_pins; ++k)                     // load the trace's pin set from regs[]
     a.mov(x86::gpq((uint32_t) pin_hosts[k]), x86::qword_ptr(x86::rbx, pin_guest[k] * 8));
-  a.mov(x86::r8, x86::qword_ptr(x86::rbx, 22 * 8));
-  a.mov(x86::r9, x86::qword_ptr(x86::rbx, 23 * 8));
+  a.mov(x86::r8, x86::qword_ptr(x86::rbx, kVolPins[0] * 8));
+  a.mov(x86::r9, x86::qword_ptr(x86::rbx, kVolPins[1] * 8));
   if (vol_sync) a.mov(x86::r8, x86::qword_ptr(x86::rbx, vol_reg * 8));   // region-cached GPR
 
   Label done = a.new_label();   // shared side-exit/return: EAX preset to the instr count, state.pc live
@@ -3464,8 +3515,8 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   RegAlloc ra;
   for (int r = 0; r < 32; ++r) ra.host[r] = -1;
   ra.rax_holds = -1;
-  ra.vol_bind = 22;
-  ra.vol_bind2 = 23;
+  ra.vol_bind = kVolPins[0];
+  ra.vol_bind2 = kVolPins[1];
   ra.dpc_live = false;
   ra.dpc_base = ra.dpc_disp = 0;
   ra.dpc_write = ra.dpc_force_align = false;
@@ -3476,8 +3527,8 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
     ra.licm_slots = m_licm_pool + m_licm_next; ra.licm_n = 0; ra.licm_max = left > 64 ? 64 : left; }
 #endif
   for (int k = 0; k < n_pins; ++k) ra.host[pin_guest[k]] = pin_hosts[k];
-  ra.host[22] = (int)x86::r8.id();
-  ra.host[23] = (int)x86::r9.id();
+  ra.host[kVolPins[0]] = (int)x86::r8.id();
+  ra.host[kVolPins[1]] = (int)x86::r9.id();
   if (vol_sync) { ra.host[vol_reg] = (int) x86::r8.id(); ra.vol_bind = vol_reg; }
 
   std::vector<ColdMemStub> cold;   // outlined memop slow paths, emitted after the epilogue
@@ -3605,16 +3656,16 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
       }
       // R8/R9 are caller-saved on both host ABIs. Publish the volatile global pins
       // across jit_indirect just as emit_call does for ordinary helpers.
-      a.mov(x86::qword_ptr(x86::rbx, 22 * 8), x86::r8);
-      a.mov(x86::qword_ptr(x86::rbx, 23 * 8), x86::r9);
+      a.mov(x86::qword_ptr(x86::rbx, kVolPins[0] * 8), x86::r8);
+      a.mov(x86::qword_ptr(x86::rbx, kVolPins[1] * 8), x86::r9);
       a.mov(x86::gpq(gpa[0]), x86::rbp);
       a.mov(x86::gpq(gpa[1]), x86::r10);
       a.xor_(x86::gpd(gpa[2]), x86::gpd(gpa[2]));                 // no per-site cache for trace final exits yet
       { const int hi = helper_index(hs, hs.indirect_helper);
         if (hi >= 0 && m_off.helpers) a.call(x86::qword_ptr(x86::rbp, (int32_t) (m_off.helpers + hi * 8)));
         else { a.mov(x86::rax, imm((uint64_t) hs.indirect_helper)); a.call(x86::rax); } }
-      a.mov(x86::r8, x86::qword_ptr(x86::rbx, 22 * 8));
-      a.mov(x86::r9, x86::qword_ptr(x86::rbx, 23 * 8));
+      a.mov(x86::r8, x86::qword_ptr(x86::rbx, kVolPins[0] * 8));
+      a.mov(x86::r9, x86::qword_ptr(x86::rbx, kVolPins[1] * 8));
       a.test(x86::rax, x86::rax); a.jz(jmiss);
       a.jmp(x86::rax);                                    // HIT: tail into the target block's body
       a.bind(jmiss);
@@ -3649,8 +3700,8 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
     if (pins_differ) {   // adapter: trace pins -> regs[], then the global block convention
       for (int k = 0; k < n_pins; ++k) a.mov(x86::qword_ptr(x86::rbx, pin_guest[k] * 8), x86::gpq((uint32_t) pin_hosts[k]));
       // A miss returns through done_nosync, so publish the volatile pins here too.
-      a.mov(x86::qword_ptr(x86::rbx, 22 * 8), x86::r8);
-      a.mov(x86::qword_ptr(x86::rbx, 23 * 8), x86::r9);
+      a.mov(x86::qword_ptr(x86::rbx, kVolPins[0] * 8), x86::r8);
+      a.mov(x86::qword_ptr(x86::rbx, kVolPins[1] * 8), x86::r9);
       a.mov(x86::r12, x86::qword_ptr(x86::rbx, 1 * 8));
       a.mov(x86::r15, x86::qword_ptr(x86::rbx, 16 * 8)); a.mov(x86::r14, x86::qword_ptr(x86::rbx, 30 * 8));
 #ifdef _WIN32
@@ -3691,8 +3742,8 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   a.bind(done);
   for (int k = 0; k < n_pins; ++k)                     // sync the trace's pin set back to regs[]
     a.mov(x86::qword_ptr(x86::rbx, pin_guest[k] * 8), x86::gpq((uint32_t) pin_hosts[k]));
-  a.mov(x86::qword_ptr(x86::rbx, 22 * 8), x86::r8);
-  a.mov(x86::qword_ptr(x86::rbx, 23 * 8), x86::r9);
+  a.mov(x86::qword_ptr(x86::rbx, kVolPins[0] * 8), x86::r8);
+  a.mov(x86::qword_ptr(x86::rbx, kVolPins[1] * 8), x86::r9);
   if (vol_sync) a.mov(x86::qword_ptr(x86::rbx, vol_reg * 8), x86::r8);   // region-cached GPR
 #ifndef JIT_VERIFY
   a.bind(done_nosync);   // chain paths whose adapter already synced land here

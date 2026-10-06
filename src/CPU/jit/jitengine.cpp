@@ -154,6 +154,7 @@ CJitEngine::CJitEngine(int cpu_id) : m_cpu_id(cpu_id), m_recorded(0), m_code_byt
   memset(m_licm_pool, 0, sizeof(m_licm_pool));
   m_link_invalidations = m_links_cleared = m_asn_link_clears = m_asn_links_cleared = 0;
   m_evict_link_clears = m_reclaims = m_jmp_exits = m_jc_hits = m_mb_exec = 0;
+  memset(m_exit_kind, 0, sizeof(m_exit_kind));
   memset(m_bump_cause, 0, sizeof(m_bump_cause));
   m_direct_patches = m_patch_unreachable = 0;
   m_page_clears = m_page_links_cleared = 0;
@@ -735,6 +736,26 @@ uint64_t CJitEngine::note_exec(uint32_t native_instr, uint32_t interp_instr, uin
            (unsigned long long) m_asn_link_clears, (unsigned long long) m_asn_links_cleared,
            (unsigned long long) m_page_clears, (unsigned long long) m_page_links_cleared,
            (unsigned long long) m_reclaims);
+  printf("[JIT][STATS][CPU%d] exits: ceiling %llu | pending %llu (timers %llu, int %llu) | resolver-null %llu | mem-bail %llu | mem-trap %llu | op-bail %llu | site-stub %llu | pic-miss %llu\n",
+         m_cpu_id, (unsigned long long) m_exit_kind[0], (unsigned long long) m_exit_kind[1], (unsigned long long) m_exit_kind[8], (unsigned long long) m_exit_kind[9],
+         (unsigned long long) m_exit_kind[2], (unsigned long long) m_exit_kind[3], (unsigned long long) m_exit_kind[4], (unsigned long long) m_exit_kind[5],
+         (unsigned long long) m_exit_kind[6], (unsigned long long) m_exit_kind[7]);
+  {   // top blocks by kind-1 exits this window
+    int top[6] = {-1,-1,-1,-1,-1,-1}; uint64_t topv[6] = {0,0,0,0,0,0};
+    for (int i2 = 0; i2 < kCacheEntries; ++i2) {
+      const uint64_t v = m_blocks[i2].st_exit1;
+      if (!v) continue;
+      int k = 5; if (v <= topv[5]) { m_blocks[i2].st_exit1 = 0; continue; }
+      while (k > 0 && topv[k - 1] < v) { top[k] = top[k - 1]; topv[k] = topv[k - 1]; --k; }
+      top[k] = i2; topv[k] = v;
+    }
+    for (int k = 0; k < 6; ++k) if (top[k] >= 0) {
+      JitBlock& b = m_blocks[top[k]];
+      printf("[JIT][STATS][CPU%d]   exit1 %llu from tag=%016llx pal=%d prefix=%u n_instr=%u asm_global=%d\n",
+             m_cpu_id, (unsigned long long) topv[k], (unsigned long long) b.tag, (int) b.pal_shadow, b.prefix_len, b.n_instr, (int) b.asm_global);
+      b.st_exit1 = 0;
+    }
+  }
   if (m_link_invalidations)
     printf("[JIT][STATS][CPU%d] bump-cause: remap %llu | tbia %llu | tbiap %llu | tbis-gh %llu | flush %llu | flush-asm %llu | evict %llu | reclaim %llu\n",
            m_cpu_id, (unsigned long long) m_bump_cause[kBumpRemap], (unsigned long long) m_bump_cause[kBumpTbia],
@@ -838,6 +859,7 @@ uint64_t CJitEngine::note_exec(uint32_t native_instr, uint32_t interp_instr, uin
   m_licm_same = m_licm_diff = 0;
   m_link_invalidations = m_links_cleared = m_asn_link_clears = m_asn_links_cleared = 0;
   m_evict_link_clears = m_jmp_exits = m_jc_hits = m_mb_exec = 0;
+  memset(m_exit_kind, 0, sizeof(m_exit_kind));
   m_direct_patches = m_patch_unreachable = 0;
   m_page_clears = m_page_links_cleared = 0;
   memset(m_bump_cause, 0, sizeof(m_bump_cause));

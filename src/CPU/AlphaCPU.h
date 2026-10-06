@@ -239,7 +239,7 @@ class CJitEngine;   // JIT block-cache engine (ES40_JIT builds)
 /// Byte numer of an address in an ICache entry.
 #define ICACHE_BYTE_MASK  (u64) (ICACHE_INDEX_MASK << 2)
 /// EV68CB/EV68DC HRM 2.1.1.3 and 2.1.6.4: 128 entries in each ITB/DTB.
-#define TB_ENTRIES        128
+#define TB_ENTRIES        1024   // software TB; the architecture never exposes its size, more entries = fewer PAL miss handlers
 
 /**
  * \brief Emulated CPU.
@@ -473,6 +473,7 @@ private:
 
   // CALL_PAL WTINT idle nap: enabled by the cpu config, announced once
   bool                                  idle_nap_enabled = false;
+  bool                                  m_unaligned_fixup = false;   // cpu.unaligned_fixup: do misaligned LD/ST in place instead of trapping to PAL UNALIGN
   bool                                  idle_announced = false;
 
   // Wall-clock RPCC: state.cc advances by real elapsed time * cpu_hz so it tracks the configured
@@ -543,9 +544,9 @@ private:
   // Data page translation cache: direct-mapped by virtual page (kDpcEntries slots/dir) so a
   // multi-page access pattern doesn't thrash a single slot. The inline load checks one slot.
   static constexpr int kDpcBits    = 7;                  // 128 slots per mode bank (8KB pages -> 1 MB)
-  // Page-indexed hint into state.tb[]: FindTBEntry probes it before the linear scan. Not
-  // architectural state; cleared on every TB write or invalidate.
-  u8 m_tb_idx[2][256] = {};
+  // Page-indexed hint into state.tb[]: FindTBEntry and add_tb probe it before anything else.
+  // Entries are validated on use, so a stale hint is harmless and nothing needs clearing.
+  u16 m_tb_idx[2][256] = {};
   inline void tb_index_clear(int t) { memset(m_tb_idx[t], 0, sizeof(m_tb_idx[t])); }
   static constexpr int kDpcEntries = 1 << kDpcBits;
   static constexpr u64 kDpcMask    = (u64) kDpcEntries - 1;
@@ -602,6 +603,11 @@ private:
   void* m_link_from = nullptr; // LinkSlot* array the dispatcher should patch
   void* m_jit_helper_tab[19] = {}; // helper fn table
   void* m_jit_exit = nullptr;      // shared epilogue, jumped through by compiled code
+#ifdef JIT_STATS
+  u64 m_stat_tb[10] = {};          // windowed: dtbm-single, double, itb-miss, dfault, tbia-D, tbiap-D, tbis_d, fills-D, miss w/ hint slot invalid, miss w/ hint slot other page
+  u64 m_stat_va[128][2] = {};      // windowed miss-page histogram (page, count)
+  u64 m_stat_kick[8] = {};         // windowed: check_int raised by eir / sir / ast / irq_h / timer; delivered; masked-at-poll
+#endif
 #if defined(JIT_REGPROF) && defined(_WIN32)
   // In-process RIP sampler (ES40_JIT_SAMPLER=1): attributes CPU0's host time to JIT blocks / C++ symbols.
   void*                  m_host_thread = nullptr;
@@ -627,6 +633,7 @@ private:
   static int jit_read_vpte(CAlphaCPU* cpu, u64 va, u64 descr, u64* out);    // HW_LD virtual: translated read / direct native-PAL fault
   static int jit_read_wchk(CAlphaCPU* cpu, u64 va, int size_bits, u64* out);    // HW_LD func 0xa: longword virtual + WrChk
   static int jit_write(CAlphaCPU* cpu, u64 va, u64 descr, u64 value);
+  static int jit_unaligned_rw(CAlphaCPU* cpu, u64 va, int size_bits, u32 ins, int rw, u64* data);  // unaligned_fixup: split DRAM access
   static int jit_write_phys(CAlphaCPU* cpu, u64 phys, int size_bits, u64 value);  // HW_ST physical: no translation
   static int jit_fp_read(CAlphaCPU* cpu, u64 va, u32 fa, u64 descr);   // FP format in descr[17:16]
   static int jit_fp_write(CAlphaCPU* cpu, u64 va, u32 fa, u64 descr);
@@ -1037,7 +1044,14 @@ inline void CAlphaCPU::kick_int_if_pending()
   if ((state.eien & state.eir) || (state.sien & state.sir)
       || (state.asten
           && (state.aster & state.astrr & ((1 << (state.cm + 1)) - 1))))
+  {
+#ifdef JIT_STATS
+    if (state.eien & state.eir) m_stat_kick[0]++;
+    else if (state.sien & state.sir) m_stat_kick[1]++;
+    else m_stat_kick[2]++;
+#endif
     state.check_int = true;
+  }
 }
 
 /**
@@ -1057,6 +1071,9 @@ inline void CAlphaCPU::irq_h(int number, bool assert, int delay)
     else
     {
       state.eir |= bit;
+#ifdef JIT_STATS
+      m_stat_kick[3]++;
+#endif
       state.check_int = true;
     }
 
