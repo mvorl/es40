@@ -295,9 +295,11 @@ private:
     RowEdge row_edges[3]{};
     int left = 0, top = 0, right = 0, bottom = 0;
     bool textured = false, flat = false, blend = false, no_depth = false, depth_less = false;
+    bool affine = false, texture_alpha = false;
     uint32_t wid = 0, bank = 0, color_width = 0;
     size_t color_offset = 0;
     uint32_t texture_base = 0, texture_width = 0, texture_height = 0;
+    uint32_t texture_mode = 0, texture_environment = 0;
     unsigned texture_row_shift = 0;
   };
   bool triangle_profile() const;
@@ -307,6 +309,8 @@ private:
   void triangle_command(uint32_t address, uint32_t value);
   uint32_t texture_color(double s, double t, uint32_t base,
     uint32_t width, uint32_t height, unsigned row_shift) const;
+  std::array<double, 4> texture_sample(double s, double t, uint32_t base,
+    uint32_t width, uint32_t height, unsigned row_shift, bool rgba) const;
   struct BlockOperation
   {
     uint32_t value = 0, banks = 0, source = 0, clear_width = 0, groups = 0,

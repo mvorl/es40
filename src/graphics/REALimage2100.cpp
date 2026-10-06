@@ -1561,15 +1561,17 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 
 bool CRealImage2100::triangle_profile() const
 {
-	const uint32_t pipeline = peek(PipelineControl0), depth_control = plane_value(2, 5, 0);
+	const uint32_t pipeline = peek(PipelineControl0), depth_control = plane_value(2, 5, 0),
+		texture_format = pipeline & 0x0f007000u, texture_mode = pipeline & 0x00038000u;
 	const bool textured = (pipeline & 0x80000000u) != 0,
 		no_depth = depth_control == 0x0a000200, blend = peek(PipelineControl2) == 0x20000080;
 	// Disabled texturing retains its format, filtering, wrapping and size fields.
 	constexpr uint32_t texture_fields = 0x0f7fffff;
 	if ((pipeline & ~(0x80000000u | texture_fields)) ||
-		(textured && ((pipeline & ~0x00000ff0u) != 0x8a4c2000u ||
-			((pipeline >> 8) & 15) > 10 || ((pipeline >> 4) & 15) > 10 || !no_depth)) ||
-		(blend && textured))
+		(textured && ((pipeline & ~0x0f03fff0u) != 0x804c0000u ||
+			(texture_format != 0x0a002000u && texture_format != 0x09003000u) ||
+			texture_mode > 0x00018000u ||
+			((pipeline >> 8) & 15) > 10 || ((pipeline >> 4) & 15) > 10)))
 		return false;
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
 		bank = (banks & 3) == 2 ? 1 : 0,
@@ -1582,7 +1584,7 @@ bool CRealImage2100::triangle_profile() const
 		copy_columns > (m_color_width + 10 * width - 1) / (10 * width) ||
 		m_pending.width || m_readback.width)
 		return false;
-	if (textured && global != 0x180)
+	if (textured && !no_depth && global != 0x190)
 		return false;
 	if (textured)
 	{
@@ -1633,9 +1635,15 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 	// These commands retain the slot without launching a primitive.
 	if (!value || value == 0x10)
 		return TrianglePreparation::NoOp;
-	const bool textured = (peek(PipelineControl0) & 0x80000000u) != 0,
+	const uint32_t pipeline = peek(PipelineControl0), texture_mode = pipeline & 0x00038000u;
+	const bool textured = (pipeline & 0x80000000u) != 0,
 		flat = flat_vertex_register(address), no_depth = plane_value(2, 5, 0) == 0x0a000200,
-		blend = peek(PipelineControl2) == 0x20000080;
+		blend = peek(PipelineControl2) == 0x20000080, affine = peek(GlobalControl0) == 0x190,
+		texture_alpha = (pipeline & 0x0f007000u) == 0x09003000u,
+		use_color = !textured || texture_mode == 0x8000 || texture_mode == 0x10000 ||
+			(texture_mode == 0 && texture_alpha),
+		use_alpha = blend && !(textured && texture_alpha && texture_mode == 0x18000),
+		use_w = textured && !affine;
 	if (value != 0x13 || !triangle_profile() ||
 		(!no_depth && (flat || blend) && peek(GlobalControl0) != 0x190))
 	{
@@ -1646,9 +1654,11 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 	for (unsigned slot = 0; slot < 3; ++slot)
 	{
 		double component[7]{};
-		for (unsigned i = textured || flat ? 4 : blend ? 0 : 1;
-			i < (no_depth && !textured ? 6u : 7u); ++i)
+		for (unsigned i = 0; i < 7; ++i)
 		{
+			if ((i == 0 && (flat || !use_alpha)) ||
+				(i > 0 && i < 4 && (flat || !use_color)) || (i == 6 && no_depth && !use_w))
+				continue;
 			const auto reg = m_shadow.find(VertexBase + slot * VertexStride + i * 4);
 			if (reg == m_shadow.end())
 			{
@@ -1660,7 +1670,7 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 			if (!std::isfinite(input) ||
 				(i == 0 && (input < 0 || input > 256)) ||
 				((i == 4 || i == 5) && (input < -32768 || input >= 32768)) ||
-				(i == 6 && (textured ? input == 0 : (input < 0 || input > 1))))
+				(i == 6 && (use_w ? input == 0 : (input < 0 || input > 1))))
 			{
 				return TrianglePreparation::Rejected;
 			}
@@ -1694,18 +1704,20 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 		}
 	}
 	// The shared projection scale can be negative; reject a horizon crossing.
-	if (textured && ((vertex[0].z < 0) != (vertex[1].z < 0) ||
+	if (use_w && ((vertex[0].z < 0) != (vertex[1].z < 0) ||
 		(vertex[0].z < 0) != (vertex[2].z < 0)))
 	{
 		return TrianglePreparation::Rejected;
 	}
 	double flat_color[4]{};
-	if (flat && !textured)
+	if (flat && (use_color || use_alpha))
 	{
 		// The launching slot supplies flat color, regardless of winding.
 		const uint32_t slot = (address - FlatVertexBase) / VertexStride;
-		for (unsigned i = blend ? 0 : 1; i < 4; ++i)
+		for (unsigned i = 0; i < 4; ++i)
 		{
+			if (i == 0 ? !use_alpha : !use_color)
+				continue;
 			const auto reg = m_shadow.find(VertexBase + slot * VertexStride + i * 4);
 			if (reg == m_shadow.end())
 			{
@@ -1717,7 +1729,7 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 			{
 				return TrianglePreparation::Rejected;
 			}
-			flat_color[i] = i ? std::clamp(double(input), 0.0, 255.0) : input / 256.0;
+			flat_color[i] = i ? std::clamp(double(input), 0.0, textured ? 256.0 : 255.0) : input / 256.0;
 		}
 	}
 	auto edge = [](const Vertex& a, const Vertex& b, double x, double y) {
@@ -1766,6 +1778,7 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 	operation.flat = flat;
 	operation.blend = blend;
 	operation.no_depth = no_depth;
+	operation.affine = affine;
 	operation.depth_less = depth_less;
 	operation.wid = wid;
 	operation.bank = bank;
@@ -1775,6 +1788,9 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 	operation.texture_width = texture_width;
 	operation.texture_height = texture_height;
 	operation.texture_row_shift = texture_row_shift;
+	operation.texture_alpha = texture_alpha;
+	operation.texture_mode = texture_mode;
+	operation.texture_environment = peek(PipelineControl5);
 	operation.row_edges[0] = {1, 2, c.y == b.y ? 0 : (c.x - b.x) / (c.y - b.y), include_a};
 	operation.row_edges[1] = {2, 0, a.y == c.y ? 0 : (a.x - c.x) / (a.y - c.y), include_b};
 	operation.row_edges[2] = {0, 1, b.y == a.y ? 0 : (b.x - a.x) / (b.y - a.y), include_c};
@@ -1803,6 +1819,9 @@ void CRealImage2100::execute_triangle(const TriangleOperation& operation)
 		right = operation.right, bottom = operation.bottom;
 	const bool textured = operation.textured, flat = operation.flat,
 		blend = operation.blend, no_depth = operation.no_depth, depth_less = operation.depth_less,
+		affine = operation.affine, texture_alpha = operation.texture_alpha,
+		simple_texture = textured && !texture_alpha && operation.texture_mode == 0 &&
+			!affine && !blend && no_depth,
 		include_a = operation.row_edges[0].inclusive,
 		include_b = operation.row_edges[1].inclusive,
 		include_c = operation.row_edges[2].inclusive;
@@ -1822,7 +1841,7 @@ void CRealImage2100::execute_triangle(const TriangleOperation& operation)
 	uint32_t sample_base = texture_base;
 	unsigned sample_row_shift = texture_row_shift;
 	std::vector<uint8_t> dense_texture;
-	if (textured && (texture_width != 1 || texture_height != 1) &&
+	if (simple_texture && (texture_width != 1 || texture_height != 1) &&
 		(_mm_getcsr() & _MM_ROUND_MASK) == _MM_ROUND_NEAREST &&
 		uint64_t(right - left + 1) * unsigned(bottom - top + 1) >= uint64_t(texture_width) * texture_height * 4)
 	{
@@ -1878,7 +1897,7 @@ void CRealImage2100::execute_triangle(const TriangleOperation& operation)
 	};
 
 #if defined(__AVX2__) && defined(REALIMAGE_SSE2)
-	if (textured && (_mm_getcsr() & _MM_ROUND_MASK) == _MM_ROUND_NEAREST)
+	if (simple_texture && (_mm_getcsr() & _MM_ROUND_MASK) == _MM_ROUND_NEAREST)
 	{
 		const __m256d zero = _mm256_setzero_pd(), area2 = _mm256_set1_pd(area);
 		auto vector_edge = [&] (const Vertex& p, const Vertex& q, __m256d xx, __m256d yy) {
@@ -1977,7 +1996,7 @@ void CRealImage2100::execute_triangle(const TriangleOperation& operation)
 		return;
 	}
 #elif defined(REALIMAGE_SSE2)
-	if (textured && (_mm_getcsr() & _MM_ROUND_MASK) == _MM_ROUND_NEAREST)
+	if (simple_texture && (_mm_getcsr() & _MM_ROUND_MASK) == _MM_ROUND_NEAREST)
 	{
 		const __m128d zero = _mm_setzero_pd(), area2 = _mm_set1_pd(area);
 		auto vector_edge = [&] (const Vertex& p, const Vertex& q, __m128d xx, __m128d yy) {
@@ -2089,18 +2108,6 @@ void CRealImage2100::execute_triangle(const TriangleOperation& operation)
 				continue;
 			uint32_t& destination = color_plane[offset];
 			const double wb = eb / area, wc = ec / area;
-			if (textured)
-			{
-				// This profile supplies scaled clip W in the vertex Z slot.
-				const double wa = ea / area / a.z, tb = wb / b.z, tc = wc / c.z,
-					denominator = wa + tb + tc;
-				const double s = (wa * a.s + tb * b.s + tc * c.s) / denominator,
-					t = (wa * a.t + tb * b.t + tc * c.t) / denominator;
-				const uint32_t color = texture_color(s, t, texture_base,
-					texture_width, texture_height, texture_row_shift);
-				destination = (destination & 0xff000000u) | color;
-				continue;
-			}
 			if (!no_depth)
 			{
 				const uint32_t z = uint32_t(std::clamp(a.z + wb * (b.z - a.z) + wc * (c.z - a.z),
@@ -2109,6 +2116,66 @@ void CRealImage2100::execute_triangle(const TriangleOperation& operation)
 				if (z > old_z || (depth_less && z == old_z))
 					continue;
 				auxiliary = (auxiliary & ~0x0fff0fffu) | (z & 0xfff) | ((z & 0xfff000) << 4);
+			}
+			if (textured)
+			{
+				double s, t;
+				if (affine)
+				{
+					s = a.s + wb * (b.s - a.s) + wc * (c.s - a.s);
+					t = a.t + wb * (b.t - a.t) + wc * (c.t - a.t);
+				}
+				else
+				{
+					const double wa = ea / area / a.z, tb = wb / b.z, tc = wc / c.z,
+						denominator = wa + tb + tc;
+					s = (wa * a.s + tb * b.s + tc * c.s) / denominator;
+					t = (wa * a.t + tb * b.t + tc * c.t) / denominator;
+				}
+				if (simple_texture)
+				{
+					const uint32_t color = texture_color(s, t, texture_base,
+						texture_width, texture_height, texture_row_shift);
+					destination = (destination & 0xff000000u) | color;
+					continue;
+				}
+				const auto texel = texture_sample(s, t, texture_base,
+					texture_width, texture_height, texture_row_shift, texture_alpha);
+				auto primary = [&](double av, double bv, double cv, unsigned i) {
+					return flat ? flat_color[i] / (i ? 256.0 : 1.0) :
+						std::clamp(av + wb * (bv - av) + wc * (cv - av), 0.0, 256.0) / 256.0;
+				};
+				double alpha = primary(a.alpha, b.alpha, c.alpha, 0);
+				if (texture_alpha && operation.texture_mode != 0)
+					alpha = operation.texture_mode == 0x18000 ? texel[0] : alpha * texel[0];
+				auto channel = [&](double av, double bv, double cv, unsigned i) {
+					const unsigned shift = (3 - i) * 8;
+					const double fragment = primary(av, bv, cv, i), texture = texel[i];
+					double source;
+					switch (operation.texture_mode)
+					{
+					case 0:
+						source = texture_alpha ? fragment * (1 - texel[0]) + texture * texel[0] : texture;
+						break;
+					case 0x8000:
+						source = fragment * texture;
+						break;
+					case 0x10000:
+						source = fragment * (1 - texture) +
+							((operation.texture_environment >> shift) & 255) / 255.0 * texture;
+						break;
+					default:
+						source = texture;
+						break;
+					}
+					const double result = blend ? source * 255 * alpha +
+						((destination >> shift) & 255) * (1 - alpha) : source * 255;
+					return uint32_t(std::clamp(result, 0.0, 255.0));
+				};
+				const uint32_t color = (channel(a.red, b.red, c.red, 1) << 16) |
+					(channel(a.green, b.green, c.green, 2) << 8) | channel(a.blue, b.blue, c.blue, 3);
+				destination = (destination & 0xff000000u) | color;
+				continue;
 			}
 			if (flat)
 			{
@@ -2157,6 +2224,29 @@ uint32_t CRealImage2100::texture_color(double s, double t, uint32_t base,
 		return uint32_t(std::clamp((top + fy * (bottom - top)) * 255 / mask, 0.0, 255.0));
 	};
 	return (channel(11, 31) << 16) | (channel(5, 63) << 8) | channel(0, 31);
+}
+
+std::array<double, 4> CRealImage2100::texture_sample(double s, double t, uint32_t base,
+	uint32_t width, uint32_t height, unsigned row_shift, bool rgba) const
+{
+	const double u = realimage_repeat_fraction(s) * width - 0.5,
+		v = realimage_repeat_fraction(t) * height - 0.5;
+	const int x = int(std::floor(u)), y = int(std::floor(v));
+	const double fx = u - x, fy = v - y;
+	auto texel = [&](int tx, int ty) {
+		const uint32_t offset = base + ((uint32_t(ty) & (height - 1)) << row_shift) +
+			((uint32_t(tx) & (width - 1)) << 1);
+		return uint32_t(m_texture[offset]) | (uint32_t(m_texture[offset + 1]) << 8);
+	};
+	const uint32_t pixels[] = {texel(x, y), texel(x + 1, y), texel(x, y + 1), texel(x + 1, y + 1)};
+	auto channel = [&](unsigned shift, uint32_t mask) {
+		const double a = (pixels[0] >> shift) & mask, b = (pixels[1] >> shift) & mask,
+			c = (pixels[2] >> shift) & mask, d = (pixels[3] >> shift) & mask;
+		const double top = a + fx * (b - a), bottom = c + fx * (d - c);
+		return (top + fy * (bottom - top)) / mask;
+	};
+	return rgba ? std::array<double, 4>{channel(12, 15), channel(8, 15), channel(4, 15), channel(0, 15)} :
+		std::array<double, 4>{1, channel(11, 31), channel(5, 63), channel(0, 31)};
 }
 
 void CRealImage2100::host_data(uint32_t v)
