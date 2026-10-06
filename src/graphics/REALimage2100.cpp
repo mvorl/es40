@@ -1553,7 +1553,7 @@ bool CRealImage2100::triangle_profile() const
 {
 	const uint32_t pipeline = peek(PipelineControl0);
 	const bool textured = (pipeline & 0x80000000u) != 0,
-		flat = pipeline == 0x0a4c2770, no_depth = textured || flat,
+		flat = pipeline == 0x0a4c2770 || pipeline == 0x0a4c2880, no_depth = textured || flat,
 		blend = peek(PipelineControl2) == 0x20000080;
 	if ((pipeline != 0x05008001 && pipeline != 0x8a4c2660 &&
 		pipeline != 0x8a4c2770 && pipeline != 0x8a4c2880 && !flat) || (blend && !flat))
