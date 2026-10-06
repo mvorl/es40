@@ -1703,8 +1703,9 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 			component[4], component[5], component[6], 0, 0};
 		if (textured)
 		{
+			// Optimized driver packets leave the leading texture word unwritten.
 			float coordinates[4];
-			for (unsigned i = 0; i < 4; ++i)
+			for (unsigned i = 1; i < 4; ++i)
 			{
 				const auto reg = m_shadow.find(VertexTextureBase + slot * VertexStride + i * 4);
 				if (reg == m_shadow.end())
@@ -1717,7 +1718,7 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 					return TrianglePreparation::Rejected;
 				}
 			}
-			if (coordinates[0] != 1 || coordinates[3] != 0)
+			if (coordinates[3] != 0)
 			{
 				return TrianglePreparation::Rejected;
 			}
