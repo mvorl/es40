@@ -1569,7 +1569,8 @@ bool CRealImage2100::triangle_profile() const
 	constexpr uint32_t texture_fields = 0x0f7fffff;
 	if ((pipeline & ~(0x80000000u | texture_fields)) ||
 		(textured && ((pipeline & ~0x0f03fffcu) != 0x804c0000u ||
-			(texture_format != 0x0a002000u && texture_format != 0x09003000u) ||
+			(texture_format != 0x0a002000u && texture_format != 0x09003000u &&
+				texture_format != 0x0d002000u && texture_format != 0x0d003000u) ||
 			texture_mode > 0x00018000u ||
 			((pipeline >> 8) & 15) > 10 || ((pipeline >> 4) & 15) > 10)))
 		return false;
@@ -1595,9 +1596,10 @@ bool CRealImage2100::triangle_profile() const
 	{
 		const uint32_t base = peek(TextureBase), texture_width = 1u << ((pipeline >> 8) & 15),
 			texture_height = 1u << ((pipeline >> 4) & 15),
+			texel_bytes = (texture_format & 0x0f000000u) == 0x0d000000u ? 4 : 2,
 			row_bytes = m_texture.size() == MaxTextureSize ? 0x4000 : 0x2000;
-		if ((base & 1) || (base & 0x3fff) + texture_width * 2 > row_bytes ||
-			uint64_t(base) + (texture_height - 1) * 0x4000 + texture_width * 2 > MaxTextureSize)
+		if ((base & (texel_bytes - 1)) || (base & 0x3fff) + texture_width * texel_bytes > row_bytes ||
+			uint64_t(base) + (texture_height - 1) * 0x4000 + texture_width * texel_bytes > MaxTextureSize)
 			return false;
 	}
 	const std::pair<uint32_t, uint32_t> profile[] = {
@@ -1645,13 +1647,13 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 	const bool textured = (pipeline & 0x80000000u) != 0,
 		flat = flat_vertex_register(address), no_depth = plane_value(2, 5, 0) == 0x0a000200,
 		blend = plane_value(bank, 4, 0) == 0xd0d0d0d0u, affine = peek(GlobalControl0) == 0x190,
-		texture_alpha = (pipeline & 0x0f007000u) == 0x09003000u,
+		texture_alpha = (pipeline & 0x00007000u) == 0x00003000u,
 		use_color = !textured || texture_mode == 0x8000 || texture_mode == 0x10000 ||
 			(texture_mode == 0 && texture_alpha),
 		use_alpha = blend && !(textured && texture_alpha && texture_mode == 0x18000),
 		use_w = textured && !affine;
-	if (value != 0x13 || !triangle_profile() ||
-		(!no_depth && (flat || blend) && peek(GlobalControl0) != 0x190))
+	// Untextured perspective draws retain the existing linear depth approximation.
+	if (value != 0x13 || !triangle_profile())
 	{
 		return TrianglePreparation::Rejected;
 	}
@@ -1795,6 +1797,7 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 	operation.texture_height = texture_height;
 	operation.texture_row_shift = texture_row_shift;
 	operation.texture_alpha = texture_alpha;
+	operation.texture_format = pipeline & 0x0f007000u;
 	operation.texture_mode = texture_mode;
 	operation.texture_environment = peek(PipelineControl5);
 	operation.texture_clamp = pipeline & 0x0c;
@@ -1828,7 +1831,7 @@ void CRealImage2100::execute_triangle(const TriangleOperation& operation)
 	const bool textured = operation.textured, flat = operation.flat,
 		blend = operation.blend, no_depth = operation.no_depth, depth_less = operation.depth_less,
 		affine = operation.affine, texture_alpha = operation.texture_alpha,
-		simple_texture = textured && !texture_alpha && operation.texture_mode == 0 &&
+		simple_texture = textured && operation.texture_format == 0x0a002000u && operation.texture_mode == 0 &&
 			!affine && !blend && no_depth && !operation.texture_clamp,
 		include_a = operation.row_edges[0].inclusive,
 		include_b = operation.row_edges[1].inclusive,
@@ -2155,7 +2158,7 @@ void CRealImage2100::execute_triangle(const TriangleOperation& operation)
 					continue;
 				}
 				const auto texel = texture_sample(s, t, texture_base,
-					texture_width, texture_height, texture_row_shift, texture_alpha,
+					texture_width, texture_height, texture_row_shift, operation.texture_format,
 					operation.texture_clamp, operation.texture_border);
 				auto primary = [&](double av, double bv, double cv, unsigned i) {
 					return flat ? flat_color[i] / (i ? 256.0 : 1.0) :
@@ -2243,10 +2246,11 @@ uint32_t CRealImage2100::texture_color(double s, double t, uint32_t base,
 }
 
 std::array<double, 4> CRealImage2100::texture_sample(double s, double t, uint32_t base,
-	uint32_t width, uint32_t height, unsigned row_shift, bool rgba,
+	uint32_t width, uint32_t height, unsigned row_shift, uint32_t format,
 	uint32_t clamp, uint32_t border) const
 {
-	const bool clamp_s = (clamp & 8) != 0, clamp_t = (clamp & 4) != 0;
+	const bool clamp_s = (clamp & 8) != 0, clamp_t = (clamp & 4) != 0,
+		rgba = (format & 0x7000) == 0x3000, wide = (format & 0x0f000000u) == 0x0d000000u;
 	const double u = (clamp_s ? std::clamp(s, 0.0, 1.0) : realimage_repeat_fraction(s)) * width - 0.5,
 		v = (clamp_t ? std::clamp(t, 0.0, 1.0) : realimage_repeat_fraction(t)) * height - 0.5;
 	const int x = int(std::floor(u)), y = int(std::floor(v));
@@ -2254,10 +2258,13 @@ std::array<double, 4> CRealImage2100::texture_sample(double s, double t, uint32_
 	auto texel = [&](int tx, int ty) {
 		// GL_CLAMP blends edge samples with the packed constant border.
 		if ((clamp_s && (tx < 0 || tx >= int(width))) || (clamp_t && (ty < 0 || ty >= int(height))))
-			return border & 0xffffu;
+			return border;
 		const uint32_t offset = base + ((uint32_t(ty) & (height - 1)) << row_shift) +
-			((uint32_t(tx) & (width - 1)) << 1);
-		return uint32_t(m_texture[offset]) | (uint32_t(m_texture[offset + 1]) << 8);
+			((uint32_t(tx) & (width - 1)) << (wide ? 2 : 1));
+		uint32_t value = uint32_t(m_texture[offset]) | (uint32_t(m_texture[offset + 1]) << 8);
+		if (wide)
+			value |= (uint32_t(m_texture[offset + 2]) << 16) | (uint32_t(m_texture[offset + 3]) << 24);
+		return value;
 	};
 	const uint32_t pixels[] = {texel(x, y), texel(x + 1, y), texel(x, y + 1), texel(x + 1, y + 1)};
 	auto channel = [&](unsigned shift, uint32_t mask) {
@@ -2266,6 +2273,8 @@ std::array<double, 4> CRealImage2100::texture_sample(double s, double t, uint32_
 		const double top = a + fx * (b - a), bottom = c + fx * (d - c);
 		return (top + fy * (bottom - top)) / mask;
 	};
+	if (wide)
+		return {rgba ? channel(24, 255) : 1, channel(16, 255), channel(8, 255), channel(0, 255)};
 	return rgba ? std::array<double, 4>{channel(12, 15), channel(8, 15), channel(4, 15), channel(0, 15)} :
 		std::array<double, 4>{1, channel(11, 31), channel(5, 63), channel(0, 31)};
 }
