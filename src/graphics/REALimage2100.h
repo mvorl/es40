@@ -300,6 +300,7 @@ private:
     size_t color_offset = 0;
     uint32_t texture_base = 0, texture_width = 0, texture_height = 0;
     uint32_t texture_mode = 0, texture_environment = 0;
+    uint32_t blend_control = 0, texture_clamp = 0, texture_border = 0;
     unsigned texture_row_shift = 0;
   };
   bool triangle_profile() const;
@@ -310,7 +311,8 @@ private:
   uint32_t texture_color(double s, double t, uint32_t base,
     uint32_t width, uint32_t height, unsigned row_shift) const;
   std::array<double, 4> texture_sample(double s, double t, uint32_t base,
-    uint32_t width, uint32_t height, unsigned row_shift, bool rgba) const;
+    uint32_t width, uint32_t height, unsigned row_shift, bool rgba,
+    uint32_t clamp, uint32_t border) const;
   struct BlockOperation
   {
     uint32_t value = 0, banks = 0, source = 0, clear_width = 0, groups = 0,

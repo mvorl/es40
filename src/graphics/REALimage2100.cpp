@@ -1564,11 +1564,11 @@ bool CRealImage2100::triangle_profile() const
 	const uint32_t pipeline = peek(PipelineControl0), depth_control = plane_value(2, 5, 0),
 		texture_format = pipeline & 0x0f007000u, texture_mode = pipeline & 0x00038000u;
 	const bool textured = (pipeline & 0x80000000u) != 0,
-		no_depth = depth_control == 0x0a000200, blend = peek(PipelineControl2) == 0x20000080;
+		no_depth = depth_control == 0x0a000200;
 	// Disabled texturing retains its format, filtering, wrapping and size fields.
 	constexpr uint32_t texture_fields = 0x0f7fffff;
 	if ((pipeline & ~(0x80000000u | texture_fields)) ||
-		(textured && ((pipeline & ~0x0f03fff0u) != 0x804c0000u ||
+		(textured && ((pipeline & ~0x0f03fffcu) != 0x804c0000u ||
 			(texture_format != 0x0a002000u && texture_format != 0x09003000u) ||
 			texture_mode > 0x00018000u ||
 			((pipeline >> 8) & 15) > 10 || ((pipeline >> 4) & 15) > 10)))
@@ -1577,7 +1577,12 @@ bool CRealImage2100::triangle_profile() const
 		bank = (banks & 3) == 2 ? 1 : 0,
 		global = peek(GlobalControl0),
 		width = block_width(), columns = (control >> 8) & 15,
-		copy_columns = ((peek(MemoryControl) >> 24) & 63) + 1;
+		copy_columns = ((peek(MemoryControl) >> 24) & 63) + 1,
+		blend_control = peek(PipelineControl2);
+	const bool blend = plane_value(bank, 4, 0) == 0xd0d0d0d0u;
+	if (blend ? ((blend_control & ~0x30000080u) || !(blend_control & 0x30000000u)) :
+		blend_control != 0x10000000u)
+		return false;
 	if ((control & ~0x000fff01u) != 0x81800002 || (banks != 5 && banks != 6) ||
 		(global != 0x180 && global != 0x190) ||
 		!native_pixel_profile() || !width || columns != (copy_columns + 1) / 2 ||
@@ -1597,7 +1602,7 @@ bool CRealImage2100::triangle_profile() const
 	}
 	const std::pair<uint32_t, uint32_t> profile[] = {
 		{GlobalControl1, 0x20800}, {GlobalControl2, 0x33},
-		{PipelineControl2, blend ? 0x20000080u : 0x10000000u}, {PipelineControl3, 0},
+		{PipelineControl3, 0},
 		{0x008005cc, 0}, {0x008005d4, 0}, {0x008005dc, 0}, {ContextControl, 0}};
 	for (const auto& reg : profile)
 		if (peek(reg.first) != reg.second)
@@ -1635,10 +1640,11 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 	// These commands retain the slot without launching a primitive.
 	if (!value || value == 0x10)
 		return TrianglePreparation::NoOp;
-	const uint32_t pipeline = peek(PipelineControl0), texture_mode = pipeline & 0x00038000u;
+	const uint32_t pipeline = peek(PipelineControl0), texture_mode = pipeline & 0x00038000u,
+		bank = ((peek(DrawControl) >> 12) & 3) == 2 ? 1 : 0;
 	const bool textured = (pipeline & 0x80000000u) != 0,
 		flat = flat_vertex_register(address), no_depth = plane_value(2, 5, 0) == 0x0a000200,
-		blend = peek(PipelineControl2) == 0x20000080, affine = peek(GlobalControl0) == 0x190,
+		blend = plane_value(bank, 4, 0) == 0xd0d0d0d0u, affine = peek(GlobalControl0) == 0x190,
 		texture_alpha = (pipeline & 0x0f007000u) == 0x09003000u,
 		use_color = !textured || texture_mode == 0x8000 || texture_mode == 0x10000 ||
 			(texture_mode == 0 && texture_alpha),
@@ -1758,8 +1764,7 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 		return q.y < p.y || (q.y == p.y && q.x > p.x);
 	};
 	const bool include_a = top_left(b, c), include_b = top_left(c, a), include_c = top_left(a, b);
-	const uint32_t wid = (peek(DrawControl) >> 4) & 0xf000,
-		bank = ((peek(DrawControl) >> 12) & 3) == 2 ? 1 : 0;
+	const uint32_t wid = (peek(DrawControl) >> 4) & 0xf000;
 	const bool depth_less = plane_value(2, 5, 0) == 0x0a000207;
 	const uint32_t texture_profile = peek(PipelineControl0),
 		texture_base = textured ? texture_offset(peek(TextureBase)) : 0,
@@ -1777,6 +1782,7 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 	operation.textured = textured;
 	operation.flat = flat;
 	operation.blend = blend;
+	operation.blend_control = peek(PipelineControl2);
 	operation.no_depth = no_depth;
 	operation.affine = affine;
 	operation.depth_less = depth_less;
@@ -1791,6 +1797,8 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 	operation.texture_alpha = texture_alpha;
 	operation.texture_mode = texture_mode;
 	operation.texture_environment = peek(PipelineControl5);
+	operation.texture_clamp = pipeline & 0x0c;
+	operation.texture_border = peek(PipelineControl1);
 	operation.row_edges[0] = {1, 2, c.y == b.y ? 0 : (c.x - b.x) / (c.y - b.y), include_a};
 	operation.row_edges[1] = {2, 0, a.y == c.y ? 0 : (a.x - c.x) / (a.y - c.y), include_b};
 	operation.row_edges[2] = {0, 1, b.y == a.y ? 0 : (b.x - a.x) / (b.y - a.y), include_c};
@@ -1821,7 +1829,7 @@ void CRealImage2100::execute_triangle(const TriangleOperation& operation)
 		blend = operation.blend, no_depth = operation.no_depth, depth_less = operation.depth_less,
 		affine = operation.affine, texture_alpha = operation.texture_alpha,
 		simple_texture = textured && !texture_alpha && operation.texture_mode == 0 &&
-			!affine && !blend && no_depth,
+			!affine && !blend && no_depth && !operation.texture_clamp,
 		include_a = operation.row_edges[0].inclusive,
 		include_b = operation.row_edges[1].inclusive,
 		include_c = operation.row_edges[2].inclusive;
@@ -1829,6 +1837,13 @@ void CRealImage2100::execute_triangle(const TriangleOperation& operation)
 		texture_base = operation.texture_base, texture_width = operation.texture_width,
 		texture_height = operation.texture_height;
 	const unsigned texture_row_shift = operation.texture_row_shift;
+	const unsigned source_blend = operation.blend_control >> 28;
+	const bool inverse_destination = (operation.blend_control & 0x80) != 0;
+	auto blend_channel = [&](double source, double alpha, unsigned destination) {
+		const double sf = source_blend == 1 ? 1.0 : source_blend == 2 ? alpha : 1 - alpha,
+			df = inverse_destination ? 1 - alpha : alpha;
+		return std::clamp(source * sf + destination * df, 0.0, 255.0);
+	};
 	auto edge = [](const Vertex& p, const Vertex& q, double x, double y) {
 		return (q.x - p.x) * (y - p.y) - (q.y - p.y) * (x - p.x);
 	};
@@ -2140,7 +2155,8 @@ void CRealImage2100::execute_triangle(const TriangleOperation& operation)
 					continue;
 				}
 				const auto texel = texture_sample(s, t, texture_base,
-					texture_width, texture_height, texture_row_shift, texture_alpha);
+					texture_width, texture_height, texture_row_shift, texture_alpha,
+					operation.texture_clamp, operation.texture_border);
 				auto primary = [&](double av, double bv, double cv, unsigned i) {
 					return flat ? flat_color[i] / (i ? 256.0 : 1.0) :
 						std::clamp(av + wb * (bv - av) + wc * (cv - av), 0.0, 256.0) / 256.0;
@@ -2168,8 +2184,8 @@ void CRealImage2100::execute_triangle(const TriangleOperation& operation)
 						source = texture;
 						break;
 					}
-					const double result = blend ? source * 255 * alpha +
-						((destination >> shift) & 255) * (1 - alpha) : source * 255;
+					const double result = blend ? blend_channel(source * 255, alpha,
+						(destination >> shift) & 255) : source * 255;
 					return uint32_t(std::clamp(result, 0.0, 255.0));
 				};
 				const uint32_t color = (channel(a.red, b.red, c.red, 1) << 16) |
@@ -2183,8 +2199,8 @@ void CRealImage2100::execute_triangle(const TriangleOperation& operation)
 				for (unsigned i = 1; i < 4; ++i)
 				{
 					const unsigned shift = (3 - i) * 8;
-					const double channel = blend ? flat_color[i] * flat_color[0] +
-						((destination >> shift) & 255) * (1 - flat_color[0]) : flat_color[i];
+					const double channel = blend ? blend_channel(flat_color[i], flat_color[0],
+						(destination >> shift) & 255) : flat_color[i];
 					color |= uint32_t(channel) << shift;
 				}
 				destination = (destination & 0xff000000u) | color;
@@ -2194,7 +2210,7 @@ void CRealImage2100::execute_triangle(const TriangleOperation& operation)
 				wc * (c.alpha - a.alpha), 0.0, 256.0) / 256.0 : 1.0;
 			auto channel = [&](double av, double bv, double cv, unsigned shift) {
 				const double source = std::clamp(av + wb * (bv - av) + wc * (cv - av), 0.0, 255.0);
-				return uint32_t(blend ? source * alpha + ((destination >> shift) & 255) * (1 - alpha) : source);
+				return uint32_t(blend ? blend_channel(source, alpha, (destination >> shift) & 255) : source);
 			};
 			const uint32_t color = (channel(a.red, b.red, c.red, 16) << 16) |
 				(channel(a.green, b.green, c.green, 8) << 8) | channel(a.blue, b.blue, c.blue, 0);
@@ -2227,13 +2243,18 @@ uint32_t CRealImage2100::texture_color(double s, double t, uint32_t base,
 }
 
 std::array<double, 4> CRealImage2100::texture_sample(double s, double t, uint32_t base,
-	uint32_t width, uint32_t height, unsigned row_shift, bool rgba) const
+	uint32_t width, uint32_t height, unsigned row_shift, bool rgba,
+	uint32_t clamp, uint32_t border) const
 {
-	const double u = realimage_repeat_fraction(s) * width - 0.5,
-		v = realimage_repeat_fraction(t) * height - 0.5;
+	const bool clamp_s = (clamp & 8) != 0, clamp_t = (clamp & 4) != 0;
+	const double u = (clamp_s ? std::clamp(s, 0.0, 1.0) : realimage_repeat_fraction(s)) * width - 0.5,
+		v = (clamp_t ? std::clamp(t, 0.0, 1.0) : realimage_repeat_fraction(t)) * height - 0.5;
 	const int x = int(std::floor(u)), y = int(std::floor(v));
 	const double fx = u - x, fy = v - y;
 	auto texel = [&](int tx, int ty) {
+		// GL_CLAMP blends edge samples with the packed constant border.
+		if ((clamp_s && (tx < 0 || tx >= int(width))) || (clamp_t && (ty < 0 || ty >= int(height))))
+			return border & 0xffffu;
 		const uint32_t offset = base + ((uint32_t(ty) & (height - 1)) << row_shift) +
 			((uint32_t(tx) & (width - 1)) << 1);
 		return uint32_t(m_texture[offset]) | (uint32_t(m_texture[offset + 1]) << 8);
