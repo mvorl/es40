@@ -1551,12 +1551,15 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 
 bool CRealImage2100::triangle_profile() const
 {
-	const uint32_t pipeline = peek(PipelineControl0);
+	const uint32_t pipeline = peek(PipelineControl0), depth_control = plane_value(2, 5, 0);
 	const bool textured = (pipeline & 0x80000000u) != 0,
-		flat = pipeline == 0x0a4c2770 || pipeline == 0x0a4c2880, no_depth = textured || flat,
-		blend = peek(PipelineControl2) == 0x20000080;
-	if ((pipeline != 0x05008001 && pipeline != 0x8a4c2660 &&
-		pipeline != 0x8a4c2770 && pipeline != 0x8a4c2880 && !flat) || (blend && !flat))
+		no_depth = depth_control == 0x0a000200, blend = peek(PipelineControl2) == 0x20000080;
+	// Disabled texturing retains its format, filtering, wrapping and size fields.
+	constexpr uint32_t texture_fields = 0x0f7fffff;
+	if ((pipeline & ~(0x80000000u | texture_fields)) ||
+		(textured && ((pipeline & ~0x00000ff0u) != 0x8a4c2000u ||
+			((pipeline >> 8) & 15) > 10 || ((pipeline >> 4) & 15) > 10 || !no_depth)) ||
+		(blend && (textured || !no_depth)))
 		return false;
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
 		bank = (banks & 3) == 2 ? 1 : 0,
@@ -1582,16 +1585,13 @@ bool CRealImage2100::triangle_profile() const
 	}
 	const std::pair<uint32_t, uint32_t> profile[] = {
 		{GlobalControl1, 0x20800}, {GlobalControl2, 0x33},
-		{PipelineControl1, 0},
 		{PipelineControl2, blend ? 0x20000080u : 0x10000000u}, {PipelineControl3, 0},
-		{PipelineControl4, 0}, {PipelineControl5, 0},
 		{0x008005cc, 0}, {0x008005d4, 0}, {0x008005dc, 0}, {ContextControl, 0}};
 	for (const auto& reg : profile)
 		if (peek(reg.first) != reg.second)
 			return false;
 	if ((peek(ClipXMin) | peek(ClipXMax) | peek(ClipYMin) | peek(ClipYMax)) & 0xffff000fu)
 		return false;
-	const uint32_t depth_control = plane_value(2, 5, 0);
 	if (!plane_profile(bank, 0x100, blend ? 0xd0d0d0d0u : 0) ||
 		plane_value(bank, 0, 0) != 0xffffffffu ||
 		plane_value(bank, 4, 0) != (blend ? 0xd0d0d0d0u : 0x03030303u) ||
@@ -1624,7 +1624,7 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 	if (!value || value == 0x10)
 		return TrianglePreparation::NoOp;
 	const bool textured = (peek(PipelineControl0) & 0x80000000u) != 0,
-		flat = flat_vertex_register(address), no_depth = peek(PipelineControl0) != 0x05008001,
+		flat = flat_vertex_register(address), no_depth = plane_value(2, 5, 0) == 0x0a000200,
 		blend = peek(PipelineControl2) == 0x20000080;
 	if (value != 0x13 || !triangle_profile() ||
 		(flat && !no_depth) || (!textured && no_depth && !flat))
@@ -1810,7 +1810,8 @@ void CRealImage2100::execute_triangle(const TriangleOperation& operation)
 	uint32_t sample_base = texture_base;
 	unsigned sample_row_shift = texture_row_shift;
 	std::vector<uint8_t> dense_texture;
-	if (textured && (_mm_getcsr() & _MM_ROUND_MASK) == _MM_ROUND_NEAREST &&
+	if (textured && (texture_width != 1 || texture_height != 1) &&
+		(_mm_getcsr() & _MM_ROUND_MASK) == _MM_ROUND_NEAREST &&
 		uint64_t(right - left + 1) * unsigned(bottom - top + 1) >= uint64_t(texture_width) * texture_height * 4)
 	{
 		const unsigned row_bytes = texture_width * 2;
