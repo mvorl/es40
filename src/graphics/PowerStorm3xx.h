@@ -140,6 +140,8 @@ private:
   u8 input_status();
   void advance_vga_scanlines(u32 lines);
   CRealImage2100::Frame render_frame();
+  CRealImage2100::Frame render_frame(CRealImage2100::Frame frame);
+  void update(CRealImage2100::Frame& frame);
   std::vector<u8> save_vga_state() const;
   void restore_vga_state(const std::vector<u8>& state);
   void trace(const char* op, int region, u32 address, int bits, u32 value);

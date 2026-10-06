@@ -38,11 +38,7 @@
 #include <utility>
 #include <vector>
 
-/** REALimage 2100 transport, VGA storage and bounded native drawing profiles.
- * Models NT 2D, texture storage, and bounded color/depth/textured triangles.
- * Unknown native registers are shadowed with a one-time diagnostic, as in
- * CPermedia2.
- */
+// REALimage 2100 transport, VGA storage and supported native 2D/3D profiles.
 class CRealImage2100
 {
 public:
@@ -64,24 +60,20 @@ public:
   static constexpr uint32_t DACIndexLow = 0x00838010, DACIndexHigh = 0x00838014,
                             DACIndexedData = 0x00838018;
   static constexpr uint32_t DACRegisterCount = 0x10000;
-  // Native registers as BAR0 offsets (BAR2 indexes the same space); the NT
-  // miniports map BAR0+0x800000 as their register base.
+  // BAR0 offsets (also indexed by BAR2); miniports map registers at BAR0+0x800000.
+
   // Active-low per-unit resets: drivers write 0 (or clear one bit), then ones.
   static constexpr uint32_t UnitReset = 0x0080041c;
-  // Read-only. Drivers spin until busy bits (0, 3, 25-31) clear, and until each
-  // timing flag sets then clears; the bit 23/24 roles are inferred.
+  // Read-only busy bits 0/3/25-31; timing roles for bits 23/24 are inferred.
   static constexpr uint32_t Status = 0x00800420, StatusVBlank = 1u << 23,
                             StatusVRetrace = 1u << 24;
   // Status reads per virtual frame; the timing flags need no host clock.
   static constexpr uint32_t StatusFrameReads = 64;
-  // Bytes 0-1: counter, one step per virtual frame.
-  // Byte 2: straps, bits 2:0 = 3D-RAM chip code. 
-  // Byte 3: control, strobed before the board-ID read; the only writable byte.
+  // Bytes 0-1: frame counter; 2: chip straps; 3: control (the only writable byte).
   static constexpr uint32_t BoardStatus = 0x008380bc;
   // Code 0 = 12 3D-RAM chips (15 MB), the PowerStorm 300 complement.
   static constexpr uint8_t BoardStraps = 0;
-  // Bytes 1-2 select the displayed bank per WID. Byte 3 reads the board ID;
-  // mode sets write timing there, which must not change later ID reads.
+  // Bytes 1-2: WID display banks; byte 3: board ID on read, timing on write.
   static constexpr uint32_t BoardIO = 0x008380b0;
   // PCGA3, which the Compaq PowerStorm 300 driver reports as "PC3".
   static constexpr uint8_t BoardIDPCGA3 = 0xfe;
@@ -216,6 +208,7 @@ public:
   void advance_frame() { ++m_frame_counter; }
 
   Frame scanout(std::string* error = nullptr) const;
+  Frame scanout(Frame frame, std::string* error = nullptr) const;
 
   void set_diagnostic_callback(DiagnosticCallback fn)
   {
@@ -257,6 +250,20 @@ public:
   static void write_ppm(std::ostream&, const Frame&);
 
 private:
+  struct ColorWriteContext
+  {
+    std::array<uint32_t, 2> masks{}, rops{};
+  };
+  struct PixelOperation
+  {
+    ColorWriteContext context;
+    uint32_t x, y, value, banks, lanes;
+    bool invalidate_cache;
+  };
+  ColorWriteContext prepare_color_write() const;
+  PixelOperation prepare_pixel(uint32_t x, uint32_t y, uint32_t value,
+    uint32_t banks, uint32_t lanes = 0xffffffffu, bool invalidate_cache = false) const;
+  void execute_pixel(const PixelOperation& operation);
   void dac_port_map(address_map& map);
   uint32_t dac_data_offset() const;
   void advance_dac_data();
@@ -278,21 +285,87 @@ private:
   bool fill_profile() const;
   bool copy_profile() const;
   bool fast_copy_profile() const;
+  enum class TrianglePreparation { Rejected, NoOp, Ready };
+  struct TriangleOperation
+  {
+    struct Vertex { double alpha, red, green, blue, x, y, z, s, t; };
+    struct RowEdge { unsigned p, q; double slope; bool inclusive; };
+    Vertex vertex[3]{};
+    double flat_color[4]{}, area = 0;
+    RowEdge row_edges[3]{};
+    int left = 0, top = 0, right = 0, bottom = 0;
+    bool textured = false, flat = false, blend = false, depth_less = false;
+    uint32_t wid = 0, bank = 0, color_width = 0;
+    size_t color_offset = 0;
+    uint32_t texture_base = 0, texture_width = 0, texture_height = 0;
+    unsigned texture_row_shift = 0;
+  };
   bool triangle_profile() const;
+  TrianglePreparation prepare_triangle(uint32_t address, uint32_t value,
+    TriangleOperation& operation) const;
+  void execute_triangle(const TriangleOperation& operation);
   void triangle_command(uint32_t address, uint32_t value);
   uint32_t texture_color(double s, double t, uint32_t base,
     uint32_t width, uint32_t height, unsigned row_shift) const;
+  struct BlockOperation
+  {
+    uint32_t value = 0, banks = 0, source = 0, clear_width = 0, groups = 0,
+      x = 0, y = 0, right = 0, bottom = 0, seed_key = 0,
+      auxiliary_mask = 0, auxiliary_value = 0;
+    bool valid = false, geometry_known = false, copy = false, seed = false,
+      auxiliary_clear = false;
+    ColorWriteContext color;
+    std::array<uint32_t, 2> colors{};
+    std::array<bool, 2> replace_color{};
+    std::array<std::array<uint32_t, 8>, 3> pixel_masks{};
+  };
+  BlockOperation prepare_block(uint32_t value) const;
+  void execute_block(const BlockOperation& operation);
+
+  struct StartPrefix
+  {
+    uint32_t address, value, selected, destination_banks;
+  };
+  StartPrefix begin_start(uint32_t address, uint32_t value);
+  struct StartOperation
+  {
+    enum class Kind { Empty, Rejected, Readback, Upload, Copy, Pattern };
+    enum class Rejection { Profile, ReadbackSource, HostBounds,
+      CopyAlignment, CopySource, MonoLayout };
+    Kind kind = Kind::Empty;
+    Rejection rejection = Rejection::Profile;
+    uint32_t address = 0, value = 0, banks = 0, destination_banks = 0,
+      width = 0, height = 0, source_bank = 0,
+      destination_bank = 0, foreground = 0, background = 0, mono_offset = 0;
+    int32_t x = 0, y = 0, sx = 0, sy = 0, left = 0, right = 0,
+      top = 0, bottom = 0;
+    bool fast_copy = false, right_to_left = false, bottom_to_top = false,
+      mono = false, transparent = false;
+    std::array<uint32_t, 4> pattern{};
+    ColorWriteContext color;
+  };
+  StartOperation prepare_start(const StartPrefix& prefix) const;
+  void execute_start(const StartOperation& operation);
   void start_command(uint32_t address, uint32_t value);
   void block_command(uint32_t value);
   void host_data(uint32_t value);
   uint32_t host_read();
   uint32_t readback_pixel(uint32_t word) const;
+  struct DMAListOperation
+  {
+    struct Packet { uint32_t address, wait_mask, first, count; };
+    uint32_t command = 0, completion = 0;
+    std::vector<uint8_t> data;
+    std::vector<Packet> packets;
+  };
+  bool prepare_dma_list(uint32_t value, DMAListOperation& operation);
+  void execute_dma_list(const DMAListOperation& operation);
   void dma_command(uint32_t value);
   void dma_command_list(uint32_t value);
   void dma_texture_upload(uint32_t value);
   bool dma_list_target(uint32_t address) const;
-  void color_write(uint32_t x, uint32_t y, uint32_t color, uint32_t banks,
-    uint32_t lanes = 0xffffffffu);
+  void color_write(const ColorWriteContext& context, uint32_t x, uint32_t y,
+    uint32_t color, uint32_t banks, uint32_t lanes = 0xffffffffu);
   void composite_cursor(Frame& frame) const;
   void report(
     const char* code, uint32_t address, uint32_t value, const char* message,

@@ -33,6 +33,7 @@
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 
 // Finite repeat coordinates only need the fractional IEEE-754 bits.
 static double realimage_repeat_fraction(double value)
@@ -58,10 +59,24 @@ static double realimage_repeat_fraction(double value)
 #if (defined(_M_X64) || defined(__SSE2__) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)) && !defined(REALIMAGE_SCALAR_ONLY)
 #define REALIMAGE_SSE2 1
 #include <emmintrin.h>
-static __m128i realimage_texture2(__m128d s, __m128d t, const uint8_t* texture,
+#if defined(__AVX2__)
+#include <immintrin.h>
+#endif
+#if defined(_MSC_VER)
+#define REALIMAGE_INLINE __forceinline
+#else
+#define REALIMAGE_INLINE inline
+#endif
+#if !defined(__AVX2__)
+static REALIMAGE_INLINE __m128i realimage_texture2(__m128d s, __m128d t, const uint8_t* texture,
 	uint32_t base, uint32_t width, uint32_t height, unsigned row_shift)
 {
 	auto repeat = [](__m128d q) {
+		const __m128d magnitude = _mm_andnot_pd(_mm_set1_pd(-0.0), q);
+		if (_mm_movemask_pd(_mm_cmplt_pd(magnitude, _mm_set1_pd(1.0))) == 3)
+			return q;
+		if (_mm_movemask_pd(_mm_cmplt_pd(magnitude, _mm_set1_pd(2147483648.0))) == 3)
+			return _mm_sub_pd(q, _mm_cvtepi32_pd(_mm_cvttpd_epi32(q)));
 		return _mm_set_pd(realimage_repeat_fraction(_mm_cvtsd_f64(_mm_unpackhi_pd(q, q))),
 			realimage_repeat_fraction(_mm_cvtsd_f64(q)));
 	};
@@ -77,18 +92,41 @@ static __m128i realimage_texture2(__m128d s, __m128d t, const uint8_t* texture,
 	const __m128d fx = _mm_sub_pd(u, _mm_cvtepi32_pd(x)), fy = _mm_sub_pd(v, _mm_cvtepi32_pd(y));
 	const __m128i xmask = _mm_set1_epi32(width - 1), ymask = _mm_set1_epi32(height - 1);
 	const __m128i x0 = _mm_slli_epi32(_mm_and_si128(x, xmask), 1),
-		x1 = _mm_slli_epi32(_mm_and_si128(_mm_add_epi32(x, _mm_set1_epi32(1)), xmask), 1),
 		y0 = _mm_sll_epi32(_mm_and_si128(y, ymask), _mm_cvtsi32_si128(row_shift)),
 		y1 = _mm_sll_epi32(_mm_and_si128(_mm_add_epi32(y, _mm_set1_epi32(1)), ymask), _mm_cvtsi32_si128(row_shift));
-	auto texel = [&](__m128i xx, __m128i yy) {
-		const __m128i at = _mm_add_epi32(_mm_set1_epi32(base), _mm_add_epi32(xx, yy));
-		const unsigned a = unsigned(_mm_cvtsi128_si32(at)), b = unsigned(_mm_cvtsi128_si32(_mm_srli_si128(at, 4)));
-		uint16_t first, second;
-		std::memcpy(&first, texture + a, 2);
-		std::memcpy(&second, texture + b, 2);
-		return _mm_set_epi32(0, 0, second, first);
-	};
-	const __m128i p00 = texel(x0, y0), p10 = texel(x1, y0), p01 = texel(x0, y1), p11 = texel(x1, y1);
+	__m128i p00, p10, p01, p11;
+	if (!(_mm_movemask_epi8(_mm_cmpeq_epi32(x0, _mm_set1_epi32((width - 1) * 2))) & 255))
+	{
+		auto pair = [&](__m128i yy) {
+			const __m128i at = _mm_add_epi32(_mm_set1_epi32(base), _mm_add_epi32(x0, yy));
+			const unsigned a = unsigned(_mm_cvtsi128_si32(at)), b = unsigned(_mm_cvtsi128_si32(_mm_srli_si128(at, 4)));
+			uint32_t first, second;
+			std::memcpy(&first, texture + a, 4);
+			std::memcpy(&second, texture + b, 4);
+			return _mm_set_epi32(0, 0, second, first);
+		};
+		const __m128i top = pair(y0), bottom = pair(y1), mask = _mm_set1_epi32(65535);
+		p00 = _mm_and_si128(top, mask);
+		p10 = _mm_srli_epi32(top, 16);
+		p01 = _mm_and_si128(bottom, mask);
+		p11 = _mm_srli_epi32(bottom, 16);
+	}
+	else
+	{
+		const __m128i x1 = _mm_slli_epi32(_mm_and_si128(_mm_add_epi32(x, _mm_set1_epi32(1)), xmask), 1);
+		auto texel = [&](__m128i xx, __m128i yy) {
+			const __m128i at = _mm_add_epi32(_mm_set1_epi32(base), _mm_add_epi32(xx, yy));
+			const unsigned a = unsigned(_mm_cvtsi128_si32(at)), b = unsigned(_mm_cvtsi128_si32(_mm_srli_si128(at, 4)));
+			uint16_t first, second;
+			std::memcpy(&first, texture + a, 2);
+			std::memcpy(&second, texture + b, 2);
+			return _mm_set_epi32(0, 0, second, first);
+		};
+		p00 = texel(x0, y0);
+		p10 = texel(x1, y0);
+		p01 = texel(x0, y1);
+		p11 = texel(x1, y1);
+	}
 	auto channel = [&](unsigned shift, uint32_t mask) {
 		const __m128i shifts = _mm_cvtsi32_si128(shift), masks = _mm_set1_epi32(mask);
 		auto expand = [&](const __m128i p) {
@@ -97,13 +135,316 @@ static __m128i realimage_texture2(__m128d s, __m128d t, const uint8_t* texture,
 		const __m128d a = expand(p00), b = expand(p10), c = expand(p01), d = expand(p11);
 		const __m128d top = _mm_add_pd(a, _mm_mul_pd(fx, _mm_sub_pd(b, a))),
 			bottom = _mm_add_pd(c, _mm_mul_pd(fx, _mm_sub_pd(d, c)));
-		const __m128d color = _mm_div_pd(_mm_mul_pd(_mm_add_pd(top,
-			_mm_mul_pd(fy, _mm_sub_pd(bottom, top))), _mm_set1_pd(255)), _mm_set1_pd(mask));
-		return _mm_cvttpd_epi32(_mm_max_pd(_mm_setzero_pd(), _mm_min_pd(_mm_set1_pd(255), color)));
+		const __m128d color = _mm_mul_pd(_mm_add_pd(top,
+			_mm_mul_pd(fy, _mm_sub_pd(bottom, top))), _mm_set1_pd(255));
+		return _mm_cvttpd_epi32(color);
 	};
-	return _mm_or_si128(_mm_slli_epi32(channel(11, 31), 16),
-		_mm_or_si128(_mm_slli_epi32(channel(5, 63), 8), channel(0, 31)));
+	const __m128i red = channel(11, 31), green = channel(5, 63), blue = channel(0, 31);
+	const __m128i numerators = _mm_packs_epi32(_mm_unpacklo_epi64(red, green), blue);
+	// Unsigned factors 33826 (R/B) and 16645 (G) preserve integral RGB thresholds.
+	const __m128i colors = _mm_srli_epi16(_mm_mulhi_epu16(numerators,
+		_mm_set_epi16(0, 0, -31710, -31710, 16645, 16645, -31710, -31710)), 4);
+	const __m128i rg = _mm_unpacklo_epi16(colors, _mm_setzero_si128()),
+		b = _mm_unpackhi_epi16(colors, _mm_setzero_si128());
+	return _mm_or_si128(_mm_slli_epi32(rg, 16),
+		_mm_or_si128(_mm_slli_epi32(_mm_srli_si128(rg, 8), 8), b));
 }
+static __m128i realimage_texture2_exact(__m128d s, __m128d t, const uint8_t* texture,
+	uint32_t base, uint32_t width, uint32_t height, unsigned row_shift)
+{
+	return realimage_texture2(s, t, texture, base, width, height, row_shift);
+}
+
+struct RealImageTextureCoordinates2
+{
+	__m128i x, y;
+	__m128 fx, fy;
+};
+
+static REALIMAGE_INLINE RealImageTextureCoordinates2 realimage_texture_coordinates2(
+	__m128d s, __m128d t, uint32_t width, uint32_t height)
+{
+	auto repeat = [](__m128d q) {
+		const __m128d magnitude = _mm_andnot_pd(_mm_set1_pd(-0.0), q);
+		if (_mm_movemask_pd(_mm_cmplt_pd(magnitude, _mm_set1_pd(1.0))) == 3)
+			return q;
+		if (_mm_movemask_pd(_mm_cmplt_pd(magnitude, _mm_set1_pd(2147483648.0))) == 3)
+			return _mm_sub_pd(q, _mm_cvtepi32_pd(_mm_cvttpd_epi32(q)));
+		return _mm_set_pd(realimage_repeat_fraction(_mm_cvtsd_f64(_mm_unpackhi_pd(q, q))),
+			realimage_repeat_fraction(_mm_cvtsd_f64(q)));
+	};
+	const __m128d u = _mm_sub_pd(_mm_mul_pd(repeat(s), _mm_set1_pd(width)), _mm_set1_pd(0.5)),
+		v = _mm_sub_pd(_mm_mul_pd(repeat(t), _mm_set1_pd(height)), _mm_set1_pd(0.5));
+	auto floor_int = [](__m128d q) {
+		const __m128i truncated = _mm_cvttpd_epi32(q);
+		const __m128i below = _mm_castpd_si128(_mm_cmplt_pd(q, _mm_cvtepi32_pd(truncated)));
+		return _mm_sub_epi32(truncated, _mm_and_si128(
+			_mm_shuffle_epi32(below, _MM_SHUFFLE(3, 1, 2, 0)), _mm_set1_epi32(1)));
+	};
+	const __m128i x = floor_int(u), y = floor_int(v);
+	return RealImageTextureCoordinates2{x, y, _mm_cvtpd_ps(_mm_sub_pd(u, _mm_cvtepi32_pd(x))),
+		_mm_cvtpd_ps(_mm_sub_pd(v, _mm_cvtepi32_pd(y)))};
+}
+
+static REALIMAGE_INLINE __m128i realimage_texture4(__m128d s01, __m128d t01,
+	__m128d s23, __m128d t23, const uint8_t* texture,
+	uint32_t base, uint32_t width, uint32_t height, unsigned row_shift)
+{
+	const auto lo = realimage_texture_coordinates2(s01, t01, width, height), hi = realimage_texture_coordinates2(s23, t23, width, height);
+	const __m128i x = _mm_unpacklo_epi64(lo.x, hi.x), y = _mm_unpacklo_epi64(lo.y, hi.y),
+		xmask = _mm_set1_epi32(width - 1), ymask = _mm_set1_epi32(height - 1),
+		x0 = _mm_slli_epi32(_mm_and_si128(x, xmask), 1),
+		y0 = _mm_sll_epi32(_mm_and_si128(y, ymask), _mm_cvtsi32_si128(row_shift)),
+		y1 = _mm_sll_epi32(_mm_and_si128(_mm_add_epi32(y, _mm_set1_epi32(1)), ymask), _mm_cvtsi32_si128(row_shift));
+	const __m128 fx = _mm_movelh_ps(lo.fx, hi.fx), fy = _mm_movelh_ps(lo.fy, hi.fy);
+	__m128i p00, p10, p01, p11;
+	if (!_mm_movemask_epi8(_mm_cmpeq_epi32(x0, _mm_set1_epi32((width - 1) * 2))))
+	{
+		auto pair = [&](__m128i yy) {
+			const __m128i at = _mm_add_epi32(_mm_set1_epi32(base), _mm_add_epi32(x0, yy));
+			uint32_t a, b, c, d;
+			std::memcpy(&a, texture + unsigned(_mm_cvtsi128_si32(at)), 4);
+			std::memcpy(&b, texture + unsigned(_mm_cvtsi128_si32(_mm_srli_si128(at, 4))), 4);
+			std::memcpy(&c, texture + unsigned(_mm_cvtsi128_si32(_mm_srli_si128(at, 8))), 4);
+			std::memcpy(&d, texture + unsigned(_mm_cvtsi128_si32(_mm_srli_si128(at, 12))), 4);
+			return _mm_set_epi32(d, c, b, a);
+		};
+		const __m128i top = pair(y0), bottom = pair(y1), mask = _mm_set1_epi32(65535);
+		p00 = _mm_and_si128(top, mask);
+		p10 = _mm_srli_epi32(top, 16);
+		p01 = _mm_and_si128(bottom, mask);
+		p11 = _mm_srli_epi32(bottom, 16);
+	}
+	else
+	{
+		const __m128i x1 = _mm_slli_epi32(_mm_and_si128(_mm_add_epi32(x, _mm_set1_epi32(1)), xmask), 1);
+		auto texel = [&](__m128i xx, __m128i yy) {
+			const __m128i at = _mm_add_epi32(_mm_set1_epi32(base), _mm_add_epi32(xx, yy));
+			uint16_t a, b, c, d;
+			std::memcpy(&a, texture + unsigned(_mm_cvtsi128_si32(at)), 2);
+			std::memcpy(&b, texture + unsigned(_mm_cvtsi128_si32(_mm_srli_si128(at, 4))), 2);
+			std::memcpy(&c, texture + unsigned(_mm_cvtsi128_si32(_mm_srli_si128(at, 8))), 2);
+			std::memcpy(&d, texture + unsigned(_mm_cvtsi128_si32(_mm_srli_si128(at, 12))), 2);
+			return _mm_set_epi32(d, c, b, a);
+		};
+		p00 = texel(x0, y0);
+		p10 = texel(x1, y0);
+		p01 = texel(x0, y1);
+		p11 = texel(x1, y1);
+	}
+	const __m128i full = _mm_and_si128(_mm_and_si128(p00, p10), _mm_and_si128(p01, p11));
+	// The upward green scale keeps maximum texels at 255 within the guarded error bound.
+	__m128 ambiguous = _mm_setzero_ps();
+	auto channel = [&](unsigned shift, unsigned mask) {
+		const __m128i shifts = _mm_cvtsi32_si128(shift), masks = _mm_set1_epi32(mask);
+		auto expand = [&](__m128i value) {
+			return _mm_cvtepi32_ps(_mm_and_si128(_mm_srl_epi32(value, shifts), masks));
+		};
+		const __m128 a = expand(p00), b = expand(p10), c = expand(p01), d = expand(p11),
+			top = _mm_add_ps(a, _mm_mul_ps(fx, _mm_sub_ps(b, a))),
+			bottom = _mm_add_ps(c, _mm_mul_ps(fx, _mm_sub_ps(d, c))),
+			value = _mm_mul_ps(_mm_add_ps(top, _mm_mul_ps(fy, _mm_sub_ps(bottom, top))), _mm_set1_ps(mask == 63 ? 0x1.030c32p+2f : 255.0f / mask));
+		const __m128i maximum = _mm_cmpeq_epi32(_mm_and_si128(_mm_srl_epi32(full, shifts), masks), masks),
+			integer = _mm_cvttps_epi32(value);
+		const __m128 fraction = _mm_sub_ps(value, _mm_cvtepi32_ps(integer)),
+			near_boundary = _mm_or_ps(_mm_and_ps(_mm_cmpge_ps(value, _mm_set1_ps(1)),
+				_mm_cmplt_ps(fraction, _mm_set1_ps(1.0f / 1024))),
+				_mm_cmpgt_ps(fraction, _mm_set1_ps(1 - 1.0f / 1024)));
+		ambiguous = _mm_or_ps(ambiguous, _mm_andnot_ps(_mm_castsi128_ps(maximum), near_boundary));
+		return integer;
+	};
+	__m128i rgb = _mm_or_si128(_mm_slli_epi32(channel(11, 31), 16),
+		_mm_or_si128(_mm_slli_epi32(channel(5, 63), 8), channel(0, 31)));
+	const unsigned fallback = unsigned(_mm_movemask_ps(ambiguous));
+	if (fallback & 3)
+		rgb = _mm_unpacklo_epi64(realimage_texture2_exact(s01, t01, texture, base, width, height, row_shift),
+			_mm_srli_si128(rgb, 8));
+	if (fallback & 12)
+		rgb = _mm_unpacklo_epi64(rgb, realimage_texture2_exact(s23, t23, texture, base, width, height, row_shift));
+	return rgb;
+}
+
+#else
+static REALIMAGE_INLINE __m128i realimage_texture4(__m256d s, __m256d t, const uint8_t* texture,
+	uint32_t base, uint32_t width, uint32_t height, unsigned row_shift)
+{
+	auto repeat = [](__m256d q) {
+		const __m256d magnitude = _mm256_andnot_pd(_mm256_set1_pd(-0.0), q);
+		if (_mm256_movemask_pd(_mm256_cmp_pd(magnitude, _mm256_set1_pd(1.0), _CMP_LT_OQ)) == 15)
+			return q;
+		if (_mm256_movemask_pd(_mm256_cmp_pd(magnitude, _mm256_set1_pd(2147483648.0), _CMP_LT_OQ)) == 15)
+			return _mm256_sub_pd(q, _mm256_cvtepi32_pd(_mm256_cvttpd_epi32(q)));
+		double values[4];
+		_mm256_storeu_pd(values, q);
+		return _mm256_set_pd(realimage_repeat_fraction(values[3]), realimage_repeat_fraction(values[2]),
+			realimage_repeat_fraction(values[1]), realimage_repeat_fraction(values[0]));
+	};
+	const __m256d u = _mm256_sub_pd(_mm256_mul_pd(repeat(s), _mm256_set1_pd(width)), _mm256_set1_pd(0.5)),
+		v = _mm256_sub_pd(_mm256_mul_pd(repeat(t), _mm256_set1_pd(height)), _mm256_set1_pd(0.5));
+	const __m256d floor_u = _mm256_floor_pd(u), floor_v = _mm256_floor_pd(v);
+	const __m128i x = _mm256_cvttpd_epi32(floor_u), y = _mm256_cvttpd_epi32(floor_v);
+	const __m256d fx = _mm256_sub_pd(u, floor_u), fy = _mm256_sub_pd(v, floor_v);
+	const __m128i xmask = _mm_set1_epi32(width - 1), ymask = _mm_set1_epi32(height - 1);
+	const __m128i x0 = _mm_slli_epi32(_mm_and_si128(x, xmask), 1),
+		y0 = _mm_sll_epi32(_mm_and_si128(y, ymask), _mm_cvtsi32_si128(row_shift)),
+		y1 = _mm_sll_epi32(_mm_and_si128(_mm_add_epi32(y, _mm_set1_epi32(1)), ymask), _mm_cvtsi32_si128(row_shift));
+	__m128i p00, p10, p01, p11;
+	if (!_mm_movemask_epi8(_mm_cmpeq_epi32(x0, _mm_set1_epi32((width - 1) * 2))))
+	{
+		auto pair = [&](__m128i yy) {
+			const __m128i at = _mm_add_epi32(_mm_set1_epi32(base), _mm_add_epi32(x0, yy));
+			return _mm_i32gather_epi32(reinterpret_cast<const int*>(texture), at, 1);
+		};
+		const __m128i top = pair(y0), bottom = pair(y1), mask = _mm_set1_epi32(65535);
+		p00 = _mm_and_si128(top, mask);
+		p10 = _mm_srli_epi32(top, 16);
+		p01 = _mm_and_si128(bottom, mask);
+		p11 = _mm_srli_epi32(bottom, 16);
+	}
+	else
+	{
+		const __m128i x1 = _mm_slli_epi32(_mm_and_si128(_mm_add_epi32(x, _mm_set1_epi32(1)), xmask), 1);
+		auto texel = [&](__m128i xx, __m128i yy) {
+			const __m128i at = _mm_add_epi32(_mm_set1_epi32(base), _mm_add_epi32(xx, yy));
+			const __m128i packed = _mm_i32gather_epi32(reinterpret_cast<const int*>(texture), _mm_and_si128(at, _mm_set1_epi32(-4)), 1);
+			return _mm_and_si128(_mm_srlv_epi32(packed, _mm_slli_epi32(_mm_and_si128(at, _mm_set1_epi32(2)), 3)), _mm_set1_epi32(65535));
+		};
+		p00 = texel(x0, y0);
+		p10 = texel(x1, y0);
+		p01 = texel(x0, y1);
+		p11 = texel(x1, y1);
+	}
+	auto channel = [&](unsigned shift, uint32_t mask) {
+		const __m128i shifts = _mm_cvtsi32_si128(shift), masks = _mm_set1_epi32(mask);
+		auto expand = [&](const __m128i p) {
+			return _mm256_cvtepi32_pd(_mm_and_si128(_mm_srl_epi32(p, shifts), masks));
+		};
+		const __m256d a = expand(p00), b = expand(p10), c = expand(p01), d = expand(p11);
+		const __m256d top = _mm256_add_pd(a, _mm256_mul_pd(fx, _mm256_sub_pd(b, a))),
+			bottom = _mm256_add_pd(c, _mm256_mul_pd(fx, _mm256_sub_pd(d, c)));
+		const __m256d color = _mm256_mul_pd(_mm256_add_pd(top,
+			_mm256_mul_pd(fy, _mm256_sub_pd(bottom, top))), _mm256_set1_pd(255));
+		return _mm256_cvttpd_epi32(color);
+	};
+	const __m128i red = channel(11, 31), green = channel(5, 63), blue = channel(0, 31);
+	const __m256i numerators = _mm256_inserti128_si256(_mm256_castsi128_si256(_mm_packs_epi32(red, green)),
+		_mm_packs_epi32(blue, _mm_setzero_si128()), 1);
+	const __m256i colors = _mm256_srli_epi16(_mm256_mulhi_epu16(numerators,
+		_mm256_set_epi16(0,0,0,0,-31710,-31710,-31710,-31710,16645,16645,16645,16645,-31710,-31710,-31710,-31710)), 4);
+	const __m128i rg = _mm256_castsi256_si128(colors), b = _mm256_extracti128_si256(colors, 1);
+	return _mm_or_si128(_mm_slli_epi32(_mm_unpacklo_epi16(rg, _mm_setzero_si128()), 16),
+		_mm_or_si128(_mm_slli_epi32(_mm_unpackhi_epi16(rg, _mm_setzero_si128()), 8), _mm_unpacklo_epi16(b, _mm_setzero_si128())));
+}
+
+static __m128i realimage_texture4_exact(__m256d s, __m256d t, const uint8_t* texture,
+	uint32_t base, uint32_t width, uint32_t height, unsigned row_shift)
+{
+	return realimage_texture4(s, t, texture, base, width, height, row_shift);
+}
+
+struct RealImageTextureCoordinates4
+{
+	__m128i x, y;
+	__m128 fx, fy;
+};
+
+static REALIMAGE_INLINE RealImageTextureCoordinates4 realimage_texture_coordinates4(
+	__m256d s, __m256d t, uint32_t width, uint32_t height)
+{
+	auto repeat = [](__m256d q) {
+		const __m256d magnitude = _mm256_andnot_pd(_mm256_set1_pd(-0.0), q);
+		if (_mm256_movemask_pd(_mm256_cmp_pd(magnitude, _mm256_set1_pd(1.0), _CMP_LT_OQ)) == 15)
+			return q;
+		if (_mm256_movemask_pd(_mm256_cmp_pd(magnitude, _mm256_set1_pd(2147483648.0), _CMP_LT_OQ)) == 15)
+			return _mm256_sub_pd(q, _mm256_cvtepi32_pd(_mm256_cvttpd_epi32(q)));
+		double values[4];
+		_mm256_storeu_pd(values, q);
+		return _mm256_set_pd(realimage_repeat_fraction(values[3]), realimage_repeat_fraction(values[2]),
+			realimage_repeat_fraction(values[1]), realimage_repeat_fraction(values[0]));
+	};
+	const __m256d u = _mm256_sub_pd(_mm256_mul_pd(repeat(s), _mm256_set1_pd(width)), _mm256_set1_pd(0.5)),
+		v = _mm256_sub_pd(_mm256_mul_pd(repeat(t), _mm256_set1_pd(height)), _mm256_set1_pd(0.5)),
+		floor_u = _mm256_floor_pd(u), floor_v = _mm256_floor_pd(v);
+	return RealImageTextureCoordinates4{_mm256_cvttpd_epi32(floor_u), _mm256_cvttpd_epi32(floor_v),
+		_mm256_cvtpd_ps(_mm256_sub_pd(u, floor_u)), _mm256_cvtpd_ps(_mm256_sub_pd(v, floor_v))};
+}
+
+static REALIMAGE_INLINE __m256i realimage_texture8(__m256d s0, __m256d t0,
+	__m256d s1, __m256d t1, const uint8_t* texture,
+	uint32_t base, uint32_t width, uint32_t height, unsigned row_shift)
+{
+	const auto lo = realimage_texture_coordinates4(s0, t0, width, height), hi = realimage_texture_coordinates4(s1, t1, width, height);
+	const __m256i x = _mm256_inserti128_si256(_mm256_castsi128_si256(lo.x), hi.x, 1),
+		y = _mm256_inserti128_si256(_mm256_castsi128_si256(lo.y), hi.y, 1),
+		xmask = _mm256_set1_epi32(width - 1), ymask = _mm256_set1_epi32(height - 1),
+		x0 = _mm256_slli_epi32(_mm256_and_si256(x, xmask), 1),
+		y0 = _mm256_sll_epi32(_mm256_and_si256(y, ymask), _mm_cvtsi32_si128(row_shift)),
+		y1 = _mm256_sll_epi32(_mm256_and_si256(_mm256_add_epi32(y, _mm256_set1_epi32(1)), ymask), _mm_cvtsi32_si128(row_shift));
+	const __m256 fx = _mm256_insertf128_ps(_mm256_castps128_ps256(lo.fx), hi.fx, 1),
+		fy = _mm256_insertf128_ps(_mm256_castps128_ps256(lo.fy), hi.fy, 1);
+	__m256i p00, p10, p01, p11;
+	if (!_mm256_movemask_epi8(_mm256_cmpeq_epi32(x0, _mm256_set1_epi32((width - 1) * 2))))
+	{
+		auto pair = [&](__m256i yy) {
+			const __m256i at = _mm256_add_epi32(_mm256_set1_epi32(base), _mm256_add_epi32(x0, yy));
+			return _mm256_i32gather_epi32(reinterpret_cast<const int*>(texture), at, 1);
+		};
+		const __m256i top = pair(y0), bottom = pair(y1), mask = _mm256_set1_epi32(65535);
+		p00 = _mm256_and_si256(top, mask);
+		p10 = _mm256_srli_epi32(top, 16);
+		p01 = _mm256_and_si256(bottom, mask);
+		p11 = _mm256_srli_epi32(bottom, 16);
+	}
+	else
+	{
+		const __m256i x1 = _mm256_slli_epi32(_mm256_and_si256(_mm256_add_epi32(x, _mm256_set1_epi32(1)), xmask), 1);
+		auto texel = [&](__m256i xx, __m256i yy) {
+			const __m256i at = _mm256_add_epi32(_mm256_set1_epi32(base), _mm256_add_epi32(xx, yy));
+			const __m256i packed = _mm256_i32gather_epi32(reinterpret_cast<const int*>(texture), _mm256_and_si256(at, _mm256_set1_epi32(-4)), 1);
+			return _mm256_and_si256(_mm256_srlv_epi32(packed,
+				_mm256_slli_epi32(_mm256_and_si256(at, _mm256_set1_epi32(2)), 3)), _mm256_set1_epi32(65535));
+		};
+		p00 = texel(x0, y0);
+		p10 = texel(x1, y0);
+		p01 = texel(x0, y1);
+		p11 = texel(x1, y1);
+	}
+	const __m256i full = _mm256_and_si256(_mm256_and_si256(p00, p10), _mm256_and_si256(p01, p11));
+	// Recompute near RGB thresholds; float error stays below 1/4096.
+	__m256 ambiguous = _mm256_setzero_ps();
+	auto channel = [&](unsigned shift, unsigned mask) {
+		const __m128i shifts = _mm_cvtsi32_si128(shift);
+		const __m256i masks = _mm256_set1_epi32(mask);
+		auto expand = [&](__m256i value) {
+			return _mm256_cvtepi32_ps(_mm256_and_si256(_mm256_srl_epi32(value, shifts), masks));
+		};
+		const __m256 a = expand(p00), b = expand(p10), c = expand(p01), d = expand(p11),
+			top = _mm256_add_ps(a, _mm256_mul_ps(fx, _mm256_sub_ps(b, a))),
+			bottom = _mm256_add_ps(c, _mm256_mul_ps(fx, _mm256_sub_ps(d, c))),
+			value = _mm256_mul_ps(_mm256_add_ps(top, _mm256_mul_ps(fy, _mm256_sub_ps(bottom, top))), _mm256_set1_ps(255.0f / mask));
+		const __m256i maximum = _mm256_cmpeq_epi32(_mm256_and_si256(_mm256_srl_epi32(full, shifts), masks), masks),
+			integer = _mm256_or_si256(_mm256_and_si256(maximum, _mm256_set1_epi32(255)),
+				_mm256_andnot_si256(maximum, _mm256_cvttps_epi32(value)));
+		const __m256 fraction = _mm256_sub_ps(value, _mm256_cvtepi32_ps(integer)),
+			near_boundary = _mm256_or_ps(_mm256_and_ps(_mm256_cmp_ps(value, _mm256_set1_ps(1), _CMP_GE_OQ),
+				_mm256_cmp_ps(fraction, _mm256_set1_ps(1.0f / 1024), _CMP_LT_OQ)),
+				_mm256_cmp_ps(fraction, _mm256_set1_ps(1 - 1.0f / 1024), _CMP_GT_OQ));
+		ambiguous = _mm256_or_ps(ambiguous, _mm256_andnot_ps(_mm256_castsi256_ps(maximum), near_boundary));
+		return integer;
+	};
+	const __m256i red = channel(11, 31), green = channel(5, 63), blue = channel(0, 31);
+	__m256i rgb = _mm256_or_si256(_mm256_slli_epi32(red, 16),
+		_mm256_or_si256(_mm256_slli_epi32(green, 8), blue));
+	const unsigned fallback = unsigned(_mm256_movemask_ps(ambiguous));
+	if (fallback & 15)
+		rgb = _mm256_inserti128_si256(rgb, realimage_texture4_exact(s0, t0, texture, base, width, height, row_shift), 0);
+	if (fallback & 240)
+		rgb = _mm256_inserti128_si256(rgb, realimage_texture4_exact(s1, t1, texture, base, width, height, row_shift), 1);
+	return rgb;
+}
+
+#endif
+#undef REALIMAGE_INLINE
 #endif
 
 static bool valid_width(int bits)
@@ -352,8 +693,7 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 		unimplemented_once("REALimage status register", a, v, true);
 		return;
 	}
-	// The Alpha miniport rewrites the whole longword from its byte copy;
-	// counter and strap bytes ignore it.
+	// Whole-longword Alpha miniport writes leave counter and strap bytes unchanged.
 	if (key == BoardStatus)
 	{
 		if (lanes & 0xff000000u)
@@ -646,7 +986,34 @@ bool CRealImage2100::fast_copy_profile() const
 	return true;
 }
 
-void CRealImage2100::color_write(
+CRealImage2100::ColorWriteContext CRealImage2100::prepare_color_write() const
+{
+	ColorWriteContext context;
+	for (unsigned bank = 0; bank < 2; ++bank)
+	{
+		context.masks[bank] = plane_value(bank, 0, 0xffffffff);
+		context.rops[bank] = plane_value(bank, 4, 0x03030303);
+	}
+	return context;
+}
+
+CRealImage2100::PixelOperation CRealImage2100::prepare_pixel(uint32_t x,
+	uint32_t y, uint32_t value, uint32_t banks, uint32_t lanes, bool invalidate_cache) const
+{
+	return {prepare_color_write(), x, y, value, banks, lanes, invalidate_cache};
+}
+
+void CRealImage2100::execute_pixel(const PixelOperation& operation)
+{
+	if (operation.invalidate_cache)
+		for (unsigned bank = 0; bank < 2; ++bank)
+			if (operation.banks & (1u << bank))
+				m_clear_cache[bank] = {};
+	color_write(operation.context, operation.x, operation.y, operation.value,
+		operation.banks, operation.lanes);
+}
+
+void CRealImage2100::color_write(const ColorWriteContext& context,
 	uint32_t x, uint32_t y, uint32_t color, uint32_t banks, uint32_t lanes)
 {
 	if (x >= m_color_width || y >= m_color_height)
@@ -656,8 +1023,8 @@ void CRealImage2100::color_write(
 		if (banks & (1u << bank))
 		{
 			uint32_t& destination = m_color[bank * m_color_pixels + offset];
-			const uint32_t mask = plane_value(bank, 0, 0xffffffff) & lanes & 0xffffff,
-				rops = plane_value(bank, 4, 0x03030303);
+			const uint32_t mask = context.masks[bank] & lanes & 0xffffff,
+				rops = context.rops[bank];
 			uint32_t result = 0;
 			for (unsigned shift = 0; shift < 24; shift += 8)
 			{
@@ -691,8 +1058,8 @@ bool CRealImage2100::framebuffer_access(
 	}
 	if (write)
 	{
-		m_clear_cache[bank] = {};
-		color_write(x, y, value << shift, 1u << bank, width_mask(bits) << shift);
+		execute_pixel(prepare_pixel(x, y, value << shift, 1u << bank,
+			width_mask(bits) << shift, true));
 	}
 	else
 		value = (m_color[size_t(bank) * m_color_pixels + y * m_color_width + x] >> shift) &
@@ -708,8 +1075,11 @@ bool CRealImage2100::fill_profile() const
 		native_copy_control_profile(true);
 }
 
-void CRealImage2100::block_command(uint32_t v)
+CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 {
+	BlockOperation op;
+	op.value = v;
+	op.color = prepare_color_write();
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
 		source = peek(BlockSource), destination = peek(BlockDestination),
 		extent = peek(BlockExtent), auxiliary_mask = plane_value(2, 0, 0xffffffff),
@@ -720,27 +1090,21 @@ void CRealImage2100::block_command(uint32_t v)
 	const uint32_t clear_width = block_width(), groups = clear_width / 2,
 		dx = destination & 0x7ff, dy = destination >> 16,
 		width = (extent & 0x7ff) + 1, height = (extent >> 16) + 1,
-		scale_x = copy ? 10 * clear_width : clear_width, scale_y = copy ? 16 : 4,
-		x = dx * scale_x, y = dy * scale_y,
-		right = x + width * scale_x, bottom = y + height * scale_y;
-	bool geometry_known = false;
-	auto invalidate_cache = [&]() {
-		for (unsigned bank = 0; bank < 3; ++bank)
-			if (banks & (1u << bank))
-			{
-				auto& cache = m_clear_cache[bank];
-				const uint32_t cx = (cache.source & 0xffff) * 10 * clear_width,
-					cy = (cache.source >> 16) * 16;
-				if (!geometry_known ||
-					(x < cx + 21 * clear_width && right > cx && y < cy + 36 && bottom > cy))
-					cache = {};
-			}
-	};
-	auto reject = [&]() {
-		invalidate_cache();
-		unimplemented_once(
-			"REALimage block command/profile (command rejected)", BlockCommand, v, true);
-	};
+		scale_x = copy ? 10 * clear_width : clear_width, scale_y = copy ? 16 : 4;
+	op.banks = banks;
+	op.source = source;
+	op.clear_width = clear_width;
+	op.groups = groups;
+	op.x = dx * scale_x;
+	op.y = dy * scale_y;
+	op.right = op.x + width * scale_x;
+	op.bottom = op.y + height * scale_y;
+	op.seed_key = ((dy / 4) << 16) | (dx / 10);
+	op.auxiliary_mask = auxiliary_mask;
+	op.auxiliary_value = auxiliary_value;
+	op.copy = copy;
+	op.seed = seed;
+	op.auxiliary_clear = auxiliary_clear;
 	const uint32_t control_fields = 0x040fff01u;
 	if ((control & ~control_fields) != 0x81000002 || !banks || (banks & ~7u) ||
 		v != (((banks ^ 7u) << 18) | (copy ? 0x30000u : 0x10000u)) ||
@@ -748,25 +1112,17 @@ void CRealImage2100::block_command(uint32_t v)
 		((source | destination | extent) & ~0x07ff07ffu) ||
 		(!copy && source) || (copy && !configuration) ||
 		((banks & 4) && auxiliary_mask && !auxiliary_clear))
-	{
-		reject();
-		return;
-	}
-	geometry_known = true;
-	// The driver seeds 21x9 small blocks for its repeated 2x2-tile source.
+		return op;
+	op.geometry_known = true;
 	if (seed && (extent != 0x00080014 || dx % 10 || dy % 4 ||
 		(dx * clear_width < m_color_width && dy * 4 < m_color_height)))
-	{
-		reject();
-		return;
-	}
+		return op;
 	if (auxiliary_clear)
 	{
 		const uint32_t depth_control = plane_value(2, 5, 0);
 		const bool neutral_clear = plane_profile(2, 0) && plane_value(2, 10, 0) == 0 &&
 			(auxiliary_mask == 0xffffffffu ||
 				(configuration && !(auxiliary_mask & ~0x0000f000u)));
-		// Block clears bypass the retained depth comparison.
 		const bool packed_clear = auxiliary_mask == 0xffffffffu &&
 			plane_value(2, 1, 0) == 0 && plane_value(2, 2, 0) == 0xf000 &&
 			plane_value(2, 3, 0) == 0x0fff0fff &&
@@ -775,76 +1131,101 @@ void CRealImage2100::block_command(uint32_t v)
 			plane_value(2, 6, 0) == 0 && plane_value(2, 7, 0) == 0 &&
 			plane_value(2, 8, 0) == 0 && plane_value(2, 9, 0) == 0 &&
 			plane_value(2, 10, 0) == 0x00ff0000 &&
-			plane_value(2, 11, 0) == 0x33300000 &&
+			plane_value(2, 11, 0x33300000) == 0x33300000 &&
 			plane_value(2, 14, 0) == 0 && plane_value(2, 15, 0) == 0;
 		if ((!neutral_clear && !packed_clear) ||
 			plane_value(2, 4, 0x03030303) != 0x03030303 ||
 			m_planes[2].unknown_masks ||
 			(m_planes[2].written & 0x00ff0000) != 0x00ff0000)
-		{
-			reject();
-			return;
-		}
+			return op;
 		for (unsigned i = 17; i < 24; ++i)
 			if ((plane_value(2, i, 0) ^ auxiliary_value) & auxiliary_mask)
-			{
-				reject();
-				return;
-			}
-		for (unsigned i = 24; i < 24 + groups; ++i)
+				return op;
+		for (unsigned i = 0; i < groups; ++i)
 		{
-			const uint32_t bits = plane_value(2, i, 0xffffffff);
+			const uint32_t bits = plane_value(2, 24 + i, 0xffffffff);
 			if (bits != (bits & 255) * 0x01010101u)
-			{
-				reject();
-				return;
-			}
+				return op;
 		}
 	}
-	std::array<uint32_t, 2> colors{};
-	std::array<bool, 2> replace_color{};
 	for (unsigned bank = 0; bank < 2; ++bank)
 	{
-		const uint32_t mask = plane_value(bank, 0, 0xffffffff) & 0xffffff,
-			rops = plane_value(bank, 4, 0x03030303);
+		const uint32_t mask = op.color.masks[bank] & 0xffffff,
+			rops = op.color.rops[bank];
 		if (!(banks & (1u << bank)) || !mask)
 			continue;
 		const bool blend = rops == 0xd0d0d0d0;
-		replace_color[bank] = blend || (!copy && (rops & 0xffffff) == 0x060606);
+		op.replace_color[bank] = blend || (!copy && (rops & 0xffffff) == 0x060606);
 		if (!plane_profile(bank, 0x100, blend ? rops : 0) ||
 			m_planes[bank].unknown_masks)
+			return op;
+		if (!copy)
 		{
-			reject();
-			return;
+			op.colors[bank] = plane_value(bank, 16, 0) & 0xffffff;
+			if ((m_planes[bank].written & 0x00ff0000) != 0x00ff0000)
+				return op;
+			for (unsigned i = 17; i < 24; ++i)
+				if ((plane_value(bank, i, 0) ^ op.colors[bank]) & mask)
+					return op;
 		}
-		if (copy)
+		for (unsigned i = 0; i < groups; ++i)
+		{
+			const uint32_t bits = plane_value(bank, 24 + i, 0xffffffff);
+			if (bits != (bits & 255) * 0x01010101u)
+				return op;
+		}
+	}
+	for (unsigned bank = 0; bank < 3; ++bank)
+		for (unsigned i = 0; i < groups; ++i)
+			op.pixel_masks[bank][i] = plane_value(bank, 24 + i, 0xffffffff);
+	op.valid = true;
+	return op;
+}
+
+void CRealImage2100::execute_block(const BlockOperation& op)
+{
+	auto invalidate_cache = [&]() {
+		for (unsigned bank = 0; bank < 3; ++bank)
+			if (op.banks & (1u << bank))
+			{
+				auto& cache = m_clear_cache[bank];
+				const uint32_t cx = (cache.source & 0xffff) * 10 * op.clear_width,
+					cy = (cache.source >> 16) * 16;
+				if (!op.geometry_known ||
+					(op.x < cx + 21 * op.clear_width && op.right > cx &&
+						op.y < cy + 36 && op.bottom > cy))
+					cache = {};
+			}
+	};
+	auto reject = [&]() {
+		invalidate_cache();
+		unimplemented_once("REALimage block command/profile (command rejected)",
+			BlockCommand, op.value, true);
+	};
+	if (!op.valid)
+	{
+		reject();
+		return;
+	}
+	auto colors = op.colors;
+	for (unsigned bank = 0; bank < 2; ++bank)
+	{
+		const uint32_t mask = op.color.masks[bank] & 0xffffff,
+			rops = op.color.rops[bank];
+		if (!(op.banks & (1u << bank)) || !mask)
+			continue;
+		if (op.copy)
 		{
 			const auto& cache = m_clear_cache[bank];
-			if (cache.source != source || (cache.known & mask) != mask)
+			if (cache.source != op.source || (cache.known & mask) != mask)
 			{
 				reject();
 				return;
 			}
 			colors[bank] = cache.color;
 		}
-		else
-		{
-			colors[bank] = plane_value(bank, 16, 0) & 0xffffff;
-			if ((m_planes[bank].written & 0x00ff0000) != 0x00ff0000)
-			{
-				reject();
-				return;
-			}
-			for (unsigned i = 17; i < 24; ++i)
-				if ((plane_value(bank, i, 0) ^ colors[bank]) & mask)
-				{
-					reject();
-					return;
-				}
-		}
-		// Block clears bypass retained XOR and blend operations.
 		for (unsigned shift = 0; shift < 24; shift += 8)
-			if (!seed && !replace_color[bank] &&
+			if (!op.seed && !op.replace_color[bank] &&
 				(mask & (0xffu << shift)) && ((rops >> shift) & 15) != 3 &&
 				(((rops >> shift) & 15) != 0 ||
 					(colors[bank] & mask & (0xffu << shift))))
@@ -852,94 +1233,131 @@ void CRealImage2100::block_command(uint32_t v)
 				reject();
 				return;
 			}
-		for (unsigned i = 24; i < 24 + groups; ++i)
-		{
-			const uint32_t bits = plane_value(bank, i, 0xffffffff);
-			if (bits != (bits & 255) * 0x01010101u)
-			{
-				reject();
-				return;
-			}
-		}
 	}
-	if (seed)
+	if (op.seed)
 	{
-		// Offscreen seeds bypass retained configuration pixel masks.
-		const uint32_t key = ((dy / 4) << 16) | (dx / 10);
-		if (auxiliary_clear)
-			m_clear_cache[2] = {key, auxiliary_value & auxiliary_mask, auxiliary_mask};
+		if (op.auxiliary_clear)
+			m_clear_cache[2] = {op.seed_key, op.auxiliary_value & op.auxiliary_mask,
+				op.auxiliary_mask};
 		for (unsigned bank = 0; bank < 2; ++bank)
-			if (banks & (1u << bank))
+			if (op.banks & (1u << bank))
 			{
-				const uint32_t mask = plane_value(bank, 0, 0xffffffff) & 0xffffff;
+				const uint32_t mask = op.color.masks[bank] & 0xffffff;
 				if (!mask)
 					continue;
 				auto& cache = m_clear_cache[bank];
-				if (cache.source != key)
+				if (cache.source != op.seed_key)
 					cache = {};
-				cache.source = key;
+				cache.source = op.seed_key;
 				cache.color = (cache.color & ~mask) | (colors[bank] & mask);
 				cache.known |= mask;
 			}
 		return;
 	}
 	invalidate_cache();
-	for (uint32_t row = y; row < std::min(bottom, m_color_height); ++row)
-		for (uint32_t col = x; col < std::min(right, m_color_width); ++col)
+	const uint32_t right = std::min(op.right, m_color_width),
+		bottom = std::min(op.bottom, m_color_height);
+	if (op.x >= right || op.y >= bottom)
+		return;
+	// Validated block ROPs reduce to masked replacement, including zero-source clears.
+	for (unsigned bank = 0; bank < 3; ++bank)
+	{
+		if (bank == 2 ? !op.auxiliary_clear : !(op.banks & (1u << bank)))
+			continue;
+		const uint32_t mask = bank == 2 ? op.auxiliary_mask : op.color.masks[bank] & 0xffffff,
+			value = bank == 2 ? op.auxiliary_value : colors[bank];
+		if (!mask)
+			continue;
+		uint32_t* const pixels = bank == 2 ? m_auxiliary.data() :
+			m_color.data() + size_t(bank) * m_color_pixels;
+		std::array<std::array<uint32_t, 16>, 4> masks{};
+		std::array<bool, 4> full{}, empty{};
+		for (unsigned y = 0; y < 4; ++y)
 		{
-			if (auxiliary_clear)
+			full[y] = empty[y] = true;
+			for (unsigned x = 0; x < op.clear_width; ++x)
 			{
-				const uint32_t bits = plane_value(2, 24 + col % groups, 0xffffffff),
-					bit = 2 * (row & 3) + ((col / groups) & 1);
-				if (bits & (1u << bit))
-				{
-					auto& pixel = m_auxiliary[size_t(row) * m_color_width + col];
-					pixel = (pixel & ~auxiliary_mask) | (auxiliary_value & auxiliary_mask);
-				}
+				const uint32_t bits = (op.pixel_masks[bank][x % op.groups] &
+					(1u << (2 * y + x / op.groups))) ? mask : 0;
+				masks[y][x] = bits;
+				full[y] = full[y] && bits == 0xffffffffu;
+				empty[y] = empty[y] && !bits;
 			}
-			for (unsigned bank = 0; bank < 2; ++bank)
-				if (banks & (1u << bank))
-				{
-					const uint32_t bits = plane_value(bank, 24 + col % groups, 0xffffffff),
-						bit = 2 * (row & 3) + ((col / groups) & 1);
-					if (bits & (1u << bit))
-					{
-						if (replace_color[bank])
-						{
-							const uint32_t mask = plane_value(bank, 0, 0xffffffff) & 0xffffff;
-							auto& pixel = m_color[size_t(bank) * m_color_pixels +
-								size_t(row) * m_color_width + col];
-							pixel = (pixel & ~mask) | (colors[bank] & mask);
-						}
-						else
-							color_write(col, row, colors[bank], 1u << bank);
-					}
-				}
 		}
+		for (uint32_t row = op.y; row < bottom; ++row)
+		{
+			if (empty[row & 3])
+				continue;
+			uint32_t* const line = pixels + size_t(row) * m_color_width;
+			if (full[row & 3])
+			{
+				std::fill(line + op.x, line + right, value);
+				continue;
+			}
+			const auto& row_masks = masks[row & 3];
+			uint32_t col = op.x;
+#if defined(REALIMAGE_SSE2)
+			const __m128i values = _mm_set1_epi32(value);
+			for (; col + 4 <= right; col += 4)
+			{
+				const __m128i lanes = _mm_loadu_si128(reinterpret_cast<const __m128i*>(
+					row_masks.data() + (col & (op.clear_width - 1))));
+				const __m128i old = _mm_loadu_si128(reinterpret_cast<const __m128i*>(line + col));
+				_mm_storeu_si128(reinterpret_cast<__m128i*>(line + col),
+					_mm_or_si128(_mm_andnot_si128(lanes, old), _mm_and_si128(lanes, values)));
+			}
+#endif
+			for (; col < right; ++col)
+			{
+				const uint32_t lanes = row_masks[col & (op.clear_width - 1)];
+				line[col] = (line[col] & ~lanes) | (value & lanes);
+			}
+		}
+	}
 }
 
-void CRealImage2100::start_command(uint32_t a, uint32_t v)
+void CRealImage2100::block_command(uint32_t v)
+{
+	execute_block(prepare_block(v));
+}
+
+CRealImage2100::StartPrefix CRealImage2100::begin_start(uint32_t a, uint32_t v)
 {
 	const bool readback = a == HostCommand && v == 0x01000052;
 	const bool cross_copy = a == HostCommand &&
 		(v == 0x01008072 || v == 0x00008062 || v == 0x00008072 || v == 0x01008062);
 	const uint32_t selected = (peek(DrawControl) >> 12) & 3;
-	// Cross-bank copies read the selected bank and write the opposite bank.
 	const uint32_t destination_banks = cross_copy ?
 		((selected >> 1) | (selected << 1)) & 3 : selected;
 	if (!readback)
 		for (unsigned bank = 0; bank < 2; ++bank)
 			if (destination_banks & (1u << bank))
 				m_clear_cache[bank] = {};
-	// A new launch cannot inherit the tail of an earlier host upload.
 	if (m_pending.width)
 		report("HOST_INTERRUPTED", a, v, "Incomplete native host upload replaced");
 	if (m_readback.width)
 		report("READBACK_INTERRUPTED", a, v, "Incomplete native host readback replaced");
 	m_pending = {};
 	m_readback = {};
+	return {a, v, selected, destination_banks};
+}
+
+CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& prefix) const
+{
+	const uint32_t a = prefix.address, v = prefix.value;
+	StartOperation op;
+	op.address = a;
+	op.value = v;
+	op.color = prepare_color_write();
+	const bool readback = a == HostCommand && v == 0x01000052;
+	const bool cross_copy = a == HostCommand &&
+		(v == 0x01008072 || v == 0x00008062 || v == 0x00008072 || v == 0x01008062);
+	const uint32_t selected = prefix.selected;
+	op.banks = selected;
+	op.destination_banks = prefix.destination_banks;
 	if (!v)
-		return;
+		return op;
+	op.kind = StartOperation::Kind::Rejected;
 	const bool upload = a == HostCommand && v == 0x01000032;
 	const bool fast_copy = a == HostCommand &&
 		(v == 0x00200062 || v == 0x00200072 || v == 0x01200062 || v == 0x01200072);
@@ -948,26 +1366,25 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		fast_copy || cross_copy;
 	const bool fill = a == FillCommand && v == 0x09000832;
 	const bool host_mono = a == HostCommand && (v & ~0x7780u) == 0x01000872;
-	const bool transparent = host_mono && !(v & 0x80);
-	const uint32_t mono_offset = host_mono ? (v >> 8) & 7 : 0;
-	// Base glyph commands also carry widths without encoding them in the command.
+	op.transparent = host_mono && !(v & 0x80);
+	op.mono_offset = host_mono ? (v >> 8) & 7 : 0;
 	const uint32_t mono_width = host_mono && (v & 0x7700) ? ((v >> 12) & 7) + 1 : 0;
-	const bool mono = host_mono || (a == FillCommand && v == 0x010008f2);
+	op.mono = host_mono || (a == FillCommand && v == 0x010008f2);
 	const bool profile = fast_copy ? fast_copy_profile() :
 		(fill ? fill_profile() : copy_profile()) && (!(selected & 1) || plane_profile(0)) &&
 		(!(selected & 2) || plane_profile(1)) &&
 		(!cross_copy || plane_profile(selected == 2 ? 0 : 1));
-	if ((!upload && !copy && !fill && !mono && !readback) || !profile ||
+	if ((!upload && !copy && !fill && !op.mono && !readback) || !profile ||
 		((copy || readback) && selected != 1 && selected != 2))
-	{
-		unimplemented_once("REALimage 2D command/profile (command rejected)", a, v, true);
-		return;
-	}
+		return op;
 	const uint32_t origin = peek(a == HostCommand ? HostOrigin : FillOrigin),
 		extent = peek(a == HostCommand ? HostExtent : FillExtent),
-		width = (extent & 0xffff) + 1, height = (extent >> 16) + 1,
-		banks = (peek(DrawControl) >> 12) & 3;
-	const int32_t x = int16_t(origin & 0xffff), y = int16_t(origin >> 16);
+		width = (extent & 0xffff) + 1, height = (extent >> 16) + 1;
+	op.width = width;
+	op.height = height;
+	op.banks = (peek(DrawControl) >> 12) & 3;
+	op.x = int16_t(origin & 0xffff);
+	op.y = int16_t(origin >> 16);
 	if (readback)
 	{
 		const uint32_t source = peek(BlockSource), sx = source & 0xffff,
@@ -975,99 +1392,161 @@ void CRealImage2100::start_command(uint32_t a, uint32_t v)
 		if (sx >= m_color_width || sy >= m_color_height ||
 			width > m_color_width - sx || height > m_color_height - sy)
 		{
-			unimplemented_once("REALimage readback source bounds (command rejected)", a, v, true);
-			return;
+			op.rejection = StartOperation::Rejection::ReadbackSource;
+			return op;
 		}
-		m_readback = {sx, sy, width, height, 0, selected};
-		return;
+		op.kind = StartOperation::Kind::Readback;
+		op.banks = selected;
+		op.sx = int32_t(sx);
+		op.sy = int32_t(sy);
+		return op;
 	}
 	if (upload)
 	{
 		if (uint64_t(width) * height > 0xffffffffu)
 		{
-			report("HOST_BOUNDS", a, v, "Native host extent exceeds model limit");
-			return;
+			op.rejection = StartOperation::Rejection::HostBounds;
+			return op;
 		}
-		m_pending = {origin & 0xffff, origin >> 16, width, height, 0, banks};
-		return;
+		op.kind = StartOperation::Kind::Upload;
+		return op;
 	}
 	if (copy)
 	{
-		const uint32_t source = peek(BlockSource), source_bank = selected == 2 ? 1 : 0,
-			bank = cross_copy ? source_bank ^ 1u : source_bank;
-		const bool right_to_left = !(v & 0x01000000), bottom_to_top = !(v & 0x10);
+		const uint32_t source = peek(BlockSource);
+		op.source_bank = selected == 2 ? 1 : 0;
+		op.destination_bank = cross_copy ? op.source_bank ^ 1u : op.source_bank;
+		op.right_to_left = !(v & 0x01000000);
+		op.bottom_to_top = !(v & 0x10);
+		op.fast_copy = fast_copy;
 		if (fast_copy && ((source ^ origin) & (block_width() / 2 - 1)))
 		{
-			unimplemented_once("REALimage fast-copy alignment (command rejected)", a, v, true);
-			return;
+			op.rejection = StartOperation::Rejection::CopyAlignment;
+			return op;
 		}
-		const int32_t sx = int16_t(source & 0xffff), sy = int16_t(source >> 16),
-			left = std::max(right_to_left ? x - int32_t(width) + 1 : x, int32_t(0)),
-			right = std::min(x + (right_to_left ? 1 : int32_t(width)), int32_t(m_color_width)),
-			top = std::max(bottom_to_top ? y - int32_t(height) + 1 : y, int32_t(0)),
-			bottom = std::min(y + (bottom_to_top ? 0 : int32_t(height) - 1),
-				int32_t(m_color_height) - 1);
-		if (left >= right || top > bottom)
-			return;
-		if (sx + left - x < 0 || sx + right - x > int32_t(m_color_width) ||
-			sy + top - y < 0 || sy + bottom - y >= int32_t(m_color_height))
+		op.sx = int16_t(source & 0xffff);
+		op.sy = int16_t(source >> 16);
+		op.left = std::max(op.right_to_left ? op.x - int32_t(width) + 1 : op.x, int32_t(0));
+		op.right = std::min(op.x + (op.right_to_left ? 1 : int32_t(width)), int32_t(m_color_width));
+		op.top = std::max(op.bottom_to_top ? op.y - int32_t(height) + 1 : op.y, int32_t(0));
+		op.bottom = std::min(op.y + (op.bottom_to_top ? 0 : int32_t(height) - 1),
+			int32_t(m_color_height) - 1);
+		if (op.left >= op.right || op.top > op.bottom)
 		{
-			unimplemented_once("REALimage copy source bounds (command rejected)", a, v, true);
-			return;
+			op.kind = StartOperation::Kind::Empty;
+			return op;
 		}
-		// Bits 24 and 4 select increasing X and Y.
-		const int32_t first = right_to_left ? right - 1 : left,
-			end = right_to_left ? left - 1 : right, step = right_to_left ? -1 : 1,
-			first_row = bottom_to_top ? bottom : top,
-			end_row = bottom_to_top ? top - 1 : bottom + 1,
-			row_step = bottom_to_top ? -1 : 1;
+		if (op.sx + op.left - op.x < 0 || op.sx + op.right - op.x > int32_t(m_color_width) ||
+			op.sy + op.top - op.y < 0 || op.sy + op.bottom - op.y >= int32_t(m_color_height))
+		{
+			op.rejection = StartOperation::Rejection::CopySource;
+			return op;
+		}
+		op.kind = StartOperation::Kind::Copy;
+		return op;
+	}
+	op.pattern = {peek(MonoPattern0), peek(MonoPattern1), peek(MonoPattern2), peek(MonoPattern3)};
+	if (op.mono && ((mono_width && width != mono_width) ||
+		(a == HostCommand && (width + op.mono_offset > 8 || height > 16)) ||
+		(a == FillCommand && (op.pattern[0] != op.pattern[2] || op.pattern[1] != op.pattern[3]))))
+	{
+		op.rejection = StartOperation::Rejection::MonoLayout;
+		return op;
+	}
+	op.left = std::max(op.x, int32_t(0));
+	op.top = std::max(op.y, int32_t(0));
+	op.right = std::min(op.x + int32_t(width), int32_t(m_color_width));
+	op.bottom = std::min(op.y + int32_t(height), int32_t(m_color_height));
+	op.foreground = peek(Foreground);
+	op.background = peek(Background);
+	op.kind = StartOperation::Kind::Pattern;
+	return op;
+}
+
+void CRealImage2100::execute_start(const StartOperation& op)
+{
+	if (op.kind == StartOperation::Kind::Empty)
+		return;
+	if (op.kind == StartOperation::Kind::Rejected)
+	{
+		const char* message = "REALimage 2D command/profile (command rejected)";
+		switch (op.rejection)
+		{
+		case StartOperation::Rejection::ReadbackSource:
+			message = "REALimage readback source bounds (command rejected)";
+			break;
+		case StartOperation::Rejection::HostBounds:
+			report("HOST_BOUNDS", op.address, op.value, "Native host extent exceeds model limit");
+			return;
+		case StartOperation::Rejection::CopyAlignment:
+			message = "REALimage fast-copy alignment (command rejected)";
+			break;
+		case StartOperation::Rejection::CopySource:
+			message = "REALimage copy source bounds (command rejected)";
+			break;
+		case StartOperation::Rejection::MonoLayout:
+			message = "REALimage monochrome layout (command rejected)";
+			break;
+		default:
+			break;
+		}
+		unimplemented_once(message, op.address, op.value, true);
+		return;
+	}
+	if (op.kind == StartOperation::Kind::Readback)
+	{
+		m_readback = {uint32_t(op.sx), uint32_t(op.sy), op.width, op.height, 0, op.banks};
+		return;
+	}
+	if (op.kind == StartOperation::Kind::Upload)
+	{
+		m_pending = {uint32_t(op.x) & 0xffff, uint32_t(op.y) & 0xffff,
+			op.width, op.height, 0, op.banks};
+		return;
+	}
+	if (op.kind == StartOperation::Kind::Copy)
+	{
+		const int32_t first = op.right_to_left ? op.right - 1 : op.left,
+			end = op.right_to_left ? op.left - 1 : op.right, step = op.right_to_left ? -1 : 1,
+			first_row = op.bottom_to_top ? op.bottom : op.top,
+			end_row = op.bottom_to_top ? op.top - 1 : op.bottom + 1,
+			row_step = op.bottom_to_top ? -1 : 1;
 		for (int32_t row = first_row; row != end_row; row += row_step)
 			for (int32_t col = first; col != end; col += step)
 			{
-				const size_t offset = size_t(source_bank) * m_color_pixels +
-					size_t(sy + row - y) * m_color_width + size_t(sx + col - x);
-				if (fast_copy)
-					// The optimized RAM-copy profile bypasses its programmed ROP 5.
-					m_color[size_t(bank) * m_color_pixels + size_t(row) * m_color_width + col] =
-						m_color[offset] & 0xffffff;
+				const size_t offset = size_t(op.source_bank) * m_color_pixels +
+					size_t(op.sy + row - op.y) * m_color_width + size_t(op.sx + col - op.x);
+				if (op.fast_copy)
+					m_color[size_t(op.destination_bank) * m_color_pixels +
+						size_t(row) * m_color_width + col] = m_color[offset] & 0xffffff;
 				else
-					color_write(uint32_t(col), uint32_t(row), m_color[offset], destination_banks);
+					color_write(op.color, uint32_t(col), uint32_t(row), m_color[offset], op.destination_banks);
 			}
 		return;
 	}
-	const uint32_t pattern[] = {peek(MonoPattern0), peek(MonoPattern1),
-		peek(MonoPattern2), peek(MonoPattern3)};
-	if (mono && ((mono_width && width != mono_width) ||
-		(a == HostCommand && (width + mono_offset > 8 || height > 16)) ||
-		(a == FillCommand && (pattern[0] != pattern[2] || pattern[1] != pattern[3]))))
-	{
-		unimplemented_once("REALimage monochrome layout (command rejected)", a, v, true);
-		return;
-	}
-	// Clip before iterating so malformed extents cannot cause unbounded work.
-	const int32_t left = std::max(x, int32_t(0)),
-		top = std::max(y, int32_t(0)),
-		right = std::min(x + int32_t(width), int32_t(m_color_width)),
-		bottom = std::min(y + int32_t(height), int32_t(m_color_height));
-	const uint32_t foreground = peek(Foreground), background = peek(Background);
-	for (int32_t row = top; row < bottom; ++row)
-		for (int32_t col = left; col < right; ++col)
+	for (int32_t row = op.top; row < op.bottom; ++row)
+		for (int32_t col = op.left; col < op.right; ++col)
 		{
-			uint32_t color = foreground;
-			if (mono)
+			uint32_t color = op.foreground;
+			if (op.mono)
 			{
-				// Local origin, MSB first; brush fills duplicate their eight rows.
-				const uint32_t px = (uint32_t(col - x) + mono_offset) & 7,
-					py = uint32_t(row - y) & 15;
-				if (!(pattern[3 - py / 4] & (1u << (31 - 8 * (py & 3) - px))))
+				const uint32_t px = (uint32_t(col - op.x) + op.mono_offset) & 7,
+					py = uint32_t(row - op.y) & 15;
+				if (!(op.pattern[3 - py / 4] & (1u << (31 - 8 * (py & 3) - px))))
 				{
-					if (transparent)
+					if (op.transparent)
 						continue;
-					color = background;
+					color = op.background;
 				}
 			}
-			color_write(uint32_t(col), uint32_t(row), color, banks);
+			color_write(op.color, uint32_t(col), uint32_t(row), color, op.banks);
 		}
+}
+
+void CRealImage2100::start_command(uint32_t a, uint32_t v)
+{
+	const auto prefix = begin_start(a, v);
+	execute_start(prepare_start(prefix));
 }
 
 bool CRealImage2100::triangle_profile() const
@@ -1138,25 +1617,22 @@ bool CRealImage2100::triangle_profile() const
 	return true;
 }
 
-void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
+CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
+	uint32_t address, uint32_t value, TriangleOperation& operation) const
 {
 	// These commands retain the slot without launching a primitive.
 	if (!value || value == 0x10)
-		return;
-	auto reject = [&]() {
-		unimplemented_once("REALimage triangle command/profile (command rejected)",
-			address, value, true);
-	};
+		return TrianglePreparation::NoOp;
 	const bool textured = (peek(PipelineControl0) & 0x80000000u) != 0,
 		flat = flat_vertex_register(address), no_depth = peek(PipelineControl0) != 0x05008001,
 		blend = peek(PipelineControl2) == 0x20000080;
 	if (value != 0x13 || !triangle_profile() ||
 		(flat && !no_depth) || (!textured && no_depth && !flat))
 	{
-		reject();
-		return;
+		return TrianglePreparation::Rejected;
 	}
-	struct Vertex { double alpha, red, green, blue, x, y, z, s, t; } vertex[3]{};
+	using Vertex = TriangleOperation::Vertex;
+	Vertex vertex[3]{};
 	for (unsigned slot = 0; slot < 3; ++slot)
 	{
 		double component[7]{};
@@ -1165,8 +1641,7 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 			const auto reg = m_shadow.find(VertexBase + slot * VertexStride + i * 4);
 			if (reg == m_shadow.end())
 			{
-				reject();
-				return;
+				return TrianglePreparation::Rejected;
 			}
 			float input;
 			static_assert(sizeof(input) == sizeof(reg->second), "IEEE vertex word size");
@@ -1176,8 +1651,7 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 				((i == 4 || i == 5) && (input < -32768 || input >= 32768)) ||
 				(i == 6 && (no_depth ? input == 0 : (input < 0 || input > 1))))
 			{
-				reject();
-				return;
+				return TrianglePreparation::Rejected;
 			}
 			// Lighting can emit overrange RGB; clamp before interpolation.
 			component[i] = i > 0 && i < 4 ? std::clamp(double(input), 0.0, 256.0) : input;
@@ -1192,20 +1666,17 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 				const auto reg = m_shadow.find(VertexTextureBase + slot * VertexStride + i * 4);
 				if (reg == m_shadow.end())
 				{
-					reject();
-					return;
+					return TrianglePreparation::Rejected;
 				}
 				std::memcpy(&coordinates[i], &reg->second, sizeof(float));
 				if (!std::isfinite(coordinates[i]))
 				{
-					reject();
-					return;
+					return TrianglePreparation::Rejected;
 				}
 			}
 			if (coordinates[0] != 1 || coordinates[3] != 0)
 			{
-				reject();
-				return;
+				return TrianglePreparation::Rejected;
 			}
 			vertex[slot].s = coordinates[1];
 			vertex[slot].t = coordinates[2];
@@ -1215,8 +1686,7 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 	if (textured && ((vertex[0].z < 0) != (vertex[1].z < 0) ||
 		(vertex[0].z < 0) != (vertex[2].z < 0)))
 	{
-		reject();
-		return;
+		return TrianglePreparation::Rejected;
 	}
 	double flat_color[4]{};
 	if (flat && !textured)
@@ -1228,15 +1698,13 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 			const auto reg = m_shadow.find(VertexBase + slot * VertexStride + i * 4);
 			if (reg == m_shadow.end())
 			{
-				reject();
-				return;
+				return TrianglePreparation::Rejected;
 			}
 			float input;
 			std::memcpy(&input, &reg->second, sizeof(input));
 			if (!std::isfinite(input) || (i == 0 && (input < 0 || input > 256)))
 			{
-				reject();
-				return;
+				return TrianglePreparation::Rejected;
 			}
 			flat_color[i] = i ? std::clamp(double(input), 0.0, 255.0) : input / 256.0;
 		}
@@ -1246,7 +1714,7 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 	};
 	double area = edge(vertex[0], vertex[1], vertex[2].x, vertex[2].y);
 	if (!area)
-		return;
+		return TrianglePreparation::NoOp;
 	if (area < 0)
 	{
 		std::swap(vertex[1], vertex[2]);
@@ -1262,7 +1730,7 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 		bottom = std::min({int(m_color_height) - 1, int(peek(ClipYMax) >> 4),
 			int(std::floor(std::max({a.y, b.y, c.y}) - 0.5))});
 	if (left > right || top > bottom)
-		return;
+		return TrianglePreparation::NoOp;
 	auto top_left = [](const Vertex& p, const Vertex& q) {
 		return q.y < p.y || (q.y == p.y && q.x > p.x);
 	};
@@ -1275,23 +1743,97 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 		texture_width = 1u << ((texture_profile >> 8) & 15),
 		texture_height = 1u << ((texture_profile >> 4) & 15);
 	const unsigned texture_row_shift = m_texture.size() == MaxTextureSize ? 14 : 13;
+	operation = {};
+	std::copy(std::begin(vertex), std::end(vertex), std::begin(operation.vertex));
+	std::copy(std::begin(flat_color), std::end(flat_color), std::begin(operation.flat_color));
+	operation.area = area;
+	operation.left = left;
+	operation.top = top;
+	operation.right = right;
+	operation.bottom = bottom;
+	operation.textured = textured;
+	operation.flat = flat;
+	operation.blend = blend;
+	operation.depth_less = depth_less;
+	operation.wid = wid;
+	operation.bank = bank;
+	operation.color_width = m_color_width;
+	operation.color_offset = size_t(bank) * m_color_pixels;
+	operation.texture_base = texture_base;
+	operation.texture_width = texture_width;
+	operation.texture_height = texture_height;
+	operation.texture_row_shift = texture_row_shift;
+	operation.row_edges[0] = {1, 2, c.y == b.y ? 0 : (c.x - b.x) / (c.y - b.y), include_a};
+	operation.row_edges[1] = {2, 0, a.y == c.y ? 0 : (a.x - c.x) / (a.y - c.y), include_b};
+	operation.row_edges[2] = {0, 1, b.y == a.y ? 0 : (b.x - a.x) / (b.y - a.y), include_c};
+	return TrianglePreparation::Ready;
+}
+
+void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
+{
+	TriangleOperation operation;
+	const TrianglePreparation result = prepare_triangle(address, value, operation);
+	if (result == TrianglePreparation::Rejected)
+		unimplemented_once("REALimage triangle command/profile (command rejected)",
+			address, value, true);
+	else if (result == TrianglePreparation::Ready)
+		execute_triangle(operation);
+}
+
+void CRealImage2100::execute_triangle(const TriangleOperation& operation)
+{
+	using Vertex = TriangleOperation::Vertex;
+	const Vertex* const vertex = operation.vertex;
+	const Vertex &a = vertex[0], &b = vertex[1], &c = vertex[2];
+	const double area = operation.area;
+	const double* const flat_color = operation.flat_color;
+	const int left = operation.left, top = operation.top,
+		right = operation.right, bottom = operation.bottom;
+	const bool textured = operation.textured, flat = operation.flat,
+		blend = operation.blend, depth_less = operation.depth_less,
+		include_a = operation.row_edges[0].inclusive,
+		include_b = operation.row_edges[1].inclusive,
+		include_c = operation.row_edges[2].inclusive;
+	const uint32_t wid = operation.wid, bank = operation.bank,
+		texture_base = operation.texture_base, texture_width = operation.texture_width,
+		texture_height = operation.texture_height;
+	const unsigned texture_row_shift = operation.texture_row_shift;
+	auto edge = [](const Vertex& p, const Vertex& q, double x, double y) {
+		return (q.x - p.x) * (y - p.y) - (q.y - p.y) * (x - p.x);
+	};
 	// Validated triangle profiles write every RGB channel.
-	uint32_t* const color_plane = m_color.data() + size_t(bank) * m_color_pixels;
+	uint32_t* const color_plane = m_color.data() + operation.color_offset;
 	m_clear_cache[bank] = {};
-	struct RowEdge { const Vertex *p, *q; double slope; bool inclusive; };
-	const RowEdge row_edges[] = {
-		{&b, &c, c.y == b.y ? 0 : (c.x - b.x) / (c.y - b.y), include_a},
-		{&c, &a, a.y == c.y ? 0 : (a.x - c.x) / (a.y - c.y), include_b},
-		{&a, &b, b.y == a.y ? 0 : (b.x - a.x) / (b.y - a.y), include_c}};
+#if defined(__AVX2__) && defined(REALIMAGE_SSE2)
+	// Pack wide-stride textures once per large draw to improve sampling locality.
+	const uint8_t* sample_texture = m_texture.data();
+	uint32_t sample_base = texture_base;
+	unsigned sample_row_shift = texture_row_shift;
+	std::vector<uint8_t> dense_texture;
+	if (textured && (_mm_getcsr() & _MM_ROUND_MASK) == _MM_ROUND_NEAREST &&
+		uint64_t(right - left + 1) * unsigned(bottom - top + 1) >= uint64_t(texture_width) * texture_height * 4)
+	{
+		const unsigned row_bytes = texture_width * 2;
+		dense_texture.resize(size_t(row_bytes) * texture_height);
+		for (unsigned y = 0; y < texture_height; ++y)
+			std::memcpy(dense_texture.data() + size_t(y) * row_bytes,
+				m_texture.data() + texture_base + (size_t(y) << texture_row_shift), row_bytes);
+		sample_texture = dense_texture.data();
+		sample_base = 0;
+		sample_row_shift = 0;
+		while ((1u << sample_row_shift) < row_bytes)
+			++sample_row_shift;
+	}
+#endif
 	// Skip only spans rejected by the original edge test.
 	auto row_span = [&](int y, int& span_left, int& span_right) {
 		span_left = left;
 		span_right = right;
-		for (const auto& limit : row_edges)
+		for (const auto& limit : operation.row_edges)
 		{
 			if (span_left > span_right)
 				break;
-			const Vertex &p = *limit.p, &q = *limit.q;
+			const Vertex &p = vertex[limit.p], &q = vertex[limit.q];
 			auto outside = [&](int x) {
 				const double e = edge(p, q, x + 0.5, y + 0.5);
 				return e < 0 || (e == 0 && !limit.inclusive);
@@ -1322,8 +1864,107 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 		}
 	};
 
-#if defined(REALIMAGE_SSE2)
-	if (textured)
+#if defined(__AVX2__) && defined(REALIMAGE_SSE2)
+	if (textured && (_mm_getcsr() & _MM_ROUND_MASK) == _MM_ROUND_NEAREST)
+	{
+		const __m256d zero = _mm256_setzero_pd(), area2 = _mm256_set1_pd(area);
+		auto vector_edge = [&] (const Vertex& p, const Vertex& q, __m256d xx, __m256d yy) {
+			return _mm256_sub_pd(_mm256_mul_pd(_mm256_set1_pd(q.x - p.x), _mm256_sub_pd(yy, _mm256_set1_pd(p.y))),
+				_mm256_mul_pd(_mm256_set1_pd(q.y - p.y), _mm256_sub_pd(xx, _mm256_set1_pd(p.x))));
+		};
+		auto inside = [&] (__m256d e, bool include) {
+			return include ? _mm256_cmp_pd(e, zero, _CMP_GE_OQ) : _mm256_cmp_pd(e, zero, _CMP_GT_OQ);
+		};
+		for (int y = top; y <= bottom; ++y)
+		{
+			int span_left, span_right;
+			row_span(y, span_left, span_right);
+			struct Group
+			{
+				__m256d s, t;
+				unsigned active;
+			};
+			auto prepare_group = [&](int x) {
+				const __m256d xx = _mm256_set_pd(x + 3.5, x + 2.5, x + 1.5, x + 0.5), yy = _mm256_set1_pd(y + 0.5);
+				const __m256d ea = vector_edge(b, c, xx, yy), eb = vector_edge(c, a, xx, yy), ec = vector_edge(a, b, xx, yy);
+				unsigned active = unsigned(_mm256_movemask_pd(_mm256_and_pd(inside(ea, include_a),
+					_mm256_and_pd(inside(eb, include_b), inside(ec, include_c))))) & (x > span_right ? 0u : x + 3 <= span_right ? 15u : (1u << (span_right - x + 1)) - 1);
+				if (!active)
+					return Group{zero, zero, 0};
+				const size_t offset = size_t(y) * operation.color_width + unsigned(x);
+				if (x + 3 <= span_right)
+				{
+					const __m128i auxiliary = _mm_loadu_si128(reinterpret_cast<const __m128i*>(m_auxiliary.data() + offset));
+					active &= unsigned(_mm_movemask_ps(_mm_castsi128_ps(_mm_cmpeq_epi32(
+						_mm_and_si128(auxiliary, _mm_set1_epi32(0xf000)), _mm_set1_epi32(wid)))));
+				}
+				else
+					for (unsigned lane = 0; lane < 4; ++lane)
+						if ((active & (1u << lane)) && (m_auxiliary[offset + lane] & 0xf000) != wid)
+							active &= ~(1u << lane);
+
+				if (!active)
+					return Group{zero, zero, 0};
+				const __m256d wb = _mm256_div_pd(eb, area2), wc = _mm256_div_pd(ec, area2),
+					wa = _mm256_div_pd(_mm256_div_pd(ea, area2), _mm256_set1_pd(a.z)),
+					tb = _mm256_div_pd(wb, _mm256_set1_pd(b.z)), tc = _mm256_div_pd(wc, _mm256_set1_pd(c.z));
+				const __m256d mask = _mm256_castsi256_pd(_mm256_set_epi64x(active & 8 ? -1ll : 0, active & 4 ? -1ll : 0, active & 2 ? -1ll : 0, active & 1 ? -1ll : 0));
+				const __m256d denominator = _mm256_or_pd(_mm256_and_pd(mask, _mm256_add_pd(_mm256_add_pd(wa, tb), tc)),
+					_mm256_andnot_pd(mask, _mm256_set1_pd(1)));
+				const __m256d s = _mm256_div_pd(_mm256_add_pd(_mm256_add_pd(_mm256_mul_pd(wa, _mm256_set1_pd(a.s)),
+					_mm256_mul_pd(tb, _mm256_set1_pd(b.s))), _mm256_mul_pd(tc, _mm256_set1_pd(c.s))), denominator),
+					t = _mm256_div_pd(_mm256_add_pd(_mm256_add_pd(_mm256_mul_pd(wa, _mm256_set1_pd(a.t)),
+					_mm256_mul_pd(tb, _mm256_set1_pd(b.t))), _mm256_mul_pd(tc, _mm256_set1_pd(c.t))), denominator);
+				return Group{s, t, active};
+			};
+			struct Packet
+			{
+				__m256d s0, t0, s1, t1;
+				unsigned active;
+			};
+			// Stage coordinates to reduce register pressure while sampling.
+			Packet packets[16];
+			for (int begin = span_left; begin <= span_right; begin += 128)
+			{
+				const unsigned count = unsigned(std::min(16, (span_right - begin) / 8 + 1));
+				for (unsigned i = 0; i < count; ++i)
+				{
+					const int x = begin + int(i) * 8;
+					const auto low = prepare_group(x), high = prepare_group(x + 4);
+					packets[i] = {low.s, low.t, high.s, high.t, low.active | (high.active << 4)};
+				}
+				for (unsigned i = 0; i < count; ++i)
+				{
+					const int x = begin + int(i) * 8;
+					const Packet& packet = packets[i];
+					const unsigned active = packet.active;
+					if (!active)
+						continue;
+					const __m256i color = realimage_texture8(packet.s0, packet.t0, packet.s1, packet.t1, sample_texture,
+						sample_base, texture_width, texture_height, sample_row_shift);
+					const size_t offset = size_t(y) * operation.color_width + unsigned(x);
+					if (active == 255)
+					{
+						const __m256i old_color = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(color_plane + offset));
+						_mm256_storeu_si256(reinterpret_cast<__m256i*>(color_plane + offset),
+							_mm256_or_si256(_mm256_and_si256(old_color, _mm256_set1_epi32(0xff000000u)), color));
+					}
+					else
+					{
+						const __m256i lane_mask = _mm256_set_epi32(active & 128 ? -1 : 0, active & 64 ? -1 : 0,
+							active & 32 ? -1 : 0, active & 16 ? -1 : 0, active & 8 ? -1 : 0, active & 4 ? -1 : 0,
+							active & 2 ? -1 : 0, active & 1 ? -1 : 0);
+						const __m256i old_color = _mm256_maskload_epi32(reinterpret_cast<const int*>(color_plane + offset), lane_mask);
+						_mm256_maskstore_epi32(reinterpret_cast<int*>(color_plane + offset), lane_mask,
+							_mm256_or_si256(_mm256_and_si256(old_color, _mm256_set1_epi32(0xff000000u)), color));
+					}
+				}
+			}
+		}
+		return;
+	}
+#elif defined(REALIMAGE_SSE2)
+	if (textured && (_mm_getcsr() & _MM_ROUND_MASK) == _MM_ROUND_NEAREST)
 	{
 		const __m128d zero = _mm_setzero_pd(), area2 = _mm_set1_pd(area);
 		auto vector_edge = [&] (const Vertex& p, const Vertex& q, __m128d xx, __m128d yy) {
@@ -1337,19 +1978,22 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 		{
 			int span_left, span_right;
 			row_span(y, span_left, span_right);
-			for (int x = span_left; x <= span_right; x += 2)
+			struct Pair
 			{
+				__m128d s, t;
+				unsigned active;
+			};
+			auto prepare_pair = [&](int x) {
 				const __m128d xx = _mm_set_pd(x + 1.5, x + 0.5), yy = _mm_set1_pd(y + 0.5);
 				const __m128d ea = vector_edge(b, c, xx, yy), eb = vector_edge(c, a, xx, yy), ec = vector_edge(a, b, xx, yy);
 				unsigned active = unsigned(_mm_movemask_pd(_mm_and_pd(inside(ea, include_a),
-					_mm_and_pd(inside(eb, include_b), inside(ec, include_c))))) & (x < span_right ? 3u : 1u);
-				const size_t offset = size_t(y) * m_color_width + unsigned(x);
+					_mm_and_pd(inside(eb, include_b), inside(ec, include_c))))) & (x > span_right ? 0u : x < span_right ? 3u : 1u);
+				const size_t offset = size_t(y) * operation.color_width + unsigned(x);
 				if ((active & 1) && (m_auxiliary[offset] & 0xf000) != wid)
 					active &= ~1u;
 				if ((active & 2) && (m_auxiliary[offset + 1] & 0xf000) != wid)
 					active &= ~2u;
-				if (!active)
-					continue;
+
 				const __m128d wb = _mm_div_pd(eb, area2), wc = _mm_div_pd(ec, area2),
 					wa = _mm_div_pd(_mm_div_pd(ea, area2), _mm_set1_pd(a.z)),
 					tb = _mm_div_pd(wb, _mm_set1_pd(b.z)), tc = _mm_div_pd(wc, _mm_set1_pd(c.z));
@@ -1360,13 +2004,55 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 					_mm_mul_pd(tb, _mm_set1_pd(b.s))), _mm_mul_pd(tc, _mm_set1_pd(c.s))), denominator),
 					t = _mm_div_pd(_mm_add_pd(_mm_add_pd(_mm_mul_pd(wa, _mm_set1_pd(a.t)),
 					_mm_mul_pd(tb, _mm_set1_pd(b.t))), _mm_mul_pd(tc, _mm_set1_pd(c.t))), denominator);
-				const __m128i color = realimage_texture2(s, t, m_texture.data(), texture_base,
-					texture_width, texture_height, texture_row_shift);
-				if (active & 1)
-					color_plane[offset] = (color_plane[offset] & 0xff000000u) | unsigned(_mm_cvtsi128_si32(color));
-				if (active & 2)
-					color_plane[offset + 1] = (color_plane[offset + 1] & 0xff000000u) |
-						unsigned(_mm_cvtsi128_si32(_mm_srli_si128(color, 4)));
+				return Pair{s, t, active};
+			};
+			struct Packet
+			{
+				__m128d s0, t0, s1, t1;
+			};
+			// Stage coordinates to reduce register pressure while sampling.
+			Packet packets[32];
+			unsigned active_masks[32];
+			for (int begin = span_left; begin <= span_right; begin += 128)
+			{
+				const unsigned count = unsigned(std::min(32, (span_right - begin) / 4 + 1));
+				for (unsigned i = 0; i < count; ++i)
+				{
+					const int x = begin + int(i) * 4;
+					const auto low = prepare_pair(x);
+					packets[i].s0 = low.s;
+					packets[i].t0 = low.t;
+					active_masks[i] = low.active;
+					const auto high = prepare_pair(x + 2);
+					packets[i].s1 = high.s;
+					packets[i].t1 = high.t;
+					active_masks[i] |= high.active << 2;
+				}
+				for (unsigned i = 0; i < count; ++i)
+				{
+					const int x = begin + int(i) * 4;
+					const Packet& packet = packets[i];
+					const unsigned active = active_masks[i];
+					if (!active)
+						continue;
+					const __m128i color = realimage_texture4(packet.s0, packet.t0, packet.s1, packet.t1, m_texture.data(),
+						texture_base, texture_width, texture_height, texture_row_shift);
+					const size_t offset = size_t(y) * operation.color_width + unsigned(x);
+					if (active == 15)
+					{
+						const __m128i old_color = _mm_loadu_si128(reinterpret_cast<const __m128i*>(color_plane + offset));
+						_mm_storeu_si128(reinterpret_cast<__m128i*>(color_plane + offset),
+							_mm_or_si128(_mm_and_si128(old_color, _mm_set1_epi32(0xff000000u)), color));
+					}
+					else
+					{
+						uint32_t pixels[4];
+						_mm_storeu_si128(reinterpret_cast<__m128i*>(pixels), color);
+						for (unsigned lane = 0; lane < 4; ++lane)
+							if (active & (1u << lane))
+								color_plane[offset + lane] = (color_plane[offset + lane] & 0xff000000u) | pixels[lane];
+					}
+				}
 			}
 		}
 		return;
@@ -1384,7 +2070,7 @@ void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 			if (ea < 0 || (ea == 0 && !include_a) ||
 				eb < 0 || (eb == 0 && !include_b) || ec < 0 || (ec == 0 && !include_c))
 				continue;
-			const size_t offset = size_t(y) * m_color_width + unsigned(x);
+			const size_t offset = size_t(y) * operation.color_width + unsigned(x);
 			uint32_t& auxiliary = m_auxiliary[offset];
 			if ((auxiliary & 0xf000) != wid)
 				continue;
@@ -1465,7 +2151,7 @@ void CRealImage2100::host_data(uint32_t v)
 		int32_t(m_pending.word % m_pending.width);
 	const int32_t y = int16_t(m_pending.y) +
 		int32_t(m_pending.word / m_pending.width);
-	color_write(uint32_t(x), uint32_t(y), v, m_pending.banks);
+	execute_pixel(prepare_pixel(uint32_t(x), uint32_t(y), v, m_pending.banks));
 	if (++m_pending.word == uint64_t(m_pending.width) * m_pending.height)
 		m_pending = {};
 }
@@ -1660,7 +2346,17 @@ bool CRealImage2100::dma_list_target(uint32_t a) const
 
 void CRealImage2100::dma_command_list(uint32_t v)
 {
-	const uint32_t completion = m_dma_regs[12];
+	DMAListOperation operation;
+	if (prepare_dma_list(v, operation))
+		execute_dma_list(operation);
+}
+
+bool CRealImage2100::prepare_dma_list(uint32_t v, DMAListOperation& operation)
+{
+	operation = {};
+	operation.command = v;
+	operation.completion = m_dma_regs[12];
+	const uint32_t completion = operation.completion;
 	uint32_t command = v, source = m_dma_regs[8], initial_address = m_dma_regs[9],
 		next = m_dma_regs[11];
 	auto reject = [&]() {
@@ -1679,26 +2375,22 @@ void CRealImage2100::dma_command_list(uint32_t v)
 	if (m_dma_list_active || !neutral || m_dma_regs[14] != 8 || (completion & 3))
 	{
 		reject();
-		return;
+		return false;
 	}
 	if (!m_dma_reader || !m_dma_completer)
 	{
 		report("DMA_READ", source, v, "PCI DMA command-list callbacks unavailable");
-		return;
+		return false;
 	}
 	auto decode_word = [](const uint8_t* p) {
 		return uint32_t(p[0]) | (uint32_t(p[1]) << 8) |
 			(uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
 	};
-	std::vector<uint8_t> data;
+	auto& data = operation.data;
 	auto word_at = [&](uint32_t index) {
 		return decode_word(data.data() + size_t(index) * 4);
 	};
-	struct Packet
-	{
-		uint32_t address, wait_mask, first, count;
-	};
-	std::vector<Packet> packets;
+	auto& packets = operation.packets;
 	std::set<uint32_t> visited;
 	// Preflight every link within the existing staging budget before executing.
 	for (;;)
@@ -1711,14 +2403,14 @@ void CRealImage2100::dma_command_list(uint32_t v)
 				(!source_range(next, 16) || !visited.insert(next).second)))
 		{
 			reject();
-			return;
+			return false;
 		}
 		const uint32_t first = uint32_t(data.size() / 4), end = first + words;
 		data.resize(data.size() + bytes);
 		if (!m_dma_reader(source, data.data() + size_t(first) * 4, bytes, completion))
 		{
 			report("DMA_READ", source, bytes, "PCI DMA read unavailable or rejected");
-			return;
+			return false;
 		}
 		uint32_t cursor = first, address = initial_address;
 		while (cursor < end)
@@ -1728,13 +2420,13 @@ void CRealImage2100::dma_command_list(uint32_t v)
 				uint64_t(address) + uint64_t(count) * 4 > 0x100000000ull)
 			{
 				reject();
-				return;
+				return false;
 			}
 			if (!dma_list_target(address))
 			{
 				report("DMA_TARGET", address, control, "Unsupported DMA command-list target");
 				reject();
-				return;
+				return false;
 			}
 			for (uint32_t i = 0; i < count; ++i)
 				if (!dma_list_target(address + i * 4))
@@ -1742,7 +2434,7 @@ void CRealImage2100::dma_command_list(uint32_t v)
 					report("DMA_TARGET", address + i * 4, word_at(cursor + i),
 						"Unsupported DMA command-list target");
 					reject();
-					return;
+					return false;
 				}
 			packets.push_back({address, control & 0xffff0000u, cursor, count});
 			cursor += count;
@@ -1752,7 +2444,7 @@ void CRealImage2100::dma_command_list(uint32_t v)
 			if (cursor == end)
 			{
 				reject();
-				return;
+				return false;
 			}
 		}
 		if (mode == 0xc0400000u)
@@ -1762,7 +2454,7 @@ void CRealImage2100::dma_command_list(uint32_t v)
 		{
 			report("DMA_READ", next, uint32_t(descriptor.size()),
 				"PCI DMA descriptor unavailable or rejected");
-			return;
+			return false;
 		}
 		command = decode_word(descriptor.data());
 		source = decode_word(descriptor.data() + 4);
@@ -1772,9 +2464,24 @@ void CRealImage2100::dma_command_list(uint32_t v)
 		if ((command & ~DMACommandListCountMask) == 0xc0400000u && next != completion)
 		{
 			reject();
-			return;
+			return false;
 		}
 	}
+	return true;
+}
+
+void CRealImage2100::execute_dma_list(const DMAListOperation& operation)
+{
+	const uint32_t completion = operation.completion;
+	auto word_at = [&](uint32_t index) {
+		const uint8_t* p = operation.data.data() + size_t(index) * 4;
+		return uint32_t(p[0]) | (uint32_t(p[1]) << 8) |
+			(uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
+	};
+	auto reject = [&]() {
+		unimplemented("REALimage DMA command list (rejected; completion not written)",
+			DMACommand, operation.command, true);
+	};
 	struct ActiveList
 	{
 		bool& active;
@@ -1782,7 +2489,7 @@ void CRealImage2100::dma_command_list(uint32_t v)
 	} active{m_dma_list_active};
 	m_dma_list_active = true;
 	m_dma_list_rejected = false;
-	for (const auto& packet : packets)
+	for (const auto& packet : operation.packets)
 	{
 		if (packet.wait_mask)
 		{
@@ -1817,10 +2524,17 @@ void CRealImage2100::dma_command_list(uint32_t v)
 
 CRealImage2100::Frame CRealImage2100::scanout(std::string* error) const
 {
+	return scanout(Frame{}, error);
+}
+
+CRealImage2100::Frame CRealImage2100::scanout(Frame frame, std::string* error) const
+{
 	auto reject = [&](const char* text) {
 		if (error)
 			*error = text;
-		return Frame{};
+		frame.width = frame.height = 0;
+		frame.argb.clear();
+		return std::move(frame);
 	};
 	if (error)
 		error->clear();
@@ -1859,14 +2573,14 @@ CRealImage2100::Frame CRealImage2100::scanout(std::string* error) const
 		!width || !height ||
 		width > m_color_width || height > m_color_height)
 		return reject("Native timing unsupported");
-	Frame frame;
 	frame.width = width;
 	frame.height = height;
 	frame.argb.resize(size_t(width) * height);
 	// Board I/O bits 8..23 select the color bank for each WID.
 	const uint32_t bank_select = (m_board_io >> 8) & 0xffff;
-	if ((bank_select == 0 || bank_select == 0xffff) &&
-		std::all_of(supported_windows.begin(), supported_windows.end(), [](bool v) { return v; }))
+	const bool all_windows_supported = std::all_of(supported_windows.begin(),
+		supported_windows.end(), [](bool v) { return v; });
+	if ((bank_select == 0 || bank_select == 0xffff) && all_windows_supported)
 	{
 		for (uint32_t y = 0; y < height; ++y)
 		{
@@ -1879,6 +2593,48 @@ CRealImage2100::Frame CRealImage2100::scanout(std::string* error) const
 		composite_cursor(frame);
 		return frame;
 	}
+	if (all_windows_supported)
+	{
+		for (uint32_t y = 0; y < height; ++y)
+		{
+			const size_t row = size_t(y) * m_color_width;
+			uint32_t* destination = frame.argb.data() + size_t(y) * width;
+			uint32_t x = 0;
+#if defined(REALIMAGE_SSE2)
+			for (; x + 4 <= width; x += 4)
+			{
+				const __m128i wids = _mm_and_si128(_mm_srli_epi32(_mm_loadu_si128(
+					reinterpret_cast<const __m128i*>(m_auxiliary.data() + row + x)), 12),
+					_mm_set1_epi32(15));
+				const unsigned wid = unsigned(_mm_cvtsi128_si32(wids));
+				if (_mm_movemask_epi8(_mm_cmpeq_epi32(wids, _mm_set1_epi32(wid))) == 0xffff)
+				{
+					const uint32_t* source = m_color.data() + row + x +
+						(((bank_select >> wid) & 1) ? m_color_pixels : 0);
+					_mm_storeu_si128(reinterpret_cast<__m128i*>(destination + x),
+						_mm_or_si128(_mm_loadu_si128(reinterpret_cast<const __m128i*>(source)),
+							_mm_set1_epi32(int(0xff000000u))));
+				}
+				else
+					for (unsigned i = 0; i < 4; ++i)
+					{
+						const unsigned pixel_wid = (m_auxiliary[row + x + i] >> 12) & 15;
+						const size_t bank = (bank_select >> pixel_wid) & 1;
+						destination[x + i] = 0xff000000 | m_color[bank * m_color_pixels + row + x + i];
+					}
+			}
+#endif
+			for (; x < width; ++x)
+			{
+				const unsigned wid = (m_auxiliary[row + x] >> 12) & 15;
+				const size_t bank = (bank_select >> wid) & 1;
+				destination[x] = 0xff000000 | m_color[bank * m_color_pixels + row + x];
+			}
+		}
+		composite_cursor(frame);
+		return frame;
+	}
+
 	for (uint32_t y = 0; y < height; ++y)
 		for (uint32_t x = 0; x < width; ++x)
 		{

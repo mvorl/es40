@@ -38,6 +38,7 @@
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 
 class CPowerStormDisplayLock
 {
@@ -714,19 +715,23 @@ void CPowerStorm3xx::recompute_params()
 
 CRealImage2100::Frame CPowerStorm3xx::render_frame()
 {
+	return render_frame({});
+}
+
+CRealImage2100::Frame CPowerStorm3xx::render_frame(CRealImage2100::Frame frame)
+{
 	std::lock_guard<std::recursive_mutex> guard(
 		cSystem->get_device_bus_mutex());
 	if (m_pause.load())
 		return {};
 	// The native display path remains active when the driver blanks legacy VGA.
 	if (m_realimage.native_display())
-		return m_realimage.scanout();
+		return m_realimage.scanout(std::move(frame));
 	if (!m_board_vga_enabled || !m_vga_enable ||
 		!vga.crtc.sync_en || (vga.sequencer.data[0] & 3) != 3 ||
 		(vga.sequencer.data[1] & 0x20) || !(vga.attribute.index & 0x20) ||
 		!vga.crtc.maximum_scan_line)
 		return {};
-	CRealImage2100::Frame frame;
 	frame.width = (vga.crtc.horz_disp_end + 1) *
 		((vga.gc.alpha_dis || (vga.sequencer.data[1] & 1)) ? 8 : 9);
 	frame.height = vga.crtc.vert_disp_end + 1;
@@ -749,7 +754,13 @@ CRealImage2100::Frame CPowerStorm3xx::render_frame()
 
 void CPowerStorm3xx::update()
 {
-	const CRealImage2100::Frame frame = render_frame();
+	CRealImage2100::Frame frame;
+	update(frame);
+}
+
+void CPowerStorm3xx::update(CRealImage2100::Frame& frame)
+{
+	frame = render_frame(std::move(frame));
 	// Never hold the device-bus mutex while acquiring a GUI mutex.
 	CPowerStormDisplayLock guard(m_output.display());
 	if (!frame.argb.empty())
@@ -780,6 +791,8 @@ void CPowerStorm3xx::run()
 			m_output.display().init(X_TILESIZE, Y_TILESIZE);
 			m_gui_initialized = true;
 		}
+		// Only this display thread owns the reusable frame.
+		CRealImage2100::Frame frame;
 		while (!m_stop.load())
 		{
 			{
@@ -793,7 +806,7 @@ void CPowerStorm3xx::run()
 				continue;
 			}
 			m_pause_ack.store(false);
-			update();
+			update(frame);
 			CThread::sleep(20);
 		}
 	}
