@@ -873,7 +873,8 @@ uint32_t CRealImage2100::plane_value(
 	return plane.written & (1u << index) ? plane.regs[index] : fallback;
 }
 
-bool CRealImage2100::plane_profile(unsigned bank, uint32_t format, uint32_t rop_high) const
+bool CRealImage2100::plane_profile(unsigned bank, uint32_t format, uint32_t rop_high,
+	uint32_t multiply_control) const
 {
 	// Callers select the supported operation; comparisons remain guarded.
 	const uint32_t compare_mask = plane_value(bank, 10, 0);
@@ -882,7 +883,7 @@ bool CRealImage2100::plane_profile(unsigned bank, uint32_t format, uint32_t rop_
 		(plane_value(bank, 4, 0x03030303) & 0xf0f0f0f0) == rop_high &&
 		plane_value(bank, 5, 0x0a000000) == 0x0a000000 &&
 		plane_value(bank, 6, 0) == 0 && plane_value(bank, 7, 0) == 0 &&
-		plane_value(bank, 8, 0) == 0 &&
+		plane_value(bank, 8, 0) == multiply_control &&
 		plane_value(bank, 9, 0) == 0 &&
 		(compare_mask == 0 || compare_mask == 0x00ff0000) &&
 		plane_value(bank, 11, 0x33300000) == 0x33300000 &&
@@ -1579,9 +1580,16 @@ bool CRealImage2100::triangle_profile() const
 		global = peek(GlobalControl0),
 		width = block_width(), columns = (control >> 8) & 15,
 		copy_columns = ((peek(MemoryControl) >> 24) & 63) + 1,
-		blend_control = peek(PipelineControl2);
-	const bool blend = plane_value(bank, 4, 0) == 0xd0d0d0d0u;
-	if (blend ? ((blend_control & ~0x30000080u) || !(blend_control & 0x30000000u)) :
+		blend_control = peek(PipelineControl2), color_rop = plane_value(bank, 4, 0);
+	const bool additive = color_rop == 0x10101010u || color_rop == 0xb0b0b0b0u,
+		blend = additive || color_rop == 0xd0d0d0d0u;
+	if (additive)
+	{
+		if (blend_control != 0x10000000u &&
+			(color_rop != 0x10101010u || blend_control != 0x30000000u))
+			return false;
+	}
+	else if (blend ? ((blend_control & ~0x30000080u) || !(blend_control & 0x30000000u)) :
 		blend_control != 0x10000000u)
 		return false;
 	if ((control & ~0x000fff01u) != 0x81800002 || (banks != 5 && banks != 6) ||
@@ -1611,9 +1619,11 @@ bool CRealImage2100::triangle_profile() const
 			return false;
 	if ((peek(ClipXMin) | peek(ClipXMax) | peek(ClipYMin) | peek(ClipYMax)) & 0xffff000fu)
 		return false;
-	if (!plane_profile(bank, 0x100, blend ? 0xd0d0d0d0u : 0) ||
+	// SRC_ALPHA + ONE uses the driver's dedicated plane multiplier.
+	if (!plane_profile(bank, 0x100, blend ? color_rop : 0,
+		color_rop == 0xb0b0b0b0u ? 0x19090909u : 0) ||
 		plane_value(bank, 0, 0) != 0xffffffffu ||
-		plane_value(bank, 4, 0) != (blend ? 0xd0d0d0d0u : 0x03030303u) ||
+		(!blend && color_rop != 0x03030303u) ||
 		plane_value(bank, 10, 0) != 0 ||
 		(no_depth ? depth_control != 0x0a000200 :
 			(depth_control != 0x0a000205 && depth_control != 0x0a000207)))
@@ -1643,14 +1653,18 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 	if (!value || value == 0x10)
 		return TrianglePreparation::NoOp;
 	const uint32_t pipeline = peek(PipelineControl0), texture_mode = pipeline & 0x00038000u,
-		bank = ((peek(DrawControl) >> 12) & 3) == 2 ? 1 : 0;
+		bank = ((peek(DrawControl) >> 12) & 3) == 2 ? 1 : 0,
+		color_rop = plane_value(bank, 4, 0),
+		source_blend = color_rop == 0xb0b0b0b0u ? 2 : peek(PipelineControl2) >> 28;
 	const bool textured = (pipeline & 0x80000000u) != 0,
 		flat = flat_vertex_register(address), no_depth = plane_value(2, 5, 0) == 0x0a000200,
-		blend = plane_value(bank, 4, 0) == 0xd0d0d0d0u, affine = peek(GlobalControl0) == 0x190,
+		additive = color_rop == 0x10101010u || color_rop == 0xb0b0b0b0u,
+		blend = additive || color_rop == 0xd0d0d0d0u, affine = peek(GlobalControl0) == 0x190,
 		texture_alpha = (pipeline & 0x00007000u) == 0x00003000u,
 		use_color = !textured || texture_mode == 0x8000 || texture_mode == 0x10000 ||
 			(texture_mode == 0 && texture_alpha),
-		use_alpha = blend && !(textured && texture_alpha && texture_mode == 0x18000),
+		use_alpha = blend && (!additive || source_blend != 1) &&
+			!(textured && texture_alpha && texture_mode == 0x18000),
 		use_w = textured && !affine;
 	// Untextured perspective draws retain the existing linear depth approximation.
 	if (value != 0x13 || !triangle_profile())
@@ -1791,6 +1805,7 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 	operation.wid = wid;
 	operation.bank = bank;
 	operation.color_width = m_color_width;
+	operation.color_rop = color_rop;
 	operation.color_offset = size_t(bank) * m_color_pixels;
 	operation.texture_base = texture_base;
 	operation.texture_width = texture_width;
@@ -1840,11 +1855,12 @@ void CRealImage2100::execute_triangle(const TriangleOperation& operation)
 		texture_base = operation.texture_base, texture_width = operation.texture_width,
 		texture_height = operation.texture_height;
 	const unsigned texture_row_shift = operation.texture_row_shift;
-	const unsigned source_blend = operation.blend_control >> 28;
-	const bool inverse_destination = (operation.blend_control & 0x80) != 0;
+	const unsigned source_blend = operation.color_rop == 0xb0b0b0b0u ? 2 : operation.blend_control >> 28;
+	const bool additive = operation.color_rop == 0x10101010u || operation.color_rop == 0xb0b0b0b0u,
+		inverse_destination = (operation.blend_control & 0x80) != 0;
 	auto blend_channel = [&](double source, double alpha, unsigned destination) {
 		const double sf = source_blend == 1 ? 1.0 : source_blend == 2 ? alpha : 1 - alpha,
-			df = inverse_destination ? 1 - alpha : alpha;
+			df = additive ? 1.0 : inverse_destination ? 1 - alpha : alpha;
 		return std::clamp(source * sf + destination * df, 0.0, 255.0);
 	};
 	auto edge = [](const Vertex& p, const Vertex& q, double x, double y) {

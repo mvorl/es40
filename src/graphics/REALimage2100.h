@@ -278,7 +278,8 @@ private:
   static int plane_register(uint32_t address);
   bool plane_write(uint32_t address, uint32_t lanes, uint32_t value);
   uint32_t plane_value(unsigned bank, unsigned index, uint32_t fallback) const;
-  bool plane_profile(unsigned bank, uint32_t format = 0x100, uint32_t rop_high = 0) const;
+  bool plane_profile(unsigned bank, uint32_t format = 0x100, uint32_t rop_high = 0,
+    uint32_t multiply_control = 0) const;
   bool native_pixel_profile() const;
   uint32_t block_width() const;
   bool native_copy_control_profile(bool clear = false) const;
@@ -296,7 +297,7 @@ private:
     int left = 0, top = 0, right = 0, bottom = 0;
     bool textured = false, flat = false, blend = false, no_depth = false, depth_less = false;
     bool affine = false, texture_alpha = false;
-    uint32_t wid = 0, bank = 0, color_width = 0;
+    uint32_t wid = 0, bank = 0, color_width = 0, color_rop = 0;
     size_t color_offset = 0;
     uint32_t texture_base = 0, texture_width = 0, texture_height = 0;
     uint32_t texture_format = 0, texture_mode = 0, texture_environment = 0;
