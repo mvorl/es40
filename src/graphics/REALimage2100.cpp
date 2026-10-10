@@ -1163,9 +1163,6 @@ bool CRealImage2100::block_copy_profile() const
 		((plane_value(bank, 0, 0xffffffff) & 0xff000000u) &&
 			(plane_value(bank, 4, 0x03030303) >> 24) != 5))
 		return false;
-	for (unsigned i = 24; i < 24 + block_width() / 2; ++i)
-		if (plane_value(bank, i, 0xffffffff) != 0xffffffff)
-			return false;
 	if (!(banks & 4))
 		return true;
 	if (m_planes[2].unknown_masks)
@@ -1174,9 +1171,6 @@ bool CRealImage2100::block_copy_profile() const
 		0, 0, 0, 0, 0x00ff0000, 0x33300000, 0x100, 0, 0x100, 0};
 	for (unsigned i = 0; i < std::size(expected); ++i)
 		if (plane_value(2, i + 1, expected[i]) != expected[i])
-			return false;
-	for (unsigned i = 24; i < 24 + block_width() / 2; ++i)
-		if (plane_value(2, i, 0xffffffff) != 0xffffffff)
 			return false;
 	return true;
 }
