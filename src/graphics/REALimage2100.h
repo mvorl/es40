@@ -333,7 +333,7 @@ private:
     TriangleOperation& operation) const;
   void execute_triangle(const TriangleOperation& operation);
   void triangle_command(uint32_t address, uint32_t value);
-  void integer_triangle_command(uint32_t address, uint32_t value);
+  void integer_vertex_command(uint32_t address, uint32_t value);
   uint32_t texture_color(double s, double t, uint32_t base,
     uint32_t width, uint32_t height, unsigned row_shift) const;
   std::array<double, 4> texture_sample(double s, double t, uint32_t base,

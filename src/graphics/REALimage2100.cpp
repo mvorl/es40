@@ -867,7 +867,7 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 	if (integer_vertex_register(key))
 	{
 		if ((key - IntegerVertexColorBase) % VertexStride == 0x1c)
-			integer_triangle_command(key, it->second);
+			integer_vertex_command(key, it->second);
 	}
 	else if (vertex_register(key))
 	{
@@ -2203,13 +2203,14 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 	return TrianglePreparation::Ready;
 }
 
-void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
+void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 {
 	if (!value)
 		return;
+	const bool line = value == 0x62;
 	auto reject = [&]() {
-		unimplemented_once("REALimage integer triangle command/profile (command rejected)",
-			address, value, true);
+		unimplemented_once(line ? "REALimage integer line command/profile (command rejected)" :
+			"REALimage integer triangle command/profile (command rejected)", address, value, true);
 	};
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
 		width = block_width(), columns = ((peek(MemoryControl) >> 24) & 63) + 1;
@@ -2218,7 +2219,9 @@ void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
 		auxiliary_write = (control & ~0x00ef0f01u) == 0xa1004002u &&
 		!(plane_value(2, 0, 0xffffffff) & ~0xe000f000u),
 		color_write = auxiliary_compare || ((control & ~0xff01u) == 0xa1000002u && !(banks & ~3u));
-	if (value != 3 || (!auxiliary_write && !color_write &&
+	if ((!line && value != 3) ||
+		(line && (!auxiliary_compare || address != IntegerVertexColorBase + VertexStride + 0x1c)) ||
+		(!auxiliary_write && !color_write &&
 		(control & ~0xff01u) != 0x21000002u) ||
 		!banks || (banks & ~7u) ||
 		!width || !native_pixel_profile() || ((control >> 8) & 15) != (columns + 1) / 2 ||
@@ -2229,7 +2232,7 @@ void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
 		return;
 	}
 	const std::pair<uint32_t, uint32_t> profile[] = {
-		{GlobalControl0, 0}, {GlobalControl1, 0x20810}, {GlobalControl2, 0x33},
+		{GlobalControl0, line ? 3u : 0u}, {GlobalControl1, 0x20810}, {GlobalControl2, 0x33},
 		{PipelineControl0, 0}, {PipelineControl1, 0}, {PipelineControl2, 0x10000000},
 		{PipelineControl3, 0}, {PipelineControl4, 0}, {PipelineControl5, 0},
 		{0x008005cc, 0}, {0x008005d4, 0}, {0x008005dc, 0}};
@@ -2280,7 +2283,7 @@ void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
 		}
 		if (bank == 2)
 		{
-			const uint32_t expected[] = {0, auxiliary_compare ? 0x10000000u : 0u,
+			const uint32_t expected[] = {0, auxiliary_compare ? (line ? 0x8000u : 0x10000000u) : 0u,
 				0x0fff0fff, 0x03030303, auxiliary_compare ? 0x0a000200u : 0x0a000000u,
 				0, 0, 0, 0, 0x00ff0000, 0x33300000, 0x100, 0, 0x100, 0};
 			for (unsigned i = 0; i < std::size(expected); ++i)
@@ -2298,7 +2301,7 @@ void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
 			}
 	}
 	struct Point { int64_t x, y; } vertex[3];
-	for (unsigned slot = 0; slot < 3; ++slot)
+	for (unsigned slot = 0; slot < (line ? 2u : 3u); ++slot)
 	{
 		const uint32_t base = IntegerVertexColorBase + slot * VertexStride + 0x10;
 		for (unsigned i = 0; i < 3; ++i)
@@ -2314,6 +2317,50 @@ void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
 			reject();
 			return;
 		}
+	}
+	const uint32_t masks[] = {plane_value(0, 0, 0xffffffff) & 0xffffff,
+		plane_value(1, 0, 0xffffffff) & 0xffffff, plane_value(2, 0, 0xffffffff)};
+	const uint32_t auxiliary = (auxiliary_write || auxiliary_compare) ?
+		((control & 0x00f00000u) << 8) | ((control & 0x000f0000u) >> 4) : 0,
+		compare_mask = line ? 0x8000u : 0x10000000u;
+	auto invalidate = [&]() {
+		for (unsigned bank = 0; bank < 3; ++bank)
+			if ((banks & (1u << bank)) && (bank < 2 || !auxiliary_compare))
+				m_clear_cache[bank] = {};
+	};
+	auto write_pixel = [&](int x, int y) {
+		const size_t offset = size_t(y) * m_color_width + unsigned(x);
+		if (auxiliary_compare && ((m_auxiliary[offset] ^ auxiliary) & compare_mask))
+			return;
+		for (unsigned bank = 0; bank < 2; ++bank)
+			if (banks & (1u << bank))
+			{
+				uint32_t& pixel = m_color[size_t(bank) * m_color_pixels + offset];
+				pixel = (pixel & ~masks[bank]) | (color & masks[bank]);
+			}
+		if (banks & 4)
+			m_auxiliary[offset] = (m_auxiliary[offset] & ~masks[2]) | (auxiliary & masks[2]);
+	};
+	if (line)
+	{
+		const Point &a = vertex[0], &b = vertex[1];
+		if (((a.x | a.y | b.x | b.y) & 15) || (a.x != b.x && a.y != b.y))
+		{
+			reject();
+			return;
+		}
+		const int left = std::max({0, int(peek(ClipXMin) >> 4), int(std::min(a.x, b.x) / 16)}),
+			top = std::max({0, int(peek(ClipYMin) >> 4), int(std::min(a.y, b.y) / 16)}),
+			right = std::min({int(m_color_width) - 1, int(peek(ClipXMax) >> 4), int(std::max(a.x, b.x) / 16)}),
+			bottom = std::min({int(m_color_height) - 1, int(peek(ClipYMax) >> 4), int(std::max(a.y, b.y) / 16)});
+		if (left > right || top > bottom)
+			return;
+		invalidate();
+		// Command 0x62 includes both endpoints of the driver's integer border lines.
+		for (int y = top; y <= bottom; ++y)
+			for (int x = left; x <= right; ++x)
+				write_pixel(x, y);
+		return;
 	}
 	auto edge = [](const Point& p, const Point& q, const Point& at) {
 		return (q.x - p.x) * (at.y - p.y) - (q.y - p.y) * (at.x - p.x);
@@ -2336,13 +2383,7 @@ void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
 		return q.y < p.y || (q.y == p.y && q.x > p.x);
 	};
 	const bool include[] = {top_left(b, c), top_left(c, a), top_left(a, b)};
-	for (unsigned bank = 0; bank < 3; ++bank)
-		if ((banks & (1u << bank)) && (bank < 2 || !auxiliary_compare))
-			m_clear_cache[bank] = {};
-	const uint32_t masks[] = {plane_value(0, 0, 0xffffffff) & 0xffffff,
-		plane_value(1, 0, 0xffffffff) & 0xffffff, plane_value(2, 0, 0xffffffff)};
-	const uint32_t auxiliary = (auxiliary_write || auxiliary_compare) ?
-		((control & 0x00f00000u) << 8) | ((control & 0x000f0000u) >> 4) : 0;
+	invalidate();
 	for (int y = top; y <= bottom; ++y)
 		for (int x = left; x <= right; ++x)
 		{
@@ -2352,17 +2393,7 @@ void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
 				edges[1] < 0 || (!edges[1] && !include[1]) ||
 				edges[2] < 0 || (!edges[2] && !include[2]))
 				continue;
-			const size_t offset = size_t(y) * m_color_width + unsigned(x);
-			if (auxiliary_compare && ((m_auxiliary[offset] ^ auxiliary) & 0x10000000u))
-				continue;
-			for (unsigned bank = 0; bank < 2; ++bank)
-				if (banks & (1u << bank))
-				{
-					uint32_t& pixel = m_color[size_t(bank) * m_color_pixels + offset];
-					pixel = (pixel & ~masks[bank]) | (color & masks[bank]);
-				}
-			if (banks & 4)
-				m_auxiliary[offset] = (m_auxiliary[offset] & ~masks[2]) | (auxiliary & masks[2]);
+			write_pixel(x, y);
 		}
 }
 
