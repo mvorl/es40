@@ -1691,7 +1691,7 @@ void CRealImage2100::execute_block(const BlockOperation& op)
 void CRealImage2100::block_command(uint32_t v)
 {
 	if (v == 0x01000032 || v == 0x01000052 || v == 0x01000072 ||
-		v == 0x07000072 || v == 0x06000062)
+		v == 0x07000072 || v == 0x06000072 || v == 0x06000062)
 		start_command(BlockCommand, v);
 	else
 		execute_block(prepare_block(v));
@@ -1710,7 +1710,7 @@ CRealImage2100::StartPrefix CRealImage2100::begin_start(uint32_t a, uint32_t v)
 			if (destination_banks & (1u << bank))
 				m_clear_cache[bank] = {};
 	if (((a == FillCommand && (v == 0x09040832 || v == 0x010408b2)) || a == BitmapCommand ||
-		(a == BlockCommand && (v == 0x07000072 || v == 0x06000062))) &&
+		(a == BlockCommand && (v == 0x07000072 || v == 0x06000072 || v == 0x06000062))) &&
 		(peek(DrawControl) & 0x4000))
 		m_clear_cache[2] = {};
 	if (m_pending.width)
@@ -1740,7 +1740,7 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	op.kind = StartOperation::Kind::Rejected;
 	const bool block_transfer = a == BlockCommand && (v == 0x01000032 || readback);
 	const bool block_copy = a == BlockCommand &&
-		(v == 0x01000072 || v == 0x07000072 || v == 0x06000062);
+		(v == 0x01000072 || v == 0x07000072 || v == 0x06000072 || v == 0x06000062);
 	const bool block_geometry = block_transfer || block_copy;
 	const bool upload = (a == HostCommand || a == BlockCommand) && v == 0x01000032;
 	const bool fast_copy = a == HostCommand &&
