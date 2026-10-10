@@ -777,7 +777,11 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 	}
 	if (key == Status)
 	{
-		unimplemented_once("REALimage status register", a, v, true);
+		// OpenVMS writes the upper status mask after idle; timing reads remain live.
+		const uint32_t written = (v << shift) & lanes;
+		if (written && written != (StatusVBlank & lanes) &&
+			written != (0xff800000u & lanes))
+			unimplemented_once("REALimage status register", a, v, true);
 		return;
 	}
 	// Whole-longword Alpha miniport writes leave counter and strap bytes unchanged.
@@ -2474,7 +2478,7 @@ void CRealImage2100::dma_command(uint32_t v)
 		dma_texture_upload(v);
 		return;
 	}
-	if (mode == 0xc0400000u || mode == 0xa1000000u)
+	if (mode == 0xc0000000u || mode == 0xc0400000u || mode == 0xa1000000u)
 	{
 		dma_command_list(v);
 		return;
@@ -2620,6 +2624,7 @@ bool CRealImage2100::dma_list_target(uint32_t a) const
 	// Other command-list targets use the existing register handlers.
 	switch (a)
 	{
+	case Status:
 	case ClipXMax: case ClipYMax: case ClipXMin: case ClipYMin:
 	case GlobalControl0: case GlobalControl1: case GlobalControl2:
 	case TextureBase:
@@ -2662,8 +2667,11 @@ bool CRealImage2100::prepare_dma_list(uint32_t v, DMAListOperation& operation)
 			!(uint64_t(completion) < uint64_t(address) + bytes &&
 				uint64_t(completion) + 4 > address);
 	};
-	bool neutral = true;
-	for (unsigned i : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 10u, 13u, 15u, 16u, 17u, 18u})
+	// Preserve the observed OpenVMS setup without assigning undocumented register meanings.
+	const bool vms_setup = (v & ~DMACommandListCountMask) == 0xc0000000u &&
+		m_dma_regs[1] == 7 && m_dma_regs[13] == 0xffffe000u;
+	bool neutral = vms_setup || (!m_dma_regs[1] && !m_dma_regs[13]);
+	for (unsigned i : {0u, 2u, 3u, 4u, 5u, 6u, 10u, 15u, 16u, 17u, 18u})
 		neutral &= m_dma_regs[i] == 0;
 	if (m_dma_list_active || !neutral || m_dma_regs[14] != 8 || (completion & 3))
 	{
@@ -2690,7 +2698,8 @@ bool CRealImage2100::prepare_dma_list(uint32_t v, DMAListOperation& operation)
 	{
 		const uint32_t mode = command & ~DMACommandListCountMask,
 			words = command & DMACommandListCountMask, bytes = words * 4;
-		if ((mode != 0xc0400000u && mode != 0xa1000000u) || !words ||
+		if ((mode != 0xc0000000u && mode != 0xc0400000u && mode != 0xa1000000u) || !words ||
+			(mode == 0xc0000000u && !data.empty()) ||
 			bytes > DMACommandListMaxBytes - data.size() || !source_range(source, bytes) ||
 			(initial_address & 3) || (mode == 0xa1000000u &&
 				(!source_range(next, 16) || !visited.insert(next).second)))
@@ -2740,7 +2749,7 @@ bool CRealImage2100::prepare_dma_list(uint32_t v, DMAListOperation& operation)
 				return false;
 			}
 		}
-		if (mode == 0xc0400000u)
+		if (mode == 0xc0000000u || mode == 0xc0400000u)
 			break;
 		std::array<uint8_t, 16> descriptor{};
 		if (!m_dma_reader(next, descriptor.data(), descriptor.size(), completion))
