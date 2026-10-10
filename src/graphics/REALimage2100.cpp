@@ -1158,12 +1158,6 @@ bool CRealImage2100::block_transfer_profile(bool upload) const
 	if ((control & ~0xff01u) != 0x21000002u || !banks || (banks & ~3u) ||
 		!native_copy_control_profile(true, true))
 		return false;
-	// Uploads use literal RGB pixels; only readback retains the shared-color restriction.
-	if (!upload)
-		for (unsigned i = 0; i < 4; ++i)
-			if (m_shadow.find(IntegerVertexColorBase + i * 4) == m_shadow.end() ||
-				peek(IntegerVertexColorBase + i * 4) != (i ? 0x3fcu : 0u))
-				return false;
 	for (unsigned bank = 0; bank < 2; ++bank)
 		if (banks & (1u << bank))
 		{
