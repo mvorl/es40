@@ -1232,9 +1232,6 @@ bool CRealImage2100::integer_rgb_profile() const
 		((plane_value(bank, 0, 0xffffffff) & 0xff000000u) &&
 			(plane_value(bank, 4, 0x03030303) >> 24) != 5))
 		return false;
-	for (unsigned i = 24; i < 24 + block_width() / 2; ++i)
-		if (plane_value(bank, i, 0xffffffff) != 0xffffffff)
-			return false;
 	if (!auxiliary_compare)
 		return true;
 	if (plane_value(2, 0, 0xffffffff) || m_planes[2].unknown_masks)
@@ -1243,9 +1240,6 @@ bool CRealImage2100::integer_rgb_profile() const
 		0, 0, 0, 0, 0x00ff0000, 0x33300000, 0x100, 0, 0x100, 0};
 	for (unsigned i = 0; i < std::size(expected); ++i)
 		if (plane_value(2, i + 1, expected[i]) != expected[i])
-			return false;
-	for (unsigned i = 24; i < 24 + block_width() / 2; ++i)
-		if (plane_value(2, i, 0xffffffff) != 0xffffffff)
 			return false;
 	return true;
 }
@@ -2300,7 +2294,8 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 {
 	if (!value)
 		return;
-	const bool line = value == 0x22 || value == 0x62;
+	const bool line = (value & ~0xcu) == 0x22 || value == 0x62;
+	const unsigned first_vertex = (value >> 2) & 3;
 	auto reject = [&]() {
 		unimplemented_once(line ? "REALimage integer line command/profile (command rejected)" :
 			"REALimage integer triangle command/profile (command rejected)", address, value, true);
@@ -2315,7 +2310,8 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 		!(plane_value(2, 0, 0xffffffff) & ~0xe000f000u),
 		color_write = direct_rgb || auxiliary_compare || ((control & ~0xff01u) == 0xa1000002u && !(banks & ~3u));
 	if ((!line && value != 3) ||
-		(line && (address != IntegerVertexColorBase + VertexStride + 0x1c ||
+		(line && (first_vertex >= 3 ||
+			address != IntegerVertexColorBase + ((first_vertex + 1) % 3) * VertexStride + 0x1c ||
 			(value == 0x62 ? (!auxiliary_compare && !direct_rgb) :
 				(!auxiliary_write && (!color_write || auxiliary_compare))))) ||
 		(!auxiliary_write && !color_write &&
@@ -2328,8 +2324,10 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 		reject();
 		return;
 	}
+	const bool direct_polygon = !line && direct_rgb && peek(GlobalControl0) == 1;
 	const std::pair<uint32_t, uint32_t> profile[] = {
-		{GlobalControl0, line ? (value == 0x62 ? 3u : 1u) : 0u}, {GlobalControl1, 0x20810}, {GlobalControl2, 0x33},
+		{GlobalControl0, line ? (value == 0x62 ? 3u : 1u) : direct_polygon ? 1u : 0u},
+		{GlobalControl1, 0x20810}, {GlobalControl2, 0x33},
 		{PipelineControl0, 0}, {PipelineControl1, 0}, {PipelineControl2, 0x10000000},
 		{PipelineControl3, 0}, {PipelineControl4, 0}, {PipelineControl5, 0},
 		{0x008005cc, 0}, {0x008005d4, 0}, {0x008005dc, 0}};
@@ -2403,7 +2401,8 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 	struct Point { int64_t x, y; } vertex[3];
 	for (unsigned slot = 0; slot < (line ? 2u : 3u); ++slot)
 	{
-		const uint32_t base = IntegerVertexColorBase + slot * VertexStride + 0x10;
+		const unsigned index = line ? (first_vertex + slot) % 3 : slot;
+		const uint32_t base = IntegerVertexColorBase + index * VertexStride + 0x10;
 		for (unsigned i = 0; i < 3; ++i)
 			if (m_shadow.find(base + i * 4) == m_shadow.end())
 			{
@@ -2445,13 +2444,51 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 	{
 		const Point& a = vertex[0];
 		Point b = vertex[1];
-		if (((a.x | a.y | b.x | b.y) & 15) || (a.x != b.x && a.y != b.y))
+		if (((a.x | a.y | b.x | b.y) & 15) ||
+			(value == 0x62 && a.x != b.x && a.y != b.y))
 		{
 			reject();
 			return;
 		}
-		// Command 0x22 excludes the final endpoint; 0x62 includes it.
-		if (value == 0x22)
+		if (a.x != b.x && a.y != b.y)
+		{
+			int x = int(a.x / 16), y = int(a.y / 16);
+			const int dx = int((b.x - a.x) / 16), dy = int((b.y - a.y) / 16),
+				adx = std::abs(dx), ady = std::abs(dy), sx = dx < 0 ? -1 : 1, sy = dy < 0 ? -1 : 1;
+			const bool x_major = adx >= ady;
+			const int major = x_major ? adx : ady, minor = x_major ? ady : adx,
+				left = std::max(0, int(peek(ClipXMin) >> 4)),
+				top = std::max(0, int(peek(ClipYMin) >> 4)),
+				right = std::min(int(m_color_width) - 1, int(peek(ClipXMax) >> 4)),
+				bottom = std::min(int(m_color_height) - 1, int(peek(ClipYMax) >> 4));
+			if (left > right || top > bottom)
+				return;
+			int error = 2 * minor - major;
+			bool drawn = false;
+			for (int i = 0; i < major; ++i)
+			{
+				if (x >= left && x <= right && y >= top && y <= bottom)
+				{
+					if (!drawn)
+						invalidate();
+					drawn = true;
+					write_pixel(x, y);
+				}
+				// Midpoint ties keep the axial step, matching RV200's convention.
+				if (error > 0)
+				{
+					if (x_major) y += sy;
+					else x += sx;
+					error -= 2 * major;
+				}
+				error += 2 * minor;
+				if (x_major) x += sx;
+				else y += sy;
+			}
+			return;
+		}
+		// Connected lines exclude the final endpoint; 0x62 includes it.
+		if (value != 0x62)
 		{
 			if (a.x == b.x && a.y == b.y)
 				return;
