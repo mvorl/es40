@@ -1178,7 +1178,7 @@ bool CRealImage2100::bitmap_profile() const
 {
 	const uint32_t control = peek(DrawControl);
 	if ((control & ~0x00ff0f01u) != 0xa1004002u ||
-		!native_copy_control_profile(false, true) ||
+		!native_copy_control_profile(true, true) ||
 		plane_value(2, 0, 0) != 0x10000000u || m_planes[2].unknown_masks ||
 		((peek(ClipXMin) | peek(ClipYMin) | peek(ClipXMax) | peek(ClipYMax)) & 0xffff000fu))
 		return false;
