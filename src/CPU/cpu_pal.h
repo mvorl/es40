@@ -166,7 +166,7 @@
                                                                                                           \
     case 0x11:  /* i_ctl */                                                                                    \
       state.r[REG_1] = state.i_ctl_other |                                                                     \
-        (((u64) CPU_CHIP_ID) << 24) |                                                                          \
+        (((u64) get_profile().chip_id) << 24) |                                                              \
         (u64) state.i_ctl_vptb |                                                                               \
         (((u64) state.i_ctl_va_mode) << 15) |                                                                  \
         (state.hwe ? U64(0x1) << 12 : 0) |                                                                     \

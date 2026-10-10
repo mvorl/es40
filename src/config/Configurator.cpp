@@ -990,7 +990,7 @@ void CConfigurator::initialize()
 		break;
 
 	case c_ev68cb:
-		myDevice = new CAlphaCPU(this, (CSystem*)pParent->get_device());
+		myDevice = new CAlphaCPU(this, (CSystem*)pParent->get_device(), kEv68CBProfile);
 		break;
 
 	case c_ali:

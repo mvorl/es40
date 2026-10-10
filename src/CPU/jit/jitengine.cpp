@@ -111,7 +111,8 @@ static asmjit::JitAllocator::CreateParams jit_rt_params()
   return p;
 }
 
-CJitEngine::CJitEngine(int cpu_id) : m_cpu_id(cpu_id), m_recorded(0), m_code_bytes(0), m_rt(nullptr)
+CJitEngine::CJitEngine(const AlphaCPUProfile& profile, int cpu_id)
+  : m_profile(profile), m_cpu_id(cpu_id), m_recorded(0), m_code_bytes(0), m_rt(nullptr)
 {
   m_active_links.reserve(4096);
   // flush() is lazy (gen bump), so the slots must start zeroed -- all big_alloc paths return

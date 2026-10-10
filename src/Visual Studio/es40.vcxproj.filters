@@ -323,6 +323,9 @@
     <ClInclude Include="..\CPU\AlphaCPU.h">
       <Filter>Header Files\CPU</Filter>
     </ClInclude>
+    <ClInclude Include="..\CPU\AlphaCPUProfile.h">
+      <Filter>Header Files\CPU</Filter>
+    </ClInclude>
     <ClInclude Include="..\graphics\Cirrus.h">
       <Filter>Header Files\graphics</Filter>
     </ClInclude>

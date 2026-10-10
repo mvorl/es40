@@ -42,6 +42,7 @@
 #endif
 
 #include <cstdint>
+#include "../AlphaCPUProfile.h"
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
@@ -255,7 +256,7 @@ public:
     void* fp_read_helper;     void* fp_write_helper;  void* fltv_helper;
   };
 
-  explicit CJitEngine(int cpu_id = 0);   // cpu_id tags the stats/diagnostic prints
+  explicit CJitEngine(const AlphaCPUProfile& profile, int cpu_id = 0);   // cpu_id tags the stats/diagnostic prints
   ~CJitEngine();
 
   static inline uint64_t set_of(uint64_t virt_pc) { return (virt_pc >> 2) & kSetMask; }
@@ -455,6 +456,8 @@ public:
 #endif
 
 private:
+  // Compiled code embeds these values; the profile cannot change during reuse.
+  const AlphaCPUProfile m_profile;
   // Both caches are heap allocations (see the ctor), preferring large/huge pages: the block
   // cache is ~40 MB indexed by PC hash, effectively random access, so 4K pages thrash the
   JitBlock* m_blocks;

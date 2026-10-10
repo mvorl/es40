@@ -225,6 +225,7 @@
 #include "emu/SystemComponent.h"
 #include "system/System.h"
 #include "cpu_defs.h"
+#include "AlphaCPUProfile.h"
 class CJitEngine;   // JIT block-cache engine (ES40_JIT builds)
 
   /// Number of entries in the Instruction Cache
@@ -274,7 +275,8 @@ public:
 
   void          set_PAL_BASE(u64 pb);
   virtual void  check_state();
-  CAlphaCPU(CConfigurator* cfg, CSystem* system);
+  CAlphaCPU(CConfigurator* cfg, CSystem* system, const AlphaCPUProfile& profile);
+  const AlphaCPUProfile& get_profile() const { return m_profile; }
   virtual       ~CAlphaCPU();
   u64           get_r(int i, bool translate);
   u64           get_f(int i);
@@ -322,6 +324,8 @@ public:
   virtual void  stop_threads();
   void ResetForSystemReset();
 private:
+  // Immutable for the CPU lifetime; deliberately outside the saved state.
+  const AlphaCPUProfile m_profile;
   CThread* myThread;
   CSemaphore mySemaphore;
   bool            StopThread;

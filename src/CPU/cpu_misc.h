@@ -80,7 +80,7 @@
     if (REG_1 != 31) {                            \
       GO_PAL(OPCDEC);                             \
     } else {                                      \
-      state.r[REG_3] = V_2 & ~CPU_AMASK;          \
+      state.r[REG_3] = V_2 & ~get_profile().amask; \
     }                                             \
   } while (0)
 
@@ -334,7 +334,7 @@
     }                                                                  \
   }
 
-#define DO_IMPLVER  state.r[REG_3] = CPU_IMPLVER;
+#define DO_IMPLVER  state.r[REG_3] = get_profile().implver;
 
 // state.cc is wall-clock in both engines; each RPCC read syncs it to now so the
 // guest never samples a stale batch-start value, with forward progress on host-clock collisions

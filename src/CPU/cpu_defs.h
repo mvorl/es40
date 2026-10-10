@@ -592,20 +592,6 @@ inline u64 fsqrt64(u64 asig, s32 exp)
 #define MT_FPCR       U64(0x700)
 #define RESET         U64(0x780)
 
-/** Chip ID (EV68CB pass 4) [HRM p 5-16]; actual value derived from SRM-code */
-#define CPU_CHIP_ID 0x21
-
-/** Major CPU type (EV68CB) [ARM pp D-1..3] */
-#define CPU_TYPE_MAJOR  12
-
-/** Minor CPU type (pass 4) [ARM pp D-1..3] */
-#define CPU_TYPE_MINOR  6
-
-/** Implementation version [HRM p 2-38; ARM p D-5] */
-#define CPU_IMPLVER 2
-
-/** Architecture mask [HRM p 2-38; ARM p D-4]; BWX|FIX|CIX|MVI|TRAP|PREFETCH */
-#define CPU_AMASK U64(0x1307)
 #define DISP_12   (sext_u64_12(ins))
 #define DISP_13   (sext_u64_13(ins))
 #define DISP_16   (sext_u64_16(ins))

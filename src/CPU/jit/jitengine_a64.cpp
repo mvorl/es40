@@ -2679,6 +2679,7 @@ struct A64ColdStub {
 struct A64EmitContext {
   asmjit::a64::Assembler& assembler;
   const CJitEngine::JitOffsets& offsets;
+  const AlphaCPUProfile& profile;
   const CJitEngine::HelperSet& helpers;
   CJitEngine::RegAlloc& regs;
   const asmjit::Label& done;
@@ -3684,12 +3685,12 @@ static A64OpEmitReceipt emit_a64_intl_probe(A64EmitContext& context,
   Error err = Error::kOk;
   const a64::Gp dst = wc.kind == A64GprRouteKind::kPinned
       ? a64::x(static_cast<uint32_t>(wc.host)) : RA::kScratch2;
-  constexpr uint64_t kAmask = 0x1307;
+  const uint64_t amask = context.profile.amask;
 
   if (((op.ins >> 5) & 0x7fu) == 0x6c) {
-    err = emit_a64_mov_u64(a, dst, 2);                      // IMPLVER
+    err = emit_a64_mov_u64(a, dst, context.profile.implver); // IMPLVER
   } else if (op.is_literal) {
-    err = emit_a64_mov_u64(a, dst, op.literal & ~kAmask);   // AMASK literal folds
+    err = emit_a64_mov_u64(a, dst, op.literal & ~amask);   // AMASK literal folds
   } else {
     const A64GprRoute rb =
         a64_guest_gpr_read_route(context.regs, op.rb, context.pal_shadow);
@@ -3705,7 +3706,7 @@ static A64OpEmitReceipt emit_a64_intl_probe(A64EmitContext& context,
       else
         err = a.ldr(RA::kScratch0, a64::ptr(RA::kRegs,
                     static_cast<int32_t>(rb.slot * sizeof(uint64_t))));
-      if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kScratch1, ~kAmask);
+      if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kScratch1, ~amask);
       if (err == Error::kOk) err = a.and_(dst, op2, RA::kScratch1);
     } else {
       return {Error::kInvalidArgument, op.kind};
@@ -6079,7 +6080,7 @@ static bool a64_validate_body_driver(const asmjit::Environment& environment,
   CJitEngine::HelperSet helpers{};
   CJitEngine::RegAlloc regs = make_a64_block_regalloc();
   const Label done = partial_assembler.new_label();
-  A64EmitContext context{partial_assembler, offsets, helpers, regs, done,
+  A64EmitContext context{partial_assembler, offsets, kEv68CBProfile, helpers, regs, done,
                          0x1000, false, false};
   const A64BodyEmitReceipt inert = validate_a64_block_body(
       plan, [&](const A64DecodedOp& op, uint32_t index) {
@@ -6181,7 +6182,8 @@ static bool a64_validate_tail_emitters(const asmjit::Environment& environment,
     const Label done = a.new_label();
     if (emit_a64_mov_u64(a, RA::kChainCount, 0) != Error::kOk) return false;
     CJitEngine::RegAlloc patch_regs = make_a64_block_regalloc();
-    A64EmitContext context{a, offsets, helpers, patch_regs, done, 0x1000, false, false};
+    A64EmitContext context{a, offsets, kEv68CBProfile, helpers, patch_regs, done,
+                           0x1000, false, false};
     context.direct_exits = true;
     const A64BlockExit exit{0x1008, 2, A64ExitKind::kFallthrough};
     std::vector<A64DirectExit> exits;
@@ -6395,7 +6397,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   if (emit_a64_mov_u64(a, RegAlloc::kNextPc, exit.fallthrough_pc)
       != asmjit::Error::kOk) return;
 
-  A64EmitContext emit_context{a, m_off, helpers, regalloc, done, b->tag,
+  A64EmitContext emit_context{a, m_off, m_profile, helpers, regalloc, done, b->tag,
                               pal_block, b->pal_shadow};
   emit_context.plan = &plan;
   // Direct exits: non-PAL fall-throughs and integer branches. Chaining is verify-blind.

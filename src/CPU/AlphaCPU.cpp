@@ -540,7 +540,8 @@ CAlphaCPU::TickHold CAlphaCPU::tick_hold(u64 period_ns)
 /**
  * Constructor.
  **/
-CAlphaCPU::CAlphaCPU(CConfigurator* cfg, CSystem* system) : CSystemComponent(cfg, system), mySemaphore(0, 1)
+CAlphaCPU::CAlphaCPU(CConfigurator* cfg, CSystem* system, const AlphaCPUProfile& profile)
+	: CSystemComponent(cfg, system), m_profile(profile), mySemaphore(0, 1)
 {
 #ifdef ES40_JIT
 	// The JIT compiles PALcode like any other guest code; the HLE can't be used
@@ -582,7 +583,7 @@ void CAlphaCPU::init()
 	state.iProcNum = cSystem->RegisterCPU(this);
 
 #ifdef ES40_JIT
-	if (!m_jit) m_jit = new CJitEngine((int)state.iProcNum);
+	if (!m_jit) m_jit = new CJitEngine(m_profile, (int)state.iProcNum);
 	m_jit->set_exit_slot(&m_jit_exit);
 	{
 		// Tell the JIT the byte offsets (from `this`) of the fields its inline load
@@ -2545,7 +2546,7 @@ u64 CAlphaCPU::jit_hw_mfpr(CAlphaCPU* cpu, u32 ins, u64 cur)
 	case 0x0f: return state.exc_sum;                         // EXC_SUM
 	case 0x10: return state.pal_base;                        // PAL_BASE
 	case 0x11:                                               // I_CTL
-		return state.i_ctl_other | (((u64)CPU_CHIP_ID) << 24) | (u64)state.i_ctl_vptb
+		return state.i_ctl_other | (((u64)cpu->get_profile().chip_id) << 24) | (u64)state.i_ctl_vptb
 			| (((u64)state.i_ctl_va_mode) << 15) | (state.hwe ? U64(0x1) << 12 : 0)
 			| (state.sde ? U64(0x1) << 7 : 0) | (((u64)state.i_ctl_spe) << 3);
 	case 0x14: return state.pctr_ctl;                        // PCTR_CTL

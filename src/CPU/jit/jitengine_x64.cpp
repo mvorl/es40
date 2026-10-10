@@ -87,7 +87,7 @@ enum SafeOp {
   OP_FLTV,                                       // FLTV (0x15) VAX arith/convert/compare: f[Fc] via jit_fltv helper
   OP_AND, OP_BIS, OP_XOR, OP_BIC, OP_ORNOT, OP_EQV,
   OP_CMOV,                       // INTL (0x11) conditional moves CMOVxx: Rc = cond(Ra) ? op2 : Rc
-  OP_AMASK, OP_IMPLVER,          // INTL (0x11) CPU feature probes: Rc = op2 & ~CPU_AMASK / Rc = CPU_IMPLVER
+  OP_AMASK, OP_IMPLVER,          // INTL (0x11) CPU feature probes from the selected profile
   OP_CMPEQ, OP_CMPLT, OP_CMPLE, OP_CMPULT, OP_CMPULE,
   OP_SLL, OP_SRL, OP_SRA, OP_MULQ,
   OP_MULL, OP_UMULH,             // INTM (0x13): MULL = sext32(Ra*op2); UMULH = hi64 of unsigned Ra*op2
@@ -2301,13 +2301,13 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             a.cmovz(x86::rax, x86::r10);          // op2==0 -> 64 (BSF leaves rax undefined)
             break;
 
-        case OP_AMASK:    // Rc = op2 & ~CPU_AMASK -- EV68 feature mask 0x1307 (keep in sync w/ cpu_defs.h);
+        case OP_AMASK:    // Rc = op2 & ~selected feature mask
             op2_rcx();      // classify enforced Ra==31 (the Ra!=31 form traps OPCDEC in the interpreter)
-            a.mov(x86::rax, imm(~(uint64_t)0x1307));
+            a.mov(x86::rax, imm(~m_profile.amask));
             a.and_(x86::rax, x86::rcx);
             break;
-        case OP_IMPLVER:  // Rc = CPU_IMPLVER (2 = EV6 family; keep in sync w/ cpu_defs.h)
-            a.mov(x86::eax, imm(2));
+        case OP_IMPLVER:  // Rc = selected implementation version
+            a.mov(x86::eax, imm(m_profile.implver));
             break;
 
         case OP_CMPEQ:  emit_compare(x86::Inst::kIdSete);  break;
