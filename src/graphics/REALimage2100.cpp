@@ -1764,13 +1764,6 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	if ((block_transfer || integer_mono) && (op.x < 0 || op.y < 0 ||
 		uint64_t(op.x) + width > m_color_width || uint64_t(op.y) + height > m_color_height))
 		return op;
-	// Block transfers retain unrelated raster clip state.
-	if (integer_mono &&
-		(((peek(ClipXMin) | peek(ClipYMin) | peek(ClipXMax) | peek(ClipYMax)) & 0xffff000fu) ||
-		uint32_t(op.x) < (peek(ClipXMin) >> 4) || uint32_t(op.y) < (peek(ClipYMin) >> 4) ||
-		uint64_t(op.x) + width - 1 > (peek(ClipXMax) >> 4) ||
-		uint64_t(op.y) + height - 1 > (peek(ClipYMax) >> 4)))
-		return op;
 	if (readback)
 	{
 		const uint32_t source = peek(BlockSource), sx = source & 0xffff,
