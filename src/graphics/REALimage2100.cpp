@@ -1149,17 +1149,18 @@ bool CRealImage2100::copy_profile() const
 		native_copy_control_profile();
 }
 
-bool CRealImage2100::block_transfer_profile() const
+bool CRealImage2100::block_transfer_profile(bool upload) const
 {
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
 	if ((control & ~0xff01u) != 0x21000002u || !banks || (banks & ~3u) ||
 		!native_copy_control_profile(true, true))
 		return false;
-	// The decoded driver path retains white shared RGB components.
-	for (unsigned i = 0; i < 4; ++i)
-		if (m_shadow.find(IntegerVertexColorBase + i * 4) == m_shadow.end() ||
-			peek(IntegerVertexColorBase + i * 4) != (i ? 0x3fcu : 0u))
-			return false;
+	// Uploads use literal RGB pixels; only readback retains the shared-color restriction.
+	if (!upload)
+		for (unsigned i = 0; i < 4; ++i)
+			if (m_shadow.find(IntegerVertexColorBase + i * 4) == m_shadow.end() ||
+				peek(IntegerVertexColorBase + i * 4) != (i ? 0x3fcu : 0u))
+				return false;
 	for (unsigned bank = 0; bank < 2; ++bank)
 		if (banks & (1u << bank))
 		{
@@ -1745,7 +1746,7 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	op.mono = bitmap || host_mono || (a == FillCommand && (v == 0x010008f2 || v == 0x010408b2));
 	op.auxiliary = (initialization || bitmap) && (peek(DrawControl) & 0x4000);
 	const bool profile = integer_mono ? integer_mono_profile() : bitmap ? bitmap_profile() :
-		block_transfer ? block_transfer_profile() : fast_copy ? fast_copy_profile() :
+		block_transfer ? block_transfer_profile(upload) : fast_copy ? fast_copy_profile() :
 		((fill || initialization) ? fill_profile(initialization) : copy_profile()) &&
 		(!(selected & 1) || plane_profile(0)) && (!(selected & 2) || plane_profile(1)) &&
 		(!op.auxiliary || plane_profile(2)) &&
