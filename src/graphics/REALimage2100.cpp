@@ -831,7 +831,9 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 		return;
 	}
 	// Configuration accesses must not consume a pending pixel upload.
-	if (a >= HostData && (a < HostData + HostDataSize ||
+	if (a >= HostData &&
+		!(key == HostData + 0x400 && (peek(DrawControl) & 0x04000000u)) &&
+		(a < HostData + HostDataSize ||
 		(m_pending.width && !(peek(DrawControl) & 0x04000000u) &&
 			a < HostData + HostUploadSize)))
 	{
@@ -943,8 +945,7 @@ int CRealImage2100::plane_register(uint32_t a)
 {
 	if ((a & ~0x001fe01cu) == 0x00e00100u && (a & 0x001fe000u))
 		return 16 + int((a & 0x1c) / 4);
-	if (a == PlanePixelMask ||
-		((a & ~0x1fe000u) == HostData + 0x400 && (a & 0x1fe000u)))
+	if (a == PlanePixelMask || (a & ~0x1fe000u) == HostData + 0x400)
 		return 24;
 	// DFE7xx and FFE7xx are the two observed full-selector state forms.
 	const uint32_t state_address = a | 0x00200000u;
