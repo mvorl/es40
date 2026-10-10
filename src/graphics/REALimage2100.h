@@ -207,7 +207,7 @@ public:
   uint16_t frame_counter() const { return m_frame_counter; }
 
   // One virtual frame of time from the board's periodic service.
-  void advance_frame() { ++m_frame_counter; }
+  void advance_frame();
 
   Frame scanout(std::string* error = nullptr) const;
   Frame scanout(Frame frame, std::string* error = nullptr) const;
@@ -271,6 +271,9 @@ private:
   void advance_dac_data();
   uint8_t dac_data_read();
   void dac_data_write(uint8_t value);
+  static uint32_t misr_step(uint32_t signature, uint32_t pixel);
+  static uint32_t dac_rgb30(uint32_t pixel);
+  bool capture_misr(uint32_t& signature);
   uint32_t* native_register(uint32_t dword_address);
   bool framebuffer_access(uint32_t address, int bits, uint32_t& value, bool write);
   uint32_t texture_offset(uint32_t address) const;
@@ -376,7 +379,8 @@ private:
   bool dma_list_target(uint32_t address) const;
   void color_write(const ColorWriteContext& context, uint32_t x, uint32_t y,
     uint32_t color, uint32_t banks, uint32_t lanes = 0xffffffffu);
-  void composite_cursor(Frame& frame) const;
+  Frame dac_frame(Frame frame, std::string* error, bool vram_input = false) const;
+  void composite_cursor(Frame& frame, bool ten_bit = false) const;
   void report(
     const char* code, uint32_t address, uint32_t value, const char* message,
     bool fatal = false);

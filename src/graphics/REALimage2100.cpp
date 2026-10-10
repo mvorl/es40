@@ -549,8 +549,95 @@ uint8_t CRealImage2100::dac_data_read()
 
 void CRealImage2100::dac_data_write(uint8_t value)
 {
-	m_dac_regs[dac_data_offset()] = value;
+	const uint32_t offset = dac_data_offset();
+	if (offset == 0xfb)
+		m_dac_regs[offset] = (m_dac_regs[offset] & 6) | (value & 1);
+	else if (offset < 0xfc || offset > 0xff)
+		m_dac_regs[offset] = value;
 	advance_dac_data();
+}
+
+uint32_t CRealImage2100::misr_step(uint32_t signature, uint32_t pixel)
+{
+	return ((signature << 1) ^ pixel ^
+		((signature & 0x20000000u) ? 0x00800007u : 0)) & 0x3fffffffu;
+}
+
+uint32_t CRealImage2100::dac_rgb30(uint32_t pixel)
+{
+	const uint32_t r = (pixel >> 16) & 255, g = (pixel >> 8) & 255, b = pixel & 255;
+	return (((r << 2) | (r >> 6)) << 20) |
+		(((g << 2) | (g >> 6)) << 10) | (b << 2) | (b >> 6);
+}
+
+bool CRealImage2100::capture_misr(uint32_t& signature)
+{
+	// The supported RGB640 input serializes four RGB888 pixels per VRAM load.
+	const uint8_t serializer[] = { 0x30, 0x31, 0x32, 0x33, 0x10, 0x11, 1, 0 };
+	if (!std::equal(std::begin(serializer), std::end(serializer), m_dac_regs.begin() + 2))
+		return false;
+	const unsigned wid_control = m_dac_regs[0x0a] & 7;
+	if ((m_dac_regs[0x0a] & 0x18) ||
+		(wid_control != 0 && wid_control != 4 && wid_control != 5 && wid_control != 6) ||
+		(m_dac_regs[0x4b] != 0 && m_dac_regs[0x4b] != 8 && m_dac_regs[0x4b] != 0x0a) || m_dac_regs[0x57])
+		return false;
+	Frame frame = dac_frame(Frame{}, nullptr, true);
+	if (frame.argb.empty())
+		return false;
+	const unsigned byte_mask = m_dac_regs[0xf0] | (unsigned(m_dac_regs[0xf1]) << 8);
+	for (uint32_t y = 0; y < frame.height; ++y)
+		for (uint32_t x = 0; x < frame.width; ++x)
+		{
+			const unsigned phase = x & 3;
+			const unsigned wid = wid_control && (m_dac_regs[0xf2] & (1u << phase)) ?
+				(m_auxiliary[size_t(y) * m_color_width + x] >> 12) & 15 : 0;
+			const unsigned fb = 0x100 + 4 * wid, overlay = 0x200 + 4 * wid;
+			if (m_dac_regs[fb] != 9 || m_dac_regs[fb + 2] || m_dac_regs[fb + 3] ||
+				m_dac_regs[overlay] != 4 || m_dac_regs[overlay + 1] ||
+				m_dac_regs[overlay + 2] || m_dac_regs[overlay + 3] != 0x44)
+				return false;
+			uint32_t& pixel = frame.argb[size_t(y) * frame.width + x];
+			const unsigned enables = (byte_mask >> (4 * phase)) & 7;
+			pixel &= ((enables & 1) ? 0x0000ffu : 0) |
+				((enables & 2) ? 0x00ff00u : 0) | ((enables & 4) ? 0xff0000u : 0);
+			pixel = dac_rgb30(pixel);
+		}
+	composite_cursor(frame, true);
+	// Accumulate active pixels after cursor composition and before analog blanking.
+	uint32_t accumulator = 0x3fffffffu;
+	for (uint32_t pixel : frame.argb)
+		accumulator = misr_step(accumulator, pixel);
+	signature = (~accumulator) & 0x3fffffffu;
+	return true;
+}
+
+void CRealImage2100::advance_frame()
+{
+	++m_frame_counter;
+	uint8_t& control = m_dac_regs[0xfb];
+	// RGB640 requires a disabled frame before another signature capture.
+	if (!(control & 1))
+	{
+		control = 0;
+		return;
+	}
+	if (!(control & 6))
+	{
+		control = 5;
+		std::fill(m_dac_regs.begin() + 0xfc, m_dac_regs.begin() + 0x100, uint8_t(0));
+	}
+	else if ((control & 6) == 4)
+	{
+		uint32_t signature;
+		if (!capture_misr(signature))
+		{
+			unimplemented_once("RGB640 MISR input profile", 0x838018, control, true);
+			return;
+		}
+		for (unsigned i = 0; i < 4; ++i)
+			m_dac_regs[0xfc + i] = uint8_t(signature >> (8 * i));
+		control = 3;
+	}
 }
 
 // Readback latches, display selection and unit reset.
@@ -2735,6 +2822,14 @@ CRealImage2100::Frame CRealImage2100::scanout(std::string* error) const
 
 CRealImage2100::Frame CRealImage2100::scanout(Frame frame, std::string* error) const
 {
+	frame = dac_frame(std::move(frame), error);
+	if (!(m_dac_regs[0x0d] & 4))
+		std::fill(frame.argb.begin(), frame.argb.end(), 0xff000000u);
+	return frame;
+}
+
+CRealImage2100::Frame CRealImage2100::dac_frame(Frame frame, std::string* error, bool vram_input) const
+{
 	auto reject = [&](const char* text) {
 		if (error)
 			*error = text;
@@ -2748,26 +2843,33 @@ CRealImage2100::Frame CRealImage2100::scanout(Frame frame, std::string* error) c
 		return reject("Native display disabled/blanked");
 	if (!native_pixel_profile())
 		return reject("Native pixel layout unsupported");
-	if (!(m_dac_regs[0x0b] & 1) || !(m_dac_regs[0x0d] & 4))
+	if (!(m_dac_regs[0x0b] & 1))
 		return reject("Native DAC disabled");
 	// Each pixel's WID selects an RGB640 window attribute entry.
 	std::array<bool, 16> supported_windows{};
 	for (uint32_t i = 0; i < 16; ++i)
 	{
 		const uint32_t fb = 0x100 + i * 4, overlay = 0x200 + i * 4;
-		supported_windows[i] = m_dac_regs[fb] == 8 && m_dac_regs[fb + 1] == 12 &&
-			!m_dac_regs[fb + 2] && !m_dac_regs[fb + 3] &&
+		const bool rgb = (m_dac_regs[fb] == 8 && m_dac_regs[fb + 1] == 12) ||
+			m_dac_regs[fb] == 9;
+		supported_windows[i] = vram_input || (rgb && !m_dac_regs[fb + 2] && !m_dac_regs[fb + 3] &&
 			m_dac_regs[overlay] == 4 && !m_dac_regs[overlay + 1] &&
-			!m_dac_regs[overlay + 2] && m_dac_regs[overlay + 3] == 0x48;
+			!m_dac_regs[overlay + 2] &&
+			(m_dac_regs[overlay + 3] == 0x48 || m_dac_regs[overlay + 3] == 0x44));
 	}
 	// Unlike VGA, vertical display is a count, not a last-line index.
 	const uint32_t horizontal = peek(TimingBase),
 		overflow = peek(TimingBase + 4) >> 24,
 		vertical = peek(TimingBase + 0x10),
 		extension = (peek(TimingBase + 0x1c) >> 16) & 255;
-	// RGB640 register 08 selects the driver's horizontal timing unit.
+	// The captured VMS clock setup retains eight-pixel timing counts with 4:1 serialization.
+	const bool unscaled_timing = m_color_width == MaxColorWidth &&
+		peek(DisplaySelect) == 0x4700 && peek(BoardTiming) == 0x26c03 &&
+		m_board_timing == 0x38 && horizontal == 0x9fce &&
+		peek(TimingBase + 4) == 0x2814a2 && vertical == 0x301 && extension == 0x0d;
 	const uint32_t horizontal_unit = m_dac_regs[0x08] == 0 ? 8 :
-		m_dac_regs[0x08] == 1 && m_color_width == MaxColorWidth ? 16 : 0;
+		m_dac_regs[0x08] == 1 && m_color_width == MaxColorWidth ?
+		(unscaled_timing ? 8 : 16) : 0;
 	const uint32_t width = ((((horizontal >> 8) & 255) |
 		((extension & 0x40) << 2)) + 1) * horizontal_unit,
 		vertical_extension = extension & 0x3f;
@@ -2796,7 +2898,8 @@ CRealImage2100::Frame CRealImage2100::scanout(Frame frame, std::string* error) c
 			for (uint32_t x = 0; x < width; ++x)
 				destination[x] = 0xff000000 | source[x];
 		}
-		composite_cursor(frame);
+		if (!vram_input)
+			composite_cursor(frame);
 		return frame;
 	}
 	if (all_windows_supported)
@@ -2837,7 +2940,8 @@ CRealImage2100::Frame CRealImage2100::scanout(Frame frame, std::string* error) c
 				destination[x] = 0xff000000 | m_color[bank * m_color_pixels + row + x];
 			}
 		}
-		composite_cursor(frame);
+		if (!vram_input)
+			composite_cursor(frame);
 		return frame;
 	}
 
@@ -2852,11 +2956,12 @@ CRealImage2100::Frame CRealImage2100::scanout(Frame frame, std::string* error) c
 			frame.argb[size_t(y) * width + x] =
 				0xff000000 | m_color[bank * m_color_pixels + offset];
 		}
-	composite_cursor(frame);
+	if (!vram_input)
+		composite_cursor(frame);
 	return frame;
 }
 
-void CRealImage2100::composite_cursor(Frame& frame) const
+void CRealImage2100::composite_cursor(Frame& frame, bool ten_bit) const
 {
 	// NT uses the RGB640 64x64 Windows cursor mode.
 	if (m_dac_regs[0x4b] != 0x0a)
@@ -2872,6 +2977,8 @@ void CRealImage2100::composite_cursor(Frame& frame) const
 		const unsigned address = 0x4800 + 3 * (i + 1);
 		colors[i] = 0xff000000u | (uint32_t(m_dac_regs[address]) << 16) |
 			(uint32_t(m_dac_regs[address + 1]) << 8) | m_dac_regs[address + 2];
+		if (ten_bit)
+			colors[i] = dac_rgb30(colors[i]);
 	}
 	for (int cy = 0; cy < 64; ++cy)
 	{
@@ -2890,7 +2997,7 @@ void CRealImage2100::composite_cursor(Frame& frame) const
 			if (code < 2)
 				pixel = colors[code];
 			else if (code == 3)
-				pixel ^= 0x00808080u;
+				pixel ^= ten_bit ? 0x20080200u : 0x00808080u;
 		}
 	}
 }
@@ -3020,6 +3127,7 @@ void CRealImage2100::reset(bool clear)
 	m_readback = {};
 	m_palette.fill(0);
 	std::fill(m_dac_regs.begin(), m_dac_regs.end(), uint8_t(0));
+	m_dac_regs[0xff] = 0x3f;
 	m_shadow.clear();
 	m_warned.clear();
 	m_aperture_warned = m_shadow_full_warned = false;
