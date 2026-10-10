@@ -590,10 +590,11 @@ bool CRealImage2100::capture_misr(uint32_t& signature)
 	const uint8_t serializer[] = { 0x30, 0x31, 0x32, 0x33, 0x10, 0x11, 1, 0 };
 	if (!std::equal(std::begin(serializer), std::end(serializer), m_dac_regs.begin() + 2))
 		return false;
-	const unsigned wid_control = m_dac_regs[0x0a] & 7;
+	const unsigned wid_control = m_dac_regs[0x0a] & 7, cursor_control = m_dac_regs[0x4b] & ~0x10u;
 	if ((m_dac_regs[0x0a] & 0x18) ||
 		(wid_control != 0 && wid_control != 4 && wid_control != 5 && wid_control != 6) ||
-		(m_dac_regs[0x4b] != 0 && m_dac_regs[0x4b] != 8 && m_dac_regs[0x4b] != 0x0a) || m_dac_regs[0x57])
+		(cursor_control != 0 && cursor_control != 8 && cursor_control != 0x0a &&
+			cursor_control != 0x0b) || m_dac_regs[0x57])
 		return false;
 	Frame frame = dac_frame(Frame{}, nullptr, true);
 	if (frame.argb.empty())
@@ -2261,16 +2262,16 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 	};
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
 		width = block_width(), columns = ((peek(MemoryControl) >> 24) & 63) + 1;
-	const bool direct_line = line && (control & ~0xff01u) == 0x21000002u &&
+	const bool direct_rgb = (control & ~0xff01u) == 0x21000002u &&
 		(banks == 1 || banks == 2),
 		auxiliary_compare = (control & ~0x00ffff01u) == 0xa1000002u &&
 		(banks == 5 || banks == 6) && plane_value(2, 0, 0xffffffff) == 0,
 		auxiliary_write = (control & ~0x00ef0f01u) == 0xa1004002u &&
 		!(plane_value(2, 0, 0xffffffff) & ~0xe000f000u),
-		color_write = direct_line || auxiliary_compare || ((control & ~0xff01u) == 0xa1000002u && !(banks & ~3u));
+		color_write = direct_rgb || auxiliary_compare || ((control & ~0xff01u) == 0xa1000002u && !(banks & ~3u));
 	if ((!line && value != 3) ||
 		(line && (address != IntegerVertexColorBase + VertexStride + 0x1c ||
-			(value == 0x62 ? (!auxiliary_compare && !direct_line) :
+			(value == 0x62 ? (!auxiliary_compare && !direct_rgb) :
 				(!auxiliary_write && (!color_write || auxiliary_compare))))) ||
 		(!auxiliary_write && !color_write &&
 		(control & ~0xff01u) != 0x21000002u) ||
@@ -2319,7 +2320,9 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 			continue;
 		const uint32_t rops = plane_value(bank, 4, 0), mask = plane_value(bank, 0, 0xffffffff);
 		bool copy_rop = rops == 0x03030303u;
-		if (color_write && bank < 2)
+		// Preserve the existing all-zero initialization triangle profile.
+		const bool zero_clear = !line && direct_rgb && !color && !peek(IntegerVertexColorBase) && copy_rop;
+		if (color_write && bank < 2 && !zero_clear)
 		{
 			copy_rop = !(mask & 0xff000000u) || (rops >> 24) == 5;
 			for (unsigned shift = 0; shift < 24; shift += 8)
@@ -3518,8 +3521,10 @@ CRealImage2100::Frame CRealImage2100::dac_frame(Frame frame, std::string* error,
 
 void CRealImage2100::composite_cursor(Frame& frame, bool ten_bit) const
 {
-	// NT uses the RGB640 64x64 Windows cursor mode.
-	if (m_dac_regs[0x4b] != 0x0a)
+	// Blink-to-transparent has no effect while blinking is disabled.
+	const unsigned control = m_dac_regs[0x4b] & ~0x10u;
+	const bool x11 = control == 0x0b;
+	if (control != 0x0a && !x11)
 		return;
 	// Position uses twelve data bits and bit 15 as the sign.
 	const int origin_x = int(m_dac_regs[0x40] | ((m_dac_regs[0x41] & 15) << 8)) -
@@ -3545,13 +3550,13 @@ void CRealImage2100::composite_cursor(Frame& frame, bool ten_bit) const
 			const int x = origin_x + cx;
 			if (x < 0 || uint32_t(x) >= frame.width)
 				continue;
-			// Four pixels per byte, low pair first: colors 1/2, transparent, highlight.
+			// Low pairs come first; X11 uses bit 1 as the mask and bit 0 as the color.
 			const unsigned code = (m_dac_regs[0x1000 + cy * 16 + cx / 4] >>
 				(2 * (cx & 3))) & 3;
 			uint32_t& pixel = frame.argb[size_t(y) * frame.width + unsigned(x)];
-			if (code < 2)
-				pixel = colors[code];
-			else if (code == 3)
+			if (x11 ? code >= 2 : code < 2)
+				pixel = colors[code & 1];
+			else if (!x11 && code == 3)
 				pixel ^= ten_bit ? 0x20080200u : 0x00808080u;
 		}
 	}
