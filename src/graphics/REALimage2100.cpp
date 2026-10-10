@@ -1076,8 +1076,9 @@ bool CRealImage2100::native_copy_control_profile(bool clear) const
 	if (!native_pixel_profile() || !width || columns != (copy_columns + 1) / 2 ||
 		copy_columns > (m_color_width + 10 * width - 1) / (10 * width))
 		return false;
-	const uint32_t global = peek(GlobalControl0);
-	const bool integer_clear = clear && (peek(DrawControl) & ~0x0400ff01u) == 0xa1000002u;
+	const uint32_t global = peek(GlobalControl0), control = peek(DrawControl);
+	const bool integer_clear = clear && ((control & ~0x0400ff01u) == 0xa1000002u ||
+		(control & ~0x04ef0f01u) == 0xa1004002u);
 	const bool context_clear = clear && (global == 0x180 || global == 0x190) &&
 		peek(GlobalControl1) == 0x20800;
 	// Other programmed pipeline modes have not been decoded.
@@ -1257,10 +1258,12 @@ CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 	// Integer clears retain the fourth byte used by the DAC overlay plane.
 	const bool integer_clear = !copy && (control & ~0x0400ff01u) == 0xa1000002u;
 	const bool integer_seed = integer_clear && seed;
+	const bool integer_auxiliary = !copy && (control & ~0x04ef0f01u) == 0xa1004002u;
 	for (auto& mask : op.color.masks)
 		mask &= integer_clear ? 0xffffffffu : 0x00ffffffu;
-	if ((!integer_clear && (control & ~control_fields) != 0x81000002) ||
-		(integer_clear && configuration && (banks & 4)) || !banks || (banks & ~7u) ||
+	if ((!integer_clear && !integer_auxiliary && (control & ~control_fields) != 0x81000002) ||
+		(integer_clear && configuration && (banks & 4) && !integer_auxiliary) ||
+		!banks || (banks & ~7u) ||
 		v != (((banks ^ 7u) << 18) | (copy ? 0x30000u : 0x10000u)) ||
 		!native_copy_control_profile(true) || m_pending.width || m_readback.width ||
 		((source | destination | extent) & ~0x07ff07ffu) ||
@@ -1272,15 +1275,23 @@ CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 		return op;
 	if (auxiliary_clear)
 	{
+		const bool integer_packed = integer_seed || integer_auxiliary;
 		const uint32_t depth_control = plane_value(2, 5, 0),
-			format = integer_seed ? 0x100u : 0u;
-		const bool neutral_clear = plane_profile(2, 0) && plane_value(2, 10, 0) == 0 &&
+			format = integer_packed ? 0x100u : 0u;
+		// The driver packs window references into the auxiliary clear source.
+		const uint32_t references = ((control & 0x000f0000u) >> 4) |
+			((control & 0x00f00000u) << 8);
+		if (integer_auxiliary && !(integer_seed && auxiliary_mask == 0xffffffffu) &&
+			((auxiliary_value ^ references) & auxiliary_mask & 0xf000f000u))
+			return op;
+		const bool neutral_clear = (!integer_auxiliary || integer_seed) &&
+			plane_profile(2, 0) && plane_value(2, 10, 0) == 0 &&
 			(auxiliary_mask == 0xffffffffu ||
 				(configuration && !(auxiliary_mask & ~0x0000f000u)));
-		const bool packed_clear = auxiliary_mask == 0xffffffffu &&
-			plane_value(2, 1, 0) == 0 && plane_value(2, 2, 0) == (integer_seed ? 0u : 0xf000u) &&
+		const bool packed_clear = (auxiliary_mask == 0xffffffffu || integer_auxiliary) &&
+			plane_value(2, 1, 0) == 0 && plane_value(2, 2, 0) == (integer_packed ? 0u : 0xf000u) &&
 			plane_value(2, 3, 0) == 0x0fff0fff &&
-			(integer_seed ? depth_control == 0x0a000000 :
+			(integer_packed ? depth_control == 0x0a000000 :
 				(depth_control == 0x0a000200 || depth_control == 0x0a000205 ||
 					depth_control == 0x0a000207)) &&
 			plane_value(2, 6, 0) == 0 && plane_value(2, 7, 0) == 0 &&
@@ -1406,20 +1417,18 @@ void CRealImage2100::execute_block(const BlockOperation& op)
 	}
 	if (op.seed)
 	{
-		if (op.auxiliary_clear)
-			m_clear_cache[2] = {op.seed_key, op.auxiliary_value & op.auxiliary_mask,
-				op.auxiliary_mask};
-		for (unsigned bank = 0; bank < 2; ++bank)
+		for (unsigned bank = 0; bank < 3; ++bank)
 			if (op.banks & (1u << bank))
 			{
-				const uint32_t mask = op.color.masks[bank];
+				const uint32_t mask = bank == 2 ? op.auxiliary_mask : op.color.masks[bank],
+					value = bank == 2 ? op.auxiliary_value : colors[bank];
 				if (!mask)
 					continue;
 				auto& cache = m_clear_cache[bank];
 				if (cache.source != op.seed_key)
 					cache = {};
 				cache.source = op.seed_key;
-				cache.color = (cache.color & ~mask) | (colors[bank] & mask);
+				cache.color = (cache.color & ~mask) | (value & mask);
 				cache.known |= mask;
 			}
 		return;
