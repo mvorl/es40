@@ -2847,8 +2847,9 @@ bool CRealImage2100::dma_setup_supported(uint32_t v) const
 {
 	if ((m_dma_regs[0] & ~0x200u) ||
 		(m_dma_regs[1] != 0 && m_dma_regs[1] != 1 && m_dma_regs[1] != 7) ||
-		(m_dma_regs[13] && ((v & ~DMACommandListCountMask) != 0xc0000000u ||
-			m_dma_regs[13] != 0xffffe000u)) || m_dma_regs[14] != 8)
+		(m_dma_regs[13] && (m_dma_regs[13] != 0xffffe000u ||
+			((v & ~DMACommandListCountMask) != 0xc0000000u &&
+				(v & 0xffff0000u) != 0xc4800000u))) || m_dma_regs[14] != 8)
 		return false;
 	for (unsigned i : {2u, 3u, 4u, 5u, 6u, 10u, 15u, 16u, 17u, 18u})
 		if (m_dma_regs[i])
