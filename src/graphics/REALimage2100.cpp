@@ -772,8 +772,19 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 	}
 	else if (key == DisplaySelect)
 	{
-		if (it->second)
+		// Format 3 uses RGB color with independent clock/capability flags.
+		if (it->second && (it->second & ~0x4100u) != 0x0600)
 			unimplemented_once("REALimage display selector", a, v, true);
+	}
+	else if (key == BoardSetup)
+	{
+		if (it->second & ~0x00820000u)
+			unimplemented_once("REALimage board setup/profile", a, v, true);
+	}
+	else if (key == InitializationPort)
+	{
+		if (it->second)
+			unimplemented_once("REALimage initialization port/profile", a, v, true);
 	}
 	else if (zero_context_register(key))
 	{
@@ -818,7 +829,8 @@ int CRealImage2100::plane_register(uint32_t a)
 	case PlaneStateBase + 0x18: case PlaneStateBase + 0x1c:
 	case PlaneStateBase + 0x20:
 	case PlaneStateBase + 0x24: case PlaneStateBase + 0x28:
-	case PlaneStateBase + 0x2c: case PlaneStateBase + 0x38:
+	case PlaneStateBase + 0x2c: case PlaneStateBase + 0x30:
+	case PlaneStateBase + 0x34: case PlaneStateBase + 0x38:
 	case PlaneStateBase + 0x3c:
 		return int((state_address - PlaneStateBase) / 4);
 	default:
@@ -887,13 +899,14 @@ bool CRealImage2100::plane_profile(unsigned bank, uint32_t format, uint32_t rop_
 		plane_value(bank, 9, 0) == 0 &&
 		(compare_mask == 0 || compare_mask == 0x00ff0000) &&
 		plane_value(bank, 11, 0x33300000) == 0x33300000 &&
+		plane_value(bank, 12, 0x100) == 0x100 && plane_value(bank, 13, 0) == 0 &&
 		plane_value(bank, 14, 0x100) == format &&
 		plane_value(bank, 15, 0) == 0;
 }
 
 bool CRealImage2100::native_storage_register(uint32_t a) const
 {
-	return vertex_register(a) || a == TextureBase || a == ContextLink ||
+	return plane_register(a) >= 0 || vertex_register(a) || a == TextureBase || a == ContextLink ||
 		a == DrawControl || a == MemoryControl || a == PixelControl ||
 		a == Foreground || a == Background || a == HostOrigin ||
 		a == MonoPattern0 || a == MonoPattern1 ||
@@ -903,6 +916,7 @@ bool CRealImage2100::native_storage_register(uint32_t a) const
 		a == BlockSource || a == BlockDestination || a == BlockExtent ||
 		a == BlockCommand ||
 		a == ContextControl || a == DisplaySelect ||
+		a == BoardSetup || a == InitializationPort ||
 		a == BoardTiming || a == WindowMask ||
 		a == ClipXMax || a == ClipYMax || a == ClipXMin || a == ClipYMin ||
 		a == GlobalControl0 || a == GlobalControl1 || a == GlobalControl2 ||
@@ -917,7 +931,8 @@ bool CRealImage2100::native_pixel_profile() const
 {
 	const uint32_t memory = peek(MemoryControl);
 	return (memory & 0x00ffffff) == 0x8000 &&
-		peek(PixelControl) == (m_color_width == MaxColorWidth ? 0x62722060u : 0x42722060u);
+		(peek(PixelControl) & ~0x08000000u) ==
+			(m_color_width == MaxColorWidth ? 0x62722060u : 0x42722060u);
 }
 
 uint32_t CRealImage2100::block_width() const
@@ -978,6 +993,7 @@ bool CRealImage2100::fast_copy_profile() const
 		plane_value(bank, 8, 0) != 0 || plane_value(bank, 9, 0) != 0 ||
 		plane_value(bank, 10, 0) != 0 ||
 		plane_value(bank, 11, 0x33300000) != 0x33300000 ||
+		plane_value(bank, 12, 0x100) != 0x100 || plane_value(bank, 13, 0) != 0 ||
 		plane_value(bank, 14, 0x100) != 0x100 || plane_value(bank, 15, 0) != 0 ||
 		m_planes[bank].unknown_masks)
 		return false;
@@ -1068,12 +1084,14 @@ bool CRealImage2100::framebuffer_access(
 	return true;
 }
 
-bool CRealImage2100::fill_profile() const
+bool CRealImage2100::fill_profile(bool initialization) const
 {
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
-	// This clear path retains the context's WID and configuration selector.
-	return (control & ~0x040fff01u) == 0x81000002 && banks && !(banks & ~3u) &&
-		native_copy_control_profile(true);
+	// Initialization can broadcast the rectangle to RGB and auxiliary planes.
+	const bool bootstrap = initialization &&
+		(control & ~0xff01u) == 0x05000002 && banks && !(banks & ~7u);
+	const bool normal = (control & ~0x040fff01u) == 0x81000002 && banks && !(banks & ~3u);
+	return (normal || bootstrap) && native_copy_control_profile(true);
 }
 
 CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
@@ -1132,6 +1150,7 @@ CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 			plane_value(2, 8, 0) == 0 && plane_value(2, 9, 0) == 0 &&
 			plane_value(2, 10, 0) == 0x00ff0000 &&
 			plane_value(2, 11, 0x33300000) == 0x33300000 &&
+			plane_value(2, 12, 0x100) == 0x100 && plane_value(2, 13, 0) == 0 &&
 			plane_value(2, 14, 0) == 0 && plane_value(2, 15, 0) == 0;
 		if ((!neutral_clear && !packed_clear) ||
 			plane_value(2, 4, 0x03030303) != 0x03030303 ||
@@ -1344,6 +1363,9 @@ CRealImage2100::StartPrefix CRealImage2100::begin_start(uint32_t a, uint32_t v)
 		for (unsigned bank = 0; bank < 2; ++bank)
 			if (destination_banks & (1u << bank))
 				m_clear_cache[bank] = {};
+	if (a == FillCommand && (v == 0x09040832 || v == 0x010408b2) &&
+		(peek(DrawControl) & 0x4000))
+		m_clear_cache[2] = {};
 	if (m_pending.width)
 		report("HOST_INTERRUPTED", a, v, "Incomplete native host upload replaced");
 	if (m_readback.width)
@@ -1375,21 +1397,27 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	const bool copy = (a == HostCommand &&
 		(v == 0x01000062 || v == 0x00000062 || v == 0x01000072 || v == 0x00000072)) ||
 		fast_copy || cross_copy;
-	const bool fill = a == FillCommand && v == 0x09000832;
+	const bool initialization = a == FillCommand &&
+		(v == 0x09040832 || v == 0x010408b2);
+	const bool fill = a == FillCommand && (v == 0x09000832 || v == 0x09040832);
 	const bool host_mono = a == HostCommand && (v & ~0x7780u) == 0x01000872;
 	op.transparent = host_mono && !(v & 0x80);
 	op.mono_offset = host_mono ? (v >> 8) & 7 : 0;
 	const uint32_t mono_width = host_mono && (v & 0x7700) ? ((v >> 12) & 7) + 1 : 0;
-	op.mono = host_mono || (a == FillCommand && v == 0x010008f2);
+	op.mono = host_mono || (a == FillCommand && (v == 0x010008f2 || v == 0x010408b2));
+	op.auxiliary = initialization && (peek(DrawControl) & 0x4000);
 	const bool profile = fast_copy ? fast_copy_profile() :
-		(fill ? fill_profile() : copy_profile()) && (!(selected & 1) || plane_profile(0)) &&
-		(!(selected & 2) || plane_profile(1)) &&
+		((fill || initialization) ? fill_profile(initialization) : copy_profile()) &&
+		(!(selected & 1) || plane_profile(0)) && (!(selected & 2) || plane_profile(1)) &&
+		(!op.auxiliary || plane_profile(2)) &&
 		(!cross_copy || plane_profile(selected == 2 ? 0 : 1));
 	if ((!upload && !copy && !fill && !op.mono && !readback) || !profile ||
 		((copy || readback) && selected != 1 && selected != 2))
 		return op;
-	const uint32_t origin = peek(a == HostCommand ? HostOrigin : FillOrigin),
-		extent = peek(a == HostCommand ? HostExtent : FillExtent),
+	// Bit 18 selects host geometry for the miniport's initialization rectangles.
+	const bool host_geometry = a == HostCommand || initialization;
+	const uint32_t origin = peek(host_geometry ? HostOrigin : FillOrigin),
+		extent = peek(host_geometry ? HostExtent : FillExtent),
 		width = (extent & 0xffff) + 1, height = (extent >> 16) + 1;
 	op.width = width;
 	op.height = height;
@@ -1470,6 +1498,11 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	op.bottom = std::min(op.y + int32_t(height), int32_t(m_color_height));
 	op.foreground = peek(Foreground);
 	op.background = peek(Background);
+	if (op.auxiliary)
+	{
+		op.auxiliary_mask = plane_value(2, 0, 0xffffffff);
+		op.auxiliary_rop = plane_value(2, 4, 0x03030303);
+	}
 	op.kind = StartOperation::Kind::Pattern;
 	return op;
 }
@@ -1551,6 +1584,22 @@ void CRealImage2100::execute_start(const StartOperation& op)
 				}
 			}
 			color_write(op.color, uint32_t(col), uint32_t(row), color, op.banks);
+			if (op.auxiliary)
+			{
+				uint32_t& destination = m_auxiliary[size_t(row) * m_color_width + col];
+				uint32_t result = 0;
+				for (unsigned shift = 0; shift < 32; shift += 8)
+				{
+					const unsigned rop = (op.auxiliary_rop >> shift) & 15;
+					uint32_t channel = 0;
+					if (rop & 1) channel |= color & destination;
+					if (rop & 2) channel |= color & ~destination;
+					if (rop & 4) channel |= ~color & destination;
+					if (rop & 8) channel |= ~color & ~destination;
+					result |= channel & (0xffu << shift);
+				}
+				destination = (destination & ~op.auxiliary_mask) | (result & op.auxiliary_mask);
+			}
 		}
 }
 
@@ -1633,7 +1682,8 @@ bool CRealImage2100::triangle_profile() const
 	for (unsigned i = 0; i < std::size(depth); ++i)
 		if (plane_value(2, i, 0) != depth[i])
 			return false;
-	if (plane_value(2, 14, 0) || plane_value(2, 15, 0))
+	if (plane_value(2, 12, 0x100) != 0x100 || plane_value(2, 13, 0) ||
+		plane_value(2, 14, 0) || plane_value(2, 15, 0))
 		return false;
 	for (unsigned plane : {bank, 2u})
 	{
@@ -3196,7 +3246,7 @@ void CRealImage2100::RestoreState(std::istream& in)
 	{
 		plane.written = get32(p);
 		plane.unknown_masks = get32(p);
-		if ((plane.written & ~(large ? 0xffffcfffu : 0x0fffcfffu)) ||
+		if ((plane.written & ~(large ? 0xffffffffu : 0x0fffffffu)) ||
 			plane.unknown_masks > (large ? 255u : 15u))
 			throw std::runtime_error("Invalid REALimage plane register mask");
 		const unsigned registers = large ? PlaneRegisterCount : LegacyPlaneRegisterCount;

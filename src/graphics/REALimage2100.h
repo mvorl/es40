@@ -80,7 +80,9 @@ public:
   // Only ever written 0; no NT miniport installs an ISR (inferred enable mask).
   static constexpr uint32_t InterruptEnable = 0x00800424;
   static constexpr uint32_t SyncCommand = 0x0080042c;
-  static constexpr uint32_t DisplaySelect = 0x008380a8;
+  static constexpr uint32_t DisplaySelect = 0x008380a8,
+                            BoardSetup = 0x00800434,
+                            InitializationPort = 0x003800b8;
   // BIOS and miniport exit write VGAControlVGA; miniport entry writes Native.
   static constexpr uint32_t VGAControl = 0x00800430, VGAControlVGA = 0x000a0000,
                             VGAControlNative = 0x00100000;
@@ -283,7 +285,7 @@ private:
   bool native_pixel_profile() const;
   uint32_t block_width() const;
   bool native_copy_control_profile(bool clear = false) const;
-  bool fill_profile() const;
+  bool fill_profile(bool initialization = false) const;
   bool copy_profile() const;
   bool fast_copy_profile() const;
   enum class TrianglePreparation { Rejected, NoOp, Ready };
@@ -343,11 +345,12 @@ private:
     Rejection rejection = Rejection::Profile;
     uint32_t address = 0, value = 0, banks = 0, destination_banks = 0,
       width = 0, height = 0, source_bank = 0,
-      destination_bank = 0, foreground = 0, background = 0, mono_offset = 0;
+      destination_bank = 0, foreground = 0, background = 0, mono_offset = 0,
+      auxiliary_mask = 0, auxiliary_rop = 0;
     int32_t x = 0, y = 0, sx = 0, sy = 0, left = 0, right = 0,
       top = 0, bottom = 0;
     bool fast_copy = false, right_to_left = false, bottom_to_top = false,
-      mono = false, transparent = false;
+      mono = false, transparent = false, auxiliary = false;
     std::array<uint32_t, 4> pattern{};
     ColorWriteContext color;
   };
