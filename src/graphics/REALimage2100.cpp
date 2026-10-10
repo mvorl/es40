@@ -2391,13 +2391,6 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 					return;
 				}
 		}
-		if (value == 0x62)
-			for (unsigned i = 24; i < 24 + width / 2; ++i)
-				if (plane_value(bank, i, 0xffffffff) != 0xffffffff)
-				{
-					reject();
-					return;
-				}
 	}
 	struct Point { int64_t x, y; } vertex[3];
 	for (unsigned slot = 0; slot < (line ? 2u : 3u); ++slot)
