@@ -127,6 +127,13 @@ public:
                             FillOrigin = 0x00800644,
                             FillExtent = 0x00800648,
                             FillCommand = 0x0080064c;
+  static constexpr uint32_t BitmapForeground = 0x00800660,
+                            BitmapBackground = 0x00800664,
+                            BitmapPattern0 = 0x00800668,
+                            BitmapPattern1 = 0x0080066c,
+                            BitmapOrigin = 0x00800670,
+                            BitmapExtent = 0x00800674,
+                            BitmapCommand = 0x00800678;
   static constexpr uint32_t BlockSource = 0x00800680,
                             BlockDestination = 0x00800684,
                             BlockExtent = 0x00800688,
@@ -299,6 +306,7 @@ private:
   uint32_t block_width() const;
   bool native_copy_control_profile(bool clear = false, bool integer = false) const;
   bool block_transfer_profile(bool readback) const;
+  bool bitmap_profile() const;
   bool fill_profile(bool initialization = false) const;
   bool copy_profile() const;
   bool fast_copy_profile() const;
@@ -363,7 +371,7 @@ private:
     uint32_t address = 0, value = 0, banks = 0, destination_banks = 0,
       width = 0, height = 0, source_bank = 0,
       destination_bank = 0, foreground = 0, background = 0, mono_offset = 0,
-      auxiliary_mask = 0, auxiliary_rop = 0;
+      auxiliary_mask = 0, auxiliary_rop = 0, auxiliary_reference = 0;
     int32_t x = 0, y = 0, sx = 0, sy = 0, left = 0, right = 0,
       top = 0, bottom = 0;
     bool fast_copy = false, right_to_left = false, bottom_to_top = false,

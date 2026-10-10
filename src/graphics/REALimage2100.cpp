@@ -876,7 +876,7 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 		else if ((key - VertexBase) % VertexStride == 0x1c)
 			triangle_command(original_address, it->second);
 	}
-	else if (key == HostCommand || key == FillCommand || key == BlockCommand)
+	else if (key == HostCommand || key == FillCommand || key == BitmapCommand || key == BlockCommand)
 	{
 		// Only longword command launches have been established by the driver.
 		if (bits == 32)
@@ -1077,6 +1077,9 @@ bool CRealImage2100::native_storage_register(uint32_t a) const
 		a == MonoPattern2 || a == MonoPattern3 ||
 		a == HostExtent || a == FillOrigin || a == FillExtent ||
 		a == HostCommand || a == FillCommand ||
+		a == BitmapForeground || a == BitmapBackground ||
+		a == BitmapPattern0 || a == BitmapPattern1 ||
+		a == BitmapOrigin || a == BitmapExtent || a == BitmapCommand ||
 		a == BlockSource || a == BlockDestination || a == BlockExtent ||
 		a == BlockCommand ||
 		a == ContextControl || a == DisplaySelect ||
@@ -1115,7 +1118,7 @@ bool CRealImage2100::native_copy_control_profile(bool clear, bool integer) const
 		return false;
 	const uint32_t global = peek(GlobalControl0), control = peek(DrawControl);
 	const bool integer_profile = integer || (clear && ((control & ~0x0400ff01u) == 0xa1000002u ||
-		(control & ~0x04ef0f01u) == 0xa1004002u));
+		(control & ~0x04ff0f01u) == 0xa1004002u));
 	const bool context_clear = clear && (global == 0x180 || global == 0x190) &&
 		peek(GlobalControl1) == 0x20800;
 	// Other programmed pipeline modes have not been decoded.
@@ -1166,6 +1169,25 @@ bool CRealImage2100::block_transfer_profile(bool readback) const
 				if (plane_value(bank, i, 0xffffffff) != 0xffffffff)
 					return false;
 		}
+	return true;
+}
+
+bool CRealImage2100::bitmap_profile() const
+{
+	const uint32_t control = peek(DrawControl);
+	if ((control & ~0x00ff0f01u) != 0xa1004002u ||
+		!native_copy_control_profile(false, true) ||
+		plane_value(2, 0, 0) != 0x10000000u || m_planes[2].unknown_masks ||
+		((peek(ClipXMin) | peek(ClipYMin) | peek(ClipXMax) | peek(ClipYMax)) & 0xffff000fu))
+		return false;
+	const uint32_t expected[] = {0, 0, 0x0fff0fff, 0x03030303, 0x0a000000,
+		0, 0, 0, 0, 0x00ff0000, 0x33300000, 0x100, 0, 0x100, 0};
+	for (unsigned i = 0; i < std::size(expected); ++i)
+		if (plane_value(2, i + 1, expected[i]) != expected[i])
+			return false;
+	for (unsigned i = 24; i < 24 + block_width() / 2; ++i)
+		if (plane_value(2, i, 0xffffffff) != 0xffffffff)
+			return false;
 	return true;
 }
 
@@ -1332,7 +1354,7 @@ CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 	// Integer profiles retain the fourth byte used by the DAC overlay plane.
 	const bool integer_clear = (control & ~0x0400ff01u) == 0xa1000002u;
 	const bool integer_seed = integer_clear && seed;
-	const bool integer_auxiliary = !copy && (control & ~0x04ef0f01u) == 0xa1004002u;
+	const bool integer_auxiliary = !copy && (control & ~0x04ff0f01u) == 0xa1004002u;
 	op.allow_pattern = integer_clear && !(banks & ~3u);
 	for (auto& mask : op.color.masks)
 		mask &= integer_clear ? 0xffffffffu : 0x00ffffffu;
@@ -1639,7 +1661,7 @@ CRealImage2100::StartPrefix CRealImage2100::begin_start(uint32_t a, uint32_t v)
 		for (unsigned bank = 0; bank < 2; ++bank)
 			if (destination_banks & (1u << bank))
 				m_clear_cache[bank] = {};
-	if (a == FillCommand && (v == 0x09040832 || v == 0x010408b2) &&
+	if (((a == FillCommand && (v == 0x09040832 || v == 0x010408b2)) || a == BitmapCommand) &&
 		(peek(DrawControl) & 0x4000))
 		m_clear_cache[2] = {};
 	if (m_pending.width)
@@ -1677,13 +1699,15 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	const bool initialization = a == FillCommand &&
 		(v == 0x09040832 || v == 0x010408b2);
 	const bool fill = a == FillCommand && (v == 0x09000832 || v == 0x09040832);
+	const bool bitmap = a == BitmapCommand && v == 0x01000872;
 	const bool host_mono = a == HostCommand && (v & ~0x7780u) == 0x01000872;
-	op.transparent = host_mono && !(v & 0x80);
+	op.transparent = bitmap || (host_mono && !(v & 0x80));
 	op.mono_offset = host_mono ? (v >> 8) & 7 : 0;
 	const uint32_t mono_width = host_mono && (v & 0x7700) ? ((v >> 12) & 7) + 1 : 0;
-	op.mono = host_mono || (a == FillCommand && (v == 0x010008f2 || v == 0x010408b2));
-	op.auxiliary = initialization && (peek(DrawControl) & 0x4000);
-	const bool profile = block_transfer ? block_transfer_profile(readback) : fast_copy ? fast_copy_profile() :
+	op.mono = bitmap || host_mono || (a == FillCommand && (v == 0x010008f2 || v == 0x010408b2));
+	op.auxiliary = (initialization || bitmap) && (peek(DrawControl) & 0x4000);
+	const bool profile = bitmap ? bitmap_profile() :
+		block_transfer ? block_transfer_profile(readback) : fast_copy ? fast_copy_profile() :
 		((fill || initialization) ? fill_profile(initialization) : copy_profile()) &&
 		(!(selected & 1) || plane_profile(0)) && (!(selected & 2) || plane_profile(1)) &&
 		(!op.auxiliary || plane_profile(2)) &&
@@ -1694,8 +1718,8 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	// Bit 18 selects host geometry for the miniport's initialization rectangles.
 	const bool host_geometry = a == HostCommand || initialization;
 	const uint32_t origin = peek(block_transfer ? (readback ? BlockSource : BlockDestination) :
-		host_geometry ? HostOrigin : FillOrigin),
-		extent = peek(block_transfer ? BlockExtent : host_geometry ? HostExtent : FillExtent),
+		bitmap ? BitmapOrigin : host_geometry ? HostOrigin : FillOrigin),
+		extent = peek(block_transfer ? BlockExtent : bitmap ? BitmapExtent : host_geometry ? HostExtent : FillExtent),
 		width = (extent & 0xffff) + 1, height = (extent >> 16) + 1;
 	op.width = width;
 	op.height = height;
@@ -1770,9 +1794,14 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 		op.kind = StartOperation::Kind::Copy;
 		return op;
 	}
-	op.pattern = {peek(MonoPattern0), peek(MonoPattern1), peek(MonoPattern2), peek(MonoPattern3)};
+	// Bitmap rows start in the higher-addressed pattern word.
+	op.pattern = bitmap ? std::array<uint32_t, 4>{0, 0, peek(BitmapPattern0), peek(BitmapPattern1)} :
+		std::array<uint32_t, 4>{peek(MonoPattern0), peek(MonoPattern1), peek(MonoPattern2), peek(MonoPattern3)};
+	// Multirow bitmap layouts are accepted only when the two possible row pitches agree.
 	if (op.mono && ((mono_width && width != mono_width) ||
 		(a == HostCommand && (width + op.mono_offset > 8 || height > 16)) ||
+		(bitmap && (width > 8 || (height != 1 &&
+			(width != 2 || height != 2 || ((op.pattern[3] ^ (op.pattern[3] >> 6)) & 0x00c00000u))))) ||
 		(a == FillCommand && (op.pattern[0] != op.pattern[2] || op.pattern[1] != op.pattern[3]))))
 	{
 		op.rejection = StartOperation::Rejection::MonoLayout;
@@ -1782,8 +1811,17 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	op.top = std::max(op.y, int32_t(0));
 	op.right = std::min(op.x + int32_t(width), int32_t(m_color_width));
 	op.bottom = std::min(op.y + int32_t(height), int32_t(m_color_height));
-	op.foreground = peek(Foreground);
-	op.background = peek(Background);
+	op.foreground = peek(bitmap ? BitmapForeground : Foreground);
+	op.background = peek(bitmap ? BitmapBackground : Background);
+	if (bitmap)
+	{
+		op.left = std::max(op.left, int32_t(peek(ClipXMin) >> 4));
+		op.top = std::max(op.top, int32_t(peek(ClipYMin) >> 4));
+		op.right = std::min(op.right, int32_t((peek(ClipXMax) >> 4) + 1));
+		op.bottom = std::min(op.bottom, int32_t((peek(ClipYMax) >> 4) + 1));
+		op.auxiliary_reference = ((peek(DrawControl) & 0x00f00000u) << 8) |
+			((peek(DrawControl) & 0x000f0000u) >> 4);
+	}
 	if (op.auxiliary)
 	{
 		op.auxiliary_mask = plane_value(2, 0, 0xffffffff);
@@ -1876,15 +1914,17 @@ void CRealImage2100::execute_start(const StartOperation& op)
 			if (op.auxiliary)
 			{
 				uint32_t& destination = m_auxiliary[size_t(row) * m_color_width + col];
+				// Auxiliary bitmap tag bits come from DrawControl.
+				const uint32_t source = op.address == BitmapCommand ? op.auxiliary_reference : color;
 				uint32_t result = 0;
 				for (unsigned shift = 0; shift < 32; shift += 8)
 				{
 					const unsigned rop = (op.auxiliary_rop >> shift) & 15;
 					uint32_t channel = 0;
-					if (rop & 1) channel |= color & destination;
-					if (rop & 2) channel |= color & ~destination;
-					if (rop & 4) channel |= ~color & destination;
-					if (rop & 8) channel |= ~color & ~destination;
+					if (rop & 1) channel |= source & destination;
+					if (rop & 2) channel |= source & ~destination;
+					if (rop & 4) channel |= ~source & destination;
+					if (rop & 8) channel |= ~source & ~destination;
 					result |= channel & (0xffu << shift);
 				}
 				destination = (destination & ~op.auxiliary_mask) | (result & op.auxiliary_mask);
@@ -2173,9 +2213,11 @@ void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
 	};
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
 		width = block_width(), columns = ((peek(MemoryControl) >> 24) & 63) + 1;
-	const bool auxiliary_write = (control & ~0x00ef0f01u) == 0xa1004002u &&
+	const bool auxiliary_compare = (control & ~0x00ffff01u) == 0xa1000002u &&
+		(banks == 5 || banks == 6) && plane_value(2, 0, 0xffffffff) == 0,
+		auxiliary_write = (control & ~0x00ef0f01u) == 0xa1004002u &&
 		!(plane_value(2, 0, 0xffffffff) & ~0xe000f000u),
-		color_write = (control & ~0xff01u) == 0xa1000002u && !(banks & ~3u);
+		color_write = auxiliary_compare || ((control & ~0xff01u) == 0xa1000002u && !(banks & ~3u));
 	if (value != 3 || (!auxiliary_write && !color_write &&
 		(control & ~0xff01u) != 0x21000002u) ||
 		!banks || (banks & ~7u) ||
@@ -2223,7 +2265,7 @@ void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
 			continue;
 		const uint32_t rops = plane_value(bank, 4, 0), mask = plane_value(bank, 0, 0xffffffff);
 		bool copy_rop = rops == 0x03030303u;
-		if (color_write)
+		if (color_write && bank < 2)
 		{
 			copy_rop = !(mask & 0xff000000u) || (rops >> 24) == 5;
 			for (unsigned shift = 0; shift < 24; shift += 8)
@@ -2238,7 +2280,8 @@ void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
 		}
 		if (bank == 2)
 		{
-			const uint32_t expected[] = {0, 0, 0x0fff0fff, 0x03030303, 0x0a000000,
+			const uint32_t expected[] = {0, auxiliary_compare ? 0x10000000u : 0u,
+				0x0fff0fff, 0x03030303, auxiliary_compare ? 0x0a000200u : 0x0a000000u,
 				0, 0, 0, 0, 0x00ff0000, 0x33300000, 0x100, 0, 0x100, 0};
 			for (unsigned i = 0; i < std::size(expected); ++i)
 				if (plane_value(bank, i + 1, expected[i]) != expected[i])
@@ -2294,12 +2337,12 @@ void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
 	};
 	const bool include[] = {top_left(b, c), top_left(c, a), top_left(a, b)};
 	for (unsigned bank = 0; bank < 3; ++bank)
-		if (banks & (1u << bank))
+		if ((banks & (1u << bank)) && (bank < 2 || !auxiliary_compare))
 			m_clear_cache[bank] = {};
 	const uint32_t masks[] = {plane_value(0, 0, 0xffffffff) & 0xffffff,
 		plane_value(1, 0, 0xffffffff) & 0xffffff, plane_value(2, 0, 0xffffffff)};
-	const uint32_t auxiliary = auxiliary_write ?
-		((control & 0x00e00000u) << 8) | ((control & 0x000f0000u) >> 4) : 0;
+	const uint32_t auxiliary = (auxiliary_write || auxiliary_compare) ?
+		((control & 0x00f00000u) << 8) | ((control & 0x000f0000u) >> 4) : 0;
 	for (int y = top; y <= bottom; ++y)
 		for (int x = left; x <= right; ++x)
 		{
@@ -2310,6 +2353,8 @@ void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
 				edges[2] < 0 || (!edges[2] && !include[2]))
 				continue;
 			const size_t offset = size_t(y) * m_color_width + unsigned(x);
+			if (auxiliary_compare && ((m_auxiliary[offset] ^ auxiliary) & 0x10000000u))
+				continue;
 			for (unsigned bank = 0; bank < 2; ++bank)
 				if (banks & (1u << bank))
 				{
@@ -3030,6 +3075,8 @@ bool CRealImage2100::dma_list_target(uint32_t a) const
 	case MonoPattern0: case MonoPattern1: case MonoPattern2: case MonoPattern3:
 	case HostOrigin: case HostExtent: case HostCommand:
 	case FillOrigin: case FillExtent: case FillCommand:
+	case BitmapForeground: case BitmapBackground: case BitmapPattern0: case BitmapPattern1:
+	case BitmapOrigin: case BitmapExtent: case BitmapCommand:
 	case BlockSource: case BlockDestination: case BlockExtent: case BlockCommand:
 		return true;
 	default:
