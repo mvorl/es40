@@ -1077,13 +1077,13 @@ bool CRealImage2100::native_copy_control_profile(bool clear) const
 		copy_columns > (m_color_width + 10 * width - 1) / (10 * width))
 		return false;
 	const uint32_t global = peek(GlobalControl0);
-	const bool integer_seed = clear && (peek(DrawControl) & ~0xff01u) == 0xa1000002u;
+	const bool integer_clear = clear && (peek(DrawControl) & ~0x0400ff01u) == 0xa1000002u;
 	const bool context_clear = clear && (global == 0x180 || global == 0x190) &&
 		peek(GlobalControl1) == 0x20800;
 	// Other programmed pipeline modes have not been decoded.
 	const std::pair<uint32_t, uint32_t> profile[] = {
-		{GlobalControl0, integer_seed ? 0u : context_clear ? global : 1u},
-		{GlobalControl1, integer_seed ? 0x20810u : context_clear ? 0x20800u : 0x20811u},
+		{GlobalControl0, integer_clear ? 0u : context_clear ? global : 1u},
+		{GlobalControl1, integer_clear ? 0x20810u : context_clear ? 0x20800u : 0x20811u},
 		{GlobalControl2, 0x33},
 		{PipelineControl0, 0}, {PipelineControl1, 0},
 		{PipelineControl2, 0x10000000}, {PipelineControl3, 0},
@@ -1254,9 +1254,13 @@ CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 	op.seed = seed;
 	op.auxiliary_clear = auxiliary_clear;
 	const uint32_t control_fields = 0x040fff01u;
-	// OpenVMS retains its drawing setup while seeding the offscreen clear tile.
-	const bool integer_seed = seed && (control & ~0xff01u) == 0xa1000002u;
-	if ((!integer_seed && (control & ~control_fields) != 0x81000002) || !banks || (banks & ~7u) ||
+	// Integer clears retain the fourth byte used by the DAC overlay plane.
+	const bool integer_clear = !copy && (control & ~0x0400ff01u) == 0xa1000002u;
+	const bool integer_seed = integer_clear && seed;
+	for (auto& mask : op.color.masks)
+		mask &= integer_clear ? 0xffffffffu : 0x00ffffffu;
+	if ((!integer_clear && (control & ~control_fields) != 0x81000002) ||
+		(integer_clear && configuration && (banks & 4)) || !banks || (banks & ~7u) ||
 		v != (((banks ^ 7u) << 18) | (copy ? 0x30000u : 0x10000u)) ||
 		!native_copy_control_profile(true) || m_pending.width || m_readback.width ||
 		((source | destination | extent) & ~0x07ff07ffu) ||
@@ -1302,18 +1306,19 @@ CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 	}
 	for (unsigned bank = 0; bank < 2; ++bank)
 	{
-		const uint32_t mask = op.color.masks[bank] & 0xffffff,
+		const uint32_t mask = op.color.masks[bank],
 			rops = op.color.rops[bank];
 		if (!(banks & (1u << bank)) || !mask)
 			continue;
 		const bool blend = rops == 0xd0d0d0d0;
 		op.replace_color[bank] = blend || (!copy && (rops & 0xffffff) == 0x060606);
-		if (!plane_profile(bank, 0x100, blend ? rops : 0) ||
+		if ((blend && (mask & 0xff000000)) ||
+			!plane_profile(bank, 0x100, blend ? rops : 0) ||
 			m_planes[bank].unknown_masks)
 			return op;
 		if (!copy)
 		{
-			op.colors[bank] = plane_value(bank, 16, 0) & 0xffffff;
+			op.colors[bank] = plane_value(bank, 16, 0);
 			if ((m_planes[bank].written & 0x00ff0000) != 0x00ff0000)
 				return op;
 			for (unsigned i = 17; i < 24; ++i)
@@ -1364,7 +1369,7 @@ void CRealImage2100::execute_block(const BlockOperation& op)
 	auto colors = op.colors;
 	for (unsigned bank = 0; bank < 2; ++bank)
 	{
-		const uint32_t mask = op.color.masks[bank] & 0xffffff,
+		const uint32_t mask = op.color.masks[bank],
 			rops = op.color.rops[bank];
 		if (!(op.banks & (1u << bank)) || !mask)
 			continue;
@@ -1378,8 +1383,8 @@ void CRealImage2100::execute_block(const BlockOperation& op)
 			}
 			colors[bank] = cache.color;
 		}
-		for (unsigned shift = 0; shift < 24; shift += 8)
-			if (!op.seed && !op.replace_color[bank] &&
+		for (unsigned shift = 0; shift < 32; shift += 8)
+			if (!op.seed && !(op.replace_color[bank] && shift < 24) &&
 				(mask & (0xffu << shift)) && ((rops >> shift) & 15) != 3 &&
 				(((rops >> shift) & 15) != 0 ||
 					(colors[bank] & mask & (0xffu << shift))))
@@ -1407,7 +1412,7 @@ void CRealImage2100::execute_block(const BlockOperation& op)
 		for (unsigned bank = 0; bank < 2; ++bank)
 			if (op.banks & (1u << bank))
 			{
-				const uint32_t mask = op.color.masks[bank] & 0xffffff;
+				const uint32_t mask = op.color.masks[bank];
 				if (!mask)
 					continue;
 				auto& cache = m_clear_cache[bank];
@@ -1429,7 +1434,7 @@ void CRealImage2100::execute_block(const BlockOperation& op)
 	{
 		if (bank == 2 ? !op.auxiliary_clear : !(op.banks & (1u << bank)))
 			continue;
-		const uint32_t mask = bank == 2 ? op.auxiliary_mask : op.color.masks[bank] & 0xffffff,
+		const uint32_t mask = bank == 2 ? op.auxiliary_mask : op.color.masks[bank],
 			value = bank == 2 ? auxiliary_value : colors[bank];
 		if (!mask)
 			continue;
@@ -1696,8 +1701,11 @@ void CRealImage2100::execute_start(const StartOperation& op)
 				const size_t offset = size_t(op.source_bank) * m_color_pixels +
 					size_t(op.sy + row - op.y) * m_color_width + size_t(op.sx + col - op.x);
 				if (op.fast_copy)
-					m_color[size_t(op.destination_bank) * m_color_pixels +
-						size_t(row) * m_color_width + col] = m_color[offset] & 0xffffff;
+				{
+					uint32_t& destination = m_color[size_t(op.destination_bank) * m_color_pixels +
+						size_t(row) * m_color_width + col];
+					destination = (destination & 0xff000000) | (m_color[offset] & 0xffffff);
+				}
 				else
 					color_write(op.color, uint32_t(col), uint32_t(row), m_color[offset], op.destination_banks);
 			}
@@ -3531,7 +3539,7 @@ void CRealImage2100::SaveState(std::ostream& out) const
 	put32(p, m_dma_irq_pending ? 1 : 0);
 	const auto bytes = p.str();
 	put32(out, 0x30324952); // RI20
-	put32(out, m_color_width == MaxColorWidth ? 15 : 14);
+	put32(out, m_color_width == MaxColorWidth ? 17 : 16);
 	put32(out, uint32_t(bytes.size()));
 	put32(out, crc32(bytes));
 	out.write(bytes.data(), bytes.size());
@@ -3542,9 +3550,9 @@ void CRealImage2100::SaveState(std::ostream& out) const
 void CRealImage2100::RestoreState(std::istream& in)
 {
 	const auto magic = get32(in), version = get32(in);
-	if (magic != 0x30324952 || version < 9 || version > 15)
+	if (magic != 0x30324952 || version < 9 || version > 17)
 		throw std::runtime_error("Wrong REALimage snapshot version");
-	const bool large = version == 11 || version == 13 || version == 15,
+	const bool large = version == 11 || version == 13 || version == 15 || version == 17,
 		packed_auxiliary = version >= 12;
 	if (large != (m_color_width == MaxColorWidth))
 		throw std::runtime_error("REALimage snapshot framebuffer mismatch");
@@ -3616,7 +3624,8 @@ void CRealImage2100::RestoreState(std::istream& in)
 		cache.source = get32(p);
 		cache.color = get32(p);
 		cache.known = get32(p);
-		if ((cache.source & ~0x07ff07ffu) || (bank < 2 && (cache.known & 0xff000000)) ||
+		if ((cache.source & ~0x07ff07ffu) ||
+			(version < 16 && bank < 2 && (cache.known & 0xff000000)) ||
 			(cache.color & ~cache.known) || (!cache.known && cache.source))
 			throw std::runtime_error("Invalid REALimage clear cache");
 	}
@@ -3665,7 +3674,7 @@ void CRealImage2100::RestoreState(std::istream& in)
 	for (uint32_t& c : color)
 	{
 		c = get32(p);
-		if (c & 0xff000000)
+		if (version < 16 && (c & 0xff000000))
 			throw std::runtime_error("Invalid REALimage color buffer");
 	}
 	std::vector<uint32_t> auxiliary(m_color_pixels);
