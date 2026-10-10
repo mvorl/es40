@@ -1119,11 +1119,13 @@ bool CRealImage2100::native_copy_control_profile(bool clear, bool integer) const
 	const uint32_t global = peek(GlobalControl0), control = peek(DrawControl);
 	const bool integer_profile = integer || (clear && ((control & ~0x0400ff01u) == 0xa1000002u ||
 		(control & ~0x04ff0f01u) == 0xa1004002u));
+	// Integer block clears retain the preceding line mode.
+	const bool retained_line = clear && integer_profile && (global == 1 || global == 3);
 	const bool context_clear = clear && (global == 0x180 || global == 0x190) &&
 		peek(GlobalControl1) == 0x20800;
 	// Other programmed pipeline modes have not been decoded.
 	const std::pair<uint32_t, uint32_t> profile[] = {
-		{GlobalControl0, integer_profile ? 0u : context_clear ? global : 1u},
+		{GlobalControl0, integer_profile ? (retained_line ? global : 0u) : context_clear ? global : 1u},
 		{GlobalControl1, integer_profile ? 0x20810u : context_clear ? 0x20800u : 0x20811u},
 		{GlobalControl2, 0x33},
 		{PipelineControl0, 0}, {PipelineControl1, 0},
@@ -1360,6 +1362,7 @@ CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 		mask &= integer_clear ? 0xffffffffu : 0x00ffffffu;
 	if ((!integer_clear && !integer_auxiliary && (control & ~control_fields) != 0x81000002) ||
 		(integer_clear && configuration && (banks & 4) && !integer_auxiliary) ||
+		(copy && integer_clear && peek(GlobalControl0)) ||
 		!banks || (banks & ~7u) ||
 		v != (((banks ^ 7u) << 18) | (copy ? 0x30000u : 0x10000u)) ||
 		!native_copy_control_profile(true) || m_pending.width || m_readback.width ||
