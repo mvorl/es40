@@ -1705,7 +1705,7 @@ void CRealImage2100::execute_block(const BlockOperation& op)
 
 void CRealImage2100::block_command(uint32_t v)
 {
-	if (v == 0x01000032 || v == 0x01000052 || v == 0x07000072)
+	if (v == 0x01000032 || v == 0x01000052 || v == 0x07000072 || v == 0x06000062)
 		start_command(BlockCommand, v);
 	else
 		execute_block(prepare_block(v));
@@ -1724,7 +1724,7 @@ CRealImage2100::StartPrefix CRealImage2100::begin_start(uint32_t a, uint32_t v)
 			if (destination_banks & (1u << bank))
 				m_clear_cache[bank] = {};
 	if (((a == FillCommand && (v == 0x09040832 || v == 0x010408b2)) || a == BitmapCommand ||
-		(a == BlockCommand && v == 0x07000072)) &&
+		(a == BlockCommand && (v == 0x07000072 || v == 0x06000062))) &&
 		(peek(DrawControl) & 0x4000))
 		m_clear_cache[2] = {};
 	if (m_pending.width)
@@ -1753,7 +1753,7 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 		return op;
 	op.kind = StartOperation::Kind::Rejected;
 	const bool block_transfer = a == BlockCommand && (v == 0x01000032 || readback);
-	const bool block_copy = a == BlockCommand && v == 0x07000072;
+	const bool block_copy = a == BlockCommand && (v == 0x07000072 || v == 0x06000062);
 	const bool block_geometry = block_transfer || block_copy;
 	const bool upload = (a == HostCommand || a == BlockCommand) && v == 0x01000032;
 	const bool fast_copy = a == HostCommand &&
@@ -1795,7 +1795,7 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	op.banks = (peek(DrawControl) >> 12) & 3;
 	op.x = int16_t(origin & 0xffff);
 	op.y = int16_t(origin >> 16);
-	if ((block_geometry || integer_mono) && (op.x < 0 || op.y < 0 ||
+	if ((block_transfer || integer_mono) && (op.x < 0 || op.y < 0 ||
 		uint64_t(op.x) + width > m_color_width || uint64_t(op.y) + height > m_color_height))
 		return op;
 	if (readback)
@@ -1844,11 +1844,17 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 		}
 		op.sx = int16_t(source & 0xffff);
 		op.sy = int16_t(source >> 16);
-		op.left = std::max(op.right_to_left ? op.x - int32_t(width) + 1 : op.x, int32_t(0));
-		op.right = std::min(op.x + (op.right_to_left ? 1 : int32_t(width)), int32_t(m_color_width));
-		op.top = std::max(op.bottom_to_top ? op.y - int32_t(height) + 1 : op.y, int32_t(0));
-		op.bottom = std::min(op.y + (op.bottom_to_top ? 0 : int32_t(height) - 1),
-			int32_t(m_color_height) - 1);
+		op.left = op.right_to_left ? op.x - int32_t(width) + 1 : op.x;
+		op.right = op.x + (op.right_to_left ? 1 : int32_t(width));
+		op.top = op.bottom_to_top ? op.y - int32_t(height) + 1 : op.y;
+		op.bottom = op.y + (op.bottom_to_top ? 0 : int32_t(height) - 1);
+		if (block_copy && (op.left < 0 || op.top < 0 || op.right > int32_t(m_color_width) ||
+			op.bottom >= int32_t(m_color_height)))
+			return op;
+		op.left = std::max(op.left, int32_t(0));
+		op.right = std::min(op.right, int32_t(m_color_width));
+		op.top = std::max(op.top, int32_t(0));
+		op.bottom = std::min(op.bottom, int32_t(m_color_height) - 1);
 		if (op.left >= op.right || op.top > op.bottom)
 		{
 			op.kind = StartOperation::Kind::Empty;
