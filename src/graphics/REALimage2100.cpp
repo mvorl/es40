@@ -1149,11 +1149,11 @@ bool CRealImage2100::copy_profile() const
 		native_copy_control_profile();
 }
 
-bool CRealImage2100::block_transfer_profile() const
+bool CRealImage2100::block_transfer_profile(bool upload) const
 {
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
 	if ((control & ~0xff01u) != 0x21000002u || !banks || (banks & ~3u) ||
-		!native_copy_control_profile(false, true))
+		!native_copy_control_profile(upload, true))
 		return false;
 	// The decoded driver path retains white shared RGB components.
 	for (unsigned i = 0; i < 4; ++i)
@@ -1196,15 +1196,23 @@ bool CRealImage2100::bitmap_profile() const
 bool CRealImage2100::integer_mono_profile() const
 {
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
-	if ((control & ~0x00ffff01u) != 0xa1000002u || (banks != 5 && banks != 6) ||
-		!native_copy_control_profile(true, true) ||
-		plane_value(2, 0, 0xffffffff) || m_planes[2].unknown_masks ||
+	const bool auxiliary_compare = (control & ~0x00ffff01u) == 0xa1000002u &&
+		(banks == 5 || banks == 6),
+		direct = (control & ~0xff01u) == 0x21000002u && (banks == 1 || banks == 2);
+	if ((!auxiliary_compare && !direct) || !native_copy_control_profile(true, true) ||
 		((peek(ClipXMin) | peek(ClipYMin) | peek(ClipXMax) | peek(ClipYMax)) & 0xffff000fu))
 		return false;
-	const unsigned bank = banks == 6 ? 1 : 0;
+	const unsigned bank = banks & 2 ? 1 : 0;
 	if (!plane_profile(bank) || m_planes[bank].unknown_masks ||
 		((plane_value(bank, 0, 0xffffffff) & 0xff000000u) &&
 			(plane_value(bank, 4, 0x03030303) >> 24) != 5))
+		return false;
+	for (unsigned i = 24; i < 24 + block_width() / 2; ++i)
+		if (plane_value(bank, i, 0xffffffff) != 0xffffffff)
+			return false;
+	if (!auxiliary_compare)
+		return true;
+	if (plane_value(2, 0, 0xffffffff) || m_planes[2].unknown_masks)
 		return false;
 	const uint32_t expected[] = {0, 0x8000, 0x0fff0fff, 0x03030303, 0x0a000200,
 		0, 0, 0, 0, 0x00ff0000, 0x33300000, 0x100, 0, 0x100, 0};
@@ -1212,8 +1220,7 @@ bool CRealImage2100::integer_mono_profile() const
 		if (plane_value(2, i + 1, expected[i]) != expected[i])
 			return false;
 	for (unsigned i = 24; i < 24 + block_width() / 2; ++i)
-		if (plane_value(bank, i, 0xffffffff) != 0xffffffff ||
-			plane_value(2, i, 0xffffffff) != 0xffffffff)
+		if (plane_value(2, i, 0xffffffff) != 0xffffffff)
 			return false;
 	return true;
 }
@@ -1730,14 +1737,15 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	const bool bitmap = a == BitmapCommand && v == 0x01000872;
 	const bool host_mono = a == HostCommand && (v & ~0x7780u) == 0x01000872;
 	const bool integer_mono = a == HostCommand && v == 0x01000872 &&
-		(peek(DrawControl) & 0xe0000000u) == 0xa0000000u;
+		((peek(DrawControl) & 0xe0000000u) == 0xa0000000u ||
+			(peek(DrawControl) & ~0xff01u) == 0x21000002u);
 	op.transparent = bitmap || (host_mono && !(v & 0x80));
 	op.mono_offset = host_mono ? (v >> 8) & 7 : 0;
 	const uint32_t mono_width = host_mono && (v & 0x7700) ? ((v >> 12) & 7) + 1 : 0;
 	op.mono = bitmap || host_mono || (a == FillCommand && (v == 0x010008f2 || v == 0x010408b2));
 	op.auxiliary = (initialization || bitmap) && (peek(DrawControl) & 0x4000);
 	const bool profile = integer_mono ? integer_mono_profile() : bitmap ? bitmap_profile() :
-		block_transfer ? block_transfer_profile() : fast_copy ? fast_copy_profile() :
+		block_transfer ? block_transfer_profile(upload) : fast_copy ? fast_copy_profile() :
 		((fill || initialization) ? fill_profile(initialization) : copy_profile()) &&
 		(!(selected & 1) || plane_profile(0)) && (!(selected & 2) || plane_profile(1)) &&
 		(!op.auxiliary || plane_profile(2)) &&
@@ -1855,7 +1863,7 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 		op.auxiliary_reference = ((peek(DrawControl) & 0x00f00000u) << 8) |
 			((peek(DrawControl) & 0x000f0000u) >> 4);
 	}
-	if (integer_mono)
+	if (integer_mono && (peek(DrawControl) & 0x4000))
 		op.auxiliary_compare_mask = 0x8000;
 	if (op.auxiliary)
 	{
@@ -2252,14 +2260,17 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 	};
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
 		width = block_width(), columns = ((peek(MemoryControl) >> 24) & 63) + 1;
-	const bool auxiliary_compare = (control & ~0x00ffff01u) == 0xa1000002u &&
+	const bool direct_line = line && (control & ~0xff01u) == 0x21000002u &&
+		(banks == 1 || banks == 2),
+		auxiliary_compare = (control & ~0x00ffff01u) == 0xa1000002u &&
 		(banks == 5 || banks == 6) && plane_value(2, 0, 0xffffffff) == 0,
 		auxiliary_write = (control & ~0x00ef0f01u) == 0xa1004002u &&
 		!(plane_value(2, 0, 0xffffffff) & ~0xe000f000u),
-		color_write = auxiliary_compare || ((control & ~0xff01u) == 0xa1000002u && !(banks & ~3u));
+		color_write = direct_line || auxiliary_compare || ((control & ~0xff01u) == 0xa1000002u && !(banks & ~3u));
 	if ((!line && value != 3) ||
 		(line && (address != IntegerVertexColorBase + VertexStride + 0x1c ||
-			(value == 0x62 ? !auxiliary_compare : (!auxiliary_write && (!color_write || auxiliary_compare))))) ||
+			(value == 0x62 ? (!auxiliary_compare && !direct_line) :
+				(!auxiliary_write && (!color_write || auxiliary_compare))))) ||
 		(!auxiliary_write && !color_write &&
 		(control & ~0xff01u) != 0x21000002u) ||
 		!banks || (banks & ~7u) ||
