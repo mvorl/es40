@@ -2019,7 +2019,10 @@ void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
 	};
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
 		width = block_width(), columns = ((peek(MemoryControl) >> 24) & 63) + 1;
-	if (value != 3 || (control & ~0xff01u) != 0x21000002u || !banks || (banks & ~7u) ||
+	const bool wid_write = (control & ~0x000fff01u) == 0xa1600002u && banks == 4 &&
+		!(plane_value(2, 0, 0xffffffff) & ~0x0000f000u);
+	if (value != 3 || (!wid_write && (control & ~0xff01u) != 0x21000002u) ||
+		!banks || (banks & ~7u) ||
 		!width || !native_pixel_profile() || ((control >> 8) & 15) != (columns + 1) / 2 ||
 		columns > (m_color_width + 10 * width - 1) / (10 * width) ||
 		m_pending.width || m_readback.width)
@@ -2038,7 +2041,7 @@ void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
 			reject();
 			return;
 		}
-	// This integer profile clears shared ARGB and depth without interpolation.
+	// These profiles use zero ARGB and depth; WID writes take their value from DrawControl.
 	for (uint32_t i = 0; i < 4; ++i)
 		if (m_shadow.find(IntegerVertexColorBase + i * 4) == m_shadow.end() ||
 			peek(IntegerVertexColorBase + i * 4))
@@ -2137,7 +2140,8 @@ void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
 				if (banks & (1u << bank))
 					m_color[size_t(bank) * m_color_pixels + offset] &= ~masks[bank];
 			if (banks & 4)
-				m_auxiliary[offset] &= ~masks[2];
+				m_auxiliary[offset] = (m_auxiliary[offset] & ~masks[2]) |
+					(wid_write ? ((control >> 4) & 0xf000u & masks[2]) : 0);
 		}
 }
 
