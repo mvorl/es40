@@ -298,7 +298,7 @@ private:
   bool native_pixel_profile() const;
   uint32_t block_width() const;
   bool native_copy_control_profile(bool clear = false, bool integer = false) const;
-  bool block_upload_profile() const;
+  bool block_transfer_profile(bool readback) const;
   bool fill_profile(bool initialization = false) const;
   bool copy_profile() const;
   bool fast_copy_profile() const;
