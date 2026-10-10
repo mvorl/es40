@@ -1421,7 +1421,6 @@ CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 		mask &= integer_clear ? 0xffffffffu : 0x00ffffffu;
 	if ((!integer_clear && !integer_auxiliary && (control & ~control_fields) != 0x81000002) ||
 		(integer_clear && configuration && (banks & 4) && !integer_auxiliary) ||
-		(copy && integer_clear && peek(GlobalControl0)) ||
 		!banks || (banks & ~7u) ||
 		v != (((banks ^ 7u) << 18) | (copy ? 0x30000u : 0x10000u)) ||
 		!native_copy_control_profile(true) || m_pending.width || m_readback.width ||
