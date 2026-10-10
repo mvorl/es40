@@ -1357,7 +1357,8 @@ CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 		for (unsigned i = 0; i < groups; ++i)
 		{
 			const uint32_t bits = plane_value(2, 24 + i, 0xffffffff);
-			if (bits != (bits & 255) * 0x01010101u || (seed && bits != 0xffffffffu))
+			// Uniform offscreen seeds bypass retained configuration pixel masks.
+			if (bits != (bits & 255) * 0x01010101u)
 				return op;
 		}
 	}
