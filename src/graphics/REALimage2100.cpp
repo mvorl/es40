@@ -2324,7 +2324,8 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 		reject();
 		return;
 	}
-	const bool direct_polygon = !line && direct_rgb && peek(GlobalControl0) == 1;
+	const bool rgb_line = line && value != 0x62 && color_write,
+		direct_polygon = !line && direct_rgb && peek(GlobalControl0) == 1;
 	const std::pair<uint32_t, uint32_t> profile[] = {
 		{GlobalControl0, line ? (value == 0x62 ? 3u : 1u) : direct_polygon ? 1u : 0u},
 		{GlobalControl1, 0x20810}, {GlobalControl2, 0x33},
@@ -2362,17 +2363,17 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 		if (!(banks & (1u << bank)))
 			continue;
 		const uint32_t rops = plane_value(bank, 4, 0), mask = plane_value(bank, 0, 0xffffffff);
-		bool copy_rop = rops == 0x03030303u;
+		bool valid_rop = rops == 0x03030303u;
 		// Preserve the existing all-zero initialization triangle profile.
-		const bool zero_clear = !line && direct_rgb && !color && !peek(IntegerVertexColorBase) && copy_rop;
+		const bool zero_clear = !line && direct_rgb && !color && !peek(IntegerVertexColorBase) && valid_rop;
 		if (color_write && bank < 2 && !zero_clear)
 		{
-			copy_rop = !(mask & 0xff000000u) || (rops >> 24) == 5;
+			valid_rop = !(mask & 0xff000000u) || (rops >> 24) == 5;
 			for (unsigned shift = 0; shift < 24; shift += 8)
-				if ((mask & (0xffu << shift)) && ((rops >> shift) & 0xff) != 3)
-					copy_rop = false;
+				if (!rgb_line && (mask & (0xffu << shift)) && ((rops >> shift) & 0xff) != 3)
+					valid_rop = false;
 		}
-		if (m_planes[bank].unknown_masks || !copy_rop ||
+		if (m_planes[bank].unknown_masks || !valid_rop ||
 			(bank < 2 && !plane_profile(bank)))
 		{
 			reject();
@@ -2417,8 +2418,9 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 			return;
 		}
 	}
-	const uint32_t masks[] = {plane_value(0, 0, 0xffffffff) & 0xffffff,
-		plane_value(1, 0, 0xffffffff) & 0xffffff, plane_value(2, 0, 0xffffffff)};
+	const ColorWriteContext rgb = prepare_color_write();
+	const uint32_t masks[] = {rgb.masks[0] & 0xffffff,
+		rgb.masks[1] & 0xffffff, plane_value(2, 0, 0xffffffff)};
 	const uint32_t auxiliary = (auxiliary_write || auxiliary_compare) ?
 		((control & 0x00f00000u) << 8) | ((control & 0x000f0000u) >> 4) : 0,
 		compare_mask = line ? 0x8000u : 0x10000000u;
@@ -2431,12 +2433,15 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 		const size_t offset = size_t(y) * m_color_width + unsigned(x);
 		if (auxiliary_compare && ((m_auxiliary[offset] ^ auxiliary) & compare_mask))
 			return;
-		for (unsigned bank = 0; bank < 2; ++bank)
-			if (banks & (1u << bank))
-			{
-				uint32_t& pixel = m_color[size_t(bank) * m_color_pixels + offset];
-				pixel = (pixel & ~masks[bank]) | (color & masks[bank]);
-			}
+		if (rgb_line)
+			this->color_write(rgb, unsigned(x), unsigned(y), color, banks);
+		else
+			for (unsigned bank = 0; bank < 2; ++bank)
+				if (banks & (1u << bank))
+				{
+					uint32_t& pixel = m_color[size_t(bank) * m_color_pixels + offset];
+					pixel = (pixel & ~masks[bank]) | (color & masks[bank]);
+				}
 		if (banks & 4)
 			m_auxiliary[offset] = (m_auxiliary[offset] & ~masks[2]) | (auxiliary & masks[2]);
 	};
