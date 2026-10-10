@@ -463,6 +463,20 @@ static bool zero_context_register(uint32_t a)
 	return a == 0x008005cc || a == 0x008005d4 || a == 0x008005dc;
 }
 
+static bool integer_vertex_color_register(uint32_t a)
+{
+	return !(a & 3) && a >= CRealImage2100::IntegerVertexColorBase &&
+		a < CRealImage2100::IntegerVertexColorBase + 16;
+}
+
+static bool integer_vertex_register(uint32_t a)
+{
+	const uint32_t offset = a - CRealImage2100::IntegerVertexColorBase;
+	return integer_vertex_color_register(a) || (!(a & 3) && offset < 3 * CRealImage2100::VertexStride &&
+		(offset % CRealImage2100::VertexStride) >= 0x10 &&
+		(offset % CRealImage2100::VertexStride) < 0x20);
+}
+
 static bool flat_vertex_register(uint32_t a)
 {
 	return a >= CRealImage2100::FlatVertexBase &&
@@ -730,16 +744,14 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 		return;
 	}
 	const uint32_t original_address = a;
-	if (flat_vertex_register(a & ~3u))
+	if ((flat_vertex_register(a & ~3u) || integer_vertex_register(a & ~3u)) && bits != 32)
 	{
-		if (bits != 32)
-		{
-			unimplemented_once("REALimage vertex width (command rejected)", a, v, true);
-			return;
-		}
-		// Flat and smooth ports address the same vertex slots.
-		a -= 0x100;
+		unimplemented_once("REALimage vertex width (command rejected)", a, v, true);
+		return;
 	}
+	// Flat and smooth floating-point ports address the same vertex slots.
+	if (flat_vertex_register(a & ~3u))
+		a -= 0x100;
 	if (framebuffer_access(a, bits, v, true))
 		return;
 	if (a >= 0x838000 && a < 0x838020 &&
@@ -852,7 +864,12 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 		m_clear_cache = {};
 	if (plane_write(key, lanes, (v << shift) & lanes))
 		return;
-	if (vertex_register(key))
+	if (integer_vertex_register(key))
+	{
+		if ((key - IntegerVertexColorBase) % VertexStride == 0x1c)
+			integer_triangle_command(key, it->second);
+	}
+	else if (vertex_register(key))
 	{
 		if (bits != 32)
 			unimplemented_once("REALimage vertex width (command rejected)", a, v, true);
@@ -1015,7 +1032,8 @@ bool CRealImage2100::plane_profile(unsigned bank, uint32_t format, uint32_t rop_
 
 bool CRealImage2100::native_storage_register(uint32_t a) const
 {
-	return plane_register(a) >= 0 || vertex_register(a) || a == TextureBase || a == ContextLink ||
+	return plane_register(a) >= 0 || vertex_register(a) || integer_vertex_register(a) ||
+		a == TextureBase || a == ContextLink ||
 		a == DrawControl || a == MemoryControl || a == PixelControl ||
 		a == Foreground || a == Background || a == HostOrigin ||
 		a == MonoPattern0 || a == MonoPattern1 ||
@@ -1983,6 +2001,138 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 	return TrianglePreparation::Ready;
 }
 
+void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
+{
+	if (!value)
+		return;
+	auto reject = [&]() {
+		unimplemented_once("REALimage integer triangle command/profile (command rejected)",
+			address, value, true);
+	};
+	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
+		width = block_width(), columns = ((peek(MemoryControl) >> 24) & 63) + 1;
+	if (value != 3 || (control & ~0xff01u) != 0x21000002u || !banks || (banks & ~7u) ||
+		!width || !native_pixel_profile() || ((control >> 8) & 15) != (columns + 1) / 2 ||
+		columns > (m_color_width + 10 * width - 1) / (10 * width) ||
+		m_pending.width || m_readback.width)
+	{
+		reject();
+		return;
+	}
+	const std::pair<uint32_t, uint32_t> profile[] = {
+		{GlobalControl0, 0}, {GlobalControl1, 0x20810}, {GlobalControl2, 0x33},
+		{PipelineControl0, 0}, {PipelineControl1, 0}, {PipelineControl2, 0x10000000},
+		{PipelineControl3, 0}, {PipelineControl4, 0}, {PipelineControl5, 0},
+		{0x008005cc, 0}, {0x008005d4, 0}, {0x008005dc, 0}};
+	for (const auto& reg : profile)
+		if (peek(reg.first) != reg.second)
+		{
+			reject();
+			return;
+		}
+	// This integer profile clears shared ARGB and depth without interpolation.
+	for (uint32_t i = 0; i < 4; ++i)
+		if (m_shadow.find(IntegerVertexColorBase + i * 4) == m_shadow.end() ||
+			peek(IntegerVertexColorBase + i * 4))
+		{
+			reject();
+			return;
+		}
+	if ((peek(ClipXMin) | peek(ClipYMin) | peek(ClipXMax) | peek(ClipYMax)) & 0xffff000fu)
+	{
+		reject();
+		return;
+	}
+	for (unsigned bank = 0; bank < 3; ++bank)
+	{
+		if (!(banks & (1u << bank)))
+			continue;
+		if (m_planes[bank].unknown_masks || plane_value(bank, 4, 0) != 0x03030303u ||
+			(bank < 2 && !plane_profile(bank)))
+		{
+			reject();
+			return;
+		}
+		if (bank == 2)
+		{
+			const uint32_t expected[] = {0, 0, 0x0fff0fff, 0x03030303, 0x0a000000,
+				0, 0, 0, 0, 0x00ff0000, 0x33300000, 0x100, 0, 0x100, 0};
+			for (unsigned i = 0; i < std::size(expected); ++i)
+				if (plane_value(bank, i + 1, expected[i]) != expected[i])
+				{
+					reject();
+					return;
+				}
+		}
+		for (unsigned i = 24; i < 24 + width / 2; ++i)
+			if (plane_value(bank, i, 0xffffffff) != 0xffffffff)
+			{
+				reject();
+				return;
+			}
+	}
+	struct Point { int64_t x, y; } vertex[3];
+	for (unsigned slot = 0; slot < 3; ++slot)
+	{
+		const uint32_t base = IntegerVertexColorBase + slot * VertexStride + 0x10;
+		for (unsigned i = 0; i < 3; ++i)
+			if (m_shadow.find(base + i * 4) == m_shadow.end())
+			{
+				reject();
+				return;
+			}
+		vertex[slot] = {int32_t(peek(base)), int32_t(peek(base + 4))};
+		if (vertex[slot].x < -524288 || vertex[slot].x >= 524288 ||
+			vertex[slot].y < -524288 || vertex[slot].y >= 524288 || peek(base + 8))
+		{
+			reject();
+			return;
+		}
+	}
+	auto edge = [](const Point& p, const Point& q, const Point& at) {
+		return (q.x - p.x) * (at.y - p.y) - (q.y - p.y) * (at.x - p.x);
+	};
+	const int64_t area = edge(vertex[0], vertex[1], vertex[2]);
+	if (!area)
+		return;
+	if (area < 0)
+		std::swap(vertex[1], vertex[2]);
+	const Point &a = vertex[0], &b = vertex[1], &c = vertex[2];
+	const int left = std::max(int(peek(ClipXMin) >> 4),
+		int(std::ceil(double(std::min({a.x, b.x, c.x}) - 8) / 16))),
+		top = std::max(int(peek(ClipYMin) >> 4),
+			int(std::ceil(double(std::min({a.y, b.y, c.y}) - 8) / 16))),
+		right = std::min({int(m_color_width) - 1, int(peek(ClipXMax) >> 4),
+			int(std::floor(double(std::max({a.x, b.x, c.x}) - 8) / 16))}),
+		bottom = std::min({int(m_color_height) - 1, int(peek(ClipYMax) >> 4),
+			int(std::floor(double(std::max({a.y, b.y, c.y}) - 8) / 16))});
+	auto top_left = [](const Point& p, const Point& q) {
+		return q.y < p.y || (q.y == p.y && q.x > p.x);
+	};
+	const bool include[] = {top_left(b, c), top_left(c, a), top_left(a, b)};
+	for (unsigned bank = 0; bank < 3; ++bank)
+		if (banks & (1u << bank))
+			m_clear_cache[bank] = {};
+	const uint32_t masks[] = {plane_value(0, 0, 0xffffffff) & 0xffffff,
+		plane_value(1, 0, 0xffffffff) & 0xffffff, plane_value(2, 0, 0xffffffff)};
+	for (int y = top; y <= bottom; ++y)
+		for (int x = left; x <= right; ++x)
+		{
+			const Point at{int64_t(x) * 16 + 8, int64_t(y) * 16 + 8};
+			const int64_t edges[] = {edge(b, c, at), edge(c, a, at), edge(a, b, at)};
+			if (edges[0] < 0 || (!edges[0] && !include[0]) ||
+				edges[1] < 0 || (!edges[1] && !include[1]) ||
+				edges[2] < 0 || (!edges[2] && !include[2]))
+				continue;
+			const size_t offset = size_t(y) * m_color_width + unsigned(x);
+			for (unsigned bank = 0; bank < 2; ++bank)
+				if (banks & (1u << bank))
+					m_color[size_t(bank) * m_color_pixels + offset] &= ~masks[bank];
+			if (banks & 4)
+				m_auxiliary[offset] &= ~masks[2];
+		}
+}
+
 void CRealImage2100::triangle_command(uint32_t address, uint32_t value)
 {
 	TriangleOperation operation;
@@ -2648,11 +2798,20 @@ void CRealImage2100::dma_texture_upload(uint32_t v)
 		dma_completed();
 }
 
+static bool dma_board_update(uint32_t address)
+{
+	return address == CRealImage2100::BoardIO + 1 ||
+		address == CRealImage2100::WindowMask + 2;
+}
+
 bool CRealImage2100::dma_list_target(uint32_t a) const
 {
+	if (dma_board_update(a))
+		return true;
 	if (a & 3)
 		return false;
-	if (vertex_register(a) || a == ContextLink || zero_context_register(a))
+	if (vertex_register(a) || integer_vertex_register(a) ||
+		a == ContextLink || zero_context_register(a))
 		return true;
 	if (a >= HostData && a < HostData + HostDataSize)
 		return true;
@@ -2670,6 +2829,7 @@ bool CRealImage2100::dma_list_target(uint32_t a) const
 	switch (a)
 	{
 	case Status:
+	case BoardIO: case WindowMask:
 	case ClipXMax: case ClipYMax: case ClipXMin: case ClipYMin:
 	case GlobalControl0: case GlobalControl1: case GlobalControl2:
 	case TextureBase:
@@ -2740,7 +2900,7 @@ bool CRealImage2100::prepare_dma_list(uint32_t v, DMAListOperation& operation)
 		if ((mode != 0xc0000000u && mode != 0xc0400000u && mode != 0xa1000000u) || !words ||
 			(mode == 0xc0000000u && !data.empty()) ||
 			bytes > DMACommandListMaxBytes - data.size() || !source_range(source, bytes) ||
-			(initial_address & 3) || (mode == 0xa1000000u &&
+			((initial_address & 3) && !dma_board_update(initial_address)) || (mode == 0xa1000000u &&
 				(!source_range(next, 16) || !visited.insert(next).second)))
 		{
 			reject();
@@ -2760,6 +2920,14 @@ bool CRealImage2100::prepare_dma_list(uint32_t v, DMAListOperation& operation)
 			if (count > end - cursor ||
 				uint64_t(address) + uint64_t(count) * 4 > 0x100000000ull)
 			{
+				reject();
+				return false;
+			}
+			// OpenVMS DMA board updates carry packed state and echo the read-only board ID.
+			if (dma_board_update(address) && (mode != 0xc0000000u || count != 1 ||
+				(address == BoardIO + 1 && (word_at(cursor) >> 24) != BoardIDPCGA3)))
+			{
+				report("DMA_TARGET", address, control, "Unsupported DMA board-update profile");
 				reject();
 				return false;
 			}
@@ -2850,7 +3018,16 @@ void CRealImage2100::execute_dma_list(const DMAListOperation& operation)
 		}
 		for (uint32_t i = 0; i < packet.count; ++i)
 		{
-			WriteMem(packet.address + i * 4, 32, word_at(packet.first + i));
+			const uint32_t address = packet.address + i * 4, value = word_at(packet.first + i);
+			if (address == BoardIO + 1)
+			{
+				WriteMem(BoardIO, 16, uint16_t(value));
+				WriteMem(BoardIO + 2, 8, uint8_t(value >> 16));
+			}
+			else if (address == WindowMask + 2)
+				WriteMem(WindowMask, 32, value);
+			else
+				WriteMem(address, 32, value);
 			if (m_dma_list_rejected)
 			{
 				reject();
