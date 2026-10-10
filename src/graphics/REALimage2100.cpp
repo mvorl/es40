@@ -1203,8 +1203,7 @@ bool CRealImage2100::integer_rgb_profile() const
 	const bool auxiliary_compare = (control & ~0x00ffff01u) == 0xa1000002u &&
 		(banks == 5 || banks == 6),
 		direct = (control & ~0xff01u) == 0x21000002u && (banks == 1 || banks == 2);
-	if ((!auxiliary_compare && !direct) || !native_copy_control_profile(true, true) ||
-		((peek(ClipXMin) | peek(ClipYMin) | peek(ClipXMax) | peek(ClipYMax)) & 0xffff000fu))
+	if ((!auxiliary_compare && !direct) || !native_copy_control_profile(true, true))
 		return false;
 	const unsigned bank = banks & 2 ? 1 : 0;
 	if (!plane_profile(bank) || m_planes[bank].unknown_masks ||
@@ -1768,10 +1767,12 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	op.banks = (peek(DrawControl) >> 12) & 3;
 	op.x = int16_t(origin & 0xffff);
 	op.y = int16_t(origin >> 16);
-	// Decoded block transfers and integer glyphs supply preclipped rectangles.
-	if ((block_transfer || integer_mono) && (((peek(ClipXMin) | peek(ClipYMin) | peek(ClipXMax) |
-		peek(ClipYMax)) & 0xffff000fu) || op.x < 0 || op.y < 0 ||
-		uint64_t(op.x) + width > m_color_width || uint64_t(op.y) + height > m_color_height ||
+	if ((block_transfer || integer_mono) && (op.x < 0 || op.y < 0 ||
+		uint64_t(op.x) + width > m_color_width || uint64_t(op.y) + height > m_color_height))
+		return op;
+	// Block uploads retain unrelated raster clip state.
+	if ((integer_mono || (block_transfer && readback)) &&
+		(((peek(ClipXMin) | peek(ClipYMin) | peek(ClipXMax) | peek(ClipYMax)) & 0xffff000fu) ||
 		uint32_t(op.x) < (peek(ClipXMin) >> 4) || uint32_t(op.y) < (peek(ClipYMin) >> 4) ||
 		uint64_t(op.x) + width - 1 > (peek(ClipXMax) >> 4) ||
 		uint64_t(op.y) + height - 1 > (peek(ClipYMax) >> 4)))
