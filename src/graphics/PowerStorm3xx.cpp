@@ -835,7 +835,7 @@ std::array<u32, 64> CPowerStorm3xx::PCIConfig::config_data() const
 	data[2] = (class_code << 8) | revision;
 	data[6] = 0x00000001; // BAR2: native index/data I/O pair
 	data[11] = u32(subsystem_vendor) | (u32(subsystem_device) << 16);
-	data[15] = 0x000001ff; // INTA#, interrupt line unassigned; no IRQ sources
+	data[15] = 0x000001ff; // INTA#, interrupt line unassigned
 	return data;
 }
 
@@ -1030,6 +1030,10 @@ try
 		mask[i] = profile_mask[i];
 	}
 	add_function(0, data, mask);
+	m_realimage.set_irq_callback([this](bool level) {
+		if (!m_replaying_pci)
+			do_pci_interrupt(0, level);
+	});
 	m_realimage.set_diagnostic_callback(
 		[this](const CRealImage2100::Diagnostic& d) {
 			diagnostic(d);
@@ -1426,8 +1430,10 @@ void CPowerStorm3xx::config_write_custom(
 	(void)old_data;
 	(void)new_data;
 	// CPCIDevice owns BAR placement and command gating; CR1C/1D do not decode.
-	if (func == 0 && !m_replaying_pci)
-		trace("PW", func, address, dsize, data);
+	if (func != 0 || m_replaying_pci)
+		return;
+	trace("PW", func, address, dsize, data);
+	do_pci_interrupt(0, m_realimage.irq_asserted());
 }
 
 // Device service and saved state
@@ -1467,7 +1473,15 @@ void CPowerStorm3xx::prepare_snapshot()
 
 void CPowerStorm3xx::finalize_restore() noexcept
 {
-	// No native interrupt source is modeled; nothing to re-assert.
+	try
+	{
+		std::lock_guard<std::recursive_mutex> guard(
+			cSystem->get_device_bus_mutex());
+		do_pci_interrupt(0, m_realimage.irq_asserted());
+	}
+	catch (...)
+	{
+	}
 }
 
 std::string CPowerStorm3xx::snapshot_identity() const
@@ -1684,6 +1698,7 @@ int CPowerStorm3xx::RestoreState(FILE* f)
 			return -1;
 		restore_vga_state(vga_bytes);
 		m_access_count = u64(lo) | (u64(hi) << 32);
+		// IRQ output is committed after all devices restore.
 		return 0;
 	}
 	catch (const std::exception& e)

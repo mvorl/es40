@@ -759,8 +759,26 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 			m_pending = {};
 			m_readback = {};
 		}
+		if (key == DMAControl)
+		{
+			if ((v << shift) & lanes & 0x200u)
+				m_dma_irq_pending = false;
+			update_irq();
+			if (*reg & ~0x200u)
+				unimplemented_once("REALimage DMA control profile", a, v, true);
+		}
+		if (key == DMAInterruptEnable)
+		{
+			update_irq();
+			if (*reg != 0 && *reg != 1 && *reg != 7)
+				unimplemented_once("REALimage DMA interrupt profile", a, v, true);
+		}
 		if (key == DMAReset && (*reg & 1))
+		{
 			m_dma_regs[(DMACommand - DMABase) / 4] = 0;
+			m_dma_irq_pending = false;
+			update_irq();
+		}
 		if (key == DMACommand && (lanes & 0xc0000000) &&
 			(*reg & 0xc0000000))
 		{
@@ -2470,6 +2488,36 @@ uint32_t CRealImage2100::readback_pixel(uint32_t word) const
 	return m_color[size_t(bank) * m_color_pixels + y * m_color_width + x];
 }
 
+void CRealImage2100::update_irq()
+{
+	// OpenVMS enables DMA notifications with 7 and masks them with 0 or 1.
+	const bool level = m_dma_irq_pending && m_dma_regs[1] == 7;
+	if (level == m_irq)
+		return;
+	m_irq = level;
+	if (m_irq_callback)
+		m_irq_callback(level);
+}
+
+void CRealImage2100::dma_completed()
+{
+	m_dma_irq_pending = true;
+	update_irq();
+}
+
+bool CRealImage2100::dma_setup_supported(uint32_t v) const
+{
+	if ((m_dma_regs[0] & ~0x200u) ||
+		(m_dma_regs[1] != 0 && m_dma_regs[1] != 1 && m_dma_regs[1] != 7) ||
+		(m_dma_regs[13] && ((v & ~DMACommandListCountMask) != 0xc0000000u ||
+			m_dma_regs[13] != 0xffffe000u)) || m_dma_regs[14] != 8)
+		return false;
+	for (unsigned i : {2u, 3u, 4u, 5u, 6u, 10u, 15u, 16u, 17u, 18u})
+		if (m_dma_regs[i])
+			return false;
+	return true;
+}
+
 void CRealImage2100::dma_command(uint32_t v)
 {
 	const uint32_t mode = v & ~DMACommandListCountMask;
@@ -2487,11 +2535,8 @@ void CRealImage2100::dma_command(uint32_t v)
 	constexpr uint32_t DMABufferSize = 32768;
 	const uint32_t destination = m_dma_regs[8], source = m_dma_regs[9],
 		completion = m_dma_regs[12], words = v & 0xffff, bytes = words * 4;
-	bool neutral = true;
-	for (unsigned i : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 10u, 13u, 15u, 16u, 17u, 18u})
-		neutral &= m_dma_regs[i] == 0;
 	if ((v & 0xffff0000u) != 0xc4800000u || !words || bytes > DMABufferSize ||
-		!neutral || m_dma_regs[14] != 8 ||
+		!dma_setup_supported(v) ||
 		!m_readback.width ||
 		uint64_t(m_readback.width) * m_readback.height - m_readback.word < words ||
 		((destination | source | completion) & 3) ||
@@ -2521,6 +2566,7 @@ void CRealImage2100::dma_command(uint32_t v)
 	m_readback.word += words;
 	if (m_readback.word == m_readback.width * m_readback.height)
 		m_readback = {};
+	dma_completed();
 }
 
 void CRealImage2100::dma_texture_upload(uint32_t v)
@@ -2536,10 +2582,7 @@ void CRealImage2100::dma_texture_upload(uint32_t v)
 			!(uint64_t(completion) < uint64_t(address) + bytes &&
 				uint64_t(completion) + 4 > address);
 	};
-	bool neutral = true;
-	for (unsigned i : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 10u, 13u, 15u, 16u, 17u, 18u})
-		neutral &= m_dma_regs[i] == 0;
-	if (!neutral || m_dma_regs[14] != 8 || m_dma_list_active || (completion & 3))
+	if (!dma_setup_supported(v) || m_dma_list_active || (completion & 3))
 	{
 		reject();
 		return;
@@ -2601,6 +2644,8 @@ void CRealImage2100::dma_texture_upload(uint32_t v)
 	m_texture.swap(texture);
 	if (!m_dma_completer(completion))
 		report("DMA_COMPLETE", completion, v, "PCI DMA completion unavailable or rejected");
+	else
+		dma_completed();
 }
 
 bool CRealImage2100::dma_list_target(uint32_t a) const
@@ -2667,13 +2712,7 @@ bool CRealImage2100::prepare_dma_list(uint32_t v, DMAListOperation& operation)
 			!(uint64_t(completion) < uint64_t(address) + bytes &&
 				uint64_t(completion) + 4 > address);
 	};
-	// Preserve the observed OpenVMS setup without assigning undocumented register meanings.
-	const bool vms_setup = (v & ~DMACommandListCountMask) == 0xc0000000u &&
-		m_dma_regs[1] == 7 && m_dma_regs[13] == 0xffffe000u;
-	bool neutral = vms_setup || (!m_dma_regs[1] && !m_dma_regs[13]);
-	for (unsigned i : {0u, 2u, 3u, 4u, 5u, 6u, 10u, 15u, 16u, 17u, 18u})
-		neutral &= m_dma_regs[i] == 0;
-	if (m_dma_list_active || !neutral || m_dma_regs[14] != 8 || (completion & 3))
+	if (m_dma_list_active || !dma_setup_supported(v) || (completion & 3))
 	{
 		reject();
 		return false;
@@ -2819,9 +2858,12 @@ void CRealImage2100::execute_dma_list(const DMAListOperation& operation)
 			}
 		}
 	}
+	m_dma_list_active = false;
 	if (!m_dma_completer(completion))
 		report("DMA_COMPLETE", completion, 0,
 			"PCI DMA completion unavailable or rejected");
+	else
+		dma_completed();
 }
 
 CRealImage2100::Frame CRealImage2100::scanout(std::string* error) const
@@ -3130,6 +3172,7 @@ void CRealImage2100::reset(bool clear)
 		std::fill(m_texture.begin(), m_texture.end(), uint8_t(0));
 	}
 	m_dma_regs.fill(0);
+	m_dma_irq_pending = false;
 	m_planes = {};
 	m_clear_cache = {};
 	m_pending = {};
@@ -3151,6 +3194,7 @@ void CRealImage2100::reset(bool clear)
 	m_dac_index = 0;
 	m_dac_component = 0;
 	m_palette_read = m_palette_write = 0;
+	update_irq();
 }
 
 void CRealImage2100::report(
@@ -3295,9 +3339,10 @@ void CRealImage2100::SaveState(std::ostream& out) const
 	for (const uint32_t word : m_auxiliary)
 		put32(p, word);
 	p.write(reinterpret_cast<const char*>(m_texture.data()), m_texture.size());
+	put32(p, m_dma_irq_pending ? 1 : 0);
 	const auto bytes = p.str();
 	put32(out, 0x30324952); // RI20
-	put32(out, m_color_width == MaxColorWidth ? 13 : 12);
+	put32(out, m_color_width == MaxColorWidth ? 15 : 14);
 	put32(out, uint32_t(bytes.size()));
 	put32(out, crc32(bytes));
 	out.write(bytes.data(), bytes.size());
@@ -3308,15 +3353,16 @@ void CRealImage2100::SaveState(std::ostream& out) const
 void CRealImage2100::RestoreState(std::istream& in)
 {
 	const auto magic = get32(in), version = get32(in);
-	if (magic != 0x30324952 || version < 9 || version > 13)
+	if (magic != 0x30324952 || version < 9 || version > 15)
 		throw std::runtime_error("Wrong REALimage snapshot version");
-	const bool large = version == 11 || version == 13, packed_auxiliary = version >= 12;
+	const bool large = version == 11 || version == 13 || version == 15,
+		packed_auxiliary = version >= 12;
 	if (large != (m_color_width == MaxColorWidth))
 		throw std::runtime_error("REALimage snapshot framebuffer mismatch");
 	const uint32_t fixed_payload = FixedPayload + (version >= 10 ? 24 : 0) +
 		(large ? (MaxColorPixels - ColorPixels) * 9 +
 			PlaneCount * (PlaneRegisterCount - LegacyPlaneRegisterCount) * 4 : 0) +
-		(packed_auxiliary ? m_color_pixels * 3 + 12 : 0);
+		(packed_auxiliary ? m_color_pixels * 3 + 12 : 0) + (version >= 14 ? 4 : 0);
 	const auto size = get32(in), crc = get32(in);
 	if (size < fixed_payload || size > MaxStateSize - 16)
 		throw std::runtime_error("Invalid REALimage snapshot length");
@@ -3448,6 +3494,9 @@ void CRealImage2100::RestoreState(std::istream& in)
 	}
 	std::vector<uint8_t> texture(texture_size);
 	p.read(reinterpret_cast<char*>(texture.data()), texture.size());
+	const uint32_t dma_irq_pending = version >= 14 ? get32(p) : 0;
+	if (dma_irq_pending > 1)
+		throw std::runtime_error("Invalid REALimage DMA interrupt state");
 	if (!p || p.peek() != std::char_traits<char>::eof())
 		throw std::runtime_error("Invalid REALimage snapshot payload");
 	// Commit only after validation; keep the storage CVGA borrows in place.
@@ -3459,6 +3508,7 @@ void CRealImage2100::RestoreState(std::istream& in)
 	m_auxiliary.swap(auxiliary);
 	m_texture.swap(texture);
 	m_dma_regs = dma_regs;
+	m_dma_irq_pending = dma_irq_pending != 0;
 	m_planes = planes;
 	m_clear_cache = clear_cache;
 	m_pending = pending;
@@ -3479,4 +3529,5 @@ void CRealImage2100::RestoreState(std::istream& in)
 	m_dac_component = uint8_t(dac_component);
 	m_palette_read = uint8_t(rd);
 	m_palette_write = uint8_t(wr);
+	update_irq();
 }

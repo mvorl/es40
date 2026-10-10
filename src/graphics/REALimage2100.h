@@ -149,6 +149,7 @@ public:
                             PlaneCount = 4, LegacyPlaneRegisterCount = 28,
                             PlaneRegisterCount = 32;
   static constexpr uint32_t DMABase = 0x00801000, DMARegisterCount = 19,
+                            DMAControl = DMABase, DMAInterruptEnable = DMABase + 4,
                             DMACommand = 0x0080101c, DMAReset = 0x0080103c;
   // Outer descriptors count DWORDs in bits 21:0; packet counts are 16-bit.
   static constexpr uint32_t DMACommandListCountMask = 0x003fffff,
@@ -165,8 +166,9 @@ public:
   static constexpr uint32_t MaxStateSize = MinStateSize + 24 + MaxShadowRegisters * 8 +
     MaxTextureSize - MinTextureSize + (MaxColorPixels - ColorPixels) * 9 +
     PlaneCount * (PlaneRegisterCount - LegacyPlaneRegisterCount) * 4 +
-    MaxColorPixels * 3 + 12;
+    MaxColorPixels * 3 + 16;
 
+  using IRQCallback = std::function<void(bool)>;
   using DiagnosticCallback = std::function<void(const Diagnostic&)>;
   using UnimplementedCallback = std::function<void(
     const char* what, uint32_t address, uint32_t value, bool write)>;
@@ -221,6 +223,9 @@ public:
   {
     m_unimplemented = std::move(fn);
   }
+
+  bool irq_asserted() const { return m_irq; }
+  void set_irq_callback(IRQCallback fn) { m_irq_callback = std::move(fn); }
 
   void set_dma_writer(DMAWriter fn) { m_dma_writer = std::move(fn); }
   void set_dma_reader(DMAReader fn) { m_dma_reader = std::move(fn); }
@@ -373,6 +378,9 @@ private:
   };
   bool prepare_dma_list(uint32_t value, DMAListOperation& operation);
   void execute_dma_list(const DMAListOperation& operation);
+  void update_irq();
+  void dma_completed();
+  bool dma_setup_supported(uint32_t value) const;
   void dma_command(uint32_t value);
   void dma_command_list(uint32_t value);
   void dma_texture_upload(uint32_t value);
@@ -435,6 +443,8 @@ private:
   uint8_t m_palette_read = 0, m_palette_write = 0;
   DiagnosticCallback m_diagnostic;
   UnimplementedCallback m_unimplemented;
+  bool m_irq = false, m_dma_irq_pending = false;
+  IRQCallback m_irq_callback;
   DMAWriter m_dma_writer;
   DMAReader m_dma_reader;
   DMACompleter m_dma_completer;
