@@ -1105,7 +1105,7 @@ uint32_t CRealImage2100::block_width() const
 	return format == 2 ? 8 : format == 3 && m_color_width == MaxColorWidth ? 16 : 0;
 }
 
-bool CRealImage2100::native_copy_control_profile(bool clear) const
+bool CRealImage2100::native_copy_control_profile(bool clear, bool integer) const
 {
 	const uint32_t width = block_width(), columns = (peek(DrawControl) >> 8) & 15,
 		copy_columns = ((peek(MemoryControl) >> 24) & 63) + 1;
@@ -1114,14 +1114,14 @@ bool CRealImage2100::native_copy_control_profile(bool clear) const
 		copy_columns > (m_color_width + 10 * width - 1) / (10 * width))
 		return false;
 	const uint32_t global = peek(GlobalControl0), control = peek(DrawControl);
-	const bool integer_clear = clear && ((control & ~0x0400ff01u) == 0xa1000002u ||
-		(control & ~0x04ef0f01u) == 0xa1004002u);
+	const bool integer_profile = integer || (clear && ((control & ~0x0400ff01u) == 0xa1000002u ||
+		(control & ~0x04ef0f01u) == 0xa1004002u));
 	const bool context_clear = clear && (global == 0x180 || global == 0x190) &&
 		peek(GlobalControl1) == 0x20800;
 	// Other programmed pipeline modes have not been decoded.
 	const std::pair<uint32_t, uint32_t> profile[] = {
-		{GlobalControl0, integer_clear ? 0u : context_clear ? global : 1u},
-		{GlobalControl1, integer_clear ? 0x20810u : context_clear ? 0x20800u : 0x20811u},
+		{GlobalControl0, integer_profile ? 0u : context_clear ? global : 1u},
+		{GlobalControl1, integer_profile ? 0x20810u : context_clear ? 0x20800u : 0x20811u},
 		{GlobalControl2, 0x33},
 		{PipelineControl0, 0}, {PipelineControl1, 0},
 		{PipelineControl2, 0x10000000}, {PipelineControl3, 0},
@@ -1142,6 +1142,31 @@ bool CRealImage2100::copy_profile() const
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
 	return (control & ~0xff01u) == 0x81000002 && banks && !(banks & ~3u) &&
 		native_copy_control_profile();
+}
+
+bool CRealImage2100::block_upload_profile() const
+{
+	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
+	if ((control & ~0xff01u) != 0x21000002u || !banks || (banks & ~3u) ||
+		peek(BlockSource) || !native_copy_control_profile(false, true))
+		return false;
+	// The decoded driver path retains white shared RGB components.
+	for (unsigned i = 0; i < 4; ++i)
+		if (m_shadow.find(IntegerVertexColorBase + i * 4) == m_shadow.end() ||
+			peek(IntegerVertexColorBase + i * 4) != (i ? 0x3fcu : 0u))
+			return false;
+	for (unsigned bank = 0; bank < 2; ++bank)
+		if (banks & (1u << bank))
+		{
+			if (!plane_profile(bank) || m_planes[bank].unknown_masks ||
+				((plane_value(bank, 0, 0xffffffff) & 0xff000000u) &&
+					(plane_value(bank, 4, 0x03030303) >> 24) != 5))
+				return false;
+			for (unsigned i = 24; i < 24 + block_width() / 2; ++i)
+				if (plane_value(bank, i, 0xffffffff) != 0xffffffff)
+					return false;
+		}
+	return true;
 }
 
 bool CRealImage2100::fast_copy_profile() const
@@ -1596,7 +1621,10 @@ void CRealImage2100::execute_block(const BlockOperation& op)
 
 void CRealImage2100::block_command(uint32_t v)
 {
-	execute_block(prepare_block(v));
+	if (v == 0x01000032)
+		start_command(BlockCommand, v);
+	else
+		execute_block(prepare_block(v));
 }
 
 CRealImage2100::StartPrefix CRealImage2100::begin_start(uint32_t a, uint32_t v)
@@ -1639,7 +1667,8 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	if (!v)
 		return op;
 	op.kind = StartOperation::Kind::Rejected;
-	const bool upload = a == HostCommand && v == 0x01000032;
+	const bool block_upload = a == BlockCommand && v == 0x01000032;
+	const bool upload = block_upload || (a == HostCommand && v == 0x01000032);
 	const bool fast_copy = a == HostCommand &&
 		(v == 0x00200062 || v == 0x00200072 || v == 0x01200062 || v == 0x01200072);
 	const bool copy = (a == HostCommand &&
@@ -1654,7 +1683,7 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	const uint32_t mono_width = host_mono && (v & 0x7700) ? ((v >> 12) & 7) + 1 : 0;
 	op.mono = host_mono || (a == FillCommand && (v == 0x010008f2 || v == 0x010408b2));
 	op.auxiliary = initialization && (peek(DrawControl) & 0x4000);
-	const bool profile = fast_copy ? fast_copy_profile() :
+	const bool profile = block_upload ? block_upload_profile() : fast_copy ? fast_copy_profile() :
 		((fill || initialization) ? fill_profile(initialization) : copy_profile()) &&
 		(!(selected & 1) || plane_profile(0)) && (!(selected & 2) || plane_profile(1)) &&
 		(!op.auxiliary || plane_profile(2)) &&
@@ -1664,14 +1693,22 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 		return op;
 	// Bit 18 selects host geometry for the miniport's initialization rectangles.
 	const bool host_geometry = a == HostCommand || initialization;
-	const uint32_t origin = peek(host_geometry ? HostOrigin : FillOrigin),
-		extent = peek(host_geometry ? HostExtent : FillExtent),
+	const uint32_t origin = peek(block_upload ? BlockDestination : host_geometry ? HostOrigin : FillOrigin),
+		extent = peek(block_upload ? BlockExtent : host_geometry ? HostExtent : FillExtent),
 		width = (extent & 0xffff) + 1, height = (extent >> 16) + 1;
 	op.width = width;
 	op.height = height;
 	op.banks = (peek(DrawControl) >> 12) & 3;
 	op.x = int16_t(origin & 0xffff);
 	op.y = int16_t(origin >> 16);
+	// The decoded block-upload path supplies preclipped pixel rectangles.
+	if (block_upload && (((peek(ClipXMin) | peek(ClipYMin) | peek(ClipXMax) |
+		peek(ClipYMax)) & 0xffff000fu) || op.x < 0 || op.y < 0 ||
+		uint64_t(op.x) + width > m_color_width || uint64_t(op.y) + height > m_color_height ||
+		uint32_t(op.x) < (peek(ClipXMin) >> 4) || uint32_t(op.y) < (peek(ClipYMin) >> 4) ||
+		uint64_t(op.x) + width - 1 > (peek(ClipXMax) >> 4) ||
+		uint64_t(op.y) + height - 1 > (peek(ClipYMax) >> 4)))
+		return op;
 	if (readback)
 	{
 		const uint32_t source = peek(BlockSource), sx = source & 0xffff,
