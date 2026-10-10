@@ -940,8 +940,8 @@ uint32_t CRealImage2100::peek(uint32_t a) const
 
 int CRealImage2100::plane_register(uint32_t a)
 {
-	if (a >= PlaneClearColor && a < PlaneClearColor + 32)
-		return 16 + int((a - PlaneClearColor) / 4);
+	if ((a & ~0x001fe01cu) == 0x00e00100u && (a & 0x001fe000u))
+		return 16 + int((a & 0x1c) / 4);
 	if (a == PlanePixelMask ||
 		((a & ~0x1fe000u) == HostData + 0x400 && (a & 0x1fe000u)))
 		return 24;
@@ -975,14 +975,17 @@ bool CRealImage2100::plane_write(uint32_t a, uint32_t lanes, uint32_t value)
 		unimplemented_once("REALimage plane access", a, value, true);
 		return true;
 	}
+	const bool clear = index >= 16 && index < 24,
+		broadcast = clear && (a & ~0x1fu) == PlaneClearColor;
 	const uint32_t available = m_color_width == MaxColorWidth ? 255u : 15u,
-		groups = a == PlanePixelMask ? available : (a >> 13) & 255;
-	if (index == 24 && (groups & ~available))
+		groups = a == PlanePixelMask || broadcast ? available : (a >> 13) & 255;
+	if ((index == 24 || clear) && (groups & ~available))
 	{
 		for (unsigned bank = 0; bank < PlaneCount; ++bank)
 			if (banks & (1u << bank))
 				m_planes[bank].unknown_masks |= groups & available;
-		unimplemented_once("REALimage plane mask", a, value, true);
+		unimplemented_once(clear ? "REALimage clear-source selector" : "REALimage plane mask",
+			a, value, true);
 		return true;
 	}
 	// Configuration writes broadcast to the selected 3D-RAM planes.
@@ -990,6 +993,27 @@ bool CRealImage2100::plane_write(uint32_t a, uint32_t lanes, uint32_t value)
 		if (banks & (1u << bank))
 		{
 			auto& plane = m_planes[bank];
+			if (clear)
+			{
+				const unsigned word = unsigned(index - 16);
+				for (unsigned group = 0; group < 8; ++group)
+					if (groups & (1u << group))
+					{
+						if (broadcast && lanes == 0xffffffffu)
+						{
+							plane.clear_written[group] &= uint8_t(~(1u << word));
+							plane.clear_colors[group][word] = 0;
+						}
+						else if (!broadcast || (plane.clear_written[group] & (1u << word)))
+						{
+							plane.clear_colors[group][word] =
+								(plane_clear_value(bank, group, word) & ~lanes) | value;
+							plane.clear_written[group] |= uint8_t(1u << word);
+						}
+					}
+				if (!broadcast)
+					continue;
+			}
 			if (index == 24 && lanes == 0xffffffffu)
 				plane.unknown_masks &= ~groups;
 			const unsigned end = index == 24 ? PlaneRegisterCount : index + 1;
@@ -1009,6 +1033,19 @@ uint32_t CRealImage2100::plane_value(
 {
 	const auto& plane = m_planes[bank];
 	return plane.written & (1u << index) ? plane.regs[index] : fallback;
+}
+
+uint32_t CRealImage2100::plane_clear_value(unsigned bank, unsigned group, unsigned word) const
+{
+	const auto& plane = m_planes[bank];
+	return plane.clear_written[group] & (1u << word) ?
+		plane.clear_colors[group][word] : plane_value(bank, 16 + word, 0);
+}
+
+bool CRealImage2100::plane_clear_written(unsigned bank, unsigned group, unsigned word) const
+{
+	return (m_planes[bank].clear_written[group] & (1u << word)) ||
+		(m_planes[bank].written & (1u << (16 + word)));
 }
 
 bool CRealImage2100::plane_profile(unsigned bank, uint32_t format, uint32_t rop_high,
@@ -1224,6 +1261,18 @@ bool CRealImage2100::fill_profile(bool initialization) const
 	return (normal || bootstrap) && native_copy_control_profile(true);
 }
 
+static bool block_pattern_layout(const std::array<uint32_t, 64>& values,
+	uint32_t width, uint32_t mask)
+{
+	if (width != 16)
+		return true;
+	// Only the driver's replicated four-column pattern is decoded for 16-pixel blocks.
+	for (unsigned i = 0; i < width * 4; ++i)
+		if ((values[i] ^ values[(i & ~15u) | (i & 3u)]) & mask)
+			return false;
+	return true;
+}
+
 CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 {
 	BlockOperation op;
@@ -1232,7 +1281,7 @@ CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
 		source = peek(BlockSource), destination = peek(BlockDestination),
 		extent = peek(BlockExtent), auxiliary_mask = plane_value(2, 0, 0xffffffff),
-		auxiliary_value = plane_value(2, 16, 0);
+		auxiliary_value = plane_clear_value(2, 0, 0);
 	const bool copy = (v & 0x20000) != 0, configuration = (control & 0x04000000) != 0;
 	const bool auxiliary_clear = (banks & 4) && auxiliary_mask;
 	const bool seed = !configuration && !copy;
@@ -1255,10 +1304,11 @@ CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 	op.seed = seed;
 	op.auxiliary_clear = auxiliary_clear;
 	const uint32_t control_fields = 0x040fff01u;
-	// Integer clears retain the fourth byte used by the DAC overlay plane.
-	const bool integer_clear = !copy && (control & ~0x0400ff01u) == 0xa1000002u;
+	// Integer profiles retain the fourth byte used by the DAC overlay plane.
+	const bool integer_clear = (control & ~0x0400ff01u) == 0xa1000002u;
 	const bool integer_seed = integer_clear && seed;
 	const bool integer_auxiliary = !copy && (control & ~0x04ef0f01u) == 0xa1004002u;
+	op.allow_pattern = integer_clear && !(banks & ~3u);
 	for (auto& mask : op.color.masks)
 		mask &= integer_clear ? 0xffffffffu : 0x00ffffffu;
 	if ((!integer_clear && !integer_auxiliary && (control & ~control_fields) != 0x81000002) ||
@@ -1302,12 +1352,8 @@ CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 			plane_value(2, 14, format) == format && plane_value(2, 15, 0) == 0;
 		if ((!neutral_clear && !packed_clear) ||
 			plane_value(2, 4, 0x03030303) != 0x03030303 ||
-			m_planes[2].unknown_masks ||
-			(!copy && (m_planes[2].written & 0x00ff0000) != 0x00ff0000))
+			m_planes[2].unknown_masks)
 			return op;
-		for (unsigned i = 17; i < 24; ++i)
-			if (!copy && ((plane_value(2, i, 0) ^ auxiliary_value) & auxiliary_mask))
-				return op;
 		for (unsigned i = 0; i < groups; ++i)
 		{
 			const uint32_t bits = plane_value(2, 24 + i, 0xffffffff);
@@ -1328,14 +1374,7 @@ CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 			m_planes[bank].unknown_masks)
 			return op;
 		if (!copy)
-		{
-			op.colors[bank] = plane_value(bank, 16, 0);
-			if ((m_planes[bank].written & 0x00ff0000) != 0x00ff0000)
-				return op;
-			for (unsigned i = 17; i < 24; ++i)
-				if ((plane_value(bank, i, 0) ^ op.colors[bank]) & mask)
-					return op;
-		}
+			op.colors[bank] = plane_clear_value(bank, 0, 0);
 		for (unsigned i = 0; i < groups; ++i)
 		{
 			const uint32_t bits = plane_value(bank, 24 + i, 0xffffffff);
@@ -1344,8 +1383,31 @@ CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 		}
 	}
 	for (unsigned bank = 0; bank < 3; ++bank)
+	{
 		for (unsigned i = 0; i < groups; ++i)
 			op.pixel_masks[bank][i] = plane_value(bank, 24 + i, 0xffffffff);
+		const uint32_t mask = bank == 2 ? auxiliary_mask : op.color.masks[bank],
+			first = bank == 2 ? auxiliary_value : op.colors[bank];
+		if (copy || !(banks & (1u << bank)) || !mask)
+			continue;
+		for (unsigned y = 0; y < 4; ++y)
+			for (unsigned x = 0; x < clear_width; ++x)
+			{
+				const unsigned group = x % groups, word = 2 * y + x / groups;
+				if (!plane_clear_written(bank, group, word))
+					return op;
+				const uint32_t value = plane_clear_value(bank, group, word) & mask;
+				op.clear_values[bank][y * clear_width + x] = value;
+				op.patterned[bank] = op.patterned[bank] || value != (first & mask);
+			}
+		if (op.patterned[bank] && (!op.allow_pattern ||
+			!block_pattern_layout(op.clear_values[bank], clear_width, mask)))
+			return op;
+		if (seed && (op.patterned[bank] || m_clear_cache[bank].patterned))
+			for (unsigned group = 0; group < groups; ++group)
+				if (op.pixel_masks[bank][group] != 0xffffffffu)
+					return op;
+	}
 	op.valid = true;
 	return op;
 }
@@ -1377,11 +1439,12 @@ void CRealImage2100::execute_block(const BlockOperation& op)
 		reject();
 		return;
 	}
-	auto colors = op.colors;
-	for (unsigned bank = 0; bank < 2; ++bank)
+	std::array<uint32_t, 3> colors = {op.colors[0], op.colors[1], op.auxiliary_value};
+	auto clear_values = op.clear_values;
+	auto patterned = op.patterned;
+	for (unsigned bank = 0; bank < 3; ++bank)
 	{
-		const uint32_t mask = op.color.masks[bank],
-			rops = op.color.rops[bank];
+		const uint32_t mask = bank == 2 ? op.auxiliary_mask : op.color.masks[bank];
 		if (!(op.banks & (1u << bank)) || !mask)
 			continue;
 		if (op.copy)
@@ -1393,42 +1456,66 @@ void CRealImage2100::execute_block(const BlockOperation& op)
 				return;
 			}
 			colors[bank] = cache.color;
-		}
-		for (unsigned shift = 0; shift < 32; shift += 8)
-			if (!op.seed && !(op.replace_color[bank] && shift < 24) &&
-				(mask & (0xffu << shift)) && ((rops >> shift) & 15) != 3 &&
-				(((rops >> shift) & 15) != 0 ||
-					(colors[bank] & mask & (0xffu << shift))))
+			patterned[bank] = cache.patterned;
+			clear_values[bank] = cache.pattern;
+			if (patterned[bank])
 			{
-				reject();
-				return;
+				patterned[bank] = false;
+				for (unsigned i = 0; i < op.clear_width * 4; ++i)
+					patterned[bank] = patterned[bank] || ((cache.pattern[i] ^ cache.color) & mask);
 			}
-	}
-	uint32_t auxiliary_value = op.auxiliary_value;
-	if (op.copy && op.auxiliary_clear)
-	{
-		const auto& cache = m_clear_cache[2];
-		if (cache.source != op.source || (cache.known & op.auxiliary_mask) != op.auxiliary_mask)
+		}
+		if (patterned[bank] && (!op.allow_pattern ||
+			!block_pattern_layout(clear_values[bank], op.clear_width, mask)))
 		{
 			reject();
 			return;
 		}
-		auxiliary_value = cache.color;
+		if (bank == 2 || op.seed)
+			continue;
+		const uint32_t rops = op.color.rops[bank];
+		for (unsigned pixel = 0; pixel < (patterned[bank] ? op.clear_width * 4 : 1); ++pixel)
+		{
+			const uint32_t value = patterned[bank] ? clear_values[bank][pixel] : colors[bank];
+			for (unsigned shift = 0; shift < 32; shift += 8)
+				if (!(op.replace_color[bank] && shift < 24 && !patterned[bank]) &&
+					(mask & (0xffu << shift)) && ((rops >> shift) & 15) != 3 &&
+					(((rops >> shift) & 15) != 0 || (value & mask & (0xffu << shift))))
+				{
+					reject();
+					return;
+				}
+		}
 	}
 	if (op.seed)
 	{
 		for (unsigned bank = 0; bank < 3; ++bank)
 			if (op.banks & (1u << bank))
 			{
-				const uint32_t mask = bank == 2 ? op.auxiliary_mask : op.color.masks[bank],
-					value = bank == 2 ? op.auxiliary_value : colors[bank];
+				const uint32_t mask = bank == 2 ? op.auxiliary_mask : op.color.masks[bank];
 				if (!mask)
 					continue;
 				auto& cache = m_clear_cache[bank];
 				if (cache.source != op.seed_key)
 					cache = {};
 				cache.source = op.seed_key;
-				cache.color = (cache.color & ~mask) | (value & mask);
+				if (cache.patterned || patterned[bank])
+				{
+					const bool old_patterned = cache.patterned;
+					cache.patterned = false;
+					for (unsigned i = 0; i < op.clear_width * 4; ++i)
+					{
+						const uint32_t old = old_patterned ? cache.pattern[i] : cache.color,
+							value = patterned[bank] ? clear_values[bank][i] : colors[bank];
+						cache.pattern[i] = (old & ~mask) | (value & mask);
+						cache.patterned = cache.patterned || cache.pattern[i] != cache.pattern[0];
+					}
+					cache.color = cache.pattern[0];
+					if (!cache.patterned)
+						cache.pattern = {};
+				}
+				else
+					cache.color = (cache.color & ~mask) | (colors[bank] & mask);
 				cache.known |= mask;
 			}
 		return;
@@ -1444,7 +1531,7 @@ void CRealImage2100::execute_block(const BlockOperation& op)
 		if (bank == 2 ? !op.auxiliary_clear : !(op.banks & (1u << bank)))
 			continue;
 		const uint32_t mask = bank == 2 ? op.auxiliary_mask : op.color.masks[bank],
-			value = bank == 2 ? auxiliary_value : colors[bank];
+			value = colors[bank];
 		if (!mask)
 			continue;
 		uint32_t* const pixels = bank == 2 ? m_auxiliary.data() :
@@ -1468,6 +1555,17 @@ void CRealImage2100::execute_block(const BlockOperation& op)
 			if (empty[row & 3])
 				continue;
 			uint32_t* const line = pixels + size_t(row) * m_color_width;
+			if (patterned[bank])
+			{
+				for (uint32_t col = op.x; col < right; ++col)
+				{
+					const unsigned x = col & (op.clear_width - 1);
+					const uint32_t lanes = masks[row & 3][x],
+						source = clear_values[bank][(row & 3) * op.clear_width + x];
+					line[col] = (line[col] & ~lanes) | (source & lanes);
+				}
+				continue;
+			}
 			if (full[row & 3])
 			{
 				std::fill(line + op.x, line + right, value);
@@ -2851,7 +2949,8 @@ bool CRealImage2100::dma_list_target(uint32_t a) const
 	if (plane_index >= 0)
 	{
 		const uint32_t available = m_color_width == MaxColorWidth ? 255u : 15u;
-		return plane_index != 24 || a == PlanePixelMask ||
+		return plane_index < 16 || plane_index > 24 ||
+			a == PlanePixelMask || (a & ~0x1fu) == PlaneClearColor ||
 			!(((a >> 13) & 255) & ~available);
 	}
 	// Other command-list targets use the existing register handlers.
@@ -3546,9 +3645,23 @@ void CRealImage2100::SaveState(std::ostream& out) const
 		put32(p, word);
 	p.write(reinterpret_cast<const char*>(m_texture.data()), m_texture.size());
 	put32(p, m_dma_irq_pending ? 1 : 0);
+	for (const auto& plane : m_planes)
+	{
+		for (const uint8_t written : plane.clear_written)
+			put32(p, written);
+		for (const auto& group : plane.clear_colors)
+			for (const uint32_t value : group)
+				put32(p, value);
+	}
+	for (const auto& cache : m_clear_cache)
+	{
+		put32(p, cache.patterned ? 1 : 0);
+		for (const uint32_t value : cache.pattern)
+			put32(p, value);
+	}
 	const auto bytes = p.str();
 	put32(out, 0x30324952); // RI20
-	put32(out, m_color_width == MaxColorWidth ? 17 : 16);
+	put32(out, m_color_width == MaxColorWidth ? 19 : 18);
 	put32(out, uint32_t(bytes.size()));
 	put32(out, crc32(bytes));
 	out.write(bytes.data(), bytes.size());
@@ -3559,16 +3672,17 @@ void CRealImage2100::SaveState(std::ostream& out) const
 void CRealImage2100::RestoreState(std::istream& in)
 {
 	const auto magic = get32(in), version = get32(in);
-	if (magic != 0x30324952 || version < 9 || version > 17)
+	if (magic != 0x30324952 || version < 9 || version > 19)
 		throw std::runtime_error("Wrong REALimage snapshot version");
-	const bool large = version == 11 || version == 13 || version == 15 || version == 17,
+	const bool large = version == 11 || version == 13 || version == 15 || version == 17 || version == 19,
 		packed_auxiliary = version >= 12;
 	if (large != (m_color_width == MaxColorWidth))
 		throw std::runtime_error("REALimage snapshot framebuffer mismatch");
 	const uint32_t fixed_payload = FixedPayload + (version >= 10 ? 24 : 0) +
 		(large ? (MaxColorPixels - ColorPixels) * 9 +
 			PlaneCount * (PlaneRegisterCount - LegacyPlaneRegisterCount) * 4 : 0) +
-		(packed_auxiliary ? m_color_pixels * 3 + 12 : 0) + (version >= 14 ? 4 : 0);
+		(packed_auxiliary ? m_color_pixels * 3 + 12 : 0) + (version >= 14 ? 4 : 0) +
+		(version >= 18 ? PatternStateSize : 0);
 	const auto size = get32(in), crc = get32(in);
 	if (size < fixed_payload || size > MaxStateSize - 16)
 		throw std::runtime_error("Invalid REALimage snapshot length");
@@ -3704,6 +3818,50 @@ void CRealImage2100::RestoreState(std::istream& in)
 	const uint32_t dma_irq_pending = version >= 14 ? get32(p) : 0;
 	if (dma_irq_pending > 1)
 		throw std::runtime_error("Invalid REALimage DMA interrupt state");
+	if (version >= 18)
+	{
+		const unsigned groups = large ? 8 : 4;
+		for (auto& plane : planes)
+		{
+			for (unsigned group = 0; group < 8; ++group)
+			{
+				const uint32_t written = get32(p);
+				if (written > 255 || (group >= groups && written))
+					throw std::runtime_error("Invalid REALimage clear latch mask");
+				plane.clear_written[group] = uint8_t(written);
+			}
+			for (unsigned group = 0; group < 8; ++group)
+				for (unsigned word = 0; word < 8; ++word)
+				{
+					const uint32_t value = get32(p);
+					if (!(plane.clear_written[group] & (1u << word)) && value)
+						throw std::runtime_error("Invalid REALimage clear latch state");
+					plane.clear_colors[group][word] = value;
+				}
+		}
+		const auto draw = shadow.find(DrawControl);
+		const uint32_t format = draw == shadow.end() ? 0 : draw->second & 255,
+			width = format == 2 ? 8 : format == 3 && large ? 16 : 0;
+		for (auto& cache : clear_cache)
+		{
+			const uint32_t patterned = get32(p);
+			if (patterned > 1 || (patterned && (!width || !cache.known)))
+				throw std::runtime_error("Invalid REALimage clear pattern state");
+			cache.patterned = patterned != 0;
+			bool uniform = true;
+			for (unsigned i = 0; i < cache.pattern.size(); ++i)
+			{
+				const uint32_t value = get32(p);
+				if ((!patterned || i >= width * 4) ? value != 0 : (value & ~cache.known) != 0)
+					throw std::runtime_error("Invalid REALimage clear pattern value");
+				if (i < width * 4 && value != cache.color)
+					uniform = false;
+				cache.pattern[i] = value;
+			}
+			if (patterned && (cache.pattern[0] != cache.color || uniform))
+				throw std::runtime_error("Invalid REALimage clear pattern encoding");
+		}
+	}
 	if (!p || p.peek() != std::char_traits<char>::eof())
 		throw std::runtime_error("Invalid REALimage snapshot payload");
 	// Commit only after validation; keep the storage CVGA borrows in place.

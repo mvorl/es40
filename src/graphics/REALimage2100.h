@@ -165,10 +165,11 @@ public:
     16 + 52 + 4 + 24 + 256 * 4 + DACRegisterCount + 4 + VGAMemorySize +
     ColorPixels * (2 * 4 + 1) + 4 + DMARegisterCount * 4 + MinTextureSize +
     PlaneCount * (LegacyPlaneRegisterCount + 2) * 4 + 2 * 3 * 4;
+  static constexpr uint32_t PatternStateSize = PlaneCount * (8 + 64) * 4 + 3 * (1 + 64) * 4;
   static constexpr uint32_t MaxStateSize = MinStateSize + 24 + MaxShadowRegisters * 8 +
     MaxTextureSize - MinTextureSize + (MaxColorPixels - ColorPixels) * 9 +
     PlaneCount * (PlaneRegisterCount - LegacyPlaneRegisterCount) * 4 +
-    MaxColorPixels * 3 + 16;
+    MaxColorPixels * 3 + 16 + PatternStateSize;
 
   using IRQCallback = std::function<void(bool)>;
   using DiagnosticCallback = std::function<void(const Diagnostic&)>;
@@ -290,6 +291,8 @@ private:
   static int plane_register(uint32_t address);
   bool plane_write(uint32_t address, uint32_t lanes, uint32_t value);
   uint32_t plane_value(unsigned bank, unsigned index, uint32_t fallback) const;
+  uint32_t plane_clear_value(unsigned bank, unsigned group, unsigned word) const;
+  bool plane_clear_written(unsigned bank, unsigned group, unsigned word) const;
   bool plane_profile(unsigned bank, uint32_t format = 0x100, uint32_t rop_high = 0,
     uint32_t multiply_control = 0) const;
   bool native_pixel_profile() const;
@@ -333,11 +336,13 @@ private:
       x = 0, y = 0, right = 0, bottom = 0, seed_key = 0,
       auxiliary_mask = 0, auxiliary_value = 0;
     bool valid = false, geometry_known = false, copy = false, seed = false,
-      auxiliary_clear = false;
+      auxiliary_clear = false, allow_pattern = false;
     ColorWriteContext color;
     std::array<uint32_t, 2> colors{};
     std::array<bool, 2> replace_color{};
     std::array<std::array<uint32_t, 8>, 3> pixel_masks{};
+    std::array<std::array<uint32_t, 64>, 3> clear_values{};
+    std::array<bool, 3> patterned{};
   };
   BlockOperation prepare_block(uint32_t value) const;
   void execute_block(const BlockOperation& operation);
@@ -417,12 +422,16 @@ private:
     uint32_t written = 0;
     uint32_t unknown_masks = 0;
     std::array<uint32_t, PlaneRegisterCount> regs{};
+    std::array<std::array<uint32_t, 8>, 8> clear_colors{};
+    std::array<uint8_t, 8> clear_written{};
   };
   std::array<PlaneState, PlaneCount> m_planes{};
-  // Uniform offscreen sources seeded by the driver's block-clear path.
+  // Offscreen sources seeded by the driver's block-clear path.
   struct ClearCache
   {
     uint32_t source = 0, color = 0, known = 0;
+    bool patterned = false;
+    std::array<uint32_t, 64> pattern{};
   };
   std::array<ClearCache, 3> m_clear_cache{};
   // Host data is a stream of RGB dwords, not a framebuffer address.
