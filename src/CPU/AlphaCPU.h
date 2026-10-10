@@ -324,6 +324,12 @@ public:
   virtual void  stop_threads();
   void ResetForSystemReset();
 private:
+  // Family PAL rules are immutable and live outside the saved CPU state.
+  AlphaPALExceptionEntry pal_exception_entry(AlphaPALException reason, u64 pc) const;
+  u64 pal_exception_offset(AlphaPALException reason) const;
+  void enter_pal_exception(const AlphaPALExceptionEntry& entry);
+  void enter_native_call_pal(u32 function);
+
   // Immutable for the CPU lifetime; deliberately outside the saved state.
   const AlphaCPUProfile m_profile;
   CThread* myThread;

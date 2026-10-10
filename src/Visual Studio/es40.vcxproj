@@ -2273,6 +2273,8 @@
     <ClInclude Include="..\chipset\AliM1543C_pmu.h" />
     <ClInclude Include="..\CPU\AlphaCPU.h" />
     <ClInclude Include="..\CPU\AlphaCPUProfile.h" />
+    <ClInclude Include="..\CPU\AlphaPAL.h" />
+    <ClInclude Include="..\CPU\Ev68PAL.h" />
     <ClInclude Include="..\emu\attotime.h" />
     <ClInclude Include="..\banner.h" />
     <ClInclude Include="..\base\Exception.h" />

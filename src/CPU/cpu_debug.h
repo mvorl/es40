@@ -167,30 +167,26 @@ void          handle_debug_string(char* s);
 #define TRC_BR  if(bTrace) \
     trc->trace_br(this, state.current_pc, state.pc);
 
-#define GO_PAL(offset)                                          \
-  {                                                             \
-    if(bDisassemble)                                            \
-    {                                                           \
-      sprintf(dbg_strptr, " ==> PAL %" PRIx64 "!\n", offset);            \
-      dbg_strptr += strlen(dbg_strptr);                         \
-    }                                                           \
-    handle_debug_string(dbg_string);                            \
-    DEBUG_INSTALL_PAL_TRAP(offset);                             \
-    state.exc_addr = state.current_pc;                          \
-    set_pc(state.pal_base | offset | 1);                        \
-    /* HRM 4.2.4: a taken exception/interrupt clears lock_flag so a pending  \
-       STx_C fails. Exclude transparent TB-miss fills, which real HW does    \
-       not use to clear the lock. */                            \
-    if constexpr ((offset) != DTBM_SINGLE && (offset) != DTBM_DOUBLE_3 && \
-                  (offset) != DTBM_DOUBLE_4 && (offset) != ITB_MISS)      \
-      cSystem->cpu_clear_lock(state.iProcNum);                  \
-    if constexpr ((offset) == DTBM_SINGLE || (offset) == ITB_MISS) { \
-      if(bTrace)                                               \
-        trc->set_waitfor(this, state.exc_addr &~U64(0x3));      \
-      else                                                      \
-        TRC_(true, false, "GO_PAL %" PRIx64, offset);           \
-    } else                                                      \
-      TRC_(true, false, "GO_PAL %" PRIx64, offset);             \
+#define GO_PAL(reason)                                                        \
+  {                                                                           \
+    const auto pal_entry = pal_exception_entry((reason), state.current_pc);    \
+    const u64 pal_offset = pal_entry.offset;                                  \
+    if(bDisassemble)                                                         \
+    {                                                                         \
+      sprintf(dbg_strptr, " ==> PAL %" PRIx64 "!\n", pal_offset);            \
+      dbg_strptr += strlen(dbg_strptr);                                      \
+    }                                                                         \
+    handle_debug_string(dbg_string);                                         \
+    DEBUG_INSTALL_PAL_TRAP(pal_offset);                                      \
+    enter_pal_exception(pal_entry);                                          \
+    if constexpr ((reason) == AlphaPALException::DataTlbMiss ||               \
+                  (reason) == AlphaPALException::InstructionTlbMiss) {       \
+      if(bTrace)                                                             \
+        trc->set_waitfor(this, state.exc_addr & ~U64(0x3));                   \
+      else                                                                    \
+        TRC_(true, false, "GO_PAL %" PRIx64, pal_offset);                     \
+    } else                                                                    \
+      TRC_(true, false, "GO_PAL %" PRIx64, pal_offset);                       \
   }
 
 #else
@@ -198,17 +194,11 @@ void          handle_debug_string(char* s);
 #define TRC(down, up)         ;
 #define TRC_BR                ;
 
-#define GO_PAL(offset)                   \
-  {                                      \
-    DEBUG_INSTALL_PAL_TRAP(offset);      \
-    state.exc_addr = state.current_pc;   \
-    set_pc(state.pal_base | offset | 1); \
-    /* HRM 4.2.4: clear lock_flag on taken exception/interrupt (fail a       \
-       pending STx_C). Exclude transparent TB-miss fills; offset is a        \
-       compile-time constant so this condition folds to nothing per site. */ \
-    if constexpr ((offset) != DTBM_SINGLE && (offset) != DTBM_DOUBLE_3 &&    \
-                  (offset) != DTBM_DOUBLE_4 && (offset) != ITB_MISS)         \
-      cSystem->cpu_clear_lock(state.iProcNum);                               \
+#define GO_PAL(reason)                                                        \
+  {                                                                           \
+    const auto pal_entry = pal_exception_entry((reason), state.current_pc);    \
+    DEBUG_INSTALL_PAL_TRAP(pal_entry.offset);                                 \
+    enter_pal_exception(pal_entry);                                          \
   }
 #endif
 #if defined(IDB)
@@ -340,7 +330,7 @@ void          handle_debug_string(char* s);
   sprintf(dbg_strptr, "Unknown opcode: %02x   ", opcode); \
   dbg_strptr += strlen(dbg_strptr);                       \
   handle_debug_string(dbg_string);                        \
-  GO_PAL(OPCDEC);                                         \
+  GO_PAL(AlphaPALException::OpcodeDecode);                                    \
   ES40_EXECUTE_END();
 
 #define UNKNOWN2  if(bDisassemble)                                       \
@@ -350,7 +340,7 @@ void          handle_debug_string(char* s);
   sprintf(dbg_strptr, "Unknown opcode: %02x.%02x   ", opcode, function); \
   dbg_strptr += strlen(dbg_strptr);                                      \
   handle_debug_string(dbg_string);                                       \
-  GO_PAL(OPCDEC);                                                        \
+  GO_PAL(AlphaPALException::OpcodeDecode);                                    \
   ES40_EXECUTE_END();
 
 #define POST_X64(a)                           \
@@ -762,13 +752,13 @@ void          handle_debug_string(char* s);
 #define UNKNOWN1                                                             \
   printf("%%CPU-W-OPCDEC: unknown opcode %02x at pc=%016" PRIx64 "\n",       \
          opcode, state.current_pc);                                          \
-  GO_PAL(OPCDEC);                                                            \
+  GO_PAL(AlphaPALException::OpcodeDecode);                                    \
   ES40_EXECUTE_END();
 
 #define UNKNOWN2                                                             \
   printf("%%CPU-W-OPCDEC: unknown opcode %02x.%02x at pc=%016" PRIx64 "\n",  \
          opcode, function, state.current_pc);                                \
-  GO_PAL(OPCDEC);                                                            \
+  GO_PAL(AlphaPALException::OpcodeDecode);                                    \
   ES40_EXECUTE_END();
 #endif
 #if defined(IDB)

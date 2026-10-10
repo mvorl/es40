@@ -28,8 +28,9 @@
 #define INCLUDED_ALPHACPUPROFILE_H
 
 #include <cstdint>
+#include "Ev68PAL.h"
 
-// Identity and architectural feature-probe values chosen by configuration. 
+// Immutable model identity, feature probes, and PAL entry rules chosen by configuration.
 struct AlphaCPUProfile
 {
   std::uint64_t amask;       // Implemented extensions; AMASK returns input & ~amask.
@@ -37,6 +38,7 @@ struct AlphaCPUProfile
   std::uint32_t chip_id;     // Implementation-specific chip revision identifier.
   std::uint32_t type_major;  // System-reference processor type.
   std::uint32_t type_minor;  // System-reference processor revision.
+  AlphaPALPolicy pal = kEv68PALPolicy;  // Immutable family entry rules.
 };
 
 // EV68CB pass 4: BWX | FIX | CIX | MVI | precise traps | prefetch modify.

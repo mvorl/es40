@@ -78,30 +78,20 @@
   do {                                            \
     /* RA must be R31 per AHB / QEMU */           \
     if (REG_1 != 31) {                            \
-      GO_PAL(OPCDEC);                             \
+      GO_PAL(AlphaPALException::OpcodeDecode);                                \
     } else {                                      \
       state.r[REG_3] = V_2 & ~get_profile().amask; \
     }                                             \
   } while (0)
 
-#define SAVE_CALL_PAL_R23()                                           \
-  do {                                                                \
-    state.r[(state.sde ? 32 : 0) + 23] = state.pc & ~U64(0x2);        \
-  } while (0)
-
 #define ENTER_NATIVE_CALL_PAL()                                       \
   do {                                                                \
-    state.exc_addr = state.current_pc;                                \
-    SAVE_CALL_PAL_R23();                                              \
-    set_pc(state.pal_base | (1 << 13) | ((function & 0x80) << 5) |    \
-             ((function & 0x3f) << 6) | 1);                           \
+    enter_native_call_pal(function);                                  \
     TRC(true, false)                                                  \
   } while (0)
 
 
-#define DO_CALL_PAL if(((function < 0x40) && ((state.cm != 0)))        \
-                     || ((function > 0x3f) && (function < 0x80))       \
-                     || (function > 0xbf))                             \
+#define DO_CALL_PAL if(!m_profile.pal.call_pal_valid(function, state.cm)) \
   {                                                                    \
     UNKNOWN2                                                           \
   }                                                                    \

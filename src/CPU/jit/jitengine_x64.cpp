@@ -2005,39 +2005,55 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             continue;
         }
 
-        // CALL_PAL (0x00): vector to the PALcode entry, saving the return address in R23 and the
-        // faulting PC in EXC_ADDR (per ENTER_NATIVE_CALL_PAL). 
+        // CALL_PAL (0x00): the family policy selects the vector, saved PC and link slots.
         if (op == OP_CALL_PAL) {
             const uint32_t func = ins & 0x1FFFFFFF;
             const uint64_t cpc = b->tag + 4 * (uint64_t)i;                          // CALL_PAL address
-            const uint64_t ret = (b->tag + 4 * (uint64_t)(i + 1)) & ~(uint64_t)2;  // return addr (PC & ~2)
-            const uint64_t voff = (uint64_t)0x2000 | ((uint64_t)(func & 0x80) << 5)
-                | ((uint64_t)(func & 0x3f) << 6) | (uint64_t)1;     // PAL entry offset
+            const AlphaPALCallEntry entry = m_profile.pal.call_pal_entry(
+                func, cpc, b->tag + 4 * (uint64_t)(i + 1));
+            uint32_t allowed_modes = 0;
+            for (uint32_t mode = 0; mode < 4; ++mode)
+                if (m_profile.pal.call_pal_valid(func, mode)) allowed_modes |= 1u << mode;
             Label do_vector = a.new_label();
-            if (func < 0x40) {                          // privileged: OPCDEC trap if in user mode (cm != 0)
-                a.cmp(x86::dword_ptr(x86::rbp, m_off.state_cm), imm(0));
-                a.je(do_vector);
+            if (allowed_modes != 0xfu) {   // Only modes admitted by the family may vector.
+                for (uint32_t mode = 0; mode < 4; ++mode) {
+                    if (!(allowed_modes & (1u << mode))) continue;
+                    a.cmp(x86::dword_ptr(x86::rbp, m_off.state_cm), imm(mode));
+                    a.je(do_vector);
+                }
                 emit_call(opcdec_helper, { {JA_CPU, 0}, {JA_I64, cpc} });  // jit_opcdec: sets state.pc/exc_addr, clears lock
                 a.add(x86::r13, imm(i + 1));                 // count the block; helper already wrote state.pc
                 a.mov(x86::eax, x86::r13d);
                 a.jmp(done);                               // trap path exits (does not chain)
             }
             a.bind(do_vector);
-            a.mov(x86::rax, imm(cpc));                                  // EXC_ADDR = CALL_PAL address
+            a.mov(x86::rax, imm(entry.saved_pc));
             a.mov(x86::qword_ptr(x86::rbp, m_off.exc_addr), x86::rax);
             a.movzx(x86::eax, x86::byte_ptr(x86::rbp, m_off.sde));      // SDE (0/1)
-            a.mov(x86::rcx, imm(ret));
-            if (const int p23 = pin_id(23); p23 >= 0) {
-                // With SDE clear CALL_PAL writes ordinary R23. 
-                // With SDE set, the destination is shadow R55.
-                a.test(x86::eax, x86::eax);
-                a.cmovz(x86::gpq((uint32_t)p23), x86::rcx);
+            a.mov(x86::rcx, imm(entry.return_pc));
+            if (const int link_pin = pin_id(entry.link_register); link_pin >= 0) {
+                if (entry.link_register == entry.shadow_link_register)
+                    a.mov(x86::gpq((uint32_t)link_pin), x86::rcx);
+                else {
+                    a.test(x86::eax, x86::eax);
+                    a.cmovz(x86::gpq((uint32_t)link_pin), x86::rcx);
+                }
             }
-            a.shl(x86::eax, imm(5));                                    // * 32
-            a.add(x86::eax, imm(23));                                   // R23 index: 23, or 55 if SDE
+            if (entry.shadow_link_register < 32
+                && entry.shadow_link_register != entry.link_register) {
+                if (const int shadow_pin = pin_id(entry.shadow_link_register); shadow_pin >= 0) {
+                    a.test(x86::eax, x86::eax);
+                    a.cmovnz(x86::gpq((uint32_t)shadow_pin), x86::rcx);
+                }
+            }
+            const int link_stride = static_cast<int>(entry.shadow_link_register)
+                                  - static_cast<int>(entry.link_register);
+            if (link_stride == 32) a.shl(x86::eax, imm(5));
+            else a.imul(x86::eax, x86::eax, imm(link_stride));
+            a.add(x86::eax, imm(entry.link_register));
             a.mov(x86::qword_ptr(x86::rbx, x86::rax, 3), x86::rcx);     // r[idx] = return address
             a.mov(x86::r10, x86::qword_ptr(x86::rbp, m_off.pal_base));
-            a.or_(x86::r10, imm(voff));                                 // r10 = pal_base | entry offset
+            a.or_(x86::r10, imm(entry.offset));                         // r10 = pal_base | entry offset
             a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);  // state.pc = PAL entry
             continue;                                                  // -> terminator epilogue chains via r10
         }

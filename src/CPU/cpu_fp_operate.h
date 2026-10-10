@@ -263,37 +263,37 @@
 
 /* float <-> integer register moves
  * Alpha requires Rb == 31 for these bit-pattern moves.
- * QEMU enforces this with REQUIRE_REG_31; we use GO_PAL(OPCDEC). */
+ * QEMU enforces this with REQUIRE_REG_31; we use GO_PAL(AlphaPALException::OpcodeDecode). */
 #define DO_FTOIS  FPSTART; \
   do { \
-    if (REG_2 != 31) { GO_PAL(OPCDEC); } \
+    if (REG_2 != 31) { GO_PAL(AlphaPALException::OpcodeDecode); } \
     else { state.r[REG_3] = sext_u64_32(ieee_sts(state.f[FREG_1])); } \
   } while (0)
 
 #define DO_FTOIT  FPSTART; \
   do { \
-    if (REG_2 != 31) { GO_PAL(OPCDEC); } \
+    if (REG_2 != 31) { GO_PAL(AlphaPALException::OpcodeDecode); } \
     else { state.r[REG_3] = state.f[FREG_1]; } \
   } while (0)
 
  /* ITOFT: raw 64-bit move into the FP reg */
 #define DO_ITOFT  FPSTART; \
   do { \
-    if (REG_2 != 31) { GO_PAL(OPCDEC); } \
+    if (REG_2 != 31) { GO_PAL(AlphaPALException::OpcodeDecode); } \
     else { state.f[FREG_3] = state.r[REG_1]; } \
   } while (0)
 
 /* ITOFS: build an S-format value from the low 32 bits */
 #define DO_ITOFS  FPSTART; \
   do { \
-    if (REG_2 != 31) { GO_PAL(OPCDEC); } \
+    if (REG_2 != 31) { GO_PAL(AlphaPALException::OpcodeDecode); } \
     else { state.f[FREG_3] = ieee_lds((u32)state.r[REG_1]); } \
   } while (0)
 
 /* ITOFF: build a VAX F-format value from the low 32 bits */
 #define DO_ITOFF  FPSTART; \
   do { \
-    if (REG_2 != 31) { GO_PAL(OPCDEC); } \
+    if (REG_2 != 31) { GO_PAL(AlphaPALException::OpcodeDecode); } \
     else { state.f[FREG_3] = vax_ldf(SWAP_VAXF((u32)state.r[REG_1])); } \
   } while (0)
 
@@ -325,17 +325,17 @@
 
 /* Square-root */
 #define DO_SQRTG  FPSTART; \
-  do { if (REG_1 != 31) { GO_PAL(OPCDEC); } \
+  do { if (REG_1 != 31) { GO_PAL(AlphaPALException::OpcodeDecode); } \
        else { state.f[FREG_3] = vax_sqrt(state.f[FREG_2], ins, DT_G); } } while (0)
 
 #define DO_SQRTF  FPSTART; \
-  do { if (REG_1 != 31) { GO_PAL(OPCDEC); } \
+  do { if (REG_1 != 31) { GO_PAL(AlphaPALException::OpcodeDecode); } \
        else { state.f[FREG_3] = vax_sqrt(state.f[FREG_2], ins, DT_F); } } while (0)
 
 #define DO_SQRTT  FPSTART; \
-  do { if (REG_1 != 31) { GO_PAL(OPCDEC); } \
+  do { if (REG_1 != 31) { GO_PAL(AlphaPALException::OpcodeDecode); } \
        else { state.f[FREG_3] = ieee_sqrt(state.f[FREG_2], ins, DT_T); } } while (0)
 
 #define DO_SQRTS  FPSTART; \
-  do { if (REG_1 != 31) { GO_PAL(OPCDEC); } \
+  do { if (REG_1 != 31) { GO_PAL(AlphaPALException::OpcodeDecode); } \
        else { state.f[FREG_3] = ieee_sqrt(state.f[FREG_2], ins, DT_S); } } while (0)

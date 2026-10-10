@@ -4290,15 +4290,26 @@ static A64OpEmitReceipt emit_a64_call_pal(A64EmitContext& context,
 
   const uint32_t fn = op.ins & 0x1fffffffu;
   const uint64_t cpc = a64_advance_pc(context.start_pc, index);
-  const uint64_t ret = a64_advance_pc(context.start_pc, index + 1) & ~uint64_t(2);
-  const uint64_t voff = uint64_t(0x2000) | (uint64_t(fn & 0x80) << 5)
-                      | (uint64_t(fn & 0x3f) << 6) | 1u;
+  const AlphaPALCallEntry entry = context.profile.pal.call_pal_entry(
+      fn, cpc, a64_advance_pc(context.start_pc, index + 1));
+  uint32_t allowed_modes = 0;
+  for (uint32_t mode = 0; mode < 4; ++mode)
+    if (context.profile.pal.call_pal_valid(fn, mode)) allowed_modes |= 1u << mode;
   Error err = Error::kOk;
 
   const Label do_vector = a.new_label();
-  if (fn < 0x40) {   // privileged: cm != 0 -> OPCDEC (cm is 0..3; low byte suffices)
-    err = emit_a64_load_cpu_u8(a, RA::kScratch3.w(), context.offsets.state_cm, false);
-    if (err == Error::kOk) err = a.cbz(RA::kScratch3.w(), do_vector);
+  if (allowed_modes != 0xfu) {   // Only modes admitted by the family may vector.
+    if (allowed_modes)
+      err = emit_a64_load_cpu_u8(a, RA::kScratch3.w(), context.offsets.state_cm, false);
+    for (uint32_t mode = 0; mode < 4; ++mode) {
+      if (!(allowed_modes & (1u << mode))) continue;
+      if (mode == 0) {
+        if (err == Error::kOk) err = a.cbz(RA::kScratch3.w(), do_vector);
+      } else {
+        if (err == Error::kOk) err = a.cmp(RA::kScratch3.w(), imm(mode));
+        if (err == Error::kOk) err = a.b_eq(do_vector);
+      }
+    }
     if (err == Error::kOk)
       err = emit_a64_helper_call(a, context.offsets, context.helpers, context.regs,
           context.pal_shadow, context.helpers.opcdec_helper,
@@ -4308,34 +4319,40 @@ static A64OpEmitReceipt emit_a64_call_pal(A64EmitContext& context,
     if (err == Error::kOk) err = a.b(context.done);
   }
   if (err == Error::kOk) err = a.bind(do_vector);
-  if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kScratch0, cpc);
+  if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kScratch0, entry.saved_pc);
   if (err == Error::kOk)
     err = emit_a64_store_cpu_u64(a, RA::kScratch0, context.offsets.exc_addr);
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
 
-  // Return-address link: R23 or shadow R55 by the LIVE SDE (runtime state).
+  // The family selects the link slots; LIVE SDE chooses the runtime destination.
   err = emit_a64_load_cpu_u8(a, RA::kScratch3.w(), context.offsets.sde, false);
-  if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kScratch5, ret);
+  if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kScratch5, entry.return_pc);
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
   {
     const Label shadow = a.new_label(), linked = a.new_label();
     err = a.cbnz(RA::kScratch3.w(), shadow);
-    const A64GprRoute r23 =
-        a64_guest_gpr_write_route(context.regs, 23, false);
-    if (err == Error::kOk && r23.kind == A64GprRouteKind::kPinned)
-      err = a.mov(a64::x(static_cast<uint32_t>(r23.host)), RA::kScratch5);
+    const A64GprRoute link =
+        a64_guest_gpr_write_route(context.regs, entry.link_register, false);
+    if (err == Error::kOk && link.kind == A64GprRouteKind::kPinned)
+      err = a.mov(a64::x(static_cast<uint32_t>(link.host)), RA::kScratch5);
     if (err == Error::kOk)
-      err = a.str(RA::kScratch5, a64::ptr(RA::kRegs, 23 * 8));
+      err = a.str(RA::kScratch5, a64::ptr(RA::kRegs, entry.link_register * 8));
     if (err == Error::kOk) err = a.b(linked);
     if (err == Error::kOk) err = a.bind(shadow);
+    if (entry.shadow_link_register < 32) {
+      const A64GprRoute shadow_link =
+          a64_guest_gpr_write_route(context.regs, entry.shadow_link_register, false);
+      if (err == Error::kOk && shadow_link.kind == A64GprRouteKind::kPinned)
+        err = a.mov(a64::x(static_cast<uint32_t>(shadow_link.host)), RA::kScratch5);
+    }
     if (err == Error::kOk)
-      err = a.str(RA::kScratch5, a64::ptr(RA::kRegs, 55 * 8));
+      err = a.str(RA::kScratch5, a64::ptr(RA::kRegs, entry.shadow_link_register * 8));
     if (err == Error::kOk) err = a.bind(linked);
     if (err != Error::kOk) return a64_completed_op_receipt(op, err);
   }
 
   err = emit_a64_load_cpu_u64(a, RA::kScratch1, context.offsets.pal_base);
-  if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kScratch2, voff);
+  if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kScratch2, entry.offset);
   if (err == Error::kOk)
     err = a.orr(RA::kNextPc, RA::kScratch1, RA::kScratch2);
   return a64_completed_op_receipt(op, err);

@@ -78,6 +78,8 @@ AM_CPPFLAGS = -I$(top_srcdir)/src/emu
 # CPU headers are distributed with the emulator sources.
 noinst_HEADERS = CPU/AlphaCPU.h \
        CPU/AlphaCPUProfile.h \
+       CPU/AlphaPAL.h \
+       CPU/Ev68PAL.h \
        CPU/cpu_arith.h \
        CPU/cpu_bwx.h \
        CPU/cpu_control.h \

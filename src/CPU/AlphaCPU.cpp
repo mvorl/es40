@@ -537,6 +537,34 @@ CAlphaCPU::TickHold CAlphaCPU::tick_hold(u64 period_ns)
 	}
 }
 
+AlphaPALExceptionEntry CAlphaCPU::pal_exception_entry(AlphaPALException reason, u64 pc) const
+{
+	return m_profile.pal.exception_entry(reason, pc);
+}
+
+u64 CAlphaCPU::pal_exception_offset(AlphaPALException reason) const
+{
+	// MMU calls keep their fault-state and lock handling - family vector 
+	// is made selection here. GO_PAL uses the complete entry.
+	return pal_exception_entry(reason, state.current_pc).offset;
+}
+
+void CAlphaCPU::enter_pal_exception(const AlphaPALExceptionEntry& entry)
+{
+	state.exc_addr = entry.saved_pc;
+	set_pc(state.pal_base | entry.offset | U64(1));
+	if (entry.clear_lock)
+		cSystem->cpu_clear_lock(state.iProcNum);
+}
+
+void CAlphaCPU::enter_native_call_pal(u32 function)
+{
+	const auto entry = m_profile.pal.call_pal_entry(function, state.current_pc, state.pc);
+	state.exc_addr = entry.saved_pc;
+	state.r[state.sde ? entry.shadow_link_register : entry.link_register] = entry.return_pc;
+	set_pc(state.pal_base | entry.offset);
+}
+
 /**
  * Constructor.
  **/
@@ -1512,8 +1540,8 @@ void CAlphaCPU::jit_run(int budget)
 						// CALL_PAL vectored to its PALcode entry (pal_base | offset); the kernel-mode
 						// path never traps, but accept the OPCDEC vector too.
 						const u32 func = ins & 0x1FFFFFFF;
-						const u64 voff = (u64)0x2000 | ((u64)(func & 0x80) << 5) | ((u64)(func & 0x3f) << 6) | U64(1);
-						ok_branch = (state.pc == (state.pal_base | voff)) || (state.pc == (state.pal_base | OPCDEC | U64(1)));
+						const u64 voff = m_profile.pal.call_pal_entry(func, vpc - 4, vpc).offset;
+						ok_branch = (state.pc == (state.pal_base | voff)) || (state.pc == (state.pal_base | pal_exception_offset(AlphaPALException::OpcodeDecode) | U64(1)));
 					}
 					if (!ok_branch)
 						clean = false;
@@ -1839,7 +1867,7 @@ int CAlphaCPU::jit_unalign(u64 va, u32 ins, int flags, int align)
 	state.exc_sum = (u64)I_GETRA(ins) << 8;
 	state.mm_stat = (I_GETOP(ins) << 4) | ((flags & ACCESS_WRITE) ? 1 : 0);
 	TRACE_UNALIGN(flags, align);
-	GO_PAL(UNALIGN);
+	GO_PAL(AlphaPALException::Unaligned);
 	return 2;
 }
 
@@ -2498,13 +2526,11 @@ u64 CAlphaCPU::jit_stc(CAlphaCPU* cpu, u64 va, u64 descr, u64 value)
 }
 
 /* CALL_PAL OPCDEC trap: a privileged function (< 0x40) attempted in user mode. Mirrors
-   GO_PAL(OPCDEC) -- save the faulting PC in EXC_ADDR, vector to the PALcode OPCDEC entry,
+   GO_PAL(AlphaPALException::OpcodeDecode) -- save the faulting PC in EXC_ADDR, vector to the PALcode OPCDEC entry,
    and clear the load-lock flag */
 void CAlphaCPU::jit_opcdec(CAlphaCPU* cpu, u64 cpc)
 {
-	cpu->state.exc_addr = cpc;
-	cpu->set_pc(cpu->state.pal_base | OPCDEC | U64(1));
-	cpu->cSystem->cpu_clear_lock(cpu->state.iProcNum);
+	cpu->enter_pal_exception(cpu->pal_exception_entry(AlphaPALException::OpcodeDecode, cpc));
 }
 
 /* HW_MFPR (PALmode): return the IPR selected by (ins>>8)&0xff. */
@@ -3068,7 +3094,7 @@ _next_instruction:
 				// irq<4> = halt / MP work request (TIG ev6_halt)
 				if (state.eir & state.eien & 0x10)
 				{
-					GO_PAL(INTERRUPT);
+					GO_PAL(AlphaPALException::Interrupt);
 					seq_remaining = 0;
 #ifndef ES40_JIT
 					goto _next_instruction;
@@ -3111,7 +3137,7 @@ _next_instruction:
 #ifdef JIT_STATS
 					m_stat_kick[5]++;
 #endif
-					GO_PAL(INTERRUPT);
+					GO_PAL(AlphaPALException::Interrupt);
 					seq_remaining = 0;
 #ifndef ES40_JIT
 					goto _next_instruction;
@@ -3656,7 +3682,7 @@ _next_instruction:
 		 * OPCDEC unless executing in PALmode or in kernel mode with I_CTL[HWE]
 		 * set. Matches brokenpipe palres_access_check(). */
 		if (!(state.pc & 1) && !(state.cm == 0 && state.hwe)) {
-			GO_PAL(OPCDEC);
+			GO_PAL(AlphaPALException::OpcodeDecode);
 			ES40_EXECUTE_END();
 		}
 		function = (ins >> 8) & 0xff;
@@ -3667,7 +3693,7 @@ _next_instruction:
 
 	case 0x1b:          // PAL reserved - HW_LD (PALRES)
 		if (!(state.pc & 1) && !(state.cm == 0 && state.hwe)) {
-			GO_PAL(OPCDEC);
+			GO_PAL(AlphaPALException::OpcodeDecode);
 			ES40_EXECUTE_END();
 		}
 		function = (ins >> 12) & 0xf;
@@ -3710,7 +3736,7 @@ _next_instruction:
 
 	case 0x1d:          // HW_MTPR (PALRES)
 		if (!(state.pc & 1) && !(state.cm == 0 && state.hwe)) {
-			GO_PAL(OPCDEC);
+			GO_PAL(AlphaPALException::OpcodeDecode);
 			ES40_EXECUTE_END();
 		}
 		function = (ins >> 8) & 0xff;
@@ -3718,14 +3744,14 @@ _next_instruction:
 
 	case 0x1e:          // HW_RET (PALRES)
 		if (!(state.pc & 1) && !(state.cm == 0 && state.hwe)) {
-			GO_PAL(OPCDEC);
+			GO_PAL(AlphaPALException::OpcodeDecode);
 			ES40_EXECUTE_END();
 		}
 		OP(HW_RET, RET);
 
 	case 0x1f:          // HW_ST (PALRES)
 		if (!(state.pc & 1) && !(state.cm == 0 && state.hwe)) {
-			GO_PAL(OPCDEC);
+			GO_PAL(AlphaPALException::OpcodeDecode);
 			ES40_EXECUTE_END();
 		}
 		function = (ins >> 12) & 0xf;
@@ -4073,7 +4099,7 @@ int CAlphaCPU::initiate_acv_fault(u64 virt, int flags, u32 ins)
 			return res ? res : -1;
 		}
 
-		set_pc(state.pal_base + IACV + 1);
+		set_pc(state.pal_base + pal_exception_offset(AlphaPALException::InstructionAccessViolation) + 1);
 		return -1;
 	}
 
@@ -4096,7 +4122,7 @@ int CAlphaCPU::initiate_acv_fault(u64 virt, int flags, u32 ins)
 		return res ? res : -1;
 	}
 
-	set_pc(state.pal_base + DFAULT + 1);
+	set_pc(state.pal_base + pal_exception_offset(AlphaPALException::DataFault) + 1);
 	return -1;
 }
 
@@ -4293,14 +4319,16 @@ int CAlphaCPU::virt2phys(u64 virt, u64* phys, int flags, bool* asm_bit, u32 ins)
 #ifdef JIT_STATS
 				m_stat_tb[1]++;
 #endif
-				set_pc(state.pal_base + ((state.i_ctl_va_mode & 1) ? DTBM_DOUBLE_4 : DTBM_DOUBLE_3) + 1);
+				const auto reason = (state.i_ctl_va_mode & 1)
+					? AlphaPALException::DataTlbDoubleMiss48 : AlphaPALException::DataTlbDoubleMiss43;
+				set_pc(state.pal_base + pal_exception_offset(reason) + 1);
 			}
 			else if (flags & ACCESS_EXEC)
 			{
 #ifdef JIT_STATS
 				m_stat_tb[2]++;
 #endif
-				set_pc(state.pal_base + ITB_MISS + 1);
+				set_pc(state.pal_base + pal_exception_offset(AlphaPALException::InstructionTlbMiss) + 1);
 			}
 			else
 			{
@@ -4326,7 +4354,7 @@ int CAlphaCPU::virt2phys(u64 virt, u64* phys, int flags, bool* asm_bit, u32 ins)
 					m_stat_va[sl][1]++;
 				}
 #endif
-				set_pc(state.pal_base + DTBM_SINGLE + 1);
+				set_pc(state.pal_base + pal_exception_offset(AlphaPALException::DataTlbMiss) + 1);
 			}
 
 			return -1;
@@ -4431,7 +4459,7 @@ int CAlphaCPU::virt2phys(u64 virt, u64* phys, int flags, bool* asm_bit, u32 ins)
 				}
 				else
 				{
-					set_pc(state.pal_base + IACV + 1);
+					set_pc(state.pal_base + pal_exception_offset(AlphaPALException::InstructionAccessViolation) + 1);
 					return -1;
 				}
 			}
@@ -4467,7 +4495,7 @@ int CAlphaCPU::virt2phys(u64 virt, u64* phys, int flags, bool* asm_bit, u32 ins)
 #ifdef JIT_STATS
 					m_stat_tb[3]++;
 #endif
-					set_pc(state.pal_base + DFAULT + 1);
+					set_pc(state.pal_base + pal_exception_offset(AlphaPALException::DataFault) + 1);
 					return -1;
 				}
 			}
@@ -4501,7 +4529,7 @@ int CAlphaCPU::virt2phys(u64 virt, u64* phys, int flags, bool* asm_bit, u32 ins)
 				}
 				else
 				{
-					set_pc(state.pal_base + IACV + 1);
+					set_pc(state.pal_base + pal_exception_offset(AlphaPALException::InstructionAccessViolation) + 1);
 					return -1;
 				}
 			}
@@ -4550,7 +4578,7 @@ int CAlphaCPU::virt2phys(u64 virt, u64* phys, int flags, bool* asm_bit, u32 ins)
 #ifdef JIT_STATS
 					m_stat_tb[3]++;
 #endif
-					set_pc(state.pal_base + DFAULT + 1);
+					set_pc(state.pal_base + pal_exception_offset(AlphaPALException::DataFault) + 1);
 					return -1;
 				}
 			}

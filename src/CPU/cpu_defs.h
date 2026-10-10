@@ -576,22 +576,6 @@ inline u64 fsqrt64(u64 asig, s32 exp)
   return zsig;
 }
 
-// INTERRUPT VECTORS
-#define DTBM_DOUBLE_3 U64(0x100)
-#define DTBM_DOUBLE_4 U64(0x180)
-#define FEN           U64(0x200)
-#define UNALIGN       U64(0x280)
-#define DTBM_SINGLE   U64(0x300)
-#define DFAULT        U64(0x380)
-#define OPCDEC        U64(0x400)
-#define IACV          U64(0x480)
-#define MCHK          U64(0x500)
-#define ITB_MISS      U64(0x580)
-#define ARITH         U64(0x600)
-#define INTERRUPT     U64(0x680)
-#define MT_FPCR       U64(0x700)
-#define RESET         U64(0x780)
-
 #define DISP_12   (sext_u64_12(ins))
 #define DISP_13   (sext_u64_13(ins))
 #define DISP_16   (sext_u64_16(ins))
@@ -665,7 +649,7 @@ inline u64 fsqrt64(u64 asig, s32 exp)
     /* HRM 5.3.8: pure misalignment is not an access violation (ACV). */        \
     state.mm_stat = (I_GETOP(ins) << 4) | ((flags & ACCESS_WRITE) ? 1 : 0);      \
     TRACE_UNALIGN(flags, align);                                                \
-    GO_PAL(UNALIGN);                                                            \
+    GO_PAL(AlphaPALException::Unaligned);                                     \
     ES40_EXECUTE_END();                                                         \
   }
 
@@ -881,7 +865,7 @@ inline u64 fsqrt64(u64 asig, s32 exp)
 
 #define FPSTART       if(state.fpen == 0) /* flt point disabled? */ \
   {                                                                 \
-    GO_PAL(FEN);            /* set trap */                          \
+    GO_PAL(AlphaPALException::FloatingPointDisabled);            /* set trap */ \
     break;                  /* and stop current instruction */      \
   }                                                                 \
   state.exc_sum = 0;
@@ -901,7 +885,7 @@ inline u64 fsqrt64(u64 asig, s32 exp)
   {                                                                \
     state.exc_sum |= flags; /* cause of trap */                    \
     state.exc_sum |= (reg & 0x1f) << 8; /* destination register */ \
-    GO_PAL(ARITH);  /* trap */                                     \
+    GO_PAL(AlphaPALException::Arithmetic);  /* trap */                        \
   }
 
 #define ARITH_TRAP_I(flags, reg)      \
