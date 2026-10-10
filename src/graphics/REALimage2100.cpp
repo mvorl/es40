@@ -1150,6 +1150,36 @@ bool CRealImage2100::copy_profile() const
 		native_copy_control_profile();
 }
 
+bool CRealImage2100::block_copy_profile() const
+{
+	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
+	if ((control & ~0xff01u) != 0xa1000002u ||
+		(banks != 1 && banks != 2 && banks != 5 && banks != 6) ||
+		!native_copy_control_profile(true, true))
+		return false;
+	const unsigned bank = banks & 2 ? 1 : 0;
+	if (!plane_profile(bank) || m_planes[bank].unknown_masks ||
+		((plane_value(bank, 0, 0xffffffff) & 0xff000000u) &&
+			(plane_value(bank, 4, 0x03030303) >> 24) != 5))
+		return false;
+	for (unsigned i = 24; i < 24 + block_width() / 2; ++i)
+		if (plane_value(bank, i, 0xffffffff) != 0xffffffff)
+			return false;
+	if (!(banks & 4))
+		return true;
+	if (m_planes[2].unknown_masks)
+		return false;
+	const uint32_t expected[] = {0, 0, 0x0fff0fff, 0x03030303, 0x0a000000,
+		0, 0, 0, 0, 0x00ff0000, 0x33300000, 0x100, 0, 0x100, 0};
+	for (unsigned i = 0; i < std::size(expected); ++i)
+		if (plane_value(2, i + 1, expected[i]) != expected[i])
+			return false;
+	for (unsigned i = 24; i < 24 + block_width() / 2; ++i)
+		if (plane_value(2, i, 0xffffffff) != 0xffffffff)
+			return false;
+	return true;
+}
+
 bool CRealImage2100::block_transfer_profile(bool upload) const
 {
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
@@ -1675,7 +1705,7 @@ void CRealImage2100::execute_block(const BlockOperation& op)
 
 void CRealImage2100::block_command(uint32_t v)
 {
-	if (v == 0x01000032 || v == 0x01000052)
+	if (v == 0x01000032 || v == 0x01000052 || v == 0x07000072)
 		start_command(BlockCommand, v);
 	else
 		execute_block(prepare_block(v));
@@ -1693,7 +1723,8 @@ CRealImage2100::StartPrefix CRealImage2100::begin_start(uint32_t a, uint32_t v)
 		for (unsigned bank = 0; bank < 2; ++bank)
 			if (destination_banks & (1u << bank))
 				m_clear_cache[bank] = {};
-	if (((a == FillCommand && (v == 0x09040832 || v == 0x010408b2)) || a == BitmapCommand) &&
+	if (((a == FillCommand && (v == 0x09040832 || v == 0x010408b2)) || a == BitmapCommand ||
+		(a == BlockCommand && v == 0x07000072)) &&
 		(peek(DrawControl) & 0x4000))
 		m_clear_cache[2] = {};
 	if (m_pending.width)
@@ -1722,12 +1753,14 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 		return op;
 	op.kind = StartOperation::Kind::Rejected;
 	const bool block_transfer = a == BlockCommand && (v == 0x01000032 || readback);
+	const bool block_copy = a == BlockCommand && v == 0x07000072;
+	const bool block_geometry = block_transfer || block_copy;
 	const bool upload = (a == HostCommand || a == BlockCommand) && v == 0x01000032;
 	const bool fast_copy = a == HostCommand &&
 		(v == 0x00200062 || v == 0x00200072 || v == 0x01200062 || v == 0x01200072);
 	const bool copy = (a == HostCommand &&
 		(v == 0x01000062 || v == 0x00000062 || v == 0x01000072 || v == 0x00000072)) ||
-		fast_copy || cross_copy;
+		fast_copy || cross_copy || block_copy;
 	const bool initialization = a == FillCommand &&
 		(v == 0x09040832 || v == 0x010408b2);
 	const bool fill = a == FillCommand && (v == 0x09000832 || v == 0x09040832);
@@ -1740,9 +1773,10 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	op.mono_offset = host_mono ? (v >> 8) & 7 : 0;
 	const uint32_t mono_width = host_mono && (v & 0x7700) ? ((v >> 12) & 7) + 1 : 0;
 	op.mono = bitmap || host_mono || (a == FillCommand && (v == 0x010008f2 || v == 0x010408b2));
-	op.auxiliary = (initialization || bitmap) && (peek(DrawControl) & 0x4000);
+	op.auxiliary = (initialization || bitmap || block_copy) && (peek(DrawControl) & 0x4000);
 	const bool profile = integer_mono ? integer_rgb_profile() : bitmap ? bitmap_profile() :
-		block_transfer ? block_transfer_profile(upload) : fast_copy ? fast_copy_profile() :
+		block_copy ? block_copy_profile() : block_transfer ? block_transfer_profile(upload) :
+		fast_copy ? fast_copy_profile() :
 		((fill || initialization) ? fill_profile(initialization) : copy_profile()) &&
 		(!(selected & 1) || plane_profile(0)) && (!(selected & 2) || plane_profile(1)) &&
 		(!op.auxiliary || plane_profile(2)) &&
@@ -1752,16 +1786,16 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 		return op;
 	// Bit 18 selects host geometry for the miniport's initialization rectangles.
 	const bool host_geometry = a == HostCommand || initialization;
-	const uint32_t origin = peek(block_transfer ? (readback ? BlockSource : BlockDestination) :
+	const uint32_t origin = peek(block_geometry ? (readback ? BlockSource : BlockDestination) :
 		bitmap ? BitmapOrigin : host_geometry ? HostOrigin : FillOrigin),
-		extent = peek(block_transfer ? BlockExtent : bitmap ? BitmapExtent : host_geometry ? HostExtent : FillExtent),
+		extent = peek(block_geometry ? BlockExtent : bitmap ? BitmapExtent : host_geometry ? HostExtent : FillExtent),
 		width = (extent & 0xffff) + 1, height = (extent >> 16) + 1;
 	op.width = width;
 	op.height = height;
 	op.banks = (peek(DrawControl) >> 12) & 3;
 	op.x = int16_t(origin & 0xffff);
 	op.y = int16_t(origin >> 16);
-	if ((block_transfer || integer_mono) && (op.x < 0 || op.y < 0 ||
+	if ((block_geometry || integer_mono) && (op.x < 0 || op.y < 0 ||
 		uint64_t(op.x) + width > m_color_width || uint64_t(op.y) + height > m_color_height))
 		return op;
 	if (readback)
@@ -1826,6 +1860,8 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 			op.rejection = StartOperation::Rejection::CopySource;
 			return op;
 		}
+		if (op.auxiliary)
+			op.auxiliary_mask = plane_value(2, 0, 0xffffffff);
 		op.kind = StartOperation::Kind::Copy;
 		return op;
 	}
@@ -1932,6 +1968,13 @@ void CRealImage2100::execute_start(const StartOperation& op)
 				}
 				else
 					color_write(op.color, uint32_t(col), uint32_t(row), m_color[offset], op.destination_banks);
+				if (op.auxiliary)
+				{
+					const uint32_t source = m_auxiliary[size_t(op.sy + row - op.y) * m_color_width +
+						size_t(op.sx + col - op.x)];
+					uint32_t& destination = m_auxiliary[size_t(row) * m_color_width + col];
+					destination = (destination & ~op.auxiliary_mask) | (source & op.auxiliary_mask);
+				}
 			}
 		return;
 	}
