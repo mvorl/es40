@@ -1705,7 +1705,8 @@ void CRealImage2100::execute_block(const BlockOperation& op)
 
 void CRealImage2100::block_command(uint32_t v)
 {
-	if (v == 0x01000032 || v == 0x01000052 || v == 0x07000072 || v == 0x06000062)
+	if (v == 0x01000032 || v == 0x01000052 || v == 0x01000072 ||
+		v == 0x07000072 || v == 0x06000062)
 		start_command(BlockCommand, v);
 	else
 		execute_block(prepare_block(v));
@@ -1753,7 +1754,8 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 		return op;
 	op.kind = StartOperation::Kind::Rejected;
 	const bool block_transfer = a == BlockCommand && (v == 0x01000032 || readback);
-	const bool block_copy = a == BlockCommand && (v == 0x07000072 || v == 0x06000062);
+	const bool block_copy = a == BlockCommand &&
+		(v == 0x01000072 || v == 0x07000072 || v == 0x06000062);
 	const bool block_geometry = block_transfer || block_copy;
 	const bool upload = (a == HostCommand || a == BlockCommand) && v == 0x01000032;
 	const bool fast_copy = a == HostCommand &&
@@ -1775,7 +1777,9 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	op.mono = bitmap || host_mono || (a == FillCommand && (v == 0x010008f2 || v == 0x010408b2));
 	op.auxiliary = (initialization || bitmap || block_copy) && (peek(DrawControl) & 0x4000);
 	const bool profile = integer_mono ? integer_rgb_profile() : bitmap ? bitmap_profile() :
-		block_copy ? block_copy_profile() : block_transfer ? block_transfer_profile(upload) :
+		block_copy ? (v == 0x01000072 ?
+			!peek(GlobalControl0) && block_transfer_profile(false) : block_copy_profile()) :
+		block_transfer ? block_transfer_profile(upload) :
 		fast_copy ? fast_copy_profile() :
 		((fill || initialization) ? fill_profile(initialization) : copy_profile()) &&
 		(!(selected & 1) || plane_profile(0)) && (!(selected & 2) || plane_profile(1)) &&
