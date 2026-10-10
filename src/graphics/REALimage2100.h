@@ -176,7 +176,7 @@ public:
   static constexpr uint32_t MaxStateSize = MinStateSize + 24 + MaxShadowRegisters * 8 +
     MaxTextureSize - MinTextureSize + (MaxColorPixels - ColorPixels) * 9 +
     PlaneCount * (PlaneRegisterCount - LegacyPlaneRegisterCount) * 4 +
-    MaxColorPixels * 3 + 16 + PatternStateSize;
+    MaxColorPixels * 3 + 24 + PatternStateSize;
 
   using IRQCallback = std::function<void(bool)>;
   using DiagnosticCallback = std::function<void(const Diagnostic&)>;
@@ -307,7 +307,7 @@ private:
   bool native_copy_control_profile(bool clear = false, bool integer = false) const;
   bool block_transfer_profile(bool upload) const;
   bool bitmap_profile() const;
-  bool integer_mono_profile() const;
+  bool integer_rgb_profile() const;
   bool fill_profile(bool initialization = false) const;
   bool copy_profile() const;
   bool fast_copy_profile() const;
@@ -449,6 +449,7 @@ private:
   struct Pending
   {
     uint32_t x = 0, y = 0, width = 0, height = 0, word = 0, banks = 0;
+    uint32_t auxiliary_compare_mask = 0, auxiliary_reference = 0;
   } m_pending, m_readback;
   // Unknown native registers, keyed by dword-aligned address.
   std::map<uint32_t, uint32_t> m_shadow;

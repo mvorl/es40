@@ -1153,6 +1153,8 @@ bool CRealImage2100::copy_profile() const
 bool CRealImage2100::block_transfer_profile(bool upload) const
 {
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
+	if (upload && (banks == 5 || banks == 6))
+		return integer_rgb_profile();
 	if ((control & ~0xff01u) != 0x21000002u || !banks || (banks & ~3u) ||
 		!native_copy_control_profile(true, true))
 		return false;
@@ -1195,7 +1197,7 @@ bool CRealImage2100::bitmap_profile() const
 	return true;
 }
 
-bool CRealImage2100::integer_mono_profile() const
+bool CRealImage2100::integer_rgb_profile() const
 {
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
 	const bool auxiliary_compare = (control & ~0x00ffff01u) == 0xa1000002u &&
@@ -1746,7 +1748,7 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	const uint32_t mono_width = host_mono && (v & 0x7700) ? ((v >> 12) & 7) + 1 : 0;
 	op.mono = bitmap || host_mono || (a == FillCommand && (v == 0x010008f2 || v == 0x010408b2));
 	op.auxiliary = (initialization || bitmap) && (peek(DrawControl) & 0x4000);
-	const bool profile = integer_mono ? integer_mono_profile() : bitmap ? bitmap_profile() :
+	const bool profile = integer_mono ? integer_rgb_profile() : bitmap ? bitmap_profile() :
 		block_transfer ? block_transfer_profile(upload) : fast_copy ? fast_copy_profile() :
 		((fill || initialization) ? fill_profile(initialization) : copy_profile()) &&
 		(!(selected & 1) || plane_profile(0)) && (!(selected & 2) || plane_profile(1)) &&
@@ -1796,6 +1798,11 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 		{
 			op.rejection = StartOperation::Rejection::HostBounds;
 			return op;
+		}
+		if (block_transfer && (peek(DrawControl) & 0x4000))
+		{
+			op.auxiliary_compare_mask = 0x8000;
+			op.auxiliary_reference = (peek(DrawControl) >> 4) & op.auxiliary_compare_mask;
 		}
 		op.kind = StartOperation::Kind::Upload;
 		return op;
@@ -1914,7 +1921,7 @@ void CRealImage2100::execute_start(const StartOperation& op)
 	if (op.kind == StartOperation::Kind::Upload)
 	{
 		m_pending = {uint32_t(op.x) & 0xffff, uint32_t(op.y) & 0xffff,
-			op.width, op.height, 0, op.banks};
+			op.width, op.height, 0, op.banks, op.auxiliary_compare_mask, op.auxiliary_reference};
 		return;
 	}
 	if (op.kind == StartOperation::Kind::Copy)
@@ -2942,7 +2949,12 @@ void CRealImage2100::host_data(uint32_t v)
 		int32_t(m_pending.word % m_pending.width);
 	const int32_t y = int16_t(m_pending.y) +
 		int32_t(m_pending.word / m_pending.width);
-	execute_pixel(prepare_pixel(uint32_t(x), uint32_t(y), v, m_pending.banks));
+	// Masked-out pixels still consume their host-data word.
+	if (!m_pending.auxiliary_compare_mask ||
+		(uint32_t(x) < m_color_width && uint32_t(y) < m_color_height &&
+			!((m_auxiliary[size_t(y) * m_color_width + x] ^ m_pending.auxiliary_reference) &
+				m_pending.auxiliary_compare_mask)))
+		execute_pixel(prepare_pixel(uint32_t(x), uint32_t(y), v, m_pending.banks));
 	if (++m_pending.word == uint64_t(m_pending.width) * m_pending.height)
 		m_pending = {};
 }
@@ -3863,9 +3875,11 @@ void CRealImage2100::SaveState(std::ostream& out) const
 		for (const uint32_t value : cache.pattern)
 			put32(p, value);
 	}
+	put32(p, m_pending.auxiliary_compare_mask);
+	put32(p, m_pending.auxiliary_reference);
 	const auto bytes = p.str();
 	put32(out, 0x30324952); // RI20
-	put32(out, m_color_width == MaxColorWidth ? 19 : 18);
+	put32(out, m_color_width == MaxColorWidth ? 21 : 20);
 	put32(out, uint32_t(bytes.size()));
 	put32(out, crc32(bytes));
 	out.write(bytes.data(), bytes.size());
@@ -3876,9 +3890,9 @@ void CRealImage2100::SaveState(std::ostream& out) const
 void CRealImage2100::RestoreState(std::istream& in)
 {
 	const auto magic = get32(in), version = get32(in);
-	if (magic != 0x30324952 || version < 9 || version > 19)
+	if (magic != 0x30324952 || version < 9 || version > 21)
 		throw std::runtime_error("Wrong REALimage snapshot version");
-	const bool large = version == 11 || version == 13 || version == 15 || version == 17 || version == 19,
+	const bool large = version == 11 || version == 13 || version == 15 || version == 17 || version == 19 || version == 21,
 		packed_auxiliary = version >= 12;
 	if (large != (m_color_width == MaxColorWidth))
 		throw std::runtime_error("REALimage snapshot framebuffer mismatch");
@@ -3886,7 +3900,7 @@ void CRealImage2100::RestoreState(std::istream& in)
 		(large ? (MaxColorPixels - ColorPixels) * 9 +
 			PlaneCount * (PlaneRegisterCount - LegacyPlaneRegisterCount) * 4 : 0) +
 		(packed_auxiliary ? m_color_pixels * 3 + 12 : 0) + (version >= 14 ? 4 : 0) +
-		(version >= 18 ? PatternStateSize : 0);
+		(version >= 18 ? PatternStateSize : 0) + (version >= 20 ? 8 : 0);
 	const auto size = get32(in), crc = get32(in);
 	if (size < fixed_payload || size > MaxStateSize - 16)
 		throw std::runtime_error("Invalid REALimage snapshot length");
@@ -4065,6 +4079,18 @@ void CRealImage2100::RestoreState(std::istream& in)
 			if (patterned && (cache.pattern[0] != cache.color || uniform))
 				throw std::runtime_error("Invalid REALimage clear pattern encoding");
 		}
+	}
+	if (version >= 20)
+	{
+		pending.auxiliary_compare_mask = get32(p);
+		pending.auxiliary_reference = get32(p);
+		if ((pending.auxiliary_reference & ~pending.auxiliary_compare_mask) ||
+			(pending.auxiliary_compare_mask && (pending.auxiliary_compare_mask != 0x8000 ||
+				!pending.width || (pending.banks != 1 && pending.banks != 2) ||
+				pending.x >= m_color_width || pending.y >= m_color_height ||
+				pending.width > m_color_width - pending.x ||
+				pending.height > m_color_height - pending.y)))
+			throw std::runtime_error("Invalid REALimage upload comparison state");
 	}
 	if (!p || p.peek() != std::char_traits<char>::eof())
 		throw std::runtime_error("Invalid REALimage snapshot payload");
