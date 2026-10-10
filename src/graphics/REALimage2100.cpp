@@ -1119,7 +1119,7 @@ bool CRealImage2100::native_copy_control_profile(bool clear, bool integer) const
 	const uint32_t global = peek(GlobalControl0), control = peek(DrawControl);
 	const bool integer_profile = integer || (clear && ((control & ~0x0400ff01u) == 0xa1000002u ||
 		(control & ~0x04ff0f01u) == 0xa1004002u));
-	// Integer block clears retain the preceding line mode.
+	// Integer raster commands can retain the preceding line mode.
 	const bool retained_line = clear && integer_profile && (global == 1 || global == 3);
 	const bool context_clear = clear && (global == 0x180 || global == 0x190) &&
 		peek(GlobalControl1) == 0x20800;
@@ -1189,6 +1189,31 @@ bool CRealImage2100::bitmap_profile() const
 			return false;
 	for (unsigned i = 24; i < 24 + block_width() / 2; ++i)
 		if (plane_value(2, i, 0xffffffff) != 0xffffffff)
+			return false;
+	return true;
+}
+
+bool CRealImage2100::integer_mono_profile() const
+{
+	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
+	if ((control & ~0x00ffff01u) != 0xa1000002u || (banks != 5 && banks != 6) ||
+		!native_copy_control_profile(true, true) ||
+		plane_value(2, 0, 0xffffffff) || m_planes[2].unknown_masks ||
+		((peek(ClipXMin) | peek(ClipYMin) | peek(ClipXMax) | peek(ClipYMax)) & 0xffff000fu))
+		return false;
+	const unsigned bank = banks == 6 ? 1 : 0;
+	if (!plane_profile(bank) || m_planes[bank].unknown_masks ||
+		((plane_value(bank, 0, 0xffffffff) & 0xff000000u) &&
+			(plane_value(bank, 4, 0x03030303) >> 24) != 5))
+		return false;
+	const uint32_t expected[] = {0, 0x8000, 0x0fff0fff, 0x03030303, 0x0a000200,
+		0, 0, 0, 0, 0x00ff0000, 0x33300000, 0x100, 0, 0x100, 0};
+	for (unsigned i = 0; i < std::size(expected); ++i)
+		if (plane_value(2, i + 1, expected[i]) != expected[i])
+			return false;
+	for (unsigned i = 24; i < 24 + block_width() / 2; ++i)
+		if (plane_value(bank, i, 0xffffffff) != 0xffffffff ||
+			plane_value(2, i, 0xffffffff) != 0xffffffff)
 			return false;
 	return true;
 }
@@ -1704,12 +1729,14 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	const bool fill = a == FillCommand && (v == 0x09000832 || v == 0x09040832);
 	const bool bitmap = a == BitmapCommand && v == 0x01000872;
 	const bool host_mono = a == HostCommand && (v & ~0x7780u) == 0x01000872;
+	const bool integer_mono = a == HostCommand && v == 0x01000872 &&
+		(peek(DrawControl) & 0xe0000000u) == 0xa0000000u;
 	op.transparent = bitmap || (host_mono && !(v & 0x80));
 	op.mono_offset = host_mono ? (v >> 8) & 7 : 0;
 	const uint32_t mono_width = host_mono && (v & 0x7700) ? ((v >> 12) & 7) + 1 : 0;
 	op.mono = bitmap || host_mono || (a == FillCommand && (v == 0x010008f2 || v == 0x010408b2));
 	op.auxiliary = (initialization || bitmap) && (peek(DrawControl) & 0x4000);
-	const bool profile = bitmap ? bitmap_profile() :
+	const bool profile = integer_mono ? integer_mono_profile() : bitmap ? bitmap_profile() :
 		block_transfer ? block_transfer_profile() : fast_copy ? fast_copy_profile() :
 		((fill || initialization) ? fill_profile(initialization) : copy_profile()) &&
 		(!(selected & 1) || plane_profile(0)) && (!(selected & 2) || plane_profile(1)) &&
@@ -1729,8 +1756,8 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	op.banks = (peek(DrawControl) >> 12) & 3;
 	op.x = int16_t(origin & 0xffff);
 	op.y = int16_t(origin >> 16);
-	// Decoded block transfers supply preclipped pixel rectangles.
-	if (block_transfer && (((peek(ClipXMin) | peek(ClipYMin) | peek(ClipXMax) |
+	// Decoded block transfers and integer glyphs supply preclipped rectangles.
+	if ((block_transfer || integer_mono) && (((peek(ClipXMin) | peek(ClipYMin) | peek(ClipXMax) |
 		peek(ClipYMax)) & 0xffff000fu) || op.x < 0 || op.y < 0 ||
 		uint64_t(op.x) + width > m_color_width || uint64_t(op.y) + height > m_color_height ||
 		uint32_t(op.x) < (peek(ClipXMin) >> 4) || uint32_t(op.y) < (peek(ClipYMin) >> 4) ||
@@ -1822,9 +1849,14 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 		op.top = std::max(op.top, int32_t(peek(ClipYMin) >> 4));
 		op.right = std::min(op.right, int32_t((peek(ClipXMax) >> 4) + 1));
 		op.bottom = std::min(op.bottom, int32_t((peek(ClipYMax) >> 4) + 1));
+	}
+	if (bitmap || integer_mono)
+	{
 		op.auxiliary_reference = ((peek(DrawControl) & 0x00f00000u) << 8) |
 			((peek(DrawControl) & 0x000f0000u) >> 4);
 	}
+	if (integer_mono)
+		op.auxiliary_compare_mask = 0x8000;
 	if (op.auxiliary)
 	{
 		op.auxiliary_mask = plane_value(2, 0, 0xffffffff);
@@ -1913,6 +1945,9 @@ void CRealImage2100::execute_start(const StartOperation& op)
 					color = op.background;
 				}
 			}
+			if (op.auxiliary_compare_mask &&
+				((m_auxiliary[size_t(row) * m_color_width + col] ^ op.auxiliary_reference) & op.auxiliary_compare_mask))
+				continue;
 			color_write(op.color, uint32_t(col), uint32_t(row), color, op.banks);
 			if (op.auxiliary)
 			{
@@ -2210,7 +2245,7 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 {
 	if (!value)
 		return;
-	const bool line = value == 0x62;
+	const bool line = value == 0x22 || value == 0x62;
 	auto reject = [&]() {
 		unimplemented_once(line ? "REALimage integer line command/profile (command rejected)" :
 			"REALimage integer triangle command/profile (command rejected)", address, value, true);
@@ -2223,7 +2258,8 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 		!(plane_value(2, 0, 0xffffffff) & ~0xe000f000u),
 		color_write = auxiliary_compare || ((control & ~0xff01u) == 0xa1000002u && !(banks & ~3u));
 	if ((!line && value != 3) ||
-		(line && (!auxiliary_compare || address != IntegerVertexColorBase + VertexStride + 0x1c)) ||
+		(line && (address != IntegerVertexColorBase + VertexStride + 0x1c ||
+			(value == 0x62 ? !auxiliary_compare : (!auxiliary_write && (!color_write || auxiliary_compare))))) ||
 		(!auxiliary_write && !color_write &&
 		(control & ~0xff01u) != 0x21000002u) ||
 		!banks || (banks & ~7u) ||
@@ -2235,7 +2271,7 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 		return;
 	}
 	const std::pair<uint32_t, uint32_t> profile[] = {
-		{GlobalControl0, line ? 3u : 0u}, {GlobalControl1, 0x20810}, {GlobalControl2, 0x33},
+		{GlobalControl0, line ? (value == 0x62 ? 3u : 1u) : 0u}, {GlobalControl1, 0x20810}, {GlobalControl2, 0x33},
 		{PipelineControl0, 0}, {PipelineControl1, 0}, {PipelineControl2, 0x10000000},
 		{PipelineControl3, 0}, {PipelineControl4, 0}, {PipelineControl5, 0},
 		{0x008005cc, 0}, {0x008005d4, 0}, {0x008005dc, 0}};
@@ -2346,11 +2382,20 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 	};
 	if (line)
 	{
-		const Point &a = vertex[0], &b = vertex[1];
+		const Point& a = vertex[0];
+		Point b = vertex[1];
 		if (((a.x | a.y | b.x | b.y) & 15) || (a.x != b.x && a.y != b.y))
 		{
 			reject();
 			return;
+		}
+		// Command 0x22 excludes the final endpoint; 0x62 includes it.
+		if (value == 0x22)
+		{
+			if (a.x == b.x && a.y == b.y)
+				return;
+			b.x += a.x > b.x ? 16 : a.x < b.x ? -16 : 0;
+			b.y += a.y > b.y ? 16 : a.y < b.y ? -16 : 0;
 		}
 		const int left = std::max({0, int(peek(ClipXMin) >> 4), int(std::min(a.x, b.x) / 16)}),
 			top = std::max({0, int(peek(ClipYMin) >> 4), int(std::min(a.y, b.y) / 16)}),
@@ -2359,7 +2404,6 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 		if (left > right || top > bottom)
 			return;
 		invalidate();
-		// Command 0x62 includes both endpoints of the driver's integer border lines.
 		for (int y = top; y <= bottom; ++y)
 			for (int x = left; x <= right; ++x)
 				write_pixel(x, y);
