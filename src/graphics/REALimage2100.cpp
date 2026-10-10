@@ -1077,12 +1077,14 @@ bool CRealImage2100::native_copy_control_profile(bool clear) const
 		copy_columns > (m_color_width + 10 * width - 1) / (10 * width))
 		return false;
 	const uint32_t global = peek(GlobalControl0);
+	const bool integer_seed = clear && (peek(DrawControl) & ~0xff01u) == 0xa1000002u;
 	const bool context_clear = clear && (global == 0x180 || global == 0x190) &&
 		peek(GlobalControl1) == 0x20800;
 	// Other programmed pipeline modes have not been decoded.
 	const std::pair<uint32_t, uint32_t> profile[] = {
-		{GlobalControl0, context_clear ? global : 1u},
-		{GlobalControl1, context_clear ? 0x20800u : 0x20811u}, {GlobalControl2, 0x33},
+		{GlobalControl0, integer_seed ? 0u : context_clear ? global : 1u},
+		{GlobalControl1, integer_seed ? 0x20810u : context_clear ? 0x20800u : 0x20811u},
+		{GlobalControl2, 0x33},
 		{PipelineControl0, 0}, {PipelineControl1, 0},
 		{PipelineControl2, 0x10000000}, {PipelineControl3, 0},
 		{PipelineControl4, 0}, {PipelineControl5, 0},
@@ -1252,7 +1254,9 @@ CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 	op.seed = seed;
 	op.auxiliary_clear = auxiliary_clear;
 	const uint32_t control_fields = 0x040fff01u;
-	if ((control & ~control_fields) != 0x81000002 || !banks || (banks & ~7u) ||
+	// OpenVMS retains its drawing setup while seeding the offscreen clear tile.
+	const bool integer_seed = seed && (control & ~0xff01u) == 0xa1000002u;
+	if ((!integer_seed && (control & ~control_fields) != 0x81000002) || !banks || (banks & ~7u) ||
 		v != (((banks ^ 7u) << 18) | (copy ? 0x30000u : 0x10000u)) ||
 		!native_copy_control_profile(true) || m_pending.width || m_readback.width ||
 		((source | destination | extent) & ~0x07ff07ffu) ||
@@ -1264,21 +1268,23 @@ CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 		return op;
 	if (auxiliary_clear)
 	{
-		const uint32_t depth_control = plane_value(2, 5, 0);
+		const uint32_t depth_control = plane_value(2, 5, 0),
+			format = integer_seed ? 0x100u : 0u;
 		const bool neutral_clear = plane_profile(2, 0) && plane_value(2, 10, 0) == 0 &&
 			(auxiliary_mask == 0xffffffffu ||
 				(configuration && !(auxiliary_mask & ~0x0000f000u)));
 		const bool packed_clear = auxiliary_mask == 0xffffffffu &&
-			plane_value(2, 1, 0) == 0 && plane_value(2, 2, 0) == 0xf000 &&
+			plane_value(2, 1, 0) == 0 && plane_value(2, 2, 0) == (integer_seed ? 0u : 0xf000u) &&
 			plane_value(2, 3, 0) == 0x0fff0fff &&
-			(depth_control == 0x0a000200 || depth_control == 0x0a000205 ||
-				depth_control == 0x0a000207) &&
+			(integer_seed ? depth_control == 0x0a000000 :
+				(depth_control == 0x0a000200 || depth_control == 0x0a000205 ||
+					depth_control == 0x0a000207)) &&
 			plane_value(2, 6, 0) == 0 && plane_value(2, 7, 0) == 0 &&
 			plane_value(2, 8, 0) == 0 && plane_value(2, 9, 0) == 0 &&
 			plane_value(2, 10, 0) == 0x00ff0000 &&
 			plane_value(2, 11, 0x33300000) == 0x33300000 &&
 			plane_value(2, 12, 0x100) == 0x100 && plane_value(2, 13, 0) == 0 &&
-			plane_value(2, 14, 0) == 0 && plane_value(2, 15, 0) == 0;
+			plane_value(2, 14, format) == format && plane_value(2, 15, 0) == 0;
 		if ((!neutral_clear && !packed_clear) ||
 			plane_value(2, 4, 0x03030303) != 0x03030303 ||
 			m_planes[2].unknown_masks ||
@@ -1330,6 +1336,8 @@ CRealImage2100::BlockOperation CRealImage2100::prepare_block(uint32_t v) const
 
 void CRealImage2100::execute_block(const BlockOperation& op)
 {
+	if (!op.value)
+		return;
 	auto invalidate_cache = [&]() {
 		for (unsigned bank = 0; bank < 3; ++bank)
 			if (op.banks & (1u << bank))
@@ -2828,7 +2836,7 @@ bool CRealImage2100::dma_list_target(uint32_t a) const
 	// Other command-list targets use the existing register handlers.
 	switch (a)
 	{
-	case Status:
+	case Status: case UnitReset:
 	case BoardIO: case WindowMask:
 	case ClipXMax: case ClipYMax: case ClipXMin: case ClipYMin:
 	case GlobalControl0: case GlobalControl1: case GlobalControl2:
