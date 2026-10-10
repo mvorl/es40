@@ -2134,9 +2134,11 @@ void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
 	};
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
 		width = block_width(), columns = ((peek(MemoryControl) >> 24) & 63) + 1;
-	const bool wid_write = (control & ~0x000fff01u) == 0xa1600002u && banks == 4 &&
-		!(plane_value(2, 0, 0xffffffff) & ~0x0000f000u);
-	if (value != 3 || (!wid_write && (control & ~0xff01u) != 0x21000002u) ||
+	const bool auxiliary_write = (control & ~0x00ef0f01u) == 0xa1004002u &&
+		!(plane_value(2, 0, 0xffffffff) & ~0xe000f000u),
+		color_write = (control & ~0xff01u) == 0xa1000002u && !(banks & ~3u);
+	if (value != 3 || (!auxiliary_write && !color_write &&
+		(control & ~0xff01u) != 0x21000002u) ||
 		!banks || (banks & ~7u) ||
 		!width || !native_pixel_profile() || ((control >> 8) & 15) != (columns + 1) / 2 ||
 		columns > (m_color_width + 10 * width - 1) / (10 * width) ||
@@ -2156,13 +2158,20 @@ void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
 			reject();
 			return;
 		}
-	// These profiles use zero ARGB and depth; WID writes take their value from DrawControl.
-	for (uint32_t i = 0; i < 4; ++i)
-		if (m_shadow.find(IntegerVertexColorBase + i * 4) == m_shadow.end() ||
-			peek(IntegerVertexColorBase + i * 4))
+	uint32_t color = 0;
+	// Auxiliary triangles retain unrelated ARGB latches and take references from DrawControl.
+	if (!auxiliary_write)
+		for (uint32_t i = 0; i < 4; ++i)
 		{
-			reject();
-			return;
+			const uint32_t component = peek(IntegerVertexColorBase + i * 4);
+			if (m_shadow.find(IntegerVertexColorBase + i * 4) == m_shadow.end() ||
+				(color_write ? (component & ~0x3fcu) != 0 : component != 0))
+			{
+				reject();
+				return;
+			}
+			if (i)
+				color |= (component >> 2) << ((3 - i) * 8);
 		}
 	if ((peek(ClipXMin) | peek(ClipYMin) | peek(ClipXMax) | peek(ClipYMax)) & 0xffff000fu)
 	{
@@ -2173,7 +2182,16 @@ void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
 	{
 		if (!(banks & (1u << bank)))
 			continue;
-		if (m_planes[bank].unknown_masks || plane_value(bank, 4, 0) != 0x03030303u ||
+		const uint32_t rops = plane_value(bank, 4, 0), mask = plane_value(bank, 0, 0xffffffff);
+		bool copy_rop = rops == 0x03030303u;
+		if (color_write)
+		{
+			copy_rop = !(mask & 0xff000000u) || (rops >> 24) == 5;
+			for (unsigned shift = 0; shift < 24; shift += 8)
+				if ((mask & (0xffu << shift)) && ((rops >> shift) & 0xff) != 3)
+					copy_rop = false;
+		}
+		if (m_planes[bank].unknown_masks || !copy_rop ||
 			(bank < 2 && !plane_profile(bank)))
 		{
 			reject();
@@ -2241,6 +2259,8 @@ void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
 			m_clear_cache[bank] = {};
 	const uint32_t masks[] = {plane_value(0, 0, 0xffffffff) & 0xffffff,
 		plane_value(1, 0, 0xffffffff) & 0xffffff, plane_value(2, 0, 0xffffffff)};
+	const uint32_t auxiliary = auxiliary_write ?
+		((control & 0x00e00000u) << 8) | ((control & 0x000f0000u) >> 4) : 0;
 	for (int y = top; y <= bottom; ++y)
 		for (int x = left; x <= right; ++x)
 		{
@@ -2253,10 +2273,12 @@ void CRealImage2100::integer_triangle_command(uint32_t address, uint32_t value)
 			const size_t offset = size_t(y) * m_color_width + unsigned(x);
 			for (unsigned bank = 0; bank < 2; ++bank)
 				if (banks & (1u << bank))
-					m_color[size_t(bank) * m_color_pixels + offset] &= ~masks[bank];
+				{
+					uint32_t& pixel = m_color[size_t(bank) * m_color_pixels + offset];
+					pixel = (pixel & ~masks[bank]) | (color & masks[bank]);
+				}
 			if (banks & 4)
-				m_auxiliary[offset] = (m_auxiliary[offset] & ~masks[2]) |
-					(wid_write ? ((control >> 4) & 0xf000u & masks[2]) : 0);
+				m_auxiliary[offset] = (m_auxiliary[offset] & ~masks[2]) | (auxiliary & masks[2]);
 		}
 }
 
