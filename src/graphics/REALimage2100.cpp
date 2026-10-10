@@ -1196,9 +1196,6 @@ bool CRealImage2100::block_transfer_profile(bool upload) const
 				((plane_value(bank, 0, 0xffffffff) & 0xff000000u) &&
 					(plane_value(bank, 4, 0x03030303) >> 24) != 5))
 				return false;
-			for (unsigned i = 24; i < 24 + block_width() / 2; ++i)
-				if (plane_value(bank, i, 0xffffffff) != 0xffffffff)
-					return false;
 		}
 	return true;
 }
@@ -2395,7 +2392,7 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 					return;
 				}
 		}
-		if (line)
+		if (value == 0x62)
 			for (unsigned i = 24; i < 24 + width / 2; ++i)
 				if (plane_value(bank, i, 0xffffffff) != 0xffffffff)
 				{
