@@ -1218,6 +1218,27 @@ bool CRealImage2100::bitmap_profile() const
 	return true;
 }
 
+bool CRealImage2100::auxiliary_mono_profile() const
+{
+	const uint32_t control = peek(DrawControl);
+	if ((control & ~0x00ef0f01u) != 0xa5004002u ||
+		!native_copy_control_profile(true, true) || m_planes[2].unknown_masks ||
+		(plane_value(2, 0, 0xffffffff) & ~0xe000f000u))
+		return false;
+	const uint32_t expected[] = {0, 0, 0x0fff0fff, 0x03030303, 0x0a000000,
+		0, 0, 0, 0, 0x00ff0000, 0x33300000, 0x100, 0, 0x100, 0};
+	for (unsigned i = 0; i < std::size(expected); ++i)
+		if (plane_value(2, i + 1, expected[i]) != expected[i])
+			return false;
+	for (unsigned i = 24; i < 24 + block_width() / 2; ++i)
+		if (plane_value(2, i, 0xffffffff) != 0xffffffff)
+			return false;
+	for (unsigned i = 0; i < 4; ++i)
+		if (peek(MonoPattern0 + i * 4) != 0xffffffff)
+			return false;
+	return true;
+}
+
 bool CRealImage2100::integer_rgb_profile() const
 {
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
@@ -1715,6 +1736,7 @@ CRealImage2100::StartPrefix CRealImage2100::begin_start(uint32_t a, uint32_t v)
 			if (destination_banks & (1u << bank))
 				m_clear_cache[bank] = {};
 	if (((a == FillCommand && (v == 0x09040832 || v == 0x010408b2)) || a == BitmapCommand ||
+		(a == HostCommand && v == 0x010008f2 && (peek(DrawControl) & 0xf000) == 0x4000) ||
 		(a == BlockCommand && (v == 0x07000072 || v == 0x06000072 || v == 0x06000062 || v == 0x07000062))) &&
 		(peek(DrawControl) & 0x4000))
 		m_clear_cache[2] = {};
@@ -1758,6 +1780,8 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	const bool fill = a == FillCommand && (v == 0x09000832 || v == 0x09040832);
 	const bool bitmap = a == BitmapCommand && v == 0x01000872;
 	const bool host_mono = a == HostCommand && (v & ~0x7780u) == 0x01000872;
+	const bool auxiliary_mono = a == HostCommand && v == 0x010008f2 &&
+		(peek(DrawControl) & 0xf000) == 0x4000;
 	const bool integer_mono = a == HostCommand && v == 0x01000872 &&
 		((peek(DrawControl) & 0xe0000000u) == 0xa0000000u ||
 			(peek(DrawControl) & ~0xff01u) == 0x21000002u);
@@ -1765,8 +1789,9 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	op.mono_offset = host_mono ? (v >> 8) & 7 : 0;
 	const uint32_t mono_width = host_mono && (v & 0x7700) ? ((v >> 12) & 7) + 1 : 0;
 	op.mono = bitmap || host_mono || (a == FillCommand && (v == 0x010008f2 || v == 0x010408b2));
-	op.auxiliary = (initialization || bitmap || block_copy) && (peek(DrawControl) & 0x4000);
-	const bool profile = integer_mono ? integer_rgb_profile() : bitmap ? bitmap_profile() :
+	op.auxiliary = (initialization || bitmap || block_copy || auxiliary_mono) && (peek(DrawControl) & 0x4000);
+	const bool profile = auxiliary_mono ? auxiliary_mono_profile() :
+		integer_mono ? integer_rgb_profile() : bitmap ? bitmap_profile() :
 		block_copy ? (v == 0x01000072 ?
 			!peek(GlobalControl0) && block_transfer_profile(false) : block_copy_profile()) :
 		block_transfer ? block_transfer_profile(upload) :
@@ -1789,7 +1814,7 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	op.banks = (peek(DrawControl) >> 12) & 3;
 	op.x = int16_t(origin & 0xffff);
 	op.y = int16_t(origin >> 16);
-	if ((block_transfer || integer_mono) && (op.x < 0 || op.y < 0 ||
+	if ((block_transfer || integer_mono || auxiliary_mono) && (op.x < 0 || op.y < 0 ||
 		uint64_t(op.x) + width > m_color_width || uint64_t(op.y) + height > m_color_height))
 		return op;
 	if (readback)
@@ -1891,11 +1916,13 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 		op.right = std::min(op.right, int32_t((peek(ClipXMax) >> 4) + 1));
 		op.bottom = std::min(op.bottom, int32_t((peek(ClipYMax) >> 4) + 1));
 	}
-	if (bitmap || integer_mono)
+	if (bitmap || integer_mono || auxiliary_mono)
 	{
 		op.auxiliary_reference = ((peek(DrawControl) & 0x00f00000u) << 8) |
 			((peek(DrawControl) & 0x000f0000u) >> 4);
 	}
+	if (auxiliary_mono)
+		op.foreground = op.background = op.auxiliary_reference;
 	if (integer_mono && (peek(DrawControl) & 0x4000))
 		op.auxiliary_compare_mask = 0x8000;
 	if (op.auxiliary)
