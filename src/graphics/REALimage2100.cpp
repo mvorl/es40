@@ -1794,7 +1794,7 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	const bool profile = auxiliary_mono ? auxiliary_mono_profile() :
 		integer_mono ? integer_rgb_profile() : bitmap ? bitmap_profile() :
 		block_copy ? (v == 0x01000072 ?
-			!peek(GlobalControl0) && block_transfer_profile(false) : block_copy_profile()) :
+			block_transfer_profile(false) : block_copy_profile()) :
 		block_transfer ? block_transfer_profile(upload) :
 		fast_copy ? fast_copy_profile() :
 		((fill || initialization) ? fill_profile(initialization) : copy_profile()) &&
