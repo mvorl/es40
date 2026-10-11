@@ -1782,12 +1782,13 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	const bool host_mono = a == HostCommand && (v & ~0x7780u) == 0x01000872;
 	const bool auxiliary_mono = a == HostCommand && v == 0x010008f2 &&
 		(peek(DrawControl) & 0xf000) == 0x4000;
-	const bool integer_mono = a == HostCommand && v == 0x01000872 &&
+	const bool integer_mono = a == HostCommand && (v & ~0x700u) == 0x01000872 &&
 		((peek(DrawControl) & 0xe0000000u) == 0xa0000000u ||
 			(peek(DrawControl) & ~0xff01u) == 0x21000002u);
 	op.transparent = bitmap || (host_mono && !(v & 0x80));
 	op.mono_offset = host_mono ? (v >> 8) & 7 : 0;
-	const uint32_t mono_width = host_mono && (v & 0x7700) ? ((v >> 12) & 7) + 1 : 0;
+	// Integer glyphs encode only the source offset; their extent supplies the width.
+	const uint32_t mono_width = host_mono && !integer_mono && (v & 0x7700) ? ((v >> 12) & 7) + 1 : 0;
 	op.mono = bitmap || host_mono || (a == FillCommand && (v == 0x010008f2 || v == 0x010408b2));
 	op.auxiliary = (initialization || bitmap || block_copy || auxiliary_mono) && (peek(DrawControl) & 0x4000);
 	const bool profile = auxiliary_mono ? auxiliary_mono_profile() :
