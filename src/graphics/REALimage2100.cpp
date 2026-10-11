@@ -870,14 +870,19 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 	if (integer_vertex_register(key))
 	{
 		if ((key - IntegerVertexColorBase) % VertexStride == 0x1c)
-			integer_vertex_command(key, it->second);
+			raster_vertex_command(key, it->second);
 	}
 	else if (vertex_register(key))
 	{
 		if (bits != 32)
 			unimplemented_once("REALimage vertex width (command rejected)", a, v, true);
 		else if ((key - VertexBase) % VertexStride == 0x1c)
-			triangle_command(original_address, it->second);
+		{
+			if (flat_vertex_register(original_address) && it->second == 0x22)
+				raster_vertex_command(original_address, it->second);
+			else
+				triangle_command(original_address, it->second);
+		}
 	}
 	else if (key == HostCommand || key == FillCommand || key == BitmapCommand || key == BlockCommand)
 	{
@@ -2284,14 +2289,16 @@ CRealImage2100::TrianglePreparation CRealImage2100::prepare_triangle(
 	return TrianglePreparation::Ready;
 }
 
-void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
+void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 {
 	if (!value)
 		return;
-	const bool line = (value & ~0xcu) == 0x22 || value == 0x62;
+	const bool floating = flat_vertex_register(address),
+		line = (value & ~0xcu) == 0x22 || value == 0x62;
 	const unsigned first_vertex = (value >> 2) & 3;
 	auto reject = [&]() {
-		unimplemented_once(line ? "REALimage integer line command/profile (command rejected)" :
+		unimplemented_once(floating ? "REALimage floating line command/profile (command rejected)" :
+			line ? "REALimage integer line command/profile (command rejected)" :
 			"REALimage integer triangle command/profile (command rejected)", address, value, true);
 	};
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
@@ -2303,9 +2310,11 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 		auxiliary_write = (control & ~0x00ef0f01u) == 0xa1004002u &&
 		!(plane_value(2, 0, 0xffffffff) & ~0xe000f000u),
 		color_write = direct_rgb || auxiliary_compare || ((control & ~0xff01u) == 0xa1000002u && !(banks & ~3u));
-	if ((!line && value != 3) ||
+	if ((floating && (value != 0x22 || (control & ~0xff01u) != 0xa1000002u ||
+		(banks != 1 && banks != 2))) || (!line && value != 3) ||
 		(line && (first_vertex >= 3 ||
-			address != IntegerVertexColorBase + ((first_vertex + 1) % 3) * VertexStride + 0x1c ||
+			address != (floating ? VertexBase + 0x100 : IntegerVertexColorBase) +
+				((first_vertex + 1) % 3) * VertexStride + 0x1c ||
 			(value == 0x62 ? (!auxiliary_compare && !direct_rgb) :
 				(!auxiliary_write && (!color_write || auxiliary_compare))))) ||
 		(!auxiliary_write && !color_write &&
@@ -2334,7 +2343,7 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 		}
 	uint32_t color = 0;
 	// Auxiliary triangles retain unrelated ARGB latches and take references from DrawControl.
-	if (!auxiliary_write)
+	if (!floating && !auxiliary_write)
 		for (uint32_t i = 0; i < 4; ++i)
 		{
 			const uint32_t component = peek(IntegerVertexColorBase + i * 4);
@@ -2364,7 +2373,8 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 		{
 			valid_rop = !(mask & 0xff000000u) || (rops >> 24) == 5;
 			for (unsigned shift = 0; shift < 24; shift += 8)
-				if (!rgb_line && (mask & (0xffu << shift)) && ((rops >> shift) & 0xff) != 3)
+				if ((mask & (0xffu << shift)) && (floating ? ((rops >> shift) & 0xff) != 0x0a :
+					!rgb_line && ((rops >> shift) & 0xff) != 3))
 					valid_rop = false;
 		}
 		if (m_planes[bank].unknown_masks || !valid_rop ||
@@ -2390,19 +2400,42 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 	for (unsigned slot = 0; slot < (line ? 2u : 3u); ++slot)
 	{
 		const unsigned index = line ? (first_vertex + slot) % 3 : slot;
-		const uint32_t base = IntegerVertexColorBase + index * VertexStride + 0x10;
+		const uint32_t base = (floating ? VertexBase : IntegerVertexColorBase) +
+			index * VertexStride + 0x10;
 		for (unsigned i = 0; i < 3; ++i)
 			if (m_shadow.find(base + i * 4) == m_shadow.end())
 			{
 				reject();
 				return;
 			}
-		vertex[slot] = {int32_t(peek(base)), int32_t(peek(base + 4))};
-		if (vertex[slot].x < -524288 || vertex[slot].x >= 524288 ||
-			vertex[slot].y < -524288 || vertex[slot].y >= 524288 || peek(base + 8))
+		if (floating)
 		{
-			reject();
-			return;
+			float component[3];
+			for (unsigned i = 0; i < 3; ++i)
+			{
+				const uint32_t word = peek(base + i * 4);
+				std::memcpy(&component[i], &word, sizeof(word));
+			}
+			if (!std::isfinite(component[0]) || !std::isfinite(component[1]) ||
+				component[0] < -32768 || component[0] >= 32768 ||
+				component[1] < -32768 || component[1] >= 32768 ||
+				component[0] != std::trunc(component[0]) ||
+				component[1] != std::trunc(component[1]) || component[2] != 0)
+			{
+				reject();
+				return;
+			}
+			vertex[slot] = {int64_t(component[0]) * 16, int64_t(component[1]) * 16};
+		}
+		else
+		{
+			vertex[slot] = {int32_t(peek(base)), int32_t(peek(base + 4))};
+			if (vertex[slot].x < -524288 || vertex[slot].x >= 524288 ||
+				vertex[slot].y < -524288 || vertex[slot].y >= 524288 || peek(base + 8))
+			{
+				reject();
+				return;
+			}
 		}
 	}
 	const ColorWriteContext rgb = prepare_color_write();
@@ -2437,7 +2470,7 @@ void CRealImage2100::integer_vertex_command(uint32_t address, uint32_t value)
 		const Point& a = vertex[0];
 		Point b = vertex[1];
 		if (((a.x | a.y | b.x | b.y) & 15) ||
-			(value == 0x62 && a.x != b.x && a.y != b.y))
+			((value == 0x62 || floating) && a.x != b.x && a.y != b.y))
 		{
 			reject();
 			return;
