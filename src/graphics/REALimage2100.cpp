@@ -1374,9 +1374,12 @@ bool CRealImage2100::framebuffer_access(
 		return false;
 	// Fixed front/back/auxiliary windows use an 8 KiB row pitch.
 	const uint32_t bank = (a >> 24) - 1, x = (a & 0x1fff) >> 2,
-		y = (a & 0x00ffffff) >> 13, shift = (a & 3) * 8;
+		y = (a & 0x00ffffff) >> 13, shift = (a & 3) * 8,
+		control = peek(DrawControl);
+	const bool integer_rgb = bank < 2 && (control & ~0xff01u) == 0x21000002u &&
+		((control >> 12) & 15) == (1u << bank) && integer_rgb_profile();
 	if ((bank == 2 ? write && !auxiliary_framebuffer_profile() :
-		!copy_profile() || !plane_profile(bank)) ||
+		(!integer_rgb && !copy_profile()) || !plane_profile(bank)) ||
 		x >= m_color_width || y >= m_color_height)
 	{
 		unimplemented_once("REALimage framebuffer aperture/profile", a, value, write);
@@ -2569,8 +2572,7 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 		const Point& a = vertex[0];
 		Point b = vertex[1];
 		if (((a.x | a.y | b.x | b.y) & 15) ||
-			((floating || patterned) && a.x != b.x && a.y != b.y) ||
-			(patterned && (b.x < a.x || b.y < a.y)))
+			((floating || patterned) && a.x != b.x && a.y != b.y))
 		{
 			reject();
 			return;
@@ -2578,14 +2580,9 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 		const bool stipple_x_major = std::abs(b.x - a.x) >= std::abs(b.y - a.y);
 		const int64_t major_start = (stipple_x_major ? a.x : a.y) / 16,
 			major_end = (stipple_x_major ? b.x : b.y) / 16;
-		// Reversed driver packets can normalize vertices; their wrapped anchors remain unverified.
-		if (patterned && (major_start < int64_t(value >> 20) || major_end > 0xfff))
-		{
-			reject();
-			return;
-		}
-		// The command anchors the repeated, LSB-first pattern to the major coordinate.
-		const unsigned phase = unsigned(major_start - int64_t(value >> 20)) & 0xfff;
+		// The 12-bit anchor preserves the repeated, LSB-first pattern in either direction.
+		const unsigned phase = unsigned(major_end < major_start ?
+			int64_t(value >> 20) - major_start : major_start - int64_t(value >> 20)) & 0xfff;
 		auto stipple_visible = [&](unsigned step) {
 			return !patterned || ((stipple >> (((phase + step) >> ((stipple >> 27) & 7)) & 15)) & 1);
 		};
