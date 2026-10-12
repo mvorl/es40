@@ -306,7 +306,7 @@ private:
   uint32_t block_width() const;
   bool native_copy_control_profile(bool clear = false, bool integer = false) const;
   bool block_copy_profile() const;
-  bool block_transfer_profile(bool upload) const;
+  bool block_transfer_profile(bool upload, bool native_readback = false) const;
   bool bitmap_profile() const;
   bool auxiliary_mono_profile() const;
   bool integer_rgb_profile(bool configuration = false) const;

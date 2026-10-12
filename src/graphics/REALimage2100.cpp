@@ -1180,12 +1180,15 @@ bool CRealImage2100::block_copy_profile() const
 	return true;
 }
 
-bool CRealImage2100::block_transfer_profile(bool upload) const
+bool CRealImage2100::block_transfer_profile(bool upload, bool native_readback) const
 {
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
 	if (upload && (banks == 5 || banks == 6))
 		return integer_rgb_profile();
-	if ((control & ~0xff01u) != 0x21000002u || !banks || (banks & ~3u) ||
+	// Native readback retains window references after disabling the auxiliary bank.
+	const uint32_t fields = native_readback ? 0x00ffff01u : 0xff01u,
+		mode = native_readback ? 0xa1000002u : 0x21000002u;
+	if ((control & ~fields) != mode || !banks || (banks & ~3u) ||
 		!native_copy_control_profile(true, true))
 		return false;
 	for (unsigned bank = 0; bank < 2; ++bank)
@@ -1717,7 +1720,7 @@ void CRealImage2100::execute_block(const BlockOperation& op)
 
 void CRealImage2100::block_command(uint32_t v)
 {
-	if (v == 0x01000032 || v == 0x01000052 || v == 0x01000072 ||
+	if (v == 0x01000032 || v == 0x01000052 || v == 0x07000052 || v == 0x01000072 ||
 		v == 0x07000072 || v == 0x06000072 || v == 0x06000062 || v == 0x07000062)
 		start_command(BlockCommand, v);
 	else
@@ -1726,7 +1729,8 @@ void CRealImage2100::block_command(uint32_t v)
 
 CRealImage2100::StartPrefix CRealImage2100::begin_start(uint32_t a, uint32_t v)
 {
-	const bool readback = (a == HostCommand || a == BlockCommand) && v == 0x01000052;
+	const bool native_readback = a == BlockCommand && v == 0x07000052;
+	const bool readback = ((a == HostCommand || a == BlockCommand) && v == 0x01000052) || native_readback;
 	const bool cross_copy = a == HostCommand &&
 		(v == 0x01008072 || v == 0x00008062 || v == 0x00008072 || v == 0x01008062);
 	const uint32_t selected = (peek(DrawControl) >> 12) & 3;
@@ -1757,7 +1761,8 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	op.address = a;
 	op.value = v;
 	op.color = prepare_color_write();
-	const bool readback = (a == HostCommand || a == BlockCommand) && v == 0x01000052;
+	const bool native_readback = a == BlockCommand && v == 0x07000052;
+	const bool readback = ((a == HostCommand || a == BlockCommand) && v == 0x01000052) || native_readback;
 	const bool cross_copy = a == HostCommand &&
 		(v == 0x01008072 || v == 0x00008062 || v == 0x00008072 || v == 0x01008062);
 	const uint32_t selected = prefix.selected;
@@ -1801,7 +1806,7 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 		integer_mono ? integer_rgb_profile(configuration_mono) : bitmap ? bitmap_profile() :
 		block_copy ? (v == 0x01000072 ?
 			block_transfer_profile(false) : block_copy_profile()) :
-		block_transfer ? block_transfer_profile(upload) :
+		block_transfer ? block_transfer_profile(upload, native_readback) :
 		fast_copy ? fast_copy_profile() :
 		((fill || initialization) ? fill_profile(initialization) : copy_profile()) &&
 		(!(selected & 1) || plane_profile(0)) && (!(selected & 2) || plane_profile(1)) &&
