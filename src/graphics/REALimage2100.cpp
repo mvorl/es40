@@ -1185,9 +1185,11 @@ bool CRealImage2100::block_transfer_profile(bool upload, bool native_readback) c
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
 	if (upload && (banks == 5 || banks == 6))
 		return integer_rgb_profile();
-	// Native readback retains window references after disabling the auxiliary bank.
-	const uint32_t fields = native_readback ? 0x00ffff01u : 0xff01u,
-		mode = native_readback ? 0xa1000002u : 0x21000002u;
+	const bool native_transfer = native_readback || (upload && (banks == 1 || banks == 2) &&
+		(control & ~0x00ffff01u) == 0xa1000002u);
+	// Native RGB transfers retain inactive window references.
+	const uint32_t fields = native_transfer ? 0x00ffff01u : 0xff01u,
+		mode = native_transfer ? 0xa1000002u : 0x21000002u;
 	if ((control & ~fields) != mode || !banks || (banks & ~3u) ||
 		!native_copy_control_profile(true, true))
 		return false;
