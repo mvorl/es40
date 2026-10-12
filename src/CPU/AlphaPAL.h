@@ -1,4 +1,4 @@
-/* ES40 emulator -- Alpha PAL entry policy
+/* ES40 emulator -- Alpha PAL policy
  * Copyright (C) 2026 by gdwnldsKSC
  * All rights reserved.
  *
@@ -64,7 +64,37 @@ struct AlphaPALCallEntry
   unsigned shadow_link_register;
 };
 
-// Stateless family entry rules, copied with the CPU profile.
+// Family access rules for the PAL-reserved hardware instructions.
+enum class AlphaPALInstructionAccess
+{
+  Denied,
+  PalOnly,
+  PalOrKernelHwe
+};
+
+constexpr bool alpha_pal_instruction_allowed(AlphaPALInstructionAccess access,
+                                              bool pal_mode, std::uint32_t mode,
+                                              bool hwe)
+{
+  switch (access)
+  {
+  case AlphaPALInstructionAccess::Denied: return false;
+  case AlphaPALInstructionAccess::PalOnly: return pal_mode;
+  case AlphaPALInstructionAccess::PalOrKernelHwe:
+    return pal_mode || (mode == 0 && hwe);
+  }
+  return false;
+}
+
+// These rules guarantee access throughout a PAL block. 
+// Native HWE execution stays interpreted.
+constexpr bool alpha_pal_instruction_compilable(AlphaPALInstructionAccess access)
+{
+  return access == AlphaPALInstructionAccess::PalOnly
+    || access == AlphaPALInstructionAccess::PalOrKernelHwe;
+}
+
+// Stateless family PAL rules, copied with the CPU profile.
 struct AlphaPALPolicy
 {
   AlphaPALExceptionEntry (*exception_entry)(AlphaPALException reason,
@@ -73,6 +103,9 @@ struct AlphaPALPolicy
   AlphaPALCallEntry (*call_pal_entry)(std::uint32_t function,
                                      std::uint64_t current_pc,
                                      std::uint64_t next_pc);
+  // Pass the complete instruction so restrictions on individual forms apply.
+  // An absent access rule denies all.
+  AlphaPALInstructionAccess (*hardware_instruction_access)(std::uint32_t instruction) = nullptr;
 };
 
 #endif

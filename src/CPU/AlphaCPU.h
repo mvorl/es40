@@ -327,6 +327,7 @@ public:
 private:
   u64 read_ipr(u32 function);
   void write_ipr(u32 function, u64 value, AlphaIPRWriteContext context);
+  bool pal_hardware_instruction_valid(u32 instruction) const;
 
   // Family PAL rules are immutable and live outside the saved CPU state.
   AlphaPALExceptionEntry pal_exception_entry(AlphaPALException reason, u64 pc) const;

@@ -547,6 +547,13 @@ void CAlphaCPU::write_ipr(u32 function, u64 value, AlphaIPRWriteContext context)
 	m_profile.ipr_write.write(*this, function, value, context);
 }
 
+bool CAlphaCPU::pal_hardware_instruction_valid(u32 instruction) const
+{
+	const auto describe = m_profile.pal.hardware_instruction_access;
+	return describe && alpha_pal_instruction_allowed(describe(instruction),
+		(state.pc & 1) != 0, (u32)state.cm, state.hwe);
+}
+
 AlphaPALExceptionEntry CAlphaCPU::pal_exception_entry(AlphaPALException reason, u64 pc) const
 {
 	return m_profile.pal.exception_entry(reason, pc);
@@ -3709,10 +3716,8 @@ _next_instruction:
 		break;
 
 	case 0x19:          // HW_MFPR (PALRES)
-		/* HRM 6.4 / 6.8.2: PALRES opcodes (0x19/0x1B/0x1D/0x1E/0x1F) raise
-		 * OPCDEC unless executing in PALmode or in kernel mode with I_CTL[HWE]
-		 * set. Matches brokenpipe palres_access_check(). */
-		if (!(state.pc & 1) && !(state.cm == 0 && state.hwe)) {
+		// The family decides access; rejection uses the shared OPCDEC entry path.
+		if (!pal_hardware_instruction_valid(ins)) {
 			GO_PAL(AlphaPALException::OpcodeDecode);
 			ES40_EXECUTE_END();
 		}
@@ -3723,7 +3728,7 @@ _next_instruction:
 		OP(JMP, JMP);
 
 	case 0x1b:          // PAL reserved - HW_LD (PALRES)
-		if (!(state.pc & 1) && !(state.cm == 0 && state.hwe)) {
+		if (!pal_hardware_instruction_valid(ins)) {
 			GO_PAL(AlphaPALException::OpcodeDecode);
 			ES40_EXECUTE_END();
 		}
@@ -3766,7 +3771,7 @@ _next_instruction:
 		break;
 
 	case 0x1d:          // HW_MTPR (PALRES)
-		if (!(state.pc & 1) && !(state.cm == 0 && state.hwe)) {
+		if (!pal_hardware_instruction_valid(ins)) {
 			GO_PAL(AlphaPALException::OpcodeDecode);
 			ES40_EXECUTE_END();
 		}
@@ -3774,14 +3779,14 @@ _next_instruction:
 		OP(HW_MTPR, MTPR);
 
 	case 0x1e:          // HW_RET (PALRES)
-		if (!(state.pc & 1) && !(state.cm == 0 && state.hwe)) {
+		if (!pal_hardware_instruction_valid(ins)) {
 			GO_PAL(AlphaPALException::OpcodeDecode);
 			ES40_EXECUTE_END();
 		}
 		OP(HW_RET, RET);
 
 	case 0x1f:          // HW_ST (PALRES)
-		if (!(state.pc & 1) && !(state.cm == 0 && state.hwe)) {
+		if (!pal_hardware_instruction_valid(ins)) {
 			GO_PAL(AlphaPALException::OpcodeDecode);
 			ES40_EXECUTE_END();
 		}

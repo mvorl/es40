@@ -71,10 +71,26 @@ constexpr AlphaPALCallEntry call_pal_entry(std::uint32_t function,
     | (std::uint64_t(function & 0x3f) << 6) | 1;
   return {offset, current_pc, next_pc & ~std::uint64_t(2), 23, 55};
 }
+
+constexpr AlphaPALInstructionAccess hardware_instruction_access(std::uint32_t instruction)
+{
+  switch (instruction >> 26)
+  {
+  case 0x19: // HW_MFPR.
+  case 0x1b: // HW_LD.
+  case 0x1d: // HW_MTPR.
+  case 0x1e: // HW_RET.
+  case 0x1f: // HW_ST.
+    return AlphaPALInstructionAccess::PalOrKernelHwe;
+  default:
+    return AlphaPALInstructionAccess::Denied;
+  }
+}
 }
 
 inline constexpr AlphaPALPolicy kEv68PALPolicy{
-  &Ev68PAL::exception_entry, &Ev68PAL::call_pal_valid, &Ev68PAL::call_pal_entry
+  &Ev68PAL::exception_entry, &Ev68PAL::call_pal_valid, &Ev68PAL::call_pal_entry,
+  &Ev68PAL::hardware_instruction_access
 };
 
 #endif

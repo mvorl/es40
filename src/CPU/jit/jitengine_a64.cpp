@@ -1200,7 +1200,8 @@ static constexpr bool a64_source_extent_valid(uint64_t phys, uint32_t words,
 // Classification stays fail-closed: each translation adds its classifier and emitter together.
 static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block,
     const AlphaIPRReadPolicy& ipr_read = kEv68IPRReadPolicy,
-    const AlphaIPRWritePolicy& ipr_write = kEv68IPRWritePolicy) noexcept
+    const AlphaIPRWritePolicy& ipr_write = kEv68IPRWritePolicy,
+    const AlphaPALPolicy& pal = kEv68PALPolicy) noexcept
 {
   const uint32_t opcode = ins >> 26;
   const uint32_t func = (ins >> 5) & 0x7fu;
@@ -1217,14 +1218,18 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block,
       break;
     }
     case 0x1b: {   // HW_LD (PALmode)
-      if (!pal_block) break;
+      if (!pal_block || !pal.hardware_instruction_access
+          || !alpha_pal_instruction_compilable(pal.hardware_instruction_access(ins)))
+        break;
       const uint32_t hwf = (ins >> 12) & 0xfu;
       if (hwf == 0 || hwf == 1 || hwf == 4 || hwf == 5 || hwf >= 8)
         return {A64OpKind::kHwLd, A64TerminatorKind::kNone, 0, 0};
       break;
     }
     case 0x1d: {   // HW_MTPR (PALmode)
-      if (!pal_block) break;
+      if (!pal_block || !pal.hardware_instruction_access
+          || !alpha_pal_instruction_compilable(pal.hardware_instruction_access(ins)))
+        break;
       const uint32_t mfn = (ins >> 8) & 0xffu;
       switch (ipr_write.describe(mfn)) {
         case AlphaIPRWriteKind::Helper:
@@ -1237,7 +1242,9 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block,
       break;
     }
     case 0x1f: {   // HW_ST (PALmode): physical funcs 0/1 only (x64 parity)
-      if (!pal_block) break;
+      if (!pal_block || !pal.hardware_instruction_access
+          || !alpha_pal_instruction_compilable(pal.hardware_instruction_access(ins)))
+        break;
       const uint32_t hwf = (ins >> 12) & 0xfu;
       if (hwf == 0 || hwf == 1)
         return {A64OpKind::kHwSt, A64TerminatorKind::kNone, 0, 0};
@@ -1429,7 +1436,9 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block,
       }
       break;
     case 0x19: {   // HW_MFPR (PALmode only)
-      if (!pal_block) break;
+      if (!pal_block || !pal.hardware_instruction_access
+          || !alpha_pal_instruction_compilable(pal.hardware_instruction_access(ins)))
+        break;
       const uint32_t fn = (ins >> 8) & 0xffu;
       if (ipr_read.describe(fn).kind != AlphaIPRReadKind::Unsupported)
         return {A64OpKind::kHwMfpr, A64TerminatorKind::kNone, 0, 0};
@@ -1440,7 +1449,9 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block,
               static_cast<uint8_t>(kA64GprRb), static_cast<uint8_t>(kA64GprRa)};
     case 0x1e:   // HW_RET/HWREI (PALmode only): PC = Rb & ~2, no link.
       // HW format: excluded from the pin-selection mask (regprof_mask parity).
-      if (!pal_block) break;
+      if (!pal_block || !pal.hardware_instruction_access
+          || !alpha_pal_instruction_compilable(pal.hardware_instruction_access(ins)))
+        break;
       return {A64OpKind::kJmpIndirect, A64TerminatorKind::kIndirect, 0, 0};
     case 0x30: case 0x34:   // BR / BSR: Ra = link, unconditional direct terminator
       return {A64OpKind::kBranchInt, A64TerminatorKind::kDirect,
@@ -1456,9 +1467,10 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block,
 
 static constexpr A64DecodedOp decode_a64_op(uint32_t ins, bool pal_block,
     const AlphaIPRReadPolicy& ipr_read = kEv68IPRReadPolicy,
-    const AlphaIPRWritePolicy& ipr_write = kEv68IPRWritePolicy) noexcept
+    const AlphaIPRWritePolicy& ipr_write = kEv68IPRWritePolicy,
+    const AlphaPALPolicy& pal = kEv68PALPolicy) noexcept
 {
-  const A64OpClass classification = classify_a64_op(ins, pal_block, ipr_read, ipr_write);
+  const A64OpClass classification = classify_a64_op(ins, pal_block, ipr_read, ipr_write, pal);
   A64DecodedOp decoded{};
   decoded.ins = ins;
   decoded.kind = classification.kind;
@@ -1502,7 +1514,7 @@ static uint32_t load_a64_guest_u32(const uint8_t* source) noexcept
 
 static A64BlockPlan plan_a64_block(const CJitEngine::JitBlock& block,
     const uint8_t* dram, uint64_t dram_size, const AlphaIPRReadPolicy& ipr_read,
-    const AlphaIPRWritePolicy& ipr_write) noexcept
+    const AlphaIPRWritePolicy& ipr_write, const AlphaPALPolicy& pal) noexcept
 {
   A64BlockPlan plan{};
   if (block.n_instr == 0) {
@@ -1519,7 +1531,7 @@ static A64BlockPlan plan_a64_block(const CJitEngine::JitBlock& block,
   const bool pal_block = (block.tag & 1u) != 0;
   for (uint32_t i = 0; i < limit.count; ++i) {
     const uint32_t word = load_a64_guest_u32(source + static_cast<size_t>(i) * 4);
-    const A64DecodedOp decoded = decode_a64_op(word, pal_block, ipr_read, ipr_write);
+    const A64DecodedOp decoded = decode_a64_op(word, pal_block, ipr_read, ipr_write, pal);
     if (decoded.kind == A64OpKind::kUnsupported) {
       plan.breaker_word = word;
       plan.stop = A64PlanStop::kUnsupported;
@@ -6308,7 +6320,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 #endif
 
   const A64BlockPlan plan = plan_a64_block(
-      *b, dram, dram_size, m_profile.ipr_read, m_profile.ipr_write);
+      *b, dram, dram_size, m_profile.ipr_read, m_profile.ipr_write, m_profile.pal);
 #ifdef JIT_STATS
   if (plan.stop == A64PlanStop::kUnsupported) {
     const uint32_t bop = plan.breaker_word >> 26;

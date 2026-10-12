@@ -140,7 +140,7 @@ static bool host_has_bmi2() {
 // pal_block enables PALmode-only ops (HW_MFPR): outside PALmode they'd OPCDEC, so only
 // compile them when the block is PALmode (the dispatcher keys blocks by PC bit 0).
 SafeOp classify(uint32_t ins, bool pal_block, const AlphaIPRReadPolicy& ipr_read,
-    const AlphaIPRWritePolicy& ipr_write)
+    const AlphaIPRWritePolicy& ipr_write, const AlphaPALPolicy& pal)
 {
   uint32_t opcode = ins >> 26;
   uint32_t func = (ins >> 5) & 0x7F;
@@ -307,7 +307,9 @@ SafeOp classify(uint32_t ins, bool pal_block, const AlphaIPRReadPolicy& ipr_read
     case 0x08: return OP_LDA;   // load address (Ra = Rb + disp16) -- pure ALU, no memory
     case 0x09: return OP_LDAH;  // load address high (Ra = Rb + (disp16 << 16))
     case 0x19: {                // HW_MFPR: read IPR -> Ra. PALmode-only (else OPCDEC).
-      if (!pal_block) return OP_NONE;
+      if (!pal_block || !pal.hardware_instruction_access
+          || !alpha_pal_instruction_compilable(pal.hardware_instruction_access(ins)))
+        return OP_NONE;
       const uint32_t fn = (ins >> 8) & 0xff;
       const auto descriptor = ipr_read.describe(fn);
       if (descriptor.kind == AlphaIPRReadKind::Unsupported) return OP_NONE;
@@ -316,7 +318,9 @@ SafeOp classify(uint32_t ins, bool pal_block, const AlphaIPRReadPolicy& ipr_read
     }
     case 0x1b: {                // HW_LD, PALmode-only. Physical locked forms still interpret;
       // all side-effect-free virtual forms use the generic translation helper.
-      if (!pal_block) return OP_NONE;
+      if (!pal_block || !pal.hardware_instruction_access
+          || !alpha_pal_instruction_compilable(pal.hardware_instruction_access(ins)))
+        return OP_NONE;
       const uint32_t f = (ins >> 12) & 0xf;
       if (f == 0) return OP_HW_LDL;
       if (f == 1) return OP_HW_LDQ;
@@ -324,7 +328,9 @@ SafeOp classify(uint32_t ins, bool pal_block, const AlphaIPRReadPolicy& ipr_read
       return OP_NONE;
     }
     case 0x1d: {                // HW_MTPR (PALmode): the family declares compiled-safe writes.
-      if (!pal_block) return OP_NONE;
+      if (!pal_block || !pal.hardware_instruction_access
+          || !alpha_pal_instruction_compilable(pal.hardware_instruction_access(ins)))
+        return OP_NONE;
       const uint32_t mfn = (ins >> 8) & 0xff;
       switch (ipr_write.describe(mfn)) {
         case AlphaIPRWriteKind::Helper: return OP_HW_MTPR;
@@ -337,7 +343,9 @@ SafeOp classify(uint32_t ins, bool pal_block, const AlphaIPRReadPolicy& ipr_read
     case 0x1f: {                // HW_ST (PALmode): compile physical longword/quadword (func 0/1).
       // Store-conditional (2/3) does LL/SC, virtual (4/5) and virtual-alt (12/13) translate with
       // side effects -> interpret. Mirrors HW_LD; the value is Ra, base Rb, displacement 12-bit.
-      if (!pal_block) return OP_NONE;
+      if (!pal_block || !pal.hardware_instruction_access
+          || !alpha_pal_instruction_compilable(pal.hardware_instruction_access(ins)))
+        return OP_NONE;
       const uint32_t f = (ins >> 12) & 0xf;
       if (f == 0) return OP_HW_STL;
       if (f == 1) return OP_HW_STQ;
@@ -347,7 +355,9 @@ SafeOp classify(uint32_t ins, bool pal_block, const AlphaIPRReadPolicy& ipr_read
                                 // chained in-frame via a block-cache lookup (jit_indirect), which
                                 // handles varying targets without the old single-slot thrash.
     case 0x1e:                  // HW_RET (HWREI): a PAL return, also a simple computed jump (Rb & ~2).
-      return pal_block ? OP_HW_RET : OP_NONE;
+      return pal_block && pal.hardware_instruction_access
+          && alpha_pal_instruction_compilable(pal.hardware_instruction_access(ins))
+          ? OP_HW_RET : OP_NONE;
     case 0x28: return OP_LDL;   // memory-format loads (Ra = MEM[Rb+disp16])
     case 0x29: return OP_LDQ;
     case 0x0a: return OP_LDBU;  // BWX byte/word loads (Ra = zero-extend MEM[Rb+disp16].{b,w})
@@ -729,7 +739,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
     int rc = ins & 0x1F;
     bool islit = ((ins >> 12) & 1) != 0;
     uint32_t lit = (ins >> 13) & 0xFF;
-    SafeOp op = classify(ins, pal_block, m_profile.ipr_read, m_profile.ipr_write);
+    SafeOp op = classify(ins, pal_block, m_profile.ipr_read, m_profile.ipr_write, m_profile.pal);
 
     // A nearby ordinary memory op can reuse the previous op's translated page.
     const bool prev_dpc_live = regalloc.dpc_live;
@@ -2492,7 +2502,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   while (plen < b->n_instr && plen < 64
          && (phys + (uint64_t) plen * 4) < page_end)
   {
-    SafeOp sop = classify(words[plen], pal_block, m_profile.ipr_read, m_profile.ipr_write);
+    SafeOp sop = classify(words[plen], pal_block, m_profile.ipr_read, m_profile.ipr_write, m_profile.pal);
     if (sop == OP_NONE) {               // uncompilable op ends the straight-line prefix
 #ifdef JIT_STATS
       const uint32_t bop = words[plen] >> 26;
