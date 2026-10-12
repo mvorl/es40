@@ -82,6 +82,8 @@ noinst_HEADERS = CPU/AlphaCPU.h \
        CPU/Ev68PAL.h \
        CPU/AlphaIPR.h \
        CPU/Ev68IPR.h \
+       CPU/AlphaMMU.h \
+       CPU/Ev68MMU.h \
        CPU/cpu_arith.h \
        CPU/cpu_bwx.h \
        CPU/cpu_control.h \
@@ -159,6 +161,7 @@ es40_SOURCES = chipset/AliM1543C.cpp \
        chipset/AliM1543C_pmu.cpp \
        CPU/AlphaCPU.cpp \
        CPU/Ev68IPR.cpp \
+       CPU/Ev68MMU.cpp \
        CPU/AlphaCPU_ieeefloat.cpp \
        CPU/AlphaCPU_vaxfloat.cpp \
        CPU/AlphaCPU_vmspal.cpp \

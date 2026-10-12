@@ -4637,34 +4637,14 @@ int CAlphaCPU::virt2phys(u64 virt, u64* phys, int flags, bool* asm_bit, u32 ins)
 	return 0;
 }
 
-/*
- * EV68CB/EV68DC HRM:
- *  - 5.3.1, Figure 5-26: DTB_TAG0/1 contain VA[47:13].
- *  - 5.3.2, Figure 5-27: DTB_PTE0/1 contain PA[43:13] and GH[1:0].
- * GH widens the granule by 3 bits per step, so the low 13/16/19/22 bits
- * are kept from the virtual address and excluded from the tag/PFN masks.
- */
-#define GH_0_MATCH  U64(0x0000ffffffffe000) /* VA <47:13> */
-#define GH_0_PHYS   U64(0x00000fffffffe000) /* PA <43:13> */
-#define GH_0_KEEP   U64(0x0000000000001fff) /* VA <12:0>  */
-
-#define GH_1_MATCH  U64(0x0000ffffffff0000) /* VA <47:16> */
-#define GH_1_PHYS   U64(0x00000fffffff0000) /* PA <43:16> */
-#define GH_1_KEEP   U64(0x000000000000ffff) /* VA <15:0>  */
-#define GH_2_MATCH  U64(0x0000fffffff80000) /* VA <47:19> */
-#define GH_2_PHYS   U64(0x00000ffffff80000) /* PA <43:19> */
-#define GH_2_KEEP   U64(0x000000000007ffff) /* VA <18:0>  */
-#define GH_3_MATCH  U64(0x0000ffffffc00000) /* VA <47:22> */
-#define GH_3_PHYS   U64(0x00000fffffc00000) /* PA <43:22> */
-#define GH_3_KEEP   U64(0x00000000003fffff) /* VA <21:0>  */
-
  /**
   * \brief Add translation-buffer entry
   *
   * Add a translation-buffer entry to one of the translation buffers.
   *
   * \param virt    Virtual address.
-  * \param pte     Translation in DTB_PTE format (see add_tb_d).
+  * \param pte_phys Physical-address input supplied by the family fill caller.
+  * \param pte_flags Family-specific fill attributes.
   * \param flags   ACCESS_EXEC determines which translation buffer to use.
   * \param asn     Address space number latched by the PAL fill port.
   **/
@@ -4672,46 +4652,17 @@ void CAlphaCPU::add_tb(u64 virt, u64 pte_phys, u64 pte_flags, int flags, int asn
 {
 	int t = (flags & ACCESS_EXEC) ? TB_INDEX_ITB : TB_INDEX_DATA;
 	int rw = (flags & ACCESS_WRITE) ? 1 : 0;
-	u64 match_mask = 0;
-	u64 keep_mask = 0;
-	u64 phys_mask = 0;
+	const auto fill = m_profile.tb_fill.decode(*this, virt, pte_phys, pte_flags, flags);
 	int i;
-
-	switch (pte_flags & 0x60)  // granularity hint
-	{
-	case 0:
-		match_mask = GH_0_MATCH;
-		phys_mask = GH_0_PHYS;
-		keep_mask = GH_0_KEEP;
-		break;
-
-	case 0x20:
-		match_mask = GH_1_MATCH;
-		phys_mask = GH_1_PHYS;
-		keep_mask = GH_1_KEEP;
-		break;
-
-	case 0x40:
-		match_mask = GH_2_MATCH;
-		phys_mask = GH_2_PHYS;
-		keep_mask = GH_2_KEEP;
-		break;
-
-	case 0x60:
-		match_mask = GH_3_MATCH;
-		phys_mask = GH_3_PHYS;
-		keep_mask = GH_3_KEEP;
-		break;
-	}
 
 	// Refill of a mapped page: the page-indexed hint finds it; otherwise take a fresh entry. A
 	// stale duplicate left behind by a hint collision is harmless: lookups prefer the hint, and
 	// every invalidate scans the whole buffer.
 	i = -1;
 	{
-		const int h = (int)m_tb_idx[t][(virt >> 13) & 255] - 1;
+		const int h = (int)m_tb_idx[t][(fill.virt >> 13) & 255] - 1;
 		if (h >= 0 && state.tb[t][h].valid
-			&& !((state.tb[t][h].virt ^ virt) & state.tb[t][h].match_mask)
+			&& !((state.tb[t][h].virt ^ fill.virt) & state.tb[t][h].match_mask)
 			&& (state.tb[t][h].asm_bit || state.tb[t][h].asn == asn))
 			i = h;
 	}
@@ -4722,7 +4673,7 @@ void CAlphaCPU::add_tb(u64 virt, u64 pte_phys, u64 pte_flags, int flags, int asn
 	// so bump the generation. A next_tb eviction (i reassigned below) replaces a DIFFERENT vpage 
 	// (not a remap of this one) and must NOT bump.
 	const bool itb_remap = (t == TB_INDEX_ITB) && (i >= 0)
-		&& (state.tb[t][i].phys != (pte_phys & phys_mask));
+		&& (state.tb[t][i].phys != fill.phys);
 #endif
 
 	if (i < 0)
@@ -4738,32 +4689,23 @@ void CAlphaCPU::add_tb(u64 virt, u64 pte_phys, u64 pte_flags, int flags, int asn
 		// Invalidate both the entry being replaced and the mapping being installed. 
 		if (state.tb[t][i].valid)
 			invalidate_data_page_cache(state.tb[t][i].virt, state.tb[t][i].match_mask);
-		invalidate_data_page_cache(virt, match_mask);
+		invalidate_data_page_cache(fill.virt, fill.match_mask);
 	}
 
-	state.tb[t][i].match_mask = match_mask;
-	state.tb[t][i].keep_mask = keep_mask;
-	state.tb[t][i].virt = virt & match_mask;
-	state.tb[t][i].phys = pte_phys & phys_mask;
-	state.tb[t][i].fault[0] = (int)pte_flags & 2;
-	state.tb[t][i].fault[1] = (int)pte_flags & 4;
-	state.tb[t][i].fault[2] = (int)pte_flags & 8;
-	state.tb[t][i].access[0][0] = (int)pte_flags & 0x100;
-	state.tb[t][i].access[1][0] = (int)pte_flags & 0x1000;
-	state.tb[t][i].access[0][1] = (int)pte_flags & 0x200;
-	state.tb[t][i].access[1][1] = (int)pte_flags & 0x2000;
-	state.tb[t][i].access[0][2] = (int)pte_flags & 0x400;
-	state.tb[t][i].access[1][2] = (int)pte_flags & 0x4000;
-	state.tb[t][i].access[0][3] = (int)pte_flags & 0x800;
-	state.tb[t][i].access[1][3] = (int)pte_flags & 0x8000;
-	state.tb[t][i].asm_bit = (int)pte_flags & 0x10;
+	state.tb[t][i].match_mask = fill.match_mask;
+	state.tb[t][i].keep_mask = fill.keep_mask;
+	state.tb[t][i].virt = fill.virt & fill.match_mask;
+	state.tb[t][i].phys = fill.phys;
+	memcpy(state.tb[t][i].fault, fill.fault, sizeof(fill.fault));
+	memcpy(state.tb[t][i].access, fill.access, sizeof(fill.access));
+	state.tb[t][i].asm_bit = fill.asm_bit;
 	state.tb[t][i].asn = asn;
 	state.tb[t][i].valid = true;
 #ifdef JIT_STATS
 	if (t == TB_INDEX_DATA) m_stat_tb[7]++;
 #endif
 	state.last_found_tb[t][rw] = i;
-	m_tb_idx[t][(virt >> 13) & 255] = (u16)(i + 1);
+	m_tb_idx[t][(fill.virt >> 13) & 255] = (u16)(i + 1);
 
 #ifdef ES40_JIT
 	if (itb_remap && m_jit) m_jit->note_itb_invalidate(CJitEngine::kBumpRemap);   // code page remapped in place -> chains re-validate
@@ -4951,10 +4893,10 @@ void CAlphaCPU::tbis_d(u64 virt, int asn)
 		}
 	}
 
-	// If the architectural TB entry was already evicted, an old GH=0 DPC line for this page can
-	// still exist. Retire its direct slot as well.
+	// If the TB entry was already evicted, an old base-page DPC line can still exist.
+	// Retire its direct slot using the mask recognized by the cache's fast path.
 	if (!found)
-		invalidate_data_page_cache(virt, GH_0_MATCH);
+		invalidate_data_page_cache(virt, U64(0x0000ffffffffe000));
 }
 
 //\}

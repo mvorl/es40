@@ -2189,6 +2189,7 @@
     <ClCompile Include="..\chipset\AliM1543C_pmu.cpp" />
     <ClCompile Include="..\CPU\AlphaCPU.cpp" />
     <ClCompile Include="..\CPU\Ev68IPR.cpp" />
+    <ClCompile Include="..\CPU\Ev68MMU.cpp" />
     <ClCompile Include="..\CPU\jit\jitengine.cpp" />
     <ClCompile Include="..\CPU\jit\jitengine_x64.cpp" />
     <ClCompile Include="..\CPU\jit\jitengine_a64.cpp" />
@@ -2278,6 +2279,8 @@
     <ClInclude Include="..\CPU\Ev68PAL.h" />
     <ClInclude Include="..\CPU\AlphaIPR.h" />
     <ClInclude Include="..\CPU\Ev68IPR.h" />
+    <ClInclude Include="..\CPU\AlphaMMU.h" />
+    <ClInclude Include="..\CPU\Ev68MMU.h" />
     <ClInclude Include="..\emu\attotime.h" />
     <ClInclude Include="..\banner.h" />
     <ClInclude Include="..\base\Exception.h" />
