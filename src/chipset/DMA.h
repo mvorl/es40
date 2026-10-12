@@ -62,6 +62,7 @@ class CAliM1543C;
 class CDMA : public CSystemComponent
 {
 public:
+  // The owning bridge selects ALi M1543C register and decode behavior.
   CDMA(CConfigurator* cfg, CSystem* c, const CAliM1543C& bridge);
   virtual       ~CDMA();
 
@@ -191,6 +192,14 @@ private:
       bool lobyte; // low byte is next for address or count access
     } controller[2];
     bool cascade_active; // accepted upper channel-4 grant, not lower HRQ
+
+    /// ALi M1543C extensions, separate from the standard 8237 state.
+    struct SDMA_ali
+    {
+      // Raw bits 5:4: 0x00/0x10/0x20 compatible, 0x30 Type F.
+      // System reset clears these; guest master clear preserves them.
+      u8 cycle_timing[8];
+    } ali;
   }
   state;
 };

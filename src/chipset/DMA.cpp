@@ -475,8 +475,11 @@ void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 				return;
 			// M1543C 4.2.1: channel select 1:0, timing 5:4; all other bits reserved.
 			data &= 0x33;
+			num = (index == DMA1_IO_EXT ? 4 : 0) + (int)(data & 0x03);
+			state.ali.cycle_timing[num] = (u8)(data & 0x30);
 			if (DMA_TRACE_CONTROLLER(index - DMA0_IO_EXT))
-				printf("dma: extended mode register %d written: %02" PRIx64 "\n", index - DMA0_IO_EXT, data);
+				printf("dma: ALi extended mode channel %d written: %02" PRIx64 " (%s timing)\n",
+					num, data, state.ali.cycle_timing[num] == 0x30 ? "Type F" : "compatible");
 			break;
 
 
