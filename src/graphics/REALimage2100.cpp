@@ -2346,10 +2346,13 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 {
 	if (!value)
 		return;
-	const bool floating = flat_vertex_register(address),
-		inclusive = (value & ~0xcu) == 0x62,
-		line = (value & ~0xcu) == 0x22 || inclusive;
+	const bool floating = flat_vertex_register(address);
+	const uint32_t primitive = floating ? value : value & 0x000fffffu;
+	const bool inclusive = (primitive & ~0xcu) == 0x62,
+		line = (primitive & ~0xcu) == 0x22 || inclusive;
 	const unsigned first_vertex = (value >> 2) & 3;
+	const uint32_t stipple = peek(PipelineControl3);
+	const bool patterned = !floating && line && (stipple & 0x80000000u);
 	auto reject = [&]() {
 		unimplemented_once(floating ? "REALimage floating line command/profile (command rejected)" :
 			line ? "REALimage integer line command/profile (command rejected)" :
@@ -2370,6 +2373,8 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 		((control & ~0xff01u) == 0xa1000002u && !(banks & ~3u));
 	if ((floating && ((value != 0x22 && value != 0x62) || !color_write)) ||
 		(!line && value != 3) ||
+		(!patterned && line && (value & 0xfff00000u)) ||
+		(patterned && ((stipple & 0x47ff0000u) || !color_write)) ||
 		(line && (first_vertex >= 3 ||
 			address != (floating ? VertexBase + 0x100 : IntegerVertexColorBase) +
 				((first_vertex + 1) % 3) * VertexStride + 0x1c ||
@@ -2391,7 +2396,7 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 		{GlobalControl0, line ? (inclusive && global == 3 ? 3u : 1u) : direct_polygon ? 1u : 0u},
 		{GlobalControl1, 0x20810}, {GlobalControl2, 0x33},
 		{PipelineControl0, 0}, {PipelineControl1, 0}, {PipelineControl2, 0x10000000},
-		{PipelineControl3, 0}, {PipelineControl4, 0}, {PipelineControl5, 0},
+		{PipelineControl3, patterned ? stipple : 0u}, {PipelineControl4, 0}, {PipelineControl5, 0},
 		{0x008005cc, 0}, {0x008005d4, 0}, {0x008005dc, 0}};
 	for (const auto& reg : profile)
 		if (peek(reg.first) != reg.second)
@@ -2536,11 +2541,26 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 		const Point& a = vertex[0];
 		Point b = vertex[1];
 		if (((a.x | a.y | b.x | b.y) & 15) ||
-			(floating && a.x != b.x && a.y != b.y))
+			((floating || patterned) && a.x != b.x && a.y != b.y) ||
+			(patterned && (b.x < a.x || b.y < a.y)))
 		{
 			reject();
 			return;
 		}
+		const bool stipple_x_major = std::abs(b.x - a.x) >= std::abs(b.y - a.y);
+		const int64_t major_start = (stipple_x_major ? a.x : a.y) / 16,
+			major_end = (stipple_x_major ? b.x : b.y) / 16;
+		// Reversed driver packets can normalize vertices; their wrapped anchors remain unverified.
+		if (patterned && (major_start < int64_t(value >> 20) || major_end > 0xfff))
+		{
+			reject();
+			return;
+		}
+		// The command anchors the repeated, LSB-first pattern to the major coordinate.
+		const unsigned phase = unsigned(major_start - int64_t(value >> 20)) & 0xfff;
+		auto stipple_visible = [&](unsigned step) {
+			return !patterned || ((stipple >> (((phase + step) >> ((stipple >> 27) & 7)) & 15)) & 1);
+		};
 		if (a.x != b.x && a.y != b.y)
 		{
 			int x = int(a.x / 16), y = int(a.y / 16);
@@ -2592,10 +2612,17 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 			bottom = std::min({int(m_color_height) - 1, int(peek(ClipYMax) >> 4), int(std::max(a.y, b.y) / 16)});
 		if (left > right || top > bottom)
 			return;
-		invalidate();
+		bool drawn = false;
 		for (int y = top; y <= bottom; ++y)
 			for (int x = left; x <= right; ++x)
+			{
+				if (!stipple_visible(unsigned(std::abs(int64_t(stipple_x_major ? x : y) - major_start))))
+					continue;
+				if (!drawn)
+					invalidate();
+				drawn = true;
 				write_pixel(x, y);
+			}
 		return;
 	}
 	auto edge = [](const Point& p, const Point& q, const Point& at) {
