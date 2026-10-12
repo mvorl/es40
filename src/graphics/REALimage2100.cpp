@@ -1353,20 +1353,48 @@ void CRealImage2100::color_write(const ColorWriteContext& context,
 		}
 }
 
+bool CRealImage2100::auxiliary_framebuffer_profile() const
+{
+	if ((peek(DrawControl) & ~0x00ff0f01u) != 0xa1004002u ||
+		!native_copy_control_profile(true, true) || m_planes[2].unknown_masks)
+		return false;
+	const uint32_t expected[] = {0, 0, 0x0fff0fff, 0x03030303, 0x0a000000,
+		0, 0, 0, 0, 0x00ff0000, 0x33300000, 0x100, 0, 0x100, 0};
+	for (unsigned i = 0; i < std::size(expected); ++i)
+		if (plane_value(2, i + 1, expected[i]) != expected[i] &&
+			!(i == 9 && plane_value(2, i + 1, expected[i]) == 0))
+			return false;
+	return true;
+}
+
 bool CRealImage2100::framebuffer_access(
 	uint32_t a, int bits, uint32_t& value, bool write)
 {
-	if (a < 0x01000000 || a >= 0x03000000)
+	if (a < 0x01000000 || a >= 0x04000000)
 		return false;
-	// Fixed front/back windows use an 8 KiB row pitch.
+	// Fixed front/back/auxiliary windows use an 8 KiB row pitch.
 	const uint32_t bank = (a >> 24) - 1, x = (a & 0x1fff) >> 2,
 		y = (a & 0x00ffffff) >> 13, shift = (a & 3) * 8;
-	if (!copy_profile() || !plane_profile(bank) ||
+	if ((bank == 2 ? write && !auxiliary_framebuffer_profile() :
+		!copy_profile() || !plane_profile(bank)) ||
 		x >= m_color_width || y >= m_color_height)
 	{
 		unimplemented_once("REALimage framebuffer aperture/profile", a, value, write);
 		if (!write)
 			value = width_mask(bits);
+		return true;
+	}
+	if (bank == 2)
+	{
+		uint32_t& pixel = m_auxiliary[size_t(y) * m_color_width + x];
+		if (write)
+		{
+			const uint32_t mask = plane_value(2, 0, 0xffffffff) & (width_mask(bits) << shift);
+			pixel = (pixel & ~mask) | ((value << shift) & mask);
+			m_clear_cache[2] = {};
+		}
+		else
+			value = (pixel >> shift) & width_mask(bits);
 		return true;
 	}
 	if (write)

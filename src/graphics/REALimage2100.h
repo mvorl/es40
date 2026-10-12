@@ -291,6 +291,7 @@ private:
   bool capture_misr(uint32_t& signature);
   uint32_t* native_register(uint32_t dword_address);
   bool framebuffer_access(uint32_t address, int bits, uint32_t& value, bool write);
+  bool auxiliary_framebuffer_profile() const;
   uint32_t texture_offset(uint32_t address) const;
   uint32_t status_read();
   uint32_t peek(uint32_t address) const;
