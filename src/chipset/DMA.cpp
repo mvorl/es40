@@ -154,31 +154,49 @@ static int dma_page_channel(u64 address)
 	return channelmap[address];
 }
 
-static size_t dma_transfer_width(int channel)
+void CDMA::validate_device_channel(int channel)
 {
 	if (channel < 0 || channel >= 8 || channel == 4)
 		FAILURE(InvalidArgument, "dma: invalid device channel (channel 4 is cascade)");
-
-	return channel < 4 ? 1 : 2;
 }
 
-u64 CDMA::dma_address(u16 pagebase, u16 current, size_t width)
+CDMA::SDMA_transfer_properties CDMA::transfer_properties(int channel) const
+{
+	validate_device_channel(channel);
+	// ALi's ISA channels count bytes or shifted words. Timing selection does
+	// not change data width, count units or addressing on this controller.
+	if (channel < 4)
+		return { 1, 1, 1, 0, 0xffff };
+	return { 2, 2, 1, 1, 0xffff };
+}
+
+u64 CDMA::dma_address(u16 pagebase, u32 current,
+	const SDMA_transfer_properties& properties)
 {
 	if (!(isa_bridge.config_read(0, 0x42, 8) & 0x40))
 		pagebase &= 0x00ff;
 
-	// Word channels drive A16 from the current address, not low-page bit 0.
-	if (width == 2)
-		pagebase &= 0xfffe;
+	// Shifted addressing drives A16 from current, not low-page bit 0.
+	pagebase &= (u16)(0xffffU << properties.address_shift);
 
-	return ((u64)pagebase << 16) | ((u64)current * width);
+	return ((u64)pagebase << 16) | ((u64)current << properties.address_shift);
 }
 
-static size_t dma_increment_chunk_size(u16 current, size_t width, size_t count)
+u32 CDMA::step_address(u32 current, size_t units, bool decrement,
+	const SDMA_transfer_properties& properties)
 {
-	// The 16-bit current register wraps without carrying into the page registers.
-	size_t bytes_to_wrap = ((size_t)0x10000 - current) * width;
-	return count < bytes_to_wrap ? count : bytes_to_wrap;
+	u32 delta = (u32)(units * properties.address_step);
+	return (decrement ? current - delta : current + delta) & properties.address_mask;
+}
+
+size_t CDMA::increment_chunk_size(u32 current, size_t length,
+	const SDMA_transfer_properties& properties)
+{
+	// Current ISA geometry is contiguous and wraps only the current register.
+	size_t units_to_wrap = ((size_t)properties.address_mask + 1 - current) /
+		properties.address_step;
+	size_t bytes_to_wrap = units_to_wrap * properties.data_width;
+	return length < bytes_to_wrap ? length : bytes_to_wrap;
 }
 
 #define DMA_INDEX(n) dma_index_names[n - DMA_IO_BASE].c_str()
@@ -598,7 +616,7 @@ void CDMA::set_drq(int channel, bool asserted)
 {
 	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	// Apply the same device-channel validation as the transfer interfaces.
-	dma_transfer_width(channel);
+	validate_device_channel(channel);
 	int ctrlr = channel < 4 ? 0 : 1;
 	int local_channel = channel & 0x03;
 	if (asserted)
@@ -641,7 +659,7 @@ bool CDMA::cascade_enabled()
  **/
 bool CDMA::service_requested(int channel)
 {
-	dma_transfer_width(channel);
+	validate_device_channel(channel);
 	int ctrlr = channel < 4 ? 0 : 1;
 	u8 bit = 1 << (channel & 0x03);
 	u8 mode = state.channel[channel].mode & 0xc0;
@@ -810,23 +828,24 @@ int CDMA::get_count(int channel)
 size_t CDMA::get_transfer_size(int channel)
 {
 	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
-	size_t width = dma_transfer_width(channel);
-	return ((size_t)state.channel[channel].count + 1) * width;
+	const SDMA_transfer_properties properties = transfer_properties(channel);
+	return ((size_t)state.channel[channel].count + 1) * properties.count_unit;
 }
 
 /**
- * Advance the current registers by transferred byte/word units and report TC.
+ * Account for serviced bytes, including verify, and report terminal count.
  **/
-bool CDMA::advance_transfer(int channel, size_t units, bool eop)
+bool CDMA::advance_transfer(int channel, size_t length,
+	const SDMA_transfer_properties& properties, bool eop)
 {
+	size_t units = length / properties.data_width;
+	size_t count_units = length / properties.count_unit;
 	// Check before narrowing: a full transfer can contain 65536 units.
-	bool terminal_count = units == (size_t)state.channel[channel].count + 1;
+	bool terminal_count = count_units == (size_t)state.channel[channel].count + 1;
 
-	if (state.channel[channel].mode & 0x20)
-		state.channel[channel].current -= (u16)units;
-	else
-		state.channel[channel].current += (u16)units;
-	state.channel[channel].count -= (u16)units;
+	state.channel[channel].current = (u16)step_address(state.channel[channel].current,
+		units, (state.channel[channel].mode & 0x20) != 0, properties);
+	state.channel[channel].count -= (u16)count_units;
 
 	if (terminal_count || eop)
 		complete_transfer(channel);
@@ -859,7 +878,7 @@ void CDMA::complete_transfer(int channel)
 CDMA::SDMA_result CDMA::send_data(int channel, void* data, size_t length, bool eop)
 {
 	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
-	size_t width = dma_transfer_width(channel);
+	const SDMA_transfer_properties properties = transfer_properties(channel);
 	int ctrlr = channel < 4 ? 0 : 1;
 	int local_channel = channel & 0x03;
 	SDMA_result result = { 0, true, false, false };
@@ -901,22 +920,21 @@ CDMA::SDMA_result CDMA::send_data(int channel, void* data, size_t length, bool e
 			}
 			size_t count = get_transfer_size(channel);
 			if (length > 0 && length < count) count = length;
-			if (count % width)
+			if (count % properties.data_width)
 				FAILURE(InvalidArgument, "dma: word-channel transfer length must be even");
-			size_t units = count / width;
 
 			if (transfer_type == 0x00)
 			{
 				if (DMA_TRACE_CHANNEL(channel))
 					printf("dma: verify on channel %d: %zx bytes.\n", channel, count);
-				result.terminal_count = advance_transfer(channel, units, eop);
+				result.terminal_count = advance_transfer(channel, count, properties, eop);
 				result.external_eop = eop;
 				result.blocked = false;
 				return result;
 			}
 
 			u64 addr = dma_address(state.channel[channel].pagebase,
-				state.channel[channel].current, width);
+				state.channel[channel].current, properties);
 			if (DMA_TRACE_CHANNEL(channel))
 			{
 				printf("DMA send_data:  %zx @ %16" PRIx64 "\n  ", count, addr);
@@ -932,29 +950,29 @@ CDMA::SDMA_result CDMA::send_data(int channel, void* data, size_t length, bool e
 			// Device buffers are byte streams, even for word channels.
 			if (state.channel[channel].mode & 0x20)
 			{
-				u16 current = state.channel[channel].current;
+				u32 current = state.channel[channel].current;
 				// Decrement by units, preserving the byte order within each word.
-				for (size_t offset = 0; offset < count; offset += width)
+				for (size_t offset = 0; offset < count; offset += properties.data_width)
 				{
-					addr = dma_address(state.channel[channel].pagebase, current, width);
-					isa_bridge.do_pci_write((u32)addr, (u8*)data + offset, 1, width);
-					current--;
+					addr = dma_address(state.channel[channel].pagebase, current, properties);
+					isa_bridge.do_pci_write((u32)addr, (u8*)data + offset, 1, properties.data_width);
+					current = step_address(current, 1, true, properties);
 				}
 			}
 			else
 			{
-				size_t first_count = dma_increment_chunk_size(state.channel[channel].current,
-					width, count);
+				size_t first_count = increment_chunk_size(state.channel[channel].current,
+					count, properties);
 				isa_bridge.do_pci_write((u32)addr, data, 1, first_count);
 				// A programmed transfer contains at most 65536 units, so only one wrap is possible.
 				if (first_count < count)
 				{
-					u64 wrap_addr = dma_address(state.channel[channel].pagebase, 0, width);
+					u64 wrap_addr = dma_address(state.channel[channel].pagebase, 0, properties);
 					isa_bridge.do_pci_write((u32)wrap_addr, (u8*)data + first_count, 1,
 						count - first_count);
 				}
 			}
-			result.terminal_count = advance_transfer(channel, units, eop);
+			result.terminal_count = advance_transfer(channel, count, properties, eop);
 			result.external_eop = eop;
 			result.transferred = count;
 			result.blocked = false;
@@ -974,7 +992,7 @@ CDMA::SDMA_result CDMA::send_data(int channel, void* data, size_t length, bool e
 CDMA::SDMA_result CDMA::recv_data(int channel, void* data, size_t length, bool eop)
 {
 	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
-	size_t width = dma_transfer_width(channel);
+	const SDMA_transfer_properties properties = transfer_properties(channel);
 	int ctrlr = channel < 4 ? 0 : 1;
 	int local_channel = channel & 0x03;
 	SDMA_result result = { 0, true, false, false };
@@ -1015,47 +1033,46 @@ CDMA::SDMA_result CDMA::recv_data(int channel, void* data, size_t length, bool e
 			}
 			size_t count = get_transfer_size(channel);
 			if (length > 0 && length < count) count = length;
-			if (count % width)
+			if (count % properties.data_width)
 				FAILURE(InvalidArgument, "dma: word-channel transfer length must be even");
-			size_t units = count / width;
 
 			if (transfer_type == 0x00)
 			{
 				if (DMA_TRACE_CHANNEL(channel))
 					printf("dma: verify on channel %d: %zx bytes.\n", channel, count);
-				result.terminal_count = advance_transfer(channel, units, eop);
+				result.terminal_count = advance_transfer(channel, count, properties, eop);
 				result.external_eop = eop;
 				result.blocked = false;
 				return result;
 			}
 
 			u64 addr = dma_address(state.channel[channel].pagebase,
-				state.channel[channel].current, width);
+				state.channel[channel].current, properties);
 			if (DMA_TRACE_CHANNEL(channel))
 				printf("DMA recv_data:  %zx @ %16" PRIx64 "\n", count, addr);
 			if (state.channel[channel].mode & 0x20)
 			{
-				u16 current = state.channel[channel].current;
-				for (size_t offset = 0; offset < count; offset += width)
+				u32 current = state.channel[channel].current;
+				for (size_t offset = 0; offset < count; offset += properties.data_width)
 				{
-					addr = dma_address(state.channel[channel].pagebase, current, width);
-					isa_bridge.do_pci_read((u32)addr, (u8*)data + offset, 1, width);
-					current--;
+					addr = dma_address(state.channel[channel].pagebase, current, properties);
+					isa_bridge.do_pci_read((u32)addr, (u8*)data + offset, 1, properties.data_width);
+					current = step_address(current, 1, true, properties);
 				}
 			}
 			else
 			{
-				size_t first_count = dma_increment_chunk_size(state.channel[channel].current,
-					width, count);
+				size_t first_count = increment_chunk_size(state.channel[channel].current,
+					count, properties);
 				isa_bridge.do_pci_read((u32)addr, data, 1, first_count);
 				if (first_count < count)
 				{
-					u64 wrap_addr = dma_address(state.channel[channel].pagebase, 0, width);
+					u64 wrap_addr = dma_address(state.channel[channel].pagebase, 0, properties);
 					isa_bridge.do_pci_read((u32)wrap_addr, (u8*)data + first_count, 1,
 						count - first_count);
 				}
 			}
-			result.terminal_count = advance_transfer(channel, units, eop);
+			result.terminal_count = advance_transfer(channel, count, properties, eop);
 			result.external_eop = eop;
 			result.transferred = count;
 			result.blocked = false;
@@ -1075,18 +1092,18 @@ CDMA::SDMA_result CDMA::recv_data(int channel, void* data, size_t length, bool e
 CDMA::SDMA_result CDMA::send_unit(int channel, u16 data, bool eop)
 {
 	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
-	size_t width = dma_transfer_width(channel);
+	const SDMA_transfer_properties properties = transfer_properties(channel);
 	u8 buffer[2] = { (u8)data, (u8)(data >> 8) };
-	return send_data(channel, buffer, width, eop);
+	return send_data(channel, buffer, properties.data_width, eop);
 }
 
 CDMA::SDMA_result CDMA::recv_unit(int channel, u16& data, bool eop)
 {
 	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
-	size_t width = dma_transfer_width(channel);
+	const SDMA_transfer_properties properties = transfer_properties(channel);
 	u8 buffer[2] = { 0, 0 };
-	SDMA_result result = recv_data(channel, buffer, width, eop);
-	if (result.transferred == width)
+	SDMA_result result = recv_data(channel, buffer, properties.data_width, eop);
+	if (result.transferred == properties.data_width)
 		data = (u16)(buffer[0] | ((u16)buffer[1] << 8));
 	return result;
 }
@@ -1118,7 +1135,7 @@ CDMA::SDMA_result CDMA::service_recv_unit(int channel, u16& data, bool eop)
 CDMA::SDMA_result CDMA::service_eop(int channel)
 {
 	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
-	dma_transfer_width(channel);
+	validate_device_channel(channel);
 	SDMA_result result = { 0, true, false, false };
 	int ctrlr = channel < 4 ? 0 : 1;
 	u8 bit = 1 << (channel & 0x03);

@@ -153,7 +153,24 @@ private:
   // Borrowed bridge for configuration, decode and DMA; never accessed during destruction.
   CAliM1543C& isa_bridge;
 
-  u64           dma_address(u16 pagebase, u16 current, size_t width);
+  // Derived transfer geometry; not guest registers or saved state.
+  struct SDMA_transfer_properties
+  {
+    size_t data_width;     // Bytes moved by one device transfer.
+    size_t count_unit;     // Bytes represented by one count-register unit.
+    u32 address_step;     // Current-register increments per device transfer.
+    unsigned address_shift; // Shift from programmed address to byte address.
+    u32 address_mask;     // Current-register wrap, without carrying into page.
+  };
+
+  static void   validate_device_channel(int channel);
+  SDMA_transfer_properties transfer_properties(int channel) const;
+  u64           dma_address(u16 pagebase, u32 current,
+                  const SDMA_transfer_properties& properties);
+  static u32    step_address(u32 current, size_t units, bool decrement,
+                  const SDMA_transfer_properties& properties);
+  static size_t increment_chunk_size(u32 current, size_t length,
+                  const SDMA_transfer_properties& properties);
   u8            get_requests(int ctrlr);
   bool          cascade_enabled();
   bool          service_requested(int channel);
@@ -162,7 +179,8 @@ private:
   void          release_service(int channel);
   void          finish_service(int channel, const SDMA_result& result);
   void          do_dma();
-  bool          advance_transfer(int channel, size_t units, bool eop);
+  bool          advance_transfer(int channel, size_t length,
+                  const SDMA_transfer_properties& properties, bool eop);
   void          complete_transfer(int channel);
 
   /// The state structure contains all elements that need to be saved to the statefile.
