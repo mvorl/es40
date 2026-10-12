@@ -1268,11 +1268,12 @@ bool CRealImage2100::integer_rgb_profile(bool configuration) const
 	return true;
 }
 
-bool CRealImage2100::fast_copy_profile() const
+bool CRealImage2100::fast_copy_profile(bool block) const
 {
-	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
-	if ((control & ~0xff01u) != 0x21000002 || (banks != 1 && banks != 2) ||
-		!native_copy_control_profile())
+	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
+		fields = block ? 0x00ffff01u : 0xff01u;
+	if ((control & ~fields) != 0x21000002 || (banks != 1 && banks != 2) ||
+		!native_copy_control_profile(block, block))
 		return false;
 	const unsigned bank = banks == 2 ? 1 : 0;
 	if ((plane_value(bank, 0, 0xffffffff) & 0xffffff) != 0xffffff ||
@@ -1282,15 +1283,17 @@ bool CRealImage2100::fast_copy_profile() const
 		plane_value(bank, 5, 0x0a000000) != 0 || plane_value(bank, 6, 0) != 1 ||
 		plane_value(bank, 7, 0) != 0 ||
 		plane_value(bank, 8, 0) != 0 || plane_value(bank, 9, 0) != 0 ||
-		plane_value(bank, 10, 0) != 0 ||
+		(plane_value(bank, 10, 0) != 0 && (!block || plane_value(bank, 10, 0) != 0x00ff0000)) ||
 		plane_value(bank, 11, 0x33300000) != 0x33300000 ||
 		plane_value(bank, 12, 0x100) != 0x100 || plane_value(bank, 13, 0) != 0 ||
 		plane_value(bank, 14, 0x100) != 0x100 || plane_value(bank, 15, 0) != 0 ||
 		m_planes[bank].unknown_masks)
 		return false;
-	for (unsigned i = 24; i < 24 + block_width() / 2; ++i)
-		if (plane_value(bank, i, 0xffffffff) != 0xffffffff)
-			return false;
+	// Native block copies bypass retained configuration masks.
+	if (!block)
+		for (unsigned i = 24; i < 24 + block_width() / 2; ++i)
+			if (plane_value(bank, i, 0xffffffff) != 0xffffffff)
+				return false;
 	return true;
 }
 
@@ -1721,7 +1724,8 @@ void CRealImage2100::execute_block(const BlockOperation& op)
 void CRealImage2100::block_command(uint32_t v)
 {
 	if (v == 0x01000032 || v == 0x01000052 || v == 0x07000052 || v == 0x01000072 ||
-		v == 0x07000072 || v == 0x06000072 || v == 0x06000062 || v == 0x07000062)
+		v == 0x07000072 || v == 0x06000072 || v == 0x06000062 || v == 0x07000062 ||
+		v == 0x06200062 || v == 0x06200072 || v == 0x07200062 || v == 0x07200072)
 		start_command(BlockCommand, v);
 	else
 		execute_block(prepare_block(v));
@@ -1772,12 +1776,14 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 		return op;
 	op.kind = StartOperation::Kind::Rejected;
 	const bool block_transfer = a == BlockCommand && (v == 0x01000032 || readback);
-	const bool block_copy = a == BlockCommand &&
-		(v == 0x01000072 || v == 0x07000072 || v == 0x06000072 || v == 0x06000062 || v == 0x07000062);
+	const bool block_fast_copy = a == BlockCommand &&
+		(v == 0x06200062 || v == 0x06200072 || v == 0x07200062 || v == 0x07200072);
+	const bool block_copy = block_fast_copy || (a == BlockCommand &&
+		(v == 0x01000072 || v == 0x07000072 || v == 0x06000072 || v == 0x06000062 || v == 0x07000062));
 	const bool block_geometry = block_transfer || block_copy;
 	const bool upload = (a == HostCommand || a == BlockCommand) && v == 0x01000032;
-	const bool fast_copy = a == HostCommand &&
-		(v == 0x00200062 || v == 0x00200072 || v == 0x01200062 || v == 0x01200072);
+	const bool fast_copy = block_fast_copy || (a == HostCommand &&
+		(v == 0x00200062 || v == 0x00200072 || v == 0x01200062 || v == 0x01200072));
 	const bool copy = (a == HostCommand &&
 		(v == 0x01000062 || v == 0x00000062 || v == 0x01000072 || v == 0x00000072)) ||
 		fast_copy || cross_copy || block_copy;
@@ -1804,10 +1810,10 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	op.auxiliary = (initialization || bitmap || block_copy || auxiliary_mono) && (peek(DrawControl) & 0x4000);
 	const bool profile = auxiliary_mono ? auxiliary_mono_profile() :
 		integer_mono ? integer_rgb_profile(configuration_mono) : bitmap ? bitmap_profile() :
+		fast_copy ? fast_copy_profile(block_fast_copy) :
 		block_copy ? (v == 0x01000072 ?
 			block_transfer_profile(false) : block_copy_profile()) :
 		block_transfer ? block_transfer_profile(upload, native_readback) :
-		fast_copy ? fast_copy_profile() :
 		((fill || initialization) ? fill_profile(initialization) : copy_profile()) &&
 		(!(selected & 1) || plane_profile(0)) && (!(selected & 2) || plane_profile(1)) &&
 		(!op.auxiliary || plane_profile(2)) &&

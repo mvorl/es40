@@ -312,7 +312,7 @@ private:
   bool integer_rgb_profile(bool configuration = false) const;
   bool fill_profile(bool initialization = false) const;
   bool copy_profile() const;
-  bool fast_copy_profile() const;
+  bool fast_copy_profile(bool block = false) const;
   enum class TrianglePreparation { Rejected, NoOp, Ready };
   struct TriangleOperation
   {
