@@ -2322,7 +2322,8 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 	if (!value)
 		return;
 	const bool floating = flat_vertex_register(address),
-		line = (value & ~0xcu) == 0x22 || value == 0x62;
+		inclusive = (value & ~0xcu) == 0x62,
+		line = (value & ~0xcu) == 0x22 || inclusive;
 	const unsigned first_vertex = (value >> 2) & 3;
 	auto reject = [&]() {
 		unimplemented_once(floating ? "REALimage floating line command/profile (command rejected)" :
@@ -2330,7 +2331,8 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 			"REALimage integer triangle command/profile (command rejected)", address, value, true);
 	};
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15,
-		width = block_width(), columns = ((peek(MemoryControl) >> 24) & 63) + 1;
+		width = block_width(), columns = ((peek(MemoryControl) >> 24) & 63) + 1,
+		global = peek(GlobalControl0);
 	const bool direct_rgb = (control & ~0xff01u) == 0x21000002u &&
 		(banks == 1 || banks == 2),
 		auxiliary_compare = (control & ~0x00ffff01u) == 0xa1000002u &&
@@ -2343,8 +2345,8 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 		(line && (first_vertex >= 3 ||
 			address != (floating ? VertexBase + 0x100 : IntegerVertexColorBase) +
 				((first_vertex + 1) % 3) * VertexStride + 0x1c ||
-			(value == 0x62 ? (!auxiliary_compare && !direct_rgb) :
-				(!auxiliary_write && (!color_write || auxiliary_compare))))) ||
+			(inclusive ? (!auxiliary_compare && !direct_rgb) :
+				(!auxiliary_write && !color_write)))) ||
 		(!auxiliary_write && !color_write &&
 		(control & ~0xff01u) != 0x21000002u) ||
 		!banks || (banks & ~7u) ||
@@ -2355,10 +2357,11 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 		reject();
 		return;
 	}
-	const bool rgb_line = line && value != 0x62 && color_write,
-		direct_polygon = !line && direct_rgb && peek(GlobalControl0) == 1;
+	const bool rgb_line = line && !inclusive && color_write,
+		direct_polygon = !line && direct_rgb && global == 1;
+	// Connected terminal commands can retain mode 1 until the next state flush.
 	const std::pair<uint32_t, uint32_t> profile[] = {
-		{GlobalControl0, line ? (value == 0x62 ? 3u : 1u) : direct_polygon ? 1u : 0u},
+		{GlobalControl0, line ? (inclusive && global == 3 ? 3u : 1u) : direct_polygon ? 1u : 0u},
 		{GlobalControl1, 0x20810}, {GlobalControl2, 0x33},
 		{PipelineControl0, 0}, {PipelineControl1, 0}, {PipelineControl2, 0x10000000},
 		{PipelineControl3, 0}, {PipelineControl4, 0}, {PipelineControl5, 0},
@@ -2498,7 +2501,7 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 		const Point& a = vertex[0];
 		Point b = vertex[1];
 		if (((a.x | a.y | b.x | b.y) & 15) ||
-			((value == 0x62 || floating) && a.x != b.x && a.y != b.y))
+			((inclusive || floating) && a.x != b.x && a.y != b.y))
 		{
 			reject();
 			return;
@@ -2540,8 +2543,8 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 			}
 			return;
 		}
-		// Connected lines exclude the final endpoint; 0x62 includes it.
-		if (value != 0x62)
+		// Bit 6 includes the final endpoint for any rotating line slot.
+		if (!inclusive)
 		{
 			if (a.x == b.x && a.y == b.y)
 				return;
