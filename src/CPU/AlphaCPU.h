@@ -326,6 +326,7 @@ public:
   void ResetForSystemReset();
 private:
   u64 read_ipr(u32 function);
+  void write_ipr(u32 function, u64 value, AlphaIPRWriteContext context);
 
   // Family PAL rules are immutable and live outside the saved CPU state.
   AlphaPALExceptionEntry pal_exception_entry(AlphaPALException reason, u64 pc) const;
@@ -656,7 +657,7 @@ private:
   static void jit_opcdec(CAlphaCPU* cpu, u64 cpc);
   // HW_MFPR (PALmode): return the IPR named in ins; the caller (compiled codegen) writes Ra.
   static u64 jit_hw_mfpr(CAlphaCPU* cpu, u32 ins, u64 cur);
-  // HW_MTPR (PALmode): store value (Rb) to the side-effect-free IPR named by function.
+  // HW_MTPR (PALmode): dispatch a family-approved compiled write of value (Rb).
   static void jit_hw_mtpr(CAlphaCPU* cpu, u32 function, u64 value);
   // Indirect jump (JMP/HW_RET): look up the target block; return its chained re-entry or null.
   static void* jit_indirect(CAlphaCPU* cpu, u64 target, void* link_cache);

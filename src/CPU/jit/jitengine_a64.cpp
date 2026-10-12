@@ -221,7 +221,7 @@ enum class A64OpKind : uint8_t {
   kInta,          // INTA (0x10) add/sub/scaled/compares/CMPBGE (/V forms interpret)
   kMisc,          // MISC (0x18): MB dmb ish, WMB dmb ishst, TRAPB/EXCB/hints nothing, RPCC/RC/RS helper
   kCallPal,       // CALL_PAL (0x00): OPCDEC gate, exc_addr, R23/R55 link, vector terminator
-  kHwMtpr,        // HW_MTPR (0x1d): jit_hw_mtpr / no-op IPRs; I_CTL is the redispatch term
+  kHwMtpr,        // HW_MTPR (0x1d): family helper / no-op writes; policy selects redispatch
   kHwLd,          // HW_LD (0x1b): physical DRAM inline, virtual via jit_read_vpte
   kHwSt,          // HW_ST (0x1f): physical DRAM inline, MMIO/verify via jit_write_phys
   kIntm,          // INTM (0x13) MULQ/MULL/UMULH -> mul / mul+sxtw / umulh
@@ -492,7 +492,7 @@ static constexpr A64DirectChainContract plan_a64_direct_chain(
   contract.target_pal_guard = exit.kind == A64ExitKind::kCallPal && !pal_block;
   contract.request_patch_on_slot_miss = true;
   // x64 emits the self-link check only on gated exits: a fall-through or forward
-  // branch can never target its own block start. CALL_PAL and I_CTL redispatch
+  // branch can never target its own block start. CALL_PAL and IPR redispatch
   // keep it, matching the shared branch-tail path.
   contract.self_loop_candidate = contract.gate_exit;
   contract.publish_pc_before_probe = a64_publish_pc_before_chain(exit, pal_block);
@@ -1199,7 +1199,8 @@ static constexpr bool a64_source_extent_valid(uint64_t phys, uint32_t words,
 
 // Classification stays fail-closed: each translation adds its classifier and emitter together.
 static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block,
-    const AlphaIPRReadPolicy& ipr_read = kEv68IPRReadPolicy) noexcept
+    const AlphaIPRReadPolicy& ipr_read = kEv68IPRReadPolicy,
+    const AlphaIPRWritePolicy& ipr_write = kEv68IPRWritePolicy) noexcept
 {
   const uint32_t opcode = ins >> 26;
   const uint32_t func = (ins >> 5) & 0x7fu;
@@ -1225,23 +1226,13 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block,
     case 0x1d: {   // HW_MTPR (PALmode)
       if (!pal_block) break;
       const uint32_t mfn = (ins >> 8) & 0xffu;
-      if ((mfn & 0xc0u) == 0x40u) {   // AST/FPEN/PPCEN group; bit 0 writes ASN -> interp
-        if (mfn & 1u) break;
-        return {A64OpKind::kHwMtpr, A64TerminatorKind::kNone, 0, 0};
-      }
-      switch (mfn) {
-        case 0x00: case 0x14: case 0x20: case 0x26:   // ITB_TAG, PCTR_CTL, DTB_TAG0, DTB_ALTMODE
-        case 0x29: case 0xa0: case 0xc0:              // DC_CTL, DTB_TAG1, CC
-        case 0x01: case 0x21: case 0xa1:              // ITB_PTE, DTB_PTE0, DTB_PTE1
-        case 0x02: case 0x03: case 0x04:              // ITB_IAP, ITB_IA, ITB_IS
-        case 0x13:                                    // IC_FLUSH (lazy gen bump)
-        case 0x0a: case 0x09: case 0x0b: case 0x0c:   // IER, CM, IER_CM, SIRR
-        case 0x24: case 0xa4:                         // DTB_IS0/1
-        case 0x15: case 0x17: case 0x27:              // CLR_MAP, SLEEP, MM_STAT (no-ops)
-        case 0x2b: case 0x2c: case 0x2d:              // C_DATA, C_SHIFT, M_FIX (no-ops)
+      switch (ipr_write.describe(mfn)) {
+        case AlphaIPRWriteKind::Helper:
+        case AlphaIPRWriteKind::Noop:
           return {A64OpKind::kHwMtpr, A64TerminatorKind::kNone, 0, 0};
-        case 0x11:                                    // I_CTL: SDE/SPE/VA change -> redispatch
+        case AlphaIPRWriteKind::HelperTerminator:
           return {A64OpKind::kHwMtpr, A64TerminatorKind::kRedispatch, 0, 0};
+        case AlphaIPRWriteKind::Interpreter: break;
       }
       break;
     }
@@ -1464,9 +1455,10 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block,
 }
 
 static constexpr A64DecodedOp decode_a64_op(uint32_t ins, bool pal_block,
-    const AlphaIPRReadPolicy& ipr_read = kEv68IPRReadPolicy) noexcept
+    const AlphaIPRReadPolicy& ipr_read = kEv68IPRReadPolicy,
+    const AlphaIPRWritePolicy& ipr_write = kEv68IPRWritePolicy) noexcept
 {
-  const A64OpClass classification = classify_a64_op(ins, pal_block, ipr_read);
+  const A64OpClass classification = classify_a64_op(ins, pal_block, ipr_read, ipr_write);
   A64DecodedOp decoded{};
   decoded.ins = ins;
   decoded.kind = classification.kind;
@@ -1509,7 +1501,8 @@ static uint32_t load_a64_guest_u32(const uint8_t* source) noexcept
 }
 
 static A64BlockPlan plan_a64_block(const CJitEngine::JitBlock& block,
-    const uint8_t* dram, uint64_t dram_size, const AlphaIPRReadPolicy& ipr_read) noexcept
+    const uint8_t* dram, uint64_t dram_size, const AlphaIPRReadPolicy& ipr_read,
+    const AlphaIPRWritePolicy& ipr_write) noexcept
 {
   A64BlockPlan plan{};
   if (block.n_instr == 0) {
@@ -1526,7 +1519,7 @@ static A64BlockPlan plan_a64_block(const CJitEngine::JitBlock& block,
   const bool pal_block = (block.tag & 1u) != 0;
   for (uint32_t i = 0; i < limit.count; ++i) {
     const uint32_t word = load_a64_guest_u32(source + static_cast<size_t>(i) * 4);
-    const A64DecodedOp decoded = decode_a64_op(word, pal_block, ipr_read);
+    const A64DecodedOp decoded = decode_a64_op(word, pal_block, ipr_read, ipr_write);
     if (decoded.kind == A64OpKind::kUnsupported) {
       plan.breaker_word = word;
       plan.stop = A64PlanStop::kUnsupported;
@@ -4362,8 +4355,7 @@ static A64OpEmitReceipt emit_a64_hw_mtpr(A64EmitContext& context,
 {
   using namespace asmjit;
   const uint32_t mfn = (op.ins >> 8) & 0xffu;
-  if (mfn == 0x15 || mfn == 0x17 || mfn == 0x27
-   || mfn == 0x2b || mfn == 0x2c || mfn == 0x2d)
+  if (context.profile.ipr_write.describe(mfn) == AlphaIPRWriteKind::Noop)
     return a64_completed_op_receipt(op);   // no-op IPRs
 
   const Error err = emit_a64_helper_call(context.assembler, context.offsets,
@@ -5413,8 +5405,8 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
       emits_nothing = op.ra == 31; break;
     case A64OpKind::kHwMtpr: {
       const uint32_t mfn = (op.ins >> 8) & 0xffu;
-      emits_nothing = mfn == 0x15 || mfn == 0x17 || mfn == 0x27
-                   || mfn == 0x2b || mfn == 0x2c || mfn == 0x2d; break;
+      emits_nothing = context.profile.ipr_write.describe(mfn) == AlphaIPRWriteKind::Noop;
+      break;
     }
     default: break;
   }
@@ -6315,7 +6307,8 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   }
 #endif
 
-  const A64BlockPlan plan = plan_a64_block(*b, dram, dram_size, m_profile.ipr_read);
+  const A64BlockPlan plan = plan_a64_block(
+      *b, dram, dram_size, m_profile.ipr_read, m_profile.ipr_write);
 #ifdef JIT_STATS
   if (plan.stop == A64PlanStop::kUnsupported) {
     const uint32_t bop = plan.breaker_word >> 26;

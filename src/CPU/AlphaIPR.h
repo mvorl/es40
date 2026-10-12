@@ -1,4 +1,4 @@
-/* ES40 emulator -- Alpha privileged-register read policy
+/* ES40 emulator -- Alpha privileged-register policies
  * Copyright (C) 2026 by gdwnldsKSC
  * All rights reserved.
  *
@@ -55,6 +55,29 @@ struct AlphaIPRReadPolicy
 {
   std::uint64_t (*read)(CAlphaCPU& cpu, std::uint32_t function);
   AlphaIPRReadDescriptor (*describe)(std::uint32_t function);
+};
+
+// The family determines which writes the JIT can perform in a compiled frame.
+enum class AlphaIPRWriteKind
+{
+  Interpreter,
+  Helper,
+  HelperTerminator,
+  Noop
+};
+
+// Compiled execution may retain caches that the interpreter normally flushes.
+enum class AlphaIPRWriteContext
+{
+  Interpreter,
+  Compiled
+};
+
+struct AlphaIPRWritePolicy
+{
+  void (*write)(CAlphaCPU& cpu, std::uint32_t function, std::uint64_t value,
+                AlphaIPRWriteContext context);
+  AlphaIPRWriteKind (*describe)(std::uint32_t function);
 };
 
 #endif

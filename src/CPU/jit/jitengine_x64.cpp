@@ -107,8 +107,8 @@ enum SafeOp {
   OP_HW_MFPR,                    // HW_MFPR (0x19), PALmode only: Ra = IPR[(ins>>8)&0xff] via helper
   OP_HW_LDL, OP_HW_LDQ,          // HW_LD (0x1b) physical func 0/1, PALmode only: Ra = phys[Rb+disp12]
   OP_HW_LD_VIRT,                 // HW_LD virtual funcs 4/5,8-15: current/VPTE/alternate mode, optional WrChk
-  OP_HW_MTPR,                    // HW_MTPR (0x1d) side-effect-free IPRs, PALmode only: IPR[fn] = Rb
-  OP_HW_MTPR_TERM,               // HW_MTPR I_CTL (0x11): writes SDE/SPE/VA mode -> terminate, re-dispatch past it
+  OP_HW_MTPR,                    // HW_MTPR (0x1d): family-approved helper writes, PALmode only
+  OP_HW_MTPR_TERM,               // HW_MTPR: a family write changes compiled assumptions -> redispatch
   OP_HW_STL, OP_HW_STQ,          // HW_ST (0x1f) physical func 0/1, PALmode only: phys[Rb+disp12] = Ra
   OP_JMP,                        // JMP/JSR/RET (0x1a): Ra = PC+4; PC = Rb & ~3 (computed target)
   OP_HW_RET,                     // HW_RET (0x1e), PALmode: PC = Rb & ~2 (computed jump, the PAL return)
@@ -139,7 +139,8 @@ static bool host_has_bmi2() {
 // Safe = goto-free, register-only operate-format ops (no trap, memory, or branch).
 // pal_block enables PALmode-only ops (HW_MFPR): outside PALmode they'd OPCDEC, so only
 // compile them when the block is PALmode (the dispatcher keys blocks by PC bit 0).
-SafeOp classify(uint32_t ins, bool pal_block, const AlphaIPRReadPolicy& ipr_read)
+SafeOp classify(uint32_t ins, bool pal_block, const AlphaIPRReadPolicy& ipr_read,
+    const AlphaIPRWritePolicy& ipr_write)
 {
   uint32_t opcode = ins >> 26;
   uint32_t func = (ins >> 5) & 0x7F;
@@ -322,32 +323,14 @@ SafeOp classify(uint32_t ins, bool pal_block, const AlphaIPRReadPolicy& ipr_read
       if (f == 4 || f == 5 || f >= 8) return OP_HW_LD_VIRT;
       return OP_NONE;
     }
-    case 0x1d: {                // HW_MTPR (PALmode): compile the pure-store IPRs, the TB fills
-      // (idempotent add_tb_i/_d), IER (field stores + check_int kick), the ITB invalidates (idempotent
-      // tbia/tbiap/tbis -> note_itb_invalidate), IC_FLUSH (lazy flush; reclaim deferred off the
-      // compiled frame), I_CTL (terminator: writes SDE/SPE/VA mode), CM/SIRR (mode + soft-int fields,
-      // check_int kick), the 0x40-7f AST/FPEN/PPCEN stores, and single-entry DTB invalidates.
-      // Broad DTB invalidates, ASN writes, HW_INT_CLR, PAL_BASE and VA_CTL stay interpreted.
+    case 0x1d: {                // HW_MTPR (PALmode): the family declares compiled-safe writes.
       if (!pal_block) return OP_NONE;
       const uint32_t mfn = (ins >> 8) & 0xff;
-      // 0x40-0x7f bitmask group: bit 0 writes ASN (dpc flush + asn-epoch bump) -> must terminate; the
-      // rest (ASTER/ASTRR/PPCEN/FPEN) are pure field stores (+check_int), safe to compile.
-      if ((mfn & 0xc0) == 0x40) return (mfn & 1) ? OP_NONE : OP_HW_MTPR;
-      switch (mfn) {
-        case 0x00: case 0x14: case 0x20: case 0x26:   // ITB_TAG, PCTR_CTL, DTB_TAG0, DTB_ALTMODE
-        case 0x29: case 0xa0: case 0xc0:              // DC_CTL, DTB_TAG1, CC
-        case 0x01: case 0x21: case 0xa1:              // ITB_PTE, DTB_PTE0, DTB_PTE1 (TB fills)
-        case 0x02: case 0x03: case 0x04:              // ITB_IAP, ITB_IA, ITB_IS (idempotent ITB invalidates)
-        case 0x13:                                    // IC_FLUSH (lazy gen-bump flush; reclaim deferred off-frame)
-        case 0x0a:                                    // IER (interrupt enables + check_int kick)
-        case 0x09: case 0x0b: case 0x0c:              // CM, IER_CM, SIRR (mode/soft-int fields + check_int)
-        case 0x24: case 0xa4:                         // DTB_IS0/1 (targeted TB + data-page-cache invalidate)
-          return OP_HW_MTPR;
-        case 0x11:                                    // I_CTL: changes SDE (shadow remap)/SPE/VA mode -> terminate
-          return OP_HW_MTPR_TERM;
-        case 0x15: case 0x17: case 0x27:              // CLR_MAP, SLEEP, MM_STAT (no-ops)
-        case 0x2b: case 0x2c: case 0x2d:              // C_DATA, C_SHIFT, M_FIX (no-ops)
-          return OP_NOP;
+      switch (ipr_write.describe(mfn)) {
+        case AlphaIPRWriteKind::Helper: return OP_HW_MTPR;
+        case AlphaIPRWriteKind::HelperTerminator: return OP_HW_MTPR_TERM;
+        case AlphaIPRWriteKind::Noop: return OP_NOP;
+        case AlphaIPRWriteKind::Interpreter: return OP_NONE;
       }
       return OP_NONE;
     }
@@ -746,7 +729,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
     int rc = ins & 0x1F;
     bool islit = ((ins >> 12) & 1) != 0;
     uint32_t lit = (ins >> 13) & 0xFF;
-    SafeOp op = classify(ins, pal_block, m_profile.ipr_read);
+    SafeOp op = classify(ins, pal_block, m_profile.ipr_read, m_profile.ipr_write);
 
     // A nearby ordinary memory op can reuse the previous op's translated page.
     const bool prev_dpc_live = regalloc.dpc_live;
@@ -1434,20 +1417,17 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             continue;
         }
 
-        // HW_MTPR (PALmode, side-effect-free IPRs): jit_hw_mtpr(cpu, function, value=Rb) stores an IPR
-        // field directly. The verify pass snapshots+compares those live-state writes. No fault/bail.
+        // HW_MTPR: the family has approved this write for a compiled helper call.
         if (op == OP_HW_MTPR) {
             const uint32_t function = (ins >> 8) & 0xff;
             emit_call(hw_mtpr_helper, { {JA_CPU, 0}, {JA_I32, (uint64_t)function}, {JA_GPZ, (uint64_t)rb} });  // jit_hw_mtpr(cpu, function, value)
             continue;
         }
 
-        // HW_MTPR I_CTL (0x11), terminator: I_CTL writes SDE (the PALshadow R4-7/R20-23 remap), SPE and
-        // VA mode -- assumptions the reg() remap and the MMU bake in -- so compiled code PAST it would be
-        // wrong. Run the IPR write via the same helper, then end the block: set the next PC and re-dispatch,
-        // so post-I_CTL code recompiles under the new SDE. 
+        // The family marks writes that change compiled assumptions as terminators.
+        // Run the helper, publish the next PC and redispatch under the new state.
         if (op == OP_HW_MTPR_TERM) {
-            const uint32_t function = (ins >> 8) & 0xff;            // 0x11 (I_CTL)
+            const uint32_t function = (ins >> 8) & 0xff;
             emit_call(hw_mtpr_helper, { {JA_CPU, 0}, {JA_I32, (uint64_t)function}, {JA_GPZ, (uint64_t)rb} });
             set_pc(b->tag + 4 * (uint64_t)(i + 1));                // next PC -> R10 + state.pc (PALmode bit preserved)
             continue;
@@ -2512,7 +2492,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   while (plen < b->n_instr && plen < 64
          && (phys + (uint64_t) plen * 4) < page_end)
   {
-    SafeOp sop = classify(words[plen], pal_block, m_profile.ipr_read);
+    SafeOp sop = classify(words[plen], pal_block, m_profile.ipr_read, m_profile.ipr_write);
     if (sop == OP_NONE) {               // uncompilable op ends the straight-line prefix
 #ifdef JIT_STATS
       const uint32_t bop = words[plen] >> 26;

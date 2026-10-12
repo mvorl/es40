@@ -542,6 +542,11 @@ u64 CAlphaCPU::read_ipr(u32 function)
 	return m_profile.ipr_read.read(*this, function);
 }
 
+void CAlphaCPU::write_ipr(u32 function, u64 value, AlphaIPRWriteContext context)
+{
+	m_profile.ipr_write.write(*this, function, value, context);
+}
+
 AlphaPALExceptionEntry CAlphaCPU::pal_exception_entry(AlphaPALException reason, u64 pc) const
 {
 	return m_profile.pal.exception_entry(reason, pc);
@@ -2677,73 +2682,10 @@ u64 CAlphaCPU::jit_hw_mfpr(CAlphaCPU* cpu, u32 ins, u64 cur)
 	return cpu->read_ipr(function);
 }
 
-/* HW_MTPR (PALmode): the IPR write selected by `function` (value = Rb). Mirrors DO_HW_MTPR
- * (cpu_pal.h) verbatim. Pure stores are verify-compared via the IPR snapshot; TB fills and
- * single-entry invalidates forward to their idempotent helpers; the conditional interrupt kick
- * (IER/CM/SIRR/AST) preserves any pending poll. The 0x40-7f ASN write
- * (bit 0) is excluded -- classify() never compiles it (it flushes the DPC + bumps the ASN epoch). */
+// The family policy owns the write; its descriptor controls compiled eligibility.
 void CAlphaCPU::jit_hw_mtpr(CAlphaCPU* cpu, u32 function, u64 value)
 {
-	// 0x40-0x7f bitmask group: ASTER/ASTRR/PPCEN/FPEN field stores (+check_int for the AST bits). The
-	// ASN write (bit 0, dpc flush + asn-epoch bump) is never compiled -- classify() routes it to OP_NONE.
-	if ((function & 0xc0) == 0x40)
-	{
-		if (function & 2) cpu->state.aster = (int)(value >> 5) & 0xf;
-		if (function & 4) cpu->state.astrr = (int)(value >> 9) & 0xf;
-		if (function & 8)    cpu->state.ppcen = (int)(value >> 1) & 1;
-		if (function & 16)   cpu->state.fpen = (int)(value >> 2) & 1;
-		if (function & 6) cpu->kick_int_if_pending();
-		return;
-	}
-	switch (function)
-	{
-	case 0x00: cpu->state.last_tb_virt = value; break;                          // ITB_TAG
-	case 0x01: cpu->add_tb_i(cpu->state.last_tb_virt, value); break;            // ITB_PTE (ITB fill)
-	case 0x02: cpu->tbiap(ACCESS_EXEC); break;                                  // ITB_IAP (process ITB invalidate)
-	case 0x03: cpu->tbia(ACCESS_EXEC); break;                                   // ITB_IA (invalidate all ITB)
-	case 0x04: cpu->tbis(value, ACCESS_EXEC); break;                            // ITB_IS (single ITB invalidate)
-	case 0x13: cpu->flush_icache(); break;                                      // IC_FLUSH (lazy flush + deferred reclaim)
-	case 0x09:                                                                   // CM (current mode)
-		cpu->state.cm = (int)(value >> 3) & 3;
-		cpu->dpc_sync_bank();
-		cpu->kick_int_if_pending();
-		break;
-	case 0x0b:                                                                   // IER_CM: write CM, then fall into IER
-		cpu->state.cm = (int)(value >> 3) & 3;
-		cpu->dpc_sync_bank();
-		[[fallthrough]];
-	case 0x0a:                                                                   // IER
-		cpu->state.asten = (int)(value >> 13) & 1;
-		cpu->state.sien = (int)(value >> 13) & 0xfffe;
-		cpu->state.pcen = (int)(value >> 29) & 3;
-		cpu->state.cren = (int)(value >> 31) & 1;
-		cpu->state.slen = (int)(value >> 32) & 1;
-		cpu->state.eien = (int)(value >> 33) & 0x3f;
-		cpu->kick_int_if_pending();                       // check the completed IER or IER_CM write
-		break;
-	case 0x0c:                                                                   // SIRR (software interrupt request)
-		cpu->state.sir = (int)(value >> 13) & 0xfffe;
-		cpu->kick_int_if_pending();
-		break;
-	case 0x11:                                                                   // I_CTL (terminator; mirrors DO_HW_MTPR)
-		cpu->state.i_ctl_other = (value & U64(0x00000000006e2f67)) | U64(0x0000000000100000);  // bit 20 hardwired-on (EV6/EV68)
-		cpu->state.i_ctl_vptb = sext_u64_48(value & U64(0x0000ffffc0000000));
-		cpu->state.i_ctl_spe = (int)((value >> 3) & 7);
-		cpu->state.sde = (value >> 7) & 1;
-		cpu->state.hwe = (value >> 12) & 1;
-		cpu->state.i_ctl_va_mode = (int)(value >> 15) & 3;
-		break;
-	case 0x14: cpu->state.pctr_ctl = value & U64(0xffffffffffffffdf); break;     // PCTR_CTL
-	case 0x20: cpu->last_dtb_virt[0] = value; break;                             // DTB_TAG0
-	case 0x21: cpu->add_tb_d(cpu->last_dtb_virt[0], value, 0); break;            // DTB_PTE0 (DTB fill)
-	case 0x24: cpu->tbis_d(value, cpu->state.asn0); break;                       // DTB_IS0
-	case 0x26: cpu->state.alt_cm = (int)(value & 3); break;                     // DTB_ALTMODE
-	case 0x29: cpu->state.dc_ctl = value; break;                                 // DC_CTL
-	case 0xa0: cpu->last_dtb_virt[1] = value; break;                             // DTB_TAG1
-	case 0xa1: cpu->add_tb_d(cpu->last_dtb_virt[1], value, 1); break;            // DTB_PTE1 (DTB fill)
-	case 0xa4: cpu->tbis_d(value, cpu->state.asn1); break;                       // DTB_IS1
-	case 0xc0: cpu->state.cc_offset = (u32)(value >> 32); break;                // CC
-	}
+	cpu->write_ipr(function, value, AlphaIPRWriteContext::Compiled);
 }
 
 // JIT indirect-jump chaining helper (static). For a compiled JMP/HW_RET, look up the block at the

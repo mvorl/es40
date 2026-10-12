@@ -1,4 +1,4 @@
-/* ES40 emulator -- EV68 privileged-register read rules
+/* ES40 emulator -- EV68 privileged-register rules
  * Copyright (C) 2026 by gdwnldsKSC
  * All rights reserved.
  *
@@ -33,6 +33,8 @@ class Ev68IPR
 {
 public:
   static std::uint64_t read(CAlphaCPU& cpu, std::uint32_t function);
+  static void write(CAlphaCPU& cpu, std::uint32_t function, std::uint64_t value,
+                    AlphaIPRWriteContext context);
 
   static constexpr AlphaIPRReadDescriptor describe(std::uint32_t function)
   {
@@ -56,10 +58,40 @@ public:
       return {AlphaIPRReadKind::Unsupported, false, true};
     }
   }
+
+  static constexpr AlphaIPRWriteKind describe_write(std::uint32_t function)
+  {
+    // ASN changes require interpreter dispatch; the other PCTX fields can compile.
+    if ((function & 0xc0) == 0x40)
+      return (function & 1) ? AlphaIPRWriteKind::Interpreter : AlphaIPRWriteKind::Helper;
+
+    switch (function)
+    {
+    case 0x00: case 0x14: case 0x20: case 0x26:
+    case 0x29: case 0xa0: case 0xc0: // Field stores.
+    case 0x01: case 0x21: case 0xa1: // Translation-buffer fills.
+    case 0x02: case 0x03: case 0x04: // ITB invalidation.
+    case 0x13:                     // Lazy instruction-cache flush.
+    case 0x09: case 0x0a: case 0x0b: case 0x0c: // Mode/interrupt fields.
+    case 0x24: case 0xa4:           // Single-entry DTB invalidation.
+      return AlphaIPRWriteKind::Helper;
+    case 0x11:                     // I_CTL changes compiled assumptions, including SDE.
+      return AlphaIPRWriteKind::HelperTerminator;
+    case 0x15: case 0x17: case 0x27:
+    case 0x2b: case 0x2c: case 0x2d:
+      return AlphaIPRWriteKind::Noop;
+    default:
+      return AlphaIPRWriteKind::Interpreter;
+    }
+  }
 };
 
 inline constexpr AlphaIPRReadPolicy kEv68IPRReadPolicy{
   &Ev68IPR::read, &Ev68IPR::describe
+};
+
+inline constexpr AlphaIPRWritePolicy kEv68IPRWritePolicy{
+  &Ev68IPR::write, &Ev68IPR::describe_write
 };
 
 #endif

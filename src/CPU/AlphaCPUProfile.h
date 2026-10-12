@@ -41,6 +41,7 @@ struct AlphaCPUProfile
   std::uint32_t type_minor;  // System-reference processor revision.
   AlphaPALPolicy pal = kEv68PALPolicy;  // Immutable family entry rules.
   AlphaIPRReadPolicy ipr_read = kEv68IPRReadPolicy; // Immutable family IPR reads.
+  AlphaIPRWritePolicy ipr_write = kEv68IPRWritePolicy; // Immutable family IPR writes.
 };
 
 // EV68CB pass 4: BWX | FIX | CIX | MVI | precise traps | prefetch modify.
