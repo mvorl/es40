@@ -85,12 +85,7 @@ CDMA::CDMA(CConfigurator* cfg, CSystem* c, const CAliM1543C& bridge) :
 	LEGACY_IO(DMA0_IO_EXT, 0x040b, 1);
 	LEGACY_IO(DMA1_IO_EXT, 0x04D6, 1);
 
-	memset(&state, 0, sizeof(state));
-	for (int controller = 0; controller < 2; controller++)
-	{
-		state.controller[controller].mask = 0x0f;
-		state.controller[controller].lobyte = true;
-	}
+	ResetPCI();
 
 	theDMA = this;
 	printf("dma: $Id$\n");
@@ -101,6 +96,22 @@ CDMA::CDMA(CConfigurator* cfg, CSystem* c, const CAliM1543C& bridge) :
  **/
 CDMA::~CDMA()
 {
+}
+
+/**
+ * Restore power-on DMA state when the whole system resets.
+ **/
+void CDMA::ResetPCI()
+{
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
+	// While guest master clear, system reset also resets channel programming,
+	// request lines and any accept/pending demand/block/cascade service.
+	memset(&state, 0, sizeof(state));
+	for (int controller = 0; controller < 2; controller++)
+	{
+		state.controller[controller].mask = 0x0f;
+		state.controller[controller].lobyte = true;
+	}
 }
 
 bool CDMA::uses_subtractive_decode(int index, u64, int, bool) const noexcept

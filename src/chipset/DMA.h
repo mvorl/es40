@@ -65,6 +65,8 @@ public:
   CDMA(CConfigurator* cfg, CSystem* c, const CAliM1543C& bridge);
   virtual       ~CDMA();
 
+  virtual void  ResetPCI() override;
+
   bool uses_subtractive_decode(int index, u64 address, int dsize,
     bool write) const noexcept override;
   const CSystemComponent* memory_decode_owner() const noexcept override;
@@ -83,7 +85,8 @@ public:
   void          set_request(int index, int channel, int data);
   // Device request line: global channel 0-3 or 5-7.
   // asserted is the logical request state, not the electrical pin level.
-  // Only the device lowers this line; TC, EOP and master clear do not lower it.
+  // Outside system reset, only the device lowers this line;
+  // TC, EOP and master clear do not lower it.
   void          set_drq(int channel, bool asserted);
 
   struct SDMA_result
