@@ -278,6 +278,13 @@ u64 CDMA::ReadMem(int index, u64 address, int dsize)
 				data = (state.channel[num].pagebase >> 8) & 0xff;
 			break;
 
+		case DMA0_IO_EXT:
+		case DMA1_IO_EXT:
+			// M1543C extended-mode ports are write-only. Use the same all-ones
+			// value as an unmapped I/O read, without changing controller state.
+			data = 0xff;
+			break;
+
 		default:
 			FAILURE(InvalidArgument, "dma: ReadMem index out of range");
 		}
@@ -462,6 +469,12 @@ void CDMA::WriteMem(int index, u64 address, int dsize, u64 data)
 
 		case DMA0_IO_EXT:
 		case DMA1_IO_EXT:
+			// Each extended register occupies one byte; wider accesses are split
+			// above, and the following bytes must not alias this register.
+			if (address != 0)
+				return;
+			// M1543C 4.2.1: channel select 1:0, timing 5:4; all other bits reserved.
+			data &= 0x33;
 			if (DMA_TRACE_CONTROLLER(index - DMA0_IO_EXT))
 				printf("dma: extended mode register %d written: %02" PRIx64 "\n", index - DMA0_IO_EXT, data);
 			break;
