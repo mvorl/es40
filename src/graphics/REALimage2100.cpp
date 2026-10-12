@@ -2367,8 +2367,8 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 		(banks == 1 || banks == 2),
 		auxiliary_compare = (control & ~0x00ffff01u) == 0xa1000002u &&
 		(banks == 5 || banks == 6) && plane_value(2, 0, 0xffffffff) == 0,
-		auxiliary_write = (control & ~0x00ef0f01u) == 0xa1004002u &&
-		!(plane_value(2, 0, 0xffffffff) & ~0xe000f000u),
+		auxiliary_write = (control & ~(line ? 0x00ef0f01u : 0x00ff0f01u)) == 0xa1004002u &&
+		!(plane_value(2, 0, 0xffffffff) & ~(line ? 0xe000f000u : 0xf000f000u)),
 		color_write = direct_rgb || native_line_rgb || auxiliary_compare ||
 		((control & ~0xff01u) == 0xa1000002u && !(banks & ~3u));
 	if ((floating && ((value != 0x22 && value != 0x62) || !color_write)) ||
