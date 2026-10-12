@@ -117,6 +117,9 @@
     <ClCompile Include="..\CPU\AlphaCPU.cpp">
       <Filter>Source Files\CPU</Filter>
     </ClCompile>
+    <ClCompile Include="..\CPU\Ev68IPR.cpp">
+      <Filter>Source Files\CPU</Filter>
+    </ClCompile>
     <ClCompile Include="..\CPU\AlphaCPU_ieeefloat.cpp">
       <Filter>Source Files\CPU</Filter>
     </ClCompile>
@@ -330,6 +333,12 @@
       <Filter>Header Files\CPU</Filter>
     </ClInclude>
     <ClInclude Include="..\CPU\Ev68PAL.h">
+      <Filter>Header Files\CPU</Filter>
+    </ClInclude>
+    <ClInclude Include="..\CPU\AlphaIPR.h">
+      <Filter>Header Files\CPU</Filter>
+    </ClInclude>
+    <ClInclude Include="..\CPU\Ev68IPR.h">
       <Filter>Header Files\CPU</Filter>
     </ClInclude>
     <ClInclude Include="..\graphics\Cirrus.h">

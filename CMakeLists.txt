@@ -374,6 +374,7 @@ list(APPEND ES40_SOURCES
     src/CPU/AlphaCPU_vaxfloat.cpp
     src/CPU/AlphaCPU_vmspal.cpp
     src/CPU/AlphaCPU.cpp
+    src/CPU/Ev68IPR.cpp
     src/AlphaSim.cpp
     # src/graphics/Cirrus.cpp
     src/config/Configurator.cpp

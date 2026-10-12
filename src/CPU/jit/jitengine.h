@@ -428,15 +428,20 @@ public:
 #endif
 
 #ifdef JIT_VERIFY
-  // Differential check: compiled result (jit) vs interpreter result (interp), r[0..30]. Returns the
-  // ns spent in its periodic progress printf (0 otherwise) so the dispatcher can exclude that stall
-  // from the wall-clock-pinned RPCC (same Heisenberg fix as note_exec).
+  // Compare normal/shadow GPRs and combine with failures from other output checks.
+  // Count each compared execution once, even when several outputs differ. Return
+  // progress-print time so the dispatcher can exclude it from wall-clock RPCC.
   uint64_t verify_compare(uint64_t blk_virt, const uint64_t* interp, const uint64_t* jit,
-                          const uint32_t* words, uint32_t nwords);
+                          const uint32_t* words, uint32_t nwords, bool other_mismatch = false);
+  // A detected failure with no valid GPR comparison span (e.g. trace count divergence).
+  uint64_t verify_failed();
+  uint64_t verify_comparisons() const { return m_v_exec; }
+  uint64_t verify_mismatches() const { return m_v_fail; }
   void trace_selftest();   // M0: unit-test trace_ok's source-coherence (SMC/IMB/ITB-remap/head-remap)
   // Side-exit-shaped trace-verify outcome: 0 = full-span compare, 1 = legitimate boundary
   // side-exit (compared at that boundary's snapshot), 2 = count mismatch (true divergence),
-  // 3 = deferred-op mid-block bail 
+  // 3 = deferred-op mid-block bail. These classify run shape; verify_mismatches
+  // counts output failures for full-span and boundary comparisons as well.
   void note_trace_verify(int outcome);
 #endif
 
@@ -490,6 +495,7 @@ private:
 #endif
 #ifdef JIT_VERIFY
   uint64_t m_v_exec, m_v_fail;
+  uint64_t record_verify_result(bool mismatch);
   uint64_t m_tv_cnt[4];   // trace-verify outcomes: full-span / boundary side-exit / count mismatch / deferred-op bail
 #endif
 #ifdef JIT_STATS

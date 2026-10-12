@@ -537,6 +537,11 @@ CAlphaCPU::TickHold CAlphaCPU::tick_hold(u64 period_ns)
 	}
 }
 
+u64 CAlphaCPU::read_ipr(u32 function)
+{
+	return m_profile.ipr_read.read(*this, function);
+}
+
 AlphaPALExceptionEntry CAlphaCPU::pal_exception_entry(AlphaPALException reason, u64 pc) const
 {
 	return m_profile.pal.exception_entry(reason, pc);
@@ -1426,12 +1431,14 @@ void CAlphaCPU::jit_run(int budget)
 			// early-exit compare is dormant scaffolding the region will light up.
 			u32 n_bnd = 0;
 			u32 bnd_cnt[CJitEngine::kMaxTraceSegs];       // cumulative interp instr count at boundary
+			u32 bnd_vn[CJitEngine::kMaxTraceSegs];        // interp load-log cursor at boundary
 			u32 bnd_sn[CJitEngine::kMaxTraceSegs];        // interp store-log cursor at boundary
 			u64 bnd_pc[CJitEngine::kMaxTraceSegs];        // interp pc at boundary (the resume PC)
 			u64 bnd_r[CJitEngine::kMaxTraceSegs][64];     // GPRs incl. PALshadow bank
 			u64 bnd_f[CJitEngine::kMaxTraceSegs][64];     // FP file
 			u64 bnd_ipr[CJitEngine::kMaxTraceSegs][27];   // cap_iprs set
 			const u32* vw = (const u32*)((const u8*)dram_ptr + b->phys);
+			u32 verify_words[16] = {};   // actual reference instructions for mismatch diagnostics
 			u32 vn = 0;   // loads recorded for replay
 			u32 sn = 0;   // stores recorded for the compiled-pass compare
 			u64 vpc = start_virt;
@@ -1449,7 +1456,22 @@ void CAlphaCPU::jit_run(int budget)
 			{
 				// Compute the load's effective address from the live registers BEFORE
 				// executing it (Rb may be the load's own dest), to compare against the JIT.
-				const u32 ins = vw[k];
+				// SRM copies over this code while its original instructions remain in the
+				// icache until IMB. Classify the word execute() will fetch, not the changed
+				// DRAM word, or a cached HW_ST can disappear from the reference store log.
+				// This is a read-only peek: a miss is still fetched/translated by execute().
+				u32 ins = vw[k];
+				if (state.pc == seq_next_pc && seq_remaining > 0)
+					ins = endian_32(seq_line_ptr[seq_offset]);
+				else if (icache_enabled)
+				{
+					const int li = (int)((state.pc >> 11) & (ICACHE_ENTRIES - 1));
+					const auto& line = state.icache[li];
+					if (line.valid && (line.asn == state.asn || line.asm_bit)
+						&& line.address == (state.pc & ICACHE_MATCH_MASK))
+						ins = endian_32(line.data[(state.pc >> 2) & ICACHE_INDEX_MASK]);
+				}
+				if (n_interp + k < 16) verify_words[n_interp + k] = ins;
 				const u32 opc = ins >> 26;
 				const int lra = (ins >> 21) & 0x1F;
 				// HW_LD physical (0x1b, func 0/1) is a load too: the compiled form replays through
@@ -1458,22 +1480,25 @@ void CAlphaCPU::jit_run(int budget)
 				const u32 hwld_func = (ins >> 12) & 0xf;
 				const bool is_hwld = (opc == 0x1b) &&
 					(hwld_func <= 1 || hwld_func == 4 || hwld_func == 5 || hwld_func >= 8);
-				// RPCC/RC/RS (MISC 0x18) and ISUM (HW_MFPR 0x19 fn 0x0d) read CPU state the verify can't
+				// RPCC/RC/RS (MISC 0x18) and family-marked IPRs read CPU state the verify can't
 				// re-derive; the compiled forms pull their value from this same load log (jit_misc /
 				// jit_hw_mfpr replay it), so log them like loads.
 				const u32  miscfn = (ins & 0xFFFF);
 				// Compiled misc reads: RC/RS (0xE000/0xF000) for all Ra incl. 31 (the flag-only side-effect
 				// forms compile too); RPCC (0xC000) only when it has a GPR dest (Ra!=31).
 				const bool is_miscrd = (opc == 0x18) && (miscfn == 0xE000 || miscfn == 0xF000 || (miscfn == 0xC000 && lra != 31));
-				const bool is_isum = (opc == 0x19) && (((ins >> 8) & 0xff) == 0x0d);   // ISUM: async interrupt-summary
+				const auto ipr_read = (opc == 0x19)
+					? m_profile.ipr_read.describe((ins >> 8) & 0xff) : AlphaIPRReadDescriptor{};
+				const bool is_ipr_replay = (opc == 0x19) && ipr_read.replay
+					&& (lra != 31 || !ipr_read.discard_safe);
 				const bool is_fpld = (opc == 0x22 || opc == 0x23 || opc == 0x20 || opc == 0x21);   // LDS/LDT/LDF/LDG: dest is f[lra]
-				// Loads/ISUM/LDS/LDT only log when they have a dest (lra!=31); the misc reads are logged
-				// regardless -- a compiled RC/RS Ra==31 still consumes a replay slot, so keep the index in sync.
+				// Ordinary loads log only with a destination. Stateful misc/IPR reads log
+				// even to R31 when the compiled helper must consume a replay slot.
 				const bool isld = ((opc == 0x28 || opc == 0x29 || opc == 0x0a || opc == 0x0c
-					|| opc == 0x2a || opc == 0x2b || opc == 0x0b || is_hwld || is_isum || is_fpld) && lra != 31)
-					|| is_miscrd;  // +LDBU/LDWU +LDx_L +LDQ_U +RPCC/RC/RS +ISUM +LDS/LDT
+					|| opc == 0x2a || opc == 0x2b || opc == 0x0b || is_hwld || is_fpld) && lra != 31)
+					|| is_miscrd || is_ipr_replay;  // +LDBU/LDWU +LDx_L +LDQ_U +RPCC/RC/RS +ISUM +LDS/LDT
 				u64 eva = 0;
-				if (isld && !is_miscrd && !is_isum)   // misc/ISUM reads have no effective address -- only a logged value
+				if (isld && !is_miscrd && !is_ipr_replay)   // misc/ISUM reads have no effective address -- only a logged value
 				{
 					const int lrb = (ins >> 16) & 0x1F;
 					const int ldisp = is_hwld ? (int)((int32_t)(ins << 20) >> 20)   // HW_LD: 12-bit
@@ -1565,7 +1590,7 @@ void CAlphaCPU::jit_run(int budget)
 				n_interp += cur_len;        // this segment ran fully
 				if (vtr && n_bnd < CJitEngine::kMaxTraceSegs) {
 					// Side-exit-shaped verify: capture the reference AT this fused-block boundary.
-					bnd_cnt[n_bnd] = n_interp;  bnd_sn[n_bnd] = sn;  bnd_pc[n_bnd] = state.pc;
+					bnd_cnt[n_bnd] = n_interp; bnd_vn[n_bnd] = vn; bnd_sn[n_bnd] = sn; bnd_pc[n_bnd] = state.pc;
 					memcpy(bnd_r[n_bnd], state.r, sizeof(bnd_r[0]));
 					memcpy(bnd_f[n_bnd], state.f, sizeof(bnd_f[0]));
 					cap_iprs(bnd_ipr[n_bnd]);
@@ -1596,14 +1621,18 @@ void CAlphaCPU::jit_run(int budget)
 				const u64 interp_pc = state.pc;   // interpreter is authoritative for the PC
 					const u32 n_stores_interp = sn;   // interp's RECORDED store count (sn), NOT the replay cursor m_jit_slog_i; a compiled pass must consume exactly this many (catches a missing/extra store)
 				m_jit_vreplay = true;
+				m_jit_vmismatch = false;
 				m_jit_vlog_i = 0;
+				m_jit_vlog_n = vn;
 				m_jit_slog_i = 0;
+				m_jit_slog_n = sn;
 				dpc_sync_bank();
 				const u32 done = m_jit->run_block(this, jr, b);   // also writes state.pc (the JIT's next PC)
 				m_jit_vreplay = false;
 				if (!vtr && done == b->prefix_len)
 				{
 					if (state.pc != interp_pc) {
+						m_jit_vmismatch = true;
 						// Dump the JIT's source (DRAM at b->phys, vw[]) vs the icache (what the
 						// interpreter actually fetches), word by word. If the middle words differ
 						// the icache holds a stale/different version the JIT never compiled.
@@ -1625,16 +1654,35 @@ void CAlphaCPU::jit_run(int budget)
 					u64 ipr_jit[27];
 					cap_iprs(ipr_jit);   // compiled pass wrote IPRs into live state; check vs interp
 					for (int ii = 0; ii < 27; ii++) if (ipr_ne(ii, ipr_jit[ii], ipr_interp[ii]))
+					{
+						m_jit_vmismatch = true;
 						printf("[JIT][VERIFY] IPR MISMATCH at %016llx slot %d: interp=%016llx jit=%016llx\n",
 							(unsigned long long) start_virt, ii,
 							(unsigned long long) ipr_interp[ii], (unsigned long long) ipr_jit[ii]);
+					}
 					for (int fi = 0; fi < 64; fi++) if (state.f[fi] != f_interp[fi])
+					{
+						m_jit_vmismatch = true;
 						printf("[JIT][VERIFY] FP MISMATCH at %016llx f%d: interp=%016llx jit=%016llx\n",
 							(unsigned long long) start_virt, fi,
 							(unsigned long long) f_interp[fi], (unsigned long long) state.f[fi]);
-					if (m_jit_slog_i != n_stores_interp) printf("[JIT][VERIFY] STORE COUNT MISMATCH at %016llx: interp=%u jit=%u\n", (unsigned long long) start_virt, n_stores_interp, m_jit_slog_i);
-						cc_last_sync += std::chrono::nanoseconds(m_jit->verify_compare(start_virt, state.r, jr, vw, b->prefix_len) + g_diag_excluded_ns);   // don't bill the verify progress-print OR the PCI decode-off diag stall to the RPCC
+					}
+					if (m_jit_vlog_i != vn) {
+						m_jit_vmismatch = true;
+						printf("[JIT][VERIFY] LOAD COUNT MISMATCH at %016llx: interp=%u jit=%u\n", (unsigned long long) start_virt, vn, m_jit_vlog_i);
+					}
+					if (m_jit_slog_i != n_stores_interp) {
+						m_jit_vmismatch = true;
+						printf("[JIT][VERIFY] STORE COUNT MISMATCH at %016llx: interp=%u jit=%u\n", (unsigned long long) start_virt, n_stores_interp, m_jit_slog_i);
+					}
+						cc_last_sync += std::chrono::nanoseconds(m_jit->verify_compare(start_virt, state.r, jr, verify_words, b->prefix_len, m_jit_vmismatch) + g_diag_excluded_ns);   // don't bill the verify progress-print OR the PCI decode-off diag stall to the RPCC
 						g_diag_excluded_ns = 0;   // consumed here in the verify path so jit_run's later sync doesn't double-count it
+				}
+				else if (m_jit_vmismatch)
+				{
+					// A deferred op (or a longer trace reference) prevents a GPR compare,
+					// but any earlier replay mismatch still belongs to this compiled pass.
+					cc_last_sync += std::chrono::nanoseconds(m_jit->verify_failed());
 				}
 				// verify extension: the production trace-run hook is gated off under JIT_VERIFY, so
 				// exercise the trace HERE; re-restore pre-interp state, run t->code on a 2nd scratch
@@ -1657,19 +1705,36 @@ void CAlphaCPU::jit_run(int budget)
 						                                                      // mismatch at interior boundaries
 						u64 jr_t[64];
 						memcpy(jr_t, snap, sizeof(jr_t));
-						m_jit_vreplay = true; m_jit_vlog_i = 0; m_jit_slog_i = 0;
+						m_jit_vreplay = true; m_jit_vmismatch = false; m_jit_vlog_i = 0; m_jit_slog_i = 0;
+						m_jit_vlog_n = vn; m_jit_slog_n = sn;
 						const u32 done_t = ((CJitEngine::JitFn)tr->code)(this, jr_t);
 						m_jit_vreplay = false;
 							if (done_t == n_interp) {
 							if (state.pc != interp_pc)
+							{
+								m_jit_vmismatch = true;
 								printf("[JIT][VERIFY] TRACE PC MISMATCH at %016llx: interp=%016llx trace=%016llx (n=%u)\n",
 									(unsigned long long) start_virt, (unsigned long long) interp_pc,
 									(unsigned long long) state.pc, n_interp);
+							}
 							u64 ipr_jit_t[27]; cap_iprs(ipr_jit_t);   // trace wrote IPRs into live state; check vs interp (parity with the block path)
-							for (int ii = 0; ii < 27; ii++) if (ipr_ne(ii, ipr_jit_t[ii], ipr_interp[ii])) printf("[JIT][VERIFY] TRACE IPR MISMATCH at %016llx slot %d: interp=%016llx trace=%016llx\n", (unsigned long long) start_virt, ii, (unsigned long long) ipr_interp[ii], (unsigned long long) ipr_jit_t[ii]);
-							for (int fi = 0; fi < 64; fi++) if (state.f[fi] != f_interp[fi]) printf("[JIT][VERIFY] TRACE FP MISMATCH at %016llx f%d: interp=%016llx trace=%016llx\n", (unsigned long long) start_virt, fi, (unsigned long long) f_interp[fi], (unsigned long long) state.f[fi]);
-							if (m_jit_slog_i != n_stores_interp) printf("[JIT][VERIFY] TRACE STORE COUNT MISMATCH at %016llx: interp=%u trace=%u\n", (unsigned long long) start_virt, n_stores_interp, m_jit_slog_i);
-							m_jit->verify_compare(start_virt, state.r, jr_t, vw, n_interp);
+							for (int ii = 0; ii < 27; ii++) if (ipr_ne(ii, ipr_jit_t[ii], ipr_interp[ii])) {
+								m_jit_vmismatch = true;
+								printf("[JIT][VERIFY] TRACE IPR MISMATCH at %016llx slot %d: interp=%016llx trace=%016llx\n", (unsigned long long) start_virt, ii, (unsigned long long) ipr_interp[ii], (unsigned long long) ipr_jit_t[ii]);
+							}
+							for (int fi = 0; fi < 64; fi++) if (state.f[fi] != f_interp[fi]) {
+								m_jit_vmismatch = true;
+								printf("[JIT][VERIFY] TRACE FP MISMATCH at %016llx f%d: interp=%016llx trace=%016llx\n", (unsigned long long) start_virt, fi, (unsigned long long) f_interp[fi], (unsigned long long) state.f[fi]);
+							}
+							if (m_jit_vlog_i != vn) {
+								m_jit_vmismatch = true;
+								printf("[JIT][VERIFY] TRACE LOAD COUNT MISMATCH at %016llx: interp=%u trace=%u\n", (unsigned long long) start_virt, vn, m_jit_vlog_i);
+							}
+							if (m_jit_slog_i != n_stores_interp) {
+								m_jit_vmismatch = true;
+								printf("[JIT][VERIFY] TRACE STORE COUNT MISMATCH at %016llx: interp=%u trace=%u\n", (unsigned long long) start_virt, n_stores_interp, m_jit_slog_i);
+							}
+							cc_last_sync += std::chrono::nanoseconds(m_jit->verify_compare(start_virt, state.r, jr_t, verify_words, n_interp, m_jit_vmismatch));
 							m_jit->note_trace_verify(0);   // full-span compare
 						} else {
 							// Early exit: legitimate if the trace stopped exactly at a fused-block
@@ -1687,27 +1752,47 @@ void CAlphaCPU::jit_run(int budget)
 									cum += tr->segs[s2].n_instr;
 								}
 								if (bail_pc && state.pc == bail_pc) {
+									if (m_jit_vmismatch)
+										cc_last_sync += std::chrono::nanoseconds(m_jit->verify_failed());
 									m_jit->note_trace_verify(3);   // deferred-op bail: compare skipped (block-path parity)
 								} else {
+									m_jit_vmismatch = true;
 									static int n_tcm = 0;   // rate-limited: a real count divergence repeats -- 25 samples suffice
 									if (n_tcm++ < 25)
 										printf("[JIT][VERIFY] TRACE COUNT MISMATCH at %016llx: interp_span=%u trace_done=%u pc=%016llx\n",
 											(unsigned long long) start_virt, n_interp, done_t, (unsigned long long) state.pc);
 									m_jit->note_trace_verify(2);   // true divergence: no boundary or bail-pc matches
+									cc_last_sync += std::chrono::nanoseconds(m_jit->verify_failed());
 								}
 							} else {
 								if (state.pc != bnd_pc[bi])
+								{
+									m_jit_vmismatch = true;
 									printf("[JIT][VERIFY] TRACE SIDE-EXIT PC MISMATCH at %016llx: boundary=%016llx trace=%016llx (n=%u)\n",
 										(unsigned long long) start_virt, (unsigned long long) bnd_pc[bi],
 										(unsigned long long) state.pc, done_t);
+								}
 								u64 ipr_jit_t[27]; cap_iprs(ipr_jit_t);
 								// Slots 0-2 (last TB fills) are replay-invisible (verify loads skip translation),
 								// so they're only sound at full-span compares (by inheritance) -- skip here.
 								for (int ii = 3; ii < 27; ii++)
-									if (ipr_ne(ii, ipr_jit_t[ii], bnd_ipr[bi][ii])) printf("[JIT][VERIFY] TRACE SIDE-EXIT IPR MISMATCH at %016llx slot %d: interp=%016llx trace=%016llx\n", (unsigned long long) start_virt, ii, (unsigned long long) bnd_ipr[bi][ii], (unsigned long long) ipr_jit_t[ii]);
-								for (int fi = 0; fi < 64; fi++) if (state.f[fi] != bnd_f[bi][fi]) printf("[JIT][VERIFY] TRACE SIDE-EXIT FP MISMATCH at %016llx f%d: interp=%016llx trace=%016llx\n", (unsigned long long) start_virt, fi, (unsigned long long) bnd_f[bi][fi], (unsigned long long) state.f[fi]);
-								if (m_jit_slog_i != bnd_sn[bi]) printf("[JIT][VERIFY] TRACE SIDE-EXIT STORE COUNT MISMATCH at %016llx: interp=%u trace=%u\n", (unsigned long long) start_virt, bnd_sn[bi], m_jit_slog_i);
-								m_jit->verify_compare(start_virt, bnd_r[bi], jr_t, vw, done_t);
+									if (ipr_ne(ii, ipr_jit_t[ii], bnd_ipr[bi][ii])) {
+										m_jit_vmismatch = true;
+										printf("[JIT][VERIFY] TRACE SIDE-EXIT IPR MISMATCH at %016llx slot %d: interp=%016llx trace=%016llx\n", (unsigned long long) start_virt, ii, (unsigned long long) bnd_ipr[bi][ii], (unsigned long long) ipr_jit_t[ii]);
+									}
+								for (int fi = 0; fi < 64; fi++) if (state.f[fi] != bnd_f[bi][fi]) {
+									m_jit_vmismatch = true;
+									printf("[JIT][VERIFY] TRACE SIDE-EXIT FP MISMATCH at %016llx f%d: interp=%016llx trace=%016llx\n", (unsigned long long) start_virt, fi, (unsigned long long) bnd_f[bi][fi], (unsigned long long) state.f[fi]);
+								}
+								if (m_jit_vlog_i != bnd_vn[bi]) {
+									m_jit_vmismatch = true;
+									printf("[JIT][VERIFY] TRACE SIDE-EXIT LOAD COUNT MISMATCH at %016llx: interp=%u trace=%u\n", (unsigned long long) start_virt, bnd_vn[bi], m_jit_vlog_i);
+								}
+								if (m_jit_slog_i != bnd_sn[bi]) {
+									m_jit_vmismatch = true;
+									printf("[JIT][VERIFY] TRACE SIDE-EXIT STORE COUNT MISMATCH at %016llx: interp=%u trace=%u\n", (unsigned long long) start_virt, bnd_sn[bi], m_jit_slog_i);
+								}
+								cc_last_sync += std::chrono::nanoseconds(m_jit->verify_compare(start_virt, bnd_r[bi], jr_t, verify_words, done_t, m_jit_vmismatch));
 								m_jit->note_trace_verify(1);   // legitimate boundary side-exit
 							}
 						}
@@ -1857,6 +1942,25 @@ void CAlphaCPU::jit_run(int budget)
 	}
 }
 
+// A diverging replay may issue more memory operations than the reference. Keep
+// counting them, but never read stale or out-of-bounds log slots. The pass-level
+// count comparison supplies the diagnostic and aggregates this failure once.
+bool CAlphaCPU::jit_verify_load_slot(u32& slot)
+{
+	slot = m_jit_vlog_i++;
+	if (slot < m_jit_vlog_n && slot < kJitVlogCap) return true;
+	m_jit_vmismatch = true;
+	return false;
+}
+
+bool CAlphaCPU::jit_verify_store_slot(u32& slot)
+{
+	slot = m_jit_slog_i++;
+	if (slot < m_jit_slog_n && slot < kJitVlogCap) return true;
+	m_jit_vmismatch = true;
+	return false;
+}
+
 // The emitted slow path installs the faulting current_pc; its exit commits earlier
 // guest registers before PAL dispatch. Match DATA_PHYS before any memory side effect.
 int CAlphaCPU::jit_unalign(u64 va, u32 ins, int flags, int align)
@@ -1974,14 +2078,17 @@ int CAlphaCPU::jit_read(CAlphaCPU* cpu, u64 va, u64 descr, u64* out)
 	// re-reading (another CPU may have written it)
 	if (cpu->m_jit_vreplay)
 	{
-		if (va != cpu->m_jit_vaddr[cpu->m_jit_vlog_i])
+		u32 i;
+		if (!cpu->jit_verify_load_slot(i)) { *out = 0; return 0; }
+		if (va != cpu->m_jit_vaddr[i])
 		{
+			cpu->m_jit_vmismatch = true;
 			static int n = 0;
 			if (n++ < 50)
 				printf("[JIT] LOAD ADDR MISMATCH: compiled va=%016llx interp va=%016llx\n",
-					(unsigned long long) va, (unsigned long long) cpu->m_jit_vaddr[cpu->m_jit_vlog_i]);
+					(unsigned long long) va, (unsigned long long) cpu->m_jit_vaddr[i]);
 		}
-		*out = cpu->m_jit_vlog[cpu->m_jit_vlog_i++];
+		*out = cpu->m_jit_vlog[i];
 		return 0;
 	}
 
@@ -2003,9 +2110,11 @@ int CAlphaCPU::jit_fp_read(CAlphaCPU* cpu, u64 va, u32 fa, u64 descr)
 		return cpu->jit_unalign(va, (u32)(descr >> 32), ACCESS_READ, (int)amask);
 	if (cpu->m_jit_vreplay)
 	{
-		const u32 i = cpu->m_jit_vlog_i++;
+		u32 i;
+		if (!cpu->jit_verify_load_slot(i)) { cpu->state.f[fa] = 0; return 0; }
 		if (va != cpu->m_jit_vaddr[i])
 		{
+			cpu->m_jit_vmismatch = true;
 			static int n = 0;
 			if (n++ < 50)
 				printf("[JIT] FP LOAD ADDR MISMATCH: compiled va=%016llx interp va=%016llx\n",
@@ -2051,7 +2160,10 @@ int CAlphaCPU::jit_fp_write(CAlphaCPU* cpu, u64 va, u32 fa, u64 descr)
 u64 CAlphaCPU::jit_misc(CAlphaCPU* cpu, u32 sel)
 {
 	if (cpu->m_jit_vreplay)
-		return cpu->m_jit_vlog[cpu->m_jit_vlog_i++];   // replay; no re-read, no double side effect
+	{
+		u32 i;
+		return cpu->jit_verify_load_slot(i) ? cpu->m_jit_vlog[i] : 0; // no double side effect
+	}
 
 	switch (sel)
 	{
@@ -2221,14 +2333,17 @@ int CAlphaCPU::jit_read_locked(CAlphaCPU* cpu, u64 va, u64 descr, u64* out)
 
 	if (cpu->m_jit_vreplay)
 	{
-		if (va != cpu->m_jit_vaddr[cpu->m_jit_vlog_i])
+		u32 i;
+		if (!cpu->jit_verify_load_slot(i)) { *out = 0; return 0; }
+		if (va != cpu->m_jit_vaddr[i])
 		{
+			cpu->m_jit_vmismatch = true;
 			static int n = 0;
 			if (n++ < 50)
 				printf("[JIT] LDx_L ADDR MISMATCH: compiled va=%016llx interp va=%016llx\n",
-					(unsigned long long) va, (unsigned long long) cpu->m_jit_vaddr[cpu->m_jit_vlog_i]);
+					(unsigned long long) va, (unsigned long long) cpu->m_jit_vaddr[i]);
 		}
-		*out = cpu->m_jit_vlog[cpu->m_jit_vlog_i++];   // the interp pass's (already sign-extended) value
+		*out = cpu->m_jit_vlog[i];   // the interp pass's (already sign-extended) value
 	}
 	else
 	{
@@ -2288,14 +2403,17 @@ int CAlphaCPU::jit_read_vpte(CAlphaCPU* cpu, u64 va, u64 descr, u64* out)
 			*out = 0;
 			return 0;
 		}
-		if (va != cpu->m_jit_vaddr[cpu->m_jit_vlog_i])
+		u32 i;
+		if (!cpu->jit_verify_load_slot(i)) { *out = 0; return 0; }
+		if (va != cpu->m_jit_vaddr[i])
 		{
+			cpu->m_jit_vmismatch = true;
 			static int n = 0;
 			if (n++ < 50)
 				printf("[JIT] HW_LD VIRT ADDR MISMATCH: compiled va=%016llx interp va=%016llx\n",
-					(unsigned long long) va, (unsigned long long) cpu->m_jit_vaddr[cpu->m_jit_vlog_i]);
+					(unsigned long long) va, (unsigned long long) cpu->m_jit_vaddr[i]);
 		}
-		*out = cpu->m_jit_vlog[cpu->m_jit_vlog_i++];
+		*out = cpu->m_jit_vlog[i];
 		return 0;
 	}
 
@@ -2327,14 +2445,17 @@ int CAlphaCPU::jit_read_wchk(CAlphaCPU* cpu, u64 va, int size_bits, u64* out)
 
 	if (cpu->m_jit_vreplay)
 	{
-		if (va != cpu->m_jit_vaddr[cpu->m_jit_vlog_i])
+		u32 i;
+		if (!cpu->jit_verify_load_slot(i)) { *out = 0; return 0; }
+		if (va != cpu->m_jit_vaddr[i])
 		{
+			cpu->m_jit_vmismatch = true;
 			static int n = 0;
 			if (n++ < 50)
 				printf("[JIT] WCHK ADDR MISMATCH: compiled va=%016llx interp va=%016llx\n",
-					(unsigned long long) va, (unsigned long long) cpu->m_jit_vaddr[cpu->m_jit_vlog_i]);
+					(unsigned long long) va, (unsigned long long) cpu->m_jit_vaddr[i]);
 		}
-		*out = cpu->m_jit_vlog[cpu->m_jit_vlog_i++];
+		*out = cpu->m_jit_vlog[i];
 		return 0;
 	}
 
@@ -2356,14 +2477,17 @@ int CAlphaCPU::jit_read_phys(CAlphaCPU* cpu, u64 phys, int size_bits, u64* out)
 
 	if (cpu->m_jit_vreplay)
 	{
-		if (phys != cpu->m_jit_vaddr[cpu->m_jit_vlog_i])
+		u32 i;
+		if (!cpu->jit_verify_load_slot(i)) { *out = 0; return 0; }
+		if (phys != cpu->m_jit_vaddr[i])
 		{
+			cpu->m_jit_vmismatch = true;
 			static int n = 0;
 			if (n++ < 50)
 				printf("[JIT] HW_LD ADDR MISMATCH: compiled pa=%016llx interp pa=%016llx\n",
-					(unsigned long long) phys, (unsigned long long) cpu->m_jit_vaddr[cpu->m_jit_vlog_i]);
+					(unsigned long long) phys, (unsigned long long) cpu->m_jit_vaddr[i]);
 		}
-		*out = cpu->m_jit_vlog[cpu->m_jit_vlog_i++];
+		*out = cpu->m_jit_vlog[i];
 		return 0;
 	}
 
@@ -2387,9 +2511,11 @@ int CAlphaCPU::jit_write(CAlphaCPU* cpu, u64 va, u64 descr, u64 value)
 	// can't see them; this is how compiled stores get validated.
 	if (cpu->m_jit_vreplay)
 	{
-		const u32 i = cpu->m_jit_slog_i++;
+		u32 i;
+		if (!cpu->jit_verify_store_slot(i)) return 0;
 		if (va != cpu->m_jit_slog_addr[i] || value != cpu->m_jit_slog_val[i])
 		{
+			cpu->m_jit_vmismatch = true;
 			static int n = 0;
 			if (n++ < 50)
 				printf("[JIT] STORE MISMATCH: compiled va=%016llx val=%016llx  interp va=%016llx val=%016llx\n",
@@ -2447,9 +2573,11 @@ int CAlphaCPU::jit_write_phys(CAlphaCPU* cpu, u64 phys, int size_bits, u64 value
 {
 	if (cpu->m_jit_vreplay)
 	{
-		const u32 i = cpu->m_jit_slog_i++;
+		u32 i;
+		if (!cpu->jit_verify_store_slot(i)) return 0;
 		if (phys != cpu->m_jit_slog_addr[i] || value != cpu->m_jit_slog_val[i])
 		{
+			cpu->m_jit_vmismatch = true;
 			static int n = 0;
 			if (n++ < 50)
 				printf("[JIT] HW_ST STORE MISMATCH: compiled pa=%016llx val=%016llx  interp pa=%016llx val=%016llx\n",
@@ -2477,10 +2605,12 @@ u64 CAlphaCPU::jit_stc(CAlphaCPU* cpu, u64 va, u64 descr, u64 value)
 		return (u64)cpu->jit_unalign(va, (u32)(descr >> 32), ACCESS_WRITE, (int)amask) << 8;
 	if (cpu->m_jit_vreplay)
 	{
-		const u32 i = cpu->m_jit_slog_i++;
+		u32 i;
+		if (!cpu->jit_verify_store_slot(i)) return 0;
 		const u64 success = cpu->m_jit_slog_success[i];
 		if (va != cpu->m_jit_slog_addr[i] || (success && value != cpu->m_jit_slog_val[i]))
 		{
+			cpu->m_jit_vmismatch = true;
 			static int n = 0;
 			if (n++ < 50)
 				printf("[JIT] STx_C MISMATCH: compiled va=%016llx val=%016llx ok=%llu  interp va=%016llx val=%016llx\n",
@@ -2536,56 +2666,15 @@ void CAlphaCPU::jit_opcdec(CAlphaCPU* cpu, u64 cpc)
 /* HW_MFPR (PALmode): return the IPR selected by (ins>>8)&0xff. */
 u64 CAlphaCPU::jit_hw_mfpr(CAlphaCPU* cpu, u32 ins, u64 cur)
 {
-	const auto& state = cpu->state;
-	const u32   function = (ins >> 8) & 0xff;
-
-	// ISUM (0x0d) reads the live async interrupt-request lines (eir/slr/crr/pcr), which the
-	// differential verify can't re-derive - changes between the interp and compiled passes.
-	// Replay the interp value here
-	if (cpu->m_jit_vreplay && function == 0x0d)
-		return cpu->m_jit_vlog[cpu->m_jit_vlog_i++];
-
-	if ((function & 0xc0) == 0x40)   // PCTX
-		return ((u64)state.asn << 39) | ((u64)state.astrr << 9) | ((u64)state.aster << 5)
-		| (state.fpen ? U64(0x1) << 2 : 0) | (state.ppcen ? U64(0x1) << 1 : 0);
-
-	switch (function)
+	const u32 function = (ins >> 8) & 0xff;
+	// Replay reads of asynchronous state from the interpreter reference pass.
+	if (cpu->m_jit_vreplay && cpu->m_profile.ipr_read.describe(function).replay)
 	{
-	case 0x05: return state.pmpc;                            // PMPC
-	case 0x06: return state.exc_addr;                        // EXC_ADDR
-	case 0x07: return cpu->va_form(state.exc_addr, true);    // IVA_FORM
-	case 0x08: case 0x09: case 0x0a: case 0x0b:              // IER_CM / CM / IER
-		return (((u64)state.eien) << 33) | (((u64)state.slen) << 32)
-			| (((u64)state.cren) << 31) | (((u64)state.pcen) << 29)
-			| (((u64)state.sien) << 13) | (((u64)state.asten) << 13)
-			| (((u64)state.cm) << 3);
-	case 0x0c: return ((u64)state.sir) << 13;               // SIRR
-	case 0x0d:                                               // ISUM (production path: read the live async
-		// interrupt-request lines; the verify replays via the m_jit_vreplay short-circuit at the top).
-		return (((u64)(state.eir & state.eien)) << 33)
-			| (((u64)(state.slr & state.slen)) << 32)
-			| (((u64)(state.crr & state.cren)) << 31)
-			| (((u64)(state.pcr & state.pcen)) << 29)
-			| (((u64)(state.sir & state.sien)) << 13)
-			| (((u64)(((U64(0x1) << (state.cm + 1)) - 1) & state.aster & state.astrr & (state.asten * 0x3))) << 3)
-			| (((u64)(((U64(0x1) << (state.cm + 1)) - 1) & state.aster & state.astrr & (state.asten * 0xc))) << 7);
-	case 0x0f: return state.exc_sum;                         // EXC_SUM
-	case 0x10: return state.pal_base;                        // PAL_BASE
-	case 0x11:                                               // I_CTL
-		return state.i_ctl_other | (((u64)cpu->get_profile().chip_id) << 24) | (u64)state.i_ctl_vptb
-			| (((u64)state.i_ctl_va_mode) << 15) | (state.hwe ? U64(0x1) << 12 : 0)
-			| (state.sde ? U64(0x1) << 7 : 0) | (((u64)state.i_ctl_spe) << 3);
-	case 0x14: return state.pctr_ctl;                        // PCTR_CTL
-	case 0x16: return state.i_stat;                          // I_STAT
-	case 0x27: return state.mm_stat;                         // MM_STAT
-	case 0x2a: return state.dc_stat;                         // DC_STAT
-	case 0x2b: return 0;                                     // C_DATA
-	case 0xc0: return (((u64)state.cc_offset) << 32) | (state.cc & U64(0xffffffff));   // CC
-	case 0xc2: return state.fault_va;                        // VA
-	case 0xc3: return cpu->va_form(state.va_form_va, false); // VA_FORM
+		u32 i;
+		return cpu->jit_verify_load_slot(i) ? cpu->m_jit_vlog[i] : 0;
 	}
 	(void)cur;
-	return 0;     // unknown IPR: read-zero, matching DO_HW_MFPR (classify() never compiles these)
+	return cpu->read_ipr(function);
 }
 
 /* HW_MTPR (PALmode): the IPR write selected by `function` (value = Rb). Mirrors DO_HW_MTPR

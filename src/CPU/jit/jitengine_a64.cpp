@@ -1198,7 +1198,8 @@ static constexpr bool a64_source_extent_valid(uint64_t phys, uint32_t words,
 }
 
 // Classification stays fail-closed: each translation adds its classifier and emitter together.
-static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block) noexcept
+static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block,
+    const AlphaIPRReadPolicy& ipr_read = kEv68IPRReadPolicy) noexcept
 {
   const uint32_t opcode = ins >> 26;
   const uint32_t func = (ins >> 5) & 0x7fu;
@@ -1439,11 +1440,7 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block) noexce
     case 0x19: {   // HW_MFPR (PALmode only)
       if (!pal_block) break;
       const uint32_t fn = (ins >> 8) & 0xffu;
-      const bool known = ((fn & 0xc0u) == 0x40u)                                 // PCTX group
-          || (fn >= 0x05 && fn <= 0x0d) || fn == 0x0f || fn == 0x10
-          || fn == 0x11 || fn == 0x14 || fn == 0x16 || fn == 0x27
-          || fn == 0x2a || fn == 0x2b || fn == 0xc0 || fn == 0xc2 || fn == 0xc3;
-      if (known)
+      if (ipr_read.describe(fn).kind != AlphaIPRReadKind::Unsupported)
         return {A64OpKind::kHwMfpr, A64TerminatorKind::kNone, 0, 0};
       break;
     }
@@ -1466,9 +1463,10 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block) noexce
   return {};
 }
 
-static constexpr A64DecodedOp decode_a64_op(uint32_t ins, bool pal_block) noexcept
+static constexpr A64DecodedOp decode_a64_op(uint32_t ins, bool pal_block,
+    const AlphaIPRReadPolicy& ipr_read = kEv68IPRReadPolicy) noexcept
 {
-  const A64OpClass classification = classify_a64_op(ins, pal_block);
+  const A64OpClass classification = classify_a64_op(ins, pal_block, ipr_read);
   A64DecodedOp decoded{};
   decoded.ins = ins;
   decoded.kind = classification.kind;
@@ -1511,7 +1509,7 @@ static uint32_t load_a64_guest_u32(const uint8_t* source) noexcept
 }
 
 static A64BlockPlan plan_a64_block(const CJitEngine::JitBlock& block,
-    const uint8_t* dram, uint64_t dram_size) noexcept
+    const uint8_t* dram, uint64_t dram_size, const AlphaIPRReadPolicy& ipr_read) noexcept
 {
   A64BlockPlan plan{};
   if (block.n_instr == 0) {
@@ -1528,7 +1526,7 @@ static A64BlockPlan plan_a64_block(const CJitEngine::JitBlock& block,
   const bool pal_block = (block.tag & 1u) != 0;
   for (uint32_t i = 0; i < limit.count; ++i) {
     const uint32_t word = load_a64_guest_u32(source + static_cast<size_t>(i) * 4);
-    const A64DecodedOp decoded = decode_a64_op(word, pal_block);
+    const A64DecodedOp decoded = decode_a64_op(word, pal_block, ipr_read);
     if (decoded.kind == A64OpKind::kUnsupported) {
       plan.breaker_word = word;
       plan.stop = A64PlanStop::kUnsupported;
@@ -5270,19 +5268,20 @@ static A64OpEmitReceipt emit_a64_hw_mfpr(A64EmitContext& context,
       a64_guest_gpr_write_route(context.regs, op.ra, context.pal_shadow);
   if (wa.kind == A64GprRouteKind::kInvalid || wa.kind == A64GprRouteKind::kZero)
     return {Error::kInvalidArgument, op.kind};
-  if (wa.kind == A64GprRouteKind::kDiscard)
+  const auto descriptor = context.profile.ipr_read.describe((op.ins >> 8) & 0xffu);
+  if (wa.kind == A64GprRouteKind::kDiscard && descriptor.discard_safe)
     return a64_completed_op_receipt(op);
 
   a64::Assembler& a = context.assembler;
 #ifndef JIT_VERIFY
   uint32_t field_offset = 0;
-  bool direct_field = true;
-  switch ((op.ins >> 8) & 0xffu) {
-    case 0x06: field_offset = context.offsets.exc_addr; break;
-    case 0x0f: field_offset = context.offsets.exc_sum; break;
-    case 0x10: field_offset = context.offsets.pal_base; break;
-    case 0x27: field_offset = context.offsets.mm_stat; break;
-    case 0xc2: field_offset = context.offsets.fault_va; break;
+  bool direct_field = wa.kind != A64GprRouteKind::kDiscard && descriptor.discard_safe;
+  switch (descriptor.kind) {
+    case AlphaIPRReadKind::ExceptionAddress: field_offset = context.offsets.exc_addr; break;
+    case AlphaIPRReadKind::ExceptionSummary: field_offset = context.offsets.exc_sum; break;
+    case AlphaIPRReadKind::PalBase: field_offset = context.offsets.pal_base; break;
+    case AlphaIPRReadKind::MemoryFaultStatus: field_offset = context.offsets.mm_stat; break;
+    case AlphaIPRReadKind::FaultAddress: field_offset = context.offsets.fault_va; break;
     default: direct_field = false; break;
   }
   if (direct_field) {
@@ -5301,12 +5300,12 @@ static A64OpEmitReceipt emit_a64_hw_mfpr(A64EmitContext& context,
       context.regs, context.pal_shadow, context.helpers.hw_mfpr_helper,
       {{A64CallArgKind::kCpu, 0},
        {A64CallArgKind::kImm32, op.ins},
-       {A64CallArgKind::kGuest, op.ra}});
+       {A64CallArgKind::kGuestOrZero, op.ra}});
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
 
   if (wa.kind == A64GprRouteKind::kPinned)
     err = a.mov(a64::x(static_cast<uint32_t>(wa.host)), a64::x0);
-  else
+  else if (wa.kind == A64GprRouteKind::kMemory)
     err = a.str(a64::x0, a64::ptr(RA::kRegs,
                 static_cast<int32_t>(wa.slot * sizeof(uint64_t))));
   return a64_completed_op_receipt(op, err);
@@ -6316,7 +6315,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   }
 #endif
 
-  const A64BlockPlan plan = plan_a64_block(*b, dram, dram_size);
+  const A64BlockPlan plan = plan_a64_block(*b, dram, dram_size, m_profile.ipr_read);
 #ifdef JIT_STATS
   if (plan.stop == A64PlanStop::kUnsupported) {
     const uint32_t bop = plan.breaker_word >> 26;

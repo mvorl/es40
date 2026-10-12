@@ -86,7 +86,7 @@
   *      File created. Contains code previously found in AlphaCPU.h
   **/
 
-/* unimplemented IPR *index* on HW_MFPR/HW_MTPR. 
+/* unimplemented IPR *index* on HW_MTPR.
  * EV6 treats those as read-zero / write-ignore 
  * warn once per index and continue instead of trapping. */
 #define UNKNOWN_IPR(dir)                                                                                       \
@@ -100,118 +100,7 @@
     }                                                                                                          \
   } while(0)
 
-#define DO_HW_MFPR  if((function & 0xc0) == 0x40)                                                              \
-  { /* PCTX */                                                                                                 \
-    state.r[REG_1] = ((u64) state.asn << 39) | ((u64) state.astrr << 9) |                                      \
-      ((u64) state.aster << 5) | (state.fpen ? U64(0x1) << 2 : 0) |                                            \
-        (state.ppcen ? U64(0x1) << 1 : 0);                                                                     \
-  }                                                                                                            \
-  else                                                                                                         \
-  {                                                                                                            \
-    switch(function)                                                                                           \
-    {                                                                                                          \
-    case 0x05:  /* PMPC     */                                                                                 \
-      state.r[REG_1] = state.pmpc;                                                                             \
-      break;                                                                                                   \
-                                                                                                          \
-    case 0x06:  /* EXC_ADDR */                                                                                 \
-      state.r[REG_1] = state.exc_addr;                                                                         \
-      break;                                                                                                   \
-                                                                                                          \
-    case 0x07:  /* IVA_FORM */                                                                                 \
-      state.r[REG_1] = va_form(state.exc_addr, true);                                                          \
-      break;                                                                                                   \
-                                                                                                          \
-    case 0x08:  /* IER_CM   */                                                                                 \
-    case 0x09:  /* CM       */                                                                                 \
-    case 0x0a:  /* IER      */                                                                                 \
-    case 0x0b:  /* IER_CM   */                                                                                 \
-      state.r[REG_1] = (((u64) state.eien) << 33) | (((u64) state.slen) << 32) |                               \
-        (((u64) state.cren) << 31) | (((u64) state.pcen) << 29) |                                              \
-          (((u64) state.sien) << 13) | (((u64) state.asten) << 13) |                                           \
-            (((u64) state.cm) << 3);                                                                           \
-      break;                                                                                                   \
-                                                                                                          \
-    case 0x0c:  /* SIRR */                                                                                     \
-      state.r[REG_1] = ((u64) state.sir) << 13;                                                                \
-      break;                                                                                                   \
-                                                                                                          \
-    case 0x0d:  /* ISUM */                                                                                     \
-      state.r[REG_1] = (((u64) (state.eir & state.eien)) << 33) |                                              \
-        (((u64) (state.slr & state.slen)) << 32) |                                                             \
-          (((u64) (state.crr & state.cren)) << 31) |                                                           \
-            (((u64) (state.pcr & state.pcen)) << 29) |                                                         \
-              (((u64) (state.sir & state.sien)) << 13) |                                                       \
-                (                                                                                              \
-                  (                                                                                            \
-                    (u64)                                                                                      \
-                      (((U64(0x1) << (state.cm + 1)) - 1) & state.aster & state.astrr & (state.asten * 0x3))   \
-                  ) << 3                                                                                       \
-                ) |                                                                                            \
-                  (                                                                                            \
-                    (                                                                                          \
-                      (u64)                                                                                    \
-                        (((U64(0x1) << (state.cm + 1)) - 1) & state.aster & state.astrr & (state.asten * 0xc)) \
-                    ) << 7                                                                                     \
-                  );                                                                                           \
-      break;                                                                                                   \
-                                                                                                          \
-    case 0x0f:  /* EXC_SUM */                                                                                  \
-      state.r[REG_1] = state.exc_sum;                                                                          \
-      break;                                                                                                   \
-                                                                                                          \
-    case 0x10:  /* PAL_BASE */                                                                                 \
-      state.r[REG_1] = state.pal_base;                                                                         \
-      break;                                                                                                   \
-                                                                                                          \
-    case 0x11:  /* i_ctl */                                                                                    \
-      state.r[REG_1] = state.i_ctl_other |                                                                     \
-        (((u64) get_profile().chip_id) << 24) |                                                              \
-        (u64) state.i_ctl_vptb |                                                                               \
-        (((u64) state.i_ctl_va_mode) << 15) |                                                                  \
-        (state.hwe ? U64(0x1) << 12 : 0) |                                                                     \
-        (state.sde ? U64(0x1) << 7 : 0) |                                                                      \
-        (((u64) state.i_ctl_spe) << 3);                                                                        \
-      break;                                                                                                   \
-                                                                                                          \
-    case 0x14:  /* PCTR_CTL */                                                                                 \
-      state.r[REG_1] = state.pctr_ctl;                                                                         \
-      break;                                                                                                   \
-                                                                                                          \
-    case 0x16:  /* I_STAT */                                                                                   \
-      state.r[REG_1] = state.i_stat;                                                                           \
-      break;                                                                                                   \
-                                                                                                          \
-    case 0x27:  /* MM_STAT */                                                                                  \
-      state.r[REG_1] = state.mm_stat;                                                                          \
-      break;                                                                                                   \
-                                                                                                          \
-    case 0x2a:  /* DC_STAT */                                                                                  \
-      state.r[REG_1] = state.dc_stat;                                                                          \
-      break;                                                                                                   \
-                                                                                                          \
-    case 0x2b:  /* C_DATA */                                                                                   \
-      state.r[REG_1] = 0;                                                                                      \
-      break;                                                                                                   \
-                                                                                                          \
-    case 0xc0:  /* CC */                                                                                       \
-      state.r[REG_1] = (((u64) state.cc_offset) << 32) | (state.cc & U64(0xffffffff));                         \
-      break;                                                                                                   \
-                                                                                                          \
-    case 0xc2:  /* VA */                                                                                       \
-      state.r[REG_1] = state.fault_va;                                                                         \
-      break;                                                                                                   \
-                                                                                                          \
-    case 0xc3:  /* VA_FORM */                                                                                  \
-      state.r[REG_1] = va_form(state.va_form_va, false);                                                       \
-      break;                                                                                                   \
-                                                                                                          \
-    default:                                                                                                   \
-      UNKNOWN_IPR("F");                                                                                        \
-      state.r[REG_1] = 0;                                                                                      \
-      break;                                                                                                   \
-    }                                                                                                          \
-  }
+#define DO_HW_MFPR state.r[REG_1] = read_ipr(function);
 
 #define DO_HW_MTPR  if((function & 0xc0) == 0x40)                                \
   {                                                                              \

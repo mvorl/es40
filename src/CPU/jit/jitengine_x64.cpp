@@ -139,7 +139,7 @@ static bool host_has_bmi2() {
 // Safe = goto-free, register-only operate-format ops (no trap, memory, or branch).
 // pal_block enables PALmode-only ops (HW_MFPR): outside PALmode they'd OPCDEC, so only
 // compile them when the block is PALmode (the dispatcher keys blocks by PC bit 0).
-SafeOp classify(uint32_t ins, bool pal_block)
+SafeOp classify(uint32_t ins, bool pal_block, const AlphaIPRReadPolicy& ipr_read)
 {
   uint32_t opcode = ins >> 26;
   uint32_t func = (ins >> 5) & 0x7F;
@@ -306,15 +306,12 @@ SafeOp classify(uint32_t ins, bool pal_block)
     case 0x08: return OP_LDA;   // load address (Ra = Rb + disp16) -- pure ALU, no memory
     case 0x09: return OP_LDAH;  // load address high (Ra = Rb + (disp16 << 16))
     case 0x19: {                // HW_MFPR: read IPR -> Ra. PALmode-only (else OPCDEC).
-      // ISUM (fn 0x0d) reads async interrupt lines -- compiled via log/replay. Only the IPRs
-      // jit_hw_mfpr implements compile; an unknown index interprets (read-zero + warn-once).
       if (!pal_block) return OP_NONE;
       const uint32_t fn = (ins >> 8) & 0xff;
-      const bool known = ((fn & 0xc0) == 0x40)                                   // PCTX group
-                      || (fn >= 0x05 && fn <= 0x0d) || fn == 0x0f || fn == 0x10
-                      || fn == 0x11 || fn == 0x14 || fn == 0x16 || fn == 0x27
-                      || fn == 0x2a || fn == 0x2b || fn == 0xc0 || fn == 0xc2 || fn == 0xc3;
-      return known ? OP_HW_MFPR : OP_NONE;
+      const auto descriptor = ipr_read.describe(fn);
+      if (descriptor.kind == AlphaIPRReadKind::Unsupported) return OP_NONE;
+      if (((ins >> 21) & 0x1f) == 31 && descriptor.discard_safe) return OP_NOP;
+      return OP_HW_MFPR;
     }
     case 0x1b: {                // HW_LD, PALmode-only. Physical locked forms still interpret;
       // all side-effect-free virtual forms use the generic translation helper.
@@ -749,7 +746,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
     int rc = ins & 0x1F;
     bool islit = ((ins >> 12) & 1) != 0;
     uint32_t lit = (ins >> 13) & 0xFF;
-    SafeOp op = classify(ins, pal_block);
+    SafeOp op = classify(ins, pal_block, m_profile.ipr_read);
 
     // A nearby ordinary memory op can reuse the previous op's translated page.
     const bool prev_dpc_live = regalloc.dpc_live;
@@ -1525,25 +1522,26 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
         // Plain fault-reporting fields read inline; derived/asynchronous registers
         // and verification retain the helper. Destination routing honors PALshadow.
         if (op == OP_HW_MFPR) {
-            if (ra != 31) {                                  // MFPR R31 discards the value (R31 is hardwired 0)
 #ifndef JIT_VERIFY
-                uint32_t field_offset = 0;
-                bool direct_field = true;
-                switch ((ins >> 8) & 0xff) {
-                case 0x06: field_offset = m_off.exc_addr; break;
-                case 0x0f: field_offset = m_off.exc_sum; break;
-                case 0x10: field_offset = m_off.pal_base; break;
-                case 0x27: field_offset = m_off.mm_stat; break;
-                case 0xc2: field_offset = m_off.fault_va; break;
-                default: direct_field = false; break;
-                }
-                if (direct_field)
-                    a.mov(x86::rax, x86::qword_ptr(x86::rbp, field_offset));
-                else
-#endif
-                    emit_call(hw_mfpr_helper, { {JA_CPU, 0}, {JA_I32, (uint64_t)ins}, {JA_GP, (uint64_t)ra} });  // -> RAX = IPR value
-                mov_to_reg(ra, x86::rax);                      // Ra = value (reg() applies the PALshadow remap)
+            const auto descriptor = m_profile.ipr_read.describe((ins >> 8) & 0xff);
+            uint32_t field_offset = 0;
+            bool direct_field = ra != 31 && descriptor.discard_safe;
+            switch (descriptor.kind) {
+            case AlphaIPRReadKind::ExceptionAddress: field_offset = m_off.exc_addr; break;
+            case AlphaIPRReadKind::ExceptionSummary: field_offset = m_off.exc_sum; break;
+            case AlphaIPRReadKind::PalBase: field_offset = m_off.pal_base; break;
+            case AlphaIPRReadKind::MemoryFaultStatus: field_offset = m_off.mm_stat; break;
+            case AlphaIPRReadKind::FaultAddress: field_offset = m_off.fault_va; break;
+            default: direct_field = false; break;
             }
+            if (direct_field)
+                a.mov(x86::rax, x86::qword_ptr(x86::rbp, field_offset));
+            else
+#endif
+                emit_call(hw_mfpr_helper, { {JA_CPU, 0}, {JA_I32, (uint64_t)ins}, {JA_GPZ, (uint64_t)ra} });  // -> RAX = IPR value
+            if (ra != 31)
+                mov_to_reg(ra, x86::rax);                      // Ra = value (reg() applies the PALshadow remap)
+            // A family may require the read's side effect even when Ra discards it.
             continue;
         }
 
@@ -2514,7 +2512,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   while (plen < b->n_instr && plen < 64
          && (phys + (uint64_t) plen * 4) < page_end)
   {
-    SafeOp sop = classify(words[plen], pal_block);
+    SafeOp sop = classify(words[plen], pal_block, m_profile.ipr_read);
     if (sop == OP_NONE) {               // uncompilable op ends the straight-line prefix
 #ifdef JIT_STATS
       const uint32_t bop = words[plen] >> 26;

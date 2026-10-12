@@ -256,6 +256,7 @@ class CJitEngine;   // JIT block-cache engine (ES40_JIT builds)
 class CAlphaCPU : public CSystemComponent, public CRunnable
 {
   friend class AlphaCPUAlignmentTest;
+  friend class Ev68IPR;
 public:
   void          flush_icache_asm();
   virtual int   SaveState(FILE* f);
@@ -324,6 +325,8 @@ public:
   virtual void  stop_threads();
   void ResetForSystemReset();
 private:
+  u64 read_ipr(u32 function);
+
   // Family PAL rules are immutable and live outside the saved CPU state.
   AlphaPALExceptionEntry pal_exception_entry(AlphaPALException reason, u64 pc) const;
   u64 pal_exception_offset(AlphaPALException reason) const;
@@ -673,12 +676,17 @@ private:
   // must cover a full trace formation, not just a 64-instruction block.
   static constexpr u32 kJitVlogCap = 1024;
   bool m_jit_vreplay = false;  // compiled pass: replay recorded loads, don't re-read
+  bool m_jit_vmismatch = false; // any checked output differed in the current replay
   u32  m_jit_vlog_i  = 0;      // replay cursor
+  u32  m_jit_vlog_n  = 0;      // reference loads available to this replay
+  bool jit_verify_load_slot(u32& slot);
   u64  m_jit_vlog[kJitVlogCap];   // values the interpreter pass loaded (<= trace span)
   u64  m_jit_vaddr[kJitVlogCap];  // diagnostic: load addresses the interpreter computed
   // Store verify: the interpreter pass records each store (addr,value); the compiled
   // pass compares against it (stores touch memory, not GPRs, so the GPR check can't see them).
   u32  m_jit_slog_i  = 0;      // store-compare cursor
+  u32  m_jit_slog_n  = 0;      // reference stores available to this replay
+  bool jit_verify_store_slot(u32& slot);
   u64  m_jit_slog_addr[kJitVlogCap];    // store addresses the interpreter pass wrote
   u64  m_jit_slog_val[kJitVlogCap];     // store values the interpreter pass wrote
   u64  m_jit_slog_success[kJitVlogCap]; // STx_C outcome (1/0) the interp pass got; 1 for ordinary stores

@@ -585,13 +585,13 @@ void CJitEngine::invalidate_links_global()
 }
 #ifdef JIT_VERIFY
 uint64_t CJitEngine::verify_compare(uint64_t blk_virt, const uint64_t* interp, const uint64_t* jit,
-                                    const uint32_t* words, uint32_t nwords)
+                                    const uint32_t* words, uint32_t nwords, bool other_mismatch)
 {
-  m_v_exec++;
+  bool mismatch = other_mismatch;
   for (int r = 0; r < 63; ++r) {   // r0..r30 main bank + r32..r62 PALshadow bank
     if (r == 31) continue;         // zero register
     if (interp[r] != jit[r]) {
-      m_v_fail++;
+      mismatch = true;
       printf("[JIT][VERIFY] MISMATCH at block pc=%016llx: r%d interp=%016llx jit=%016llx\n",
              (unsigned long long) blk_virt, r,
              (unsigned long long) interp[r], (unsigned long long) jit[r]);
@@ -601,9 +601,21 @@ uint64_t CJitEngine::verify_compare(uint64_t blk_virt, const uint64_t* interp, c
       break;
     }
   }
+  return record_verify_result(mismatch);
+}
+
+uint64_t CJitEngine::verify_failed()
+{
+  return record_verify_result(true);
+}
+
+uint64_t CJitEngine::record_verify_result(bool mismatch)
+{
+  m_v_exec++;
+  if (mismatch) m_v_fail++;
   if ((m_v_exec % 500000) == 0) {
     const auto t0 = std::chrono::steady_clock::now();   // exclude this print's I/O stall from the
-    printf("[JIT][VERIFY] %llu compiled-block execs, %llu mismatches\n",   // wall-clock-pinned RPCC
+    printf("[JIT][VERIFY] %llu comparisons, %llu mismatches\n",   // wall-clock-pinned RPCC
            (unsigned long long) m_v_exec, (unsigned long long) m_v_fail);
     return (uint64_t) std::chrono::duration_cast<std::chrono::nanoseconds>(
              std::chrono::steady_clock::now() - t0).count();
@@ -619,7 +631,7 @@ void CJitEngine::note_trace_verify(int outcome)
   m_tv_cnt[outcome]++;
   const uint64_t total = m_tv_cnt[0] + m_tv_cnt[1] + m_tv_cnt[2] + m_tv_cnt[3];
   if ((total % 200000) == 0)
-    printf("[JIT][VERIFY][TRACE] runs=%llu full=%llu side_exit=%llu bail=%llu mismatch=%llu\n",
+    printf("[JIT][VERIFY][TRACE] runs=%llu full=%llu side_exit=%llu bail=%llu count_divergence=%llu\n",
            (unsigned long long) total, (unsigned long long) m_tv_cnt[0],
            (unsigned long long) m_tv_cnt[1], (unsigned long long) m_tv_cnt[3],
            (unsigned long long) m_tv_cnt[2]);
