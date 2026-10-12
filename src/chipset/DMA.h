@@ -63,7 +63,7 @@ class CDMA : public CSystemComponent
 {
 public:
   // The owning bridge selects ALi M1543C register and decode behavior.
-  CDMA(CConfigurator* cfg, CSystem* c, const CAliM1543C& bridge);
+  CDMA(CConfigurator* cfg, CSystem* c, CAliM1543C& bridge);
   virtual       ~CDMA();
 
   virtual void  ResetPCI() override;
@@ -150,9 +150,10 @@ public:
   size_t        get_transfer_size(int channel);
 
 private:
-  // Borrowed configuration owner; never accessed during destruction.
-  const CAliM1543C& isa_bridge;
+  // Borrowed bridge for configuration, decode and DMA; never accessed during destruction.
+  CAliM1543C& isa_bridge;
 
+  u64           dma_address(u16 pagebase, u16 current, size_t width);
   u8            get_requests(int ctrlr);
   bool          cascade_enabled();
   bool          service_requested(int channel);

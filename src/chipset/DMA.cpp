@@ -71,7 +71,7 @@ CDMA* theDMA = 0;
 /**
  * Constructor.
  **/
-CDMA::CDMA(CConfigurator* cfg, CSystem* c, const CAliM1543C& bridge) :
+CDMA::CDMA(CConfigurator* cfg, CSystem* c, CAliM1543C& bridge) :
 	CSystemComponent(cfg, c), isa_bridge(bridge)
 {
 	// DMA Setup
@@ -162,9 +162,9 @@ static size_t dma_transfer_width(int channel)
 	return channel < 4 ? 1 : 2;
 }
 
-static u64 dma_address(u16 pagebase, u16 current, size_t width)
+u64 CDMA::dma_address(u16 pagebase, u16 current, size_t width)
 {
-	if (!theAli || !(theAli->config_read(0, 0x42, 8) & 0x40))
+	if (!(isa_bridge.config_read(0, 0x42, 8) & 0x40))
 		pagebase &= 0x00ff;
 
 	// Word channels drive A16 from the current address, not low-page bit 0.
@@ -880,7 +880,7 @@ CDMA::SDMA_result CDMA::send_data(int channel, void* data, size_t length, bool e
 	}
 
 	// The PCI helpers otherwise silently skip DMA when bus mastering is disabled.
-	if (!theAli || !(theAli->config_read(0, 0x04, 16) & 0x04))
+	if (!(isa_bridge.config_read(0, 0x04, 16) & 0x04))
 		return result;
 
 	if ((state.controller[ctrlr].command & 0x04) == 0)
@@ -937,7 +937,7 @@ CDMA::SDMA_result CDMA::send_data(int channel, void* data, size_t length, bool e
 				for (size_t offset = 0; offset < count; offset += width)
 				{
 					addr = dma_address(state.channel[channel].pagebase, current, width);
-					theAli->do_pci_write((u32)addr, (u8*)data + offset, 1, width);
+					isa_bridge.do_pci_write((u32)addr, (u8*)data + offset, 1, width);
 					current--;
 				}
 			}
@@ -945,12 +945,12 @@ CDMA::SDMA_result CDMA::send_data(int channel, void* data, size_t length, bool e
 			{
 				size_t first_count = dma_increment_chunk_size(state.channel[channel].current,
 					width, count);
-				theAli->do_pci_write((u32)addr, data, 1, first_count);
+				isa_bridge.do_pci_write((u32)addr, data, 1, first_count);
 				// A programmed transfer contains at most 65536 units, so only one wrap is possible.
 				if (first_count < count)
 				{
 					u64 wrap_addr = dma_address(state.channel[channel].pagebase, 0, width);
-					theAli->do_pci_write((u32)wrap_addr, (u8*)data + first_count, 1,
+					isa_bridge.do_pci_write((u32)wrap_addr, (u8*)data + first_count, 1,
 						count - first_count);
 				}
 			}
@@ -994,7 +994,7 @@ CDMA::SDMA_result CDMA::recv_data(int channel, void* data, size_t length, bool e
 	}
 
 	// Avoid zero-filling the device buffer and advancing a blocked transfer.
-	if (!theAli || !(theAli->config_read(0, 0x04, 16) & 0x04))
+	if (!(isa_bridge.config_read(0, 0x04, 16) & 0x04))
 		return result;
 
 	if ((state.controller[ctrlr].command & 0x04) == 0)
@@ -1039,7 +1039,7 @@ CDMA::SDMA_result CDMA::recv_data(int channel, void* data, size_t length, bool e
 				for (size_t offset = 0; offset < count; offset += width)
 				{
 					addr = dma_address(state.channel[channel].pagebase, current, width);
-					theAli->do_pci_read((u32)addr, (u8*)data + offset, 1, width);
+					isa_bridge.do_pci_read((u32)addr, (u8*)data + offset, 1, width);
 					current--;
 				}
 			}
@@ -1047,11 +1047,11 @@ CDMA::SDMA_result CDMA::recv_data(int channel, void* data, size_t length, bool e
 			{
 				size_t first_count = dma_increment_chunk_size(state.channel[channel].current,
 					width, count);
-				theAli->do_pci_read((u32)addr, data, 1, first_count);
+				isa_bridge.do_pci_read((u32)addr, data, 1, first_count);
 				if (first_count < count)
 				{
 					u64 wrap_addr = dma_address(state.channel[channel].pagebase, 0, width);
-					theAli->do_pci_read((u32)wrap_addr, (u8*)data + first_count, 1,
+					isa_bridge.do_pci_read((u32)wrap_addr, (u8*)data + first_count, 1,
 						count - first_count);
 				}
 			}
