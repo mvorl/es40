@@ -878,7 +878,7 @@ void CRealImage2100::WriteMem(uint32_t a, int bits, uint32_t v)
 			unimplemented_once("REALimage vertex width (command rejected)", a, v, true);
 		else if ((key - VertexBase) % VertexStride == 0x1c)
 		{
-			if (flat_vertex_register(original_address) && it->second == 0x22)
+			if (flat_vertex_register(original_address) && (it->second == 0x22 || it->second == 0x62))
 				raster_vertex_command(original_address, it->second);
 			else
 				triangle_command(original_address, it->second);
@@ -2351,12 +2351,12 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 		auxiliary_write = (control & ~0x00ef0f01u) == 0xa1004002u &&
 		!(plane_value(2, 0, 0xffffffff) & ~0xe000f000u),
 		color_write = direct_rgb || auxiliary_compare || ((control & ~0xff01u) == 0xa1000002u && !(banks & ~3u));
-	if ((floating && (value != 0x22 || (control & ~0xff01u) != 0xa1000002u ||
-		(banks != 1 && banks != 2))) || (!line && value != 3) ||
+	if ((floating && ((value != 0x22 && value != 0x62) || !color_write)) ||
+		(!line && value != 3) ||
 		(line && (first_vertex >= 3 ||
 			address != (floating ? VertexBase + 0x100 : IntegerVertexColorBase) +
 				((first_vertex + 1) % 3) * VertexStride + 0x1c ||
-			(inclusive ? (!auxiliary_compare && !direct_rgb) :
+			(inclusive && !floating ? (!auxiliary_compare && !direct_rgb) :
 				(!auxiliary_write && !color_write)))) ||
 		(!auxiliary_write && !color_write &&
 		(control & ~0xff01u) != 0x21000002u) ||
@@ -2368,7 +2368,7 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 		reject();
 		return;
 	}
-	const bool rgb_raster = !inclusive && color_write,
+	const bool rgb_raster = (!inclusive || floating) && color_write,
 		direct_polygon = !line && direct_rgb && global == 1;
 	// Connected terminal commands can retain mode 1 until the next state flush.
 	const std::pair<uint32_t, uint32_t> profile[] = {
@@ -2383,9 +2383,20 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 			reject();
 			return;
 		}
+	bool uses_color = !floating;
+	if (floating)
+		for (unsigned bank = 0; bank < 2; ++bank)
+			if (banks & (1u << bank))
+				for (unsigned shift = 0; shift < 24; shift += 8)
+				{
+					const unsigned rop = (plane_value(bank, 4, 0) >> shift) & 15;
+					if ((plane_value(bank, 0, 0xffffffff) & (0xffu << shift)) &&
+						((rop ^ (rop >> 2)) & 3))
+						uses_color = true;
+				}
 	uint32_t color = 0;
-	// Auxiliary triangles retain unrelated ARGB latches and take references from DrawControl.
-	if (!floating && !auxiliary_write)
+	// Floating 2D lines share integer ARGB; source-independent ROPs need no color.
+	if (uses_color && !auxiliary_write)
 		for (uint32_t i = 0; i < 4; ++i)
 		{
 			const uint32_t component = peek(IntegerVertexColorBase + i * 4);
@@ -2415,8 +2426,7 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 		{
 			valid_rop = !(mask & 0xff000000u) || (rops >> 24) == 5;
 			for (unsigned shift = 0; shift < 24; shift += 8)
-				if ((mask & (0xffu << shift)) && (floating ? ((rops >> shift) & 0xff) != 0x0a :
-					!rgb_raster && ((rops >> shift) & 0xff) != 3))
+				if ((mask & (0xffu << shift)) && !rgb_raster && ((rops >> shift) & 0xff) != 3)
 					valid_rop = false;
 		}
 		if (m_planes[bank].unknown_masks || !valid_rop ||
