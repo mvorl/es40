@@ -2536,7 +2536,7 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 		const Point& a = vertex[0];
 		Point b = vertex[1];
 		if (((a.x | a.y | b.x | b.y) & 15) ||
-			((inclusive || floating) && a.x != b.x && a.y != b.y))
+			(floating && a.x != b.x && a.y != b.y))
 		{
 			reject();
 			return;
@@ -2556,7 +2556,7 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 				return;
 			int error = 2 * minor - major;
 			bool drawn = false;
-			for (int i = 0; i < major; ++i)
+			for (int i = 0; i < major + int(inclusive); ++i)
 			{
 				if (x >= left && x <= right && y >= top && y <= bottom)
 				{
