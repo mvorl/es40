@@ -1221,9 +1221,8 @@ bool CRealImage2100::bitmap_profile() const
 bool CRealImage2100::auxiliary_mono_profile() const
 {
 	const uint32_t control = peek(DrawControl);
-	if ((control & ~0x00ef0f01u) != 0xa5004002u ||
-		!native_copy_control_profile(true, true) || m_planes[2].unknown_masks ||
-		(plane_value(2, 0, 0xffffffff) & ~0xe000f000u))
+	if ((control & ~0x00ff0f01u) != 0xa5004002u ||
+		!native_copy_control_profile(true, true) || m_planes[2].unknown_masks)
 		return false;
 	const uint32_t expected[] = {0, 0, 0x0fff0fff, 0x03030303, 0x0a000000,
 		0, 0, 0, 0, 0x00ff0000, 0x33300000, 0x100, 0, 0x100, 0};
@@ -1239,13 +1238,15 @@ bool CRealImage2100::auxiliary_mono_profile() const
 	return true;
 }
 
-bool CRealImage2100::integer_rgb_profile() const
+bool CRealImage2100::integer_rgb_profile(bool configuration) const
 {
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
 	const bool auxiliary_compare = (control & ~0x00ffff01u) == 0xa1000002u &&
 		(banks == 5 || banks == 6),
-		direct = (control & ~0xff01u) == 0x21000002u && (banks == 1 || banks == 2);
-	if ((!auxiliary_compare && !direct) || !native_copy_control_profile(true, true))
+		direct = (control & ~0xff01u) == 0x21000002u && (banks == 1 || banks == 2),
+		rectangle = configuration && (control & ~0x00ffff01u) == 0xa5000002u &&
+			(banks == 1 || banks == 2);
+	if ((!auxiliary_compare && !direct && !rectangle) || !native_copy_control_profile(true, true))
 		return false;
 	const unsigned bank = banks & 2 ? 1 : 0;
 	if (!plane_profile(bank) || m_planes[bank].unknown_masks ||
@@ -1778,21 +1779,26 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	const bool initialization = a == FillCommand &&
 		(v == 0x09040832 || v == 0x010408b2);
 	const bool fill = a == FillCommand && (v == 0x09000832 || v == 0x09040832);
+	const bool repeated_mono = a == FillCommand && (v == 0x01000872 || v == 0x010008f2);
 	const bool bitmap = a == BitmapCommand && v == 0x01000872;
 	const bool host_mono = a == HostCommand && (v & ~0x7780u) == 0x01000872;
 	const bool auxiliary_mono = a == HostCommand && v == 0x010008f2 &&
 		(peek(DrawControl) & 0xf000) == 0x4000;
-	const bool integer_mono = a == HostCommand && (v & ~0x700u) == 0x01000872 &&
-		((peek(DrawControl) & 0xe0000000u) == 0xa0000000u ||
-			(peek(DrawControl) & ~0xff01u) == 0x21000002u);
-	op.transparent = bitmap || (host_mono && !(v & 0x80));
+	const bool configuration_mono = a == HostCommand && v == 0x010008f2 &&
+		(peek(DrawControl) & 0xff000000u) == 0xa5000000u &&
+		(peek(DrawControl) & 0xf000) != 0x4000;
+	const bool integer_mono = configuration_mono ||
+		(a == HostCommand && (v & ~0x700u) == 0x01000872 &&
+			((peek(DrawControl) & 0xe0000000u) == 0xa0000000u ||
+				(peek(DrawControl) & ~0xff01u) == 0x21000002u));
+	op.transparent = bitmap || ((host_mono || repeated_mono) && !(v & 0x80));
 	op.mono_offset = host_mono ? (v >> 8) & 7 : 0;
 	// Integer glyphs encode only the source offset; their extent supplies the width.
 	const uint32_t mono_width = host_mono && !integer_mono && (v & 0x7700) ? ((v >> 12) & 7) + 1 : 0;
-	op.mono = bitmap || host_mono || (a == FillCommand && (v == 0x010008f2 || v == 0x010408b2));
+	op.mono = bitmap || host_mono || repeated_mono || (a == FillCommand && v == 0x010408b2);
 	op.auxiliary = (initialization || bitmap || block_copy || auxiliary_mono) && (peek(DrawControl) & 0x4000);
 	const bool profile = auxiliary_mono ? auxiliary_mono_profile() :
-		integer_mono ? integer_rgb_profile() : bitmap ? bitmap_profile() :
+		integer_mono ? integer_rgb_profile(configuration_mono) : bitmap ? bitmap_profile() :
 		block_copy ? (v == 0x01000072 ?
 			block_transfer_profile(false) : block_copy_profile()) :
 		block_transfer ? block_transfer_profile(upload) :
@@ -1894,9 +1900,13 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	// Bitmap rows start in the higher-addressed pattern word.
 	op.pattern = bitmap ? std::array<uint32_t, 4>{0, 0, peek(BitmapPattern0), peek(BitmapPattern1)} :
 		std::array<uint32_t, 4>{peek(MonoPattern0), peek(MonoPattern1), peek(MonoPattern2), peek(MonoPattern3)};
+	// Native rectangle fills can repeat one word beyond the glyph limits.
+	const bool repeated_host = configuration_mono && op.pattern[0] == op.pattern[1] &&
+		op.pattern[0] == op.pattern[2] && op.pattern[0] == op.pattern[3];
 	// Multirow bitmap layouts are accepted only when the two possible row pitches agree.
 	if (op.mono && ((mono_width && width != mono_width) ||
-		(a == HostCommand && (width + op.mono_offset > 8 || height > 16)) ||
+		(a == HostCommand && !auxiliary_mono && !repeated_host &&
+			(width + op.mono_offset > 8 || height > 16)) ||
 		(bitmap && (width > 8 || (height != 1 &&
 			(width != 2 || height != 2 || ((op.pattern[3] ^ (op.pattern[3] >> 6)) & 0x00c00000u))))) ||
 		(a == FillCommand && (op.pattern[0] != op.pattern[2] || op.pattern[1] != op.pattern[3]))))
@@ -1922,8 +1932,9 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 		op.auxiliary_reference = ((peek(DrawControl) & 0x00f00000u) << 8) |
 			((peek(DrawControl) & 0x000f0000u) >> 4);
 	}
+	// Auxiliary payload and window references occupy separate packed fields.
 	if (auxiliary_mono)
-		op.foreground = op.background = op.auxiliary_reference;
+		op.foreground = op.background = (op.foreground & 0x0fff0fffu) | op.auxiliary_reference;
 	if (integer_mono && (peek(DrawControl) & 0x4000))
 		op.auxiliary_compare_mask = 0x8000;
 	if (op.auxiliary)
@@ -2357,7 +2368,7 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 		reject();
 		return;
 	}
-	const bool rgb_line = line && !inclusive && color_write,
+	const bool rgb_raster = !inclusive && color_write,
 		direct_polygon = !line && direct_rgb && global == 1;
 	// Connected terminal commands can retain mode 1 until the next state flush.
 	const std::pair<uint32_t, uint32_t> profile[] = {
@@ -2405,7 +2416,7 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 			valid_rop = !(mask & 0xff000000u) || (rops >> 24) == 5;
 			for (unsigned shift = 0; shift < 24; shift += 8)
 				if ((mask & (0xffu << shift)) && (floating ? ((rops >> shift) & 0xff) != 0x0a :
-					!rgb_line && ((rops >> shift) & 0xff) != 3))
+					!rgb_raster && ((rops >> shift) & 0xff) != 3))
 					valid_rop = false;
 		}
 		if (m_planes[bank].unknown_masks || !valid_rop ||
@@ -2470,6 +2481,9 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 		}
 	}
 	const ColorWriteContext rgb = prepare_color_write();
+	const bool apply_rgb_rop = rgb_raster && (line ||
+		((banks & 1) && (rgb.rops[0] & 0xffffff) != 0x030303) ||
+		((banks & 2) && (rgb.rops[1] & 0xffffff) != 0x030303));
 	const uint32_t masks[] = {rgb.masks[0] & 0xffffff,
 		rgb.masks[1] & 0xffffff, plane_value(2, 0, 0xffffffff)};
 	const uint32_t auxiliary = (auxiliary_write || auxiliary_compare) ?
@@ -2484,7 +2498,7 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 		const size_t offset = size_t(y) * m_color_width + unsigned(x);
 		if (auxiliary_compare && ((m_auxiliary[offset] ^ auxiliary) & compare_mask))
 			return;
-		if (rgb_line)
+		if (apply_rgb_rop)
 			this->color_write(rgb, unsigned(x), unsigned(y), color, banks);
 		else
 			for (unsigned bank = 0; bank < 2; ++bank)

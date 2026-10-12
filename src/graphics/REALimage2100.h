@@ -309,7 +309,7 @@ private:
   bool block_transfer_profile(bool upload) const;
   bool bitmap_profile() const;
   bool auxiliary_mono_profile() const;
-  bool integer_rgb_profile() const;
+  bool integer_rgb_profile(bool configuration = false) const;
   bool fill_profile(bool initialization = false) const;
   bool copy_profile() const;
   bool fast_copy_profile() const;
