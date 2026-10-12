@@ -2359,17 +2359,20 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 		global = peek(GlobalControl0);
 	const bool direct_rgb = (control & ~0xff01u) == 0x21000002u &&
 		(banks == 1 || banks == 2),
+		native_line_rgb = !floating && line && (control & ~0x00ffff01u) == 0xa1000002u &&
+		(banks == 1 || banks == 2),
 		auxiliary_compare = (control & ~0x00ffff01u) == 0xa1000002u &&
 		(banks == 5 || banks == 6) && plane_value(2, 0, 0xffffffff) == 0,
 		auxiliary_write = (control & ~0x00ef0f01u) == 0xa1004002u &&
 		!(plane_value(2, 0, 0xffffffff) & ~0xe000f000u),
-		color_write = direct_rgb || auxiliary_compare || ((control & ~0xff01u) == 0xa1000002u && !(banks & ~3u));
+		color_write = direct_rgb || native_line_rgb || auxiliary_compare ||
+		((control & ~0xff01u) == 0xa1000002u && !(banks & ~3u));
 	if ((floating && ((value != 0x22 && value != 0x62) || !color_write)) ||
 		(!line && value != 3) ||
 		(line && (first_vertex >= 3 ||
 			address != (floating ? VertexBase + 0x100 : IntegerVertexColorBase) +
 				((first_vertex + 1) % 3) * VertexStride + 0x1c ||
-			(inclusive && !floating ? (!auxiliary_compare && !direct_rgb) :
+			(inclusive && !floating ? (!auxiliary_compare && !direct_rgb && !native_line_rgb) :
 				(!auxiliary_write && !color_write)))) ||
 		(!auxiliary_write && !color_write &&
 		(control & ~0xff01u) != 0x21000002u) ||
@@ -2381,8 +2384,7 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 		reject();
 		return;
 	}
-	const bool rgb_raster = (!inclusive || floating) && color_write,
-		direct_polygon = !line && direct_rgb && global == 1;
+	const bool direct_polygon = !line && direct_rgb && global == 1;
 	// Connected terminal commands can retain mode 1 until the next state flush.
 	const std::pair<uint32_t, uint32_t> profile[] = {
 		{GlobalControl0, line ? (inclusive && global == 3 ? 3u : 1u) : direct_polygon ? 1u : 0u},
@@ -2436,12 +2438,7 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 		// Preserve the existing all-zero initialization triangle profile.
 		const bool zero_clear = !line && direct_rgb && !color && !peek(IntegerVertexColorBase) && valid_rop;
 		if (color_write && bank < 2 && !zero_clear)
-		{
 			valid_rop = !(mask & 0xff000000u) || (rops >> 24) == 5;
-			for (unsigned shift = 0; shift < 24; shift += 8)
-				if ((mask & (0xffu << shift)) && !rgb_raster && ((rops >> shift) & 0xff) != 3)
-					valid_rop = false;
-		}
 		if (m_planes[bank].unknown_masks || !valid_rop ||
 			(bank < 2 && !plane_profile(bank)))
 		{
@@ -2504,7 +2501,7 @@ void CRealImage2100::raster_vertex_command(uint32_t address, uint32_t value)
 		}
 	}
 	const ColorWriteContext rgb = prepare_color_write();
-	const bool apply_rgb_rop = rgb_raster && (line ||
+	const bool apply_rgb_rop = color_write && (line ||
 		((banks & 1) && (rgb.rops[0] & 0xffffff) != 0x030303) ||
 		((banks & 2) && (rgb.rops[1] & 0xffffff) != 0x030303));
 	const uint32_t masks[] = {rgb.masks[0] & 0xffffff,
