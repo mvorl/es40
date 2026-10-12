@@ -1180,12 +1180,12 @@ bool CRealImage2100::block_copy_profile() const
 	return true;
 }
 
-bool CRealImage2100::block_transfer_profile(bool upload, bool native_readback) const
+bool CRealImage2100::block_transfer_profile(bool upload, bool native_command) const
 {
 	const uint32_t control = peek(DrawControl), banks = (control >> 12) & 15;
-	if (upload && (banks == 5 || banks == 6))
+	if (upload && !native_command && (banks == 5 || banks == 6))
 		return integer_rgb_profile();
-	const bool native_transfer = native_readback || (upload && (banks == 1 || banks == 2) &&
+	const bool native_transfer = native_command || (upload && (banks == 1 || banks == 2) &&
 		(control & ~0x00ffff01u) == 0xa1000002u);
 	// Native RGB transfers retain inactive window references.
 	const uint32_t fields = native_transfer ? 0x00ffff01u : 0xff01u,
@@ -1725,7 +1725,7 @@ void CRealImage2100::execute_block(const BlockOperation& op)
 
 void CRealImage2100::block_command(uint32_t v)
 {
-	if (v == 0x01000032 || v == 0x01000052 || v == 0x07000052 || v == 0x01000072 ||
+	if (v == 0x01000032 || v == 0x07000032 || v == 0x01000052 || v == 0x07000052 || v == 0x01000072 ||
 		v == 0x07000072 || v == 0x06000072 || v == 0x06000062 || v == 0x07000062 ||
 		v == 0x06200062 || v == 0x06200072 || v == 0x07200062 || v == 0x07200072)
 		start_command(BlockCommand, v);
@@ -1767,6 +1767,7 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	op.address = a;
 	op.value = v;
 	op.color = prepare_color_write();
+	const bool native_upload = a == BlockCommand && v == 0x07000032;
 	const bool native_readback = a == BlockCommand && v == 0x07000052;
 	const bool readback = ((a == HostCommand || a == BlockCommand) && v == 0x01000052) || native_readback;
 	const bool cross_copy = a == HostCommand &&
@@ -1777,13 +1778,13 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 	if (!v)
 		return op;
 	op.kind = StartOperation::Kind::Rejected;
-	const bool block_transfer = a == BlockCommand && (v == 0x01000032 || readback);
+	const bool block_transfer = a == BlockCommand && (v == 0x01000032 || native_upload || readback);
 	const bool block_fast_copy = a == BlockCommand &&
 		(v == 0x06200062 || v == 0x06200072 || v == 0x07200062 || v == 0x07200072);
 	const bool block_copy = block_fast_copy || (a == BlockCommand &&
 		(v == 0x01000072 || v == 0x07000072 || v == 0x06000072 || v == 0x06000062 || v == 0x07000062));
 	const bool block_geometry = block_transfer || block_copy;
-	const bool upload = (a == HostCommand || a == BlockCommand) && v == 0x01000032;
+	const bool upload = ((a == HostCommand || a == BlockCommand) && v == 0x01000032) || native_upload;
 	const bool fast_copy = block_fast_copy || (a == HostCommand &&
 		(v == 0x00200062 || v == 0x00200072 || v == 0x01200062 || v == 0x01200072));
 	const bool copy = (a == HostCommand &&
@@ -1815,13 +1816,13 @@ CRealImage2100::StartOperation CRealImage2100::prepare_start(const StartPrefix& 
 		fast_copy ? fast_copy_profile(block_fast_copy) :
 		block_copy ? (v == 0x01000072 ?
 			block_transfer_profile(false) : block_copy_profile()) :
-		block_transfer ? block_transfer_profile(upload, native_readback) :
+		block_transfer ? block_transfer_profile(upload, native_readback || native_upload) :
 		((fill || initialization) ? fill_profile(initialization) : copy_profile()) &&
 		(!(selected & 1) || plane_profile(0)) && (!(selected & 2) || plane_profile(1)) &&
 		(!op.auxiliary || plane_profile(2)) &&
 		(!cross_copy || plane_profile(selected == 2 ? 0 : 1));
 	if ((!upload && !copy && !fill && !op.mono && !readback) || !profile ||
-		((copy || readback) && selected != 1 && selected != 2))
+		((copy || readback || native_upload) && selected != 1 && selected != 2))
 		return op;
 	// Bit 18 selects host geometry for the miniport's initialization rectangles.
 	const bool host_geometry = a == HostCommand || initialization;
