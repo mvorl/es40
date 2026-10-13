@@ -173,10 +173,8 @@ es40_LDADD += $(SLIRP_RS_LDADD)
 es40_idb_LDADD += $(SLIRP_RS_LDADD)
 es40_lss_LDADD += $(SLIRP_RS_LDADD)
 es40_lsm_LDADD += $(SLIRP_RS_LDADD)
-es40_DEPENDENCIES = $(SLIRP_RS_LIB)
-es40_idb_DEPENDENCIES = $(SLIRP_RS_LIB)
-es40_lss_DEPENDENCIES = $(SLIRP_RS_LIB)
-es40_lsm_DEPENDENCIES = $(SLIRP_RS_LIB)
+# Let Automake infer prerequisites from LDADD, preserving libasmjit.a as well
+# as the Rust archive when both JIT and SLIRP are enabled.
 endif
 
 # Sources of the Rust userspace ("slirp") backend, so a distribution tarball
