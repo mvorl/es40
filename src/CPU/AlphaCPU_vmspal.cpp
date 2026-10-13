@@ -758,7 +758,8 @@ int CAlphaCPU::vmspal_call_rei()
 
 	p23 = state.pc;
 
-	p7 = p22 & 0x18;    //old cm
+	// Reading the frame can invoke a TB-miss handler that overwrites p7.
+	const u64 old_cm = p22 & 0x18;
 	hw_stq(p21 + 0x150, p23);
 	if (r30 & 0x3f)
 	{
@@ -769,15 +770,17 @@ int CAlphaCPU::vmspal_call_rei()
 		return vmspal_int_initiate_exception();
 	}
 
-	if (p7)
+	if (old_cm)
 	{
 
 		// what to do if the next instruction results in a TNV exception?
 		ldq(r30 + 0x38, p20);
+		// ARM 10.1.11: REI clears both intr_flag and lock_flag.
 		state.bIntrFlag = false;
+		cSystem->cpu_clear_lock(state.iProcNum);
 		ldq(r30 + 0x30, p23);
 		p4 = p20 & 0x18;  // new cm
-		if ((p4 < p7) || (p20 & ~U64(0x3f0000000000001b)))
+		if ((p4 < old_cm) || (p20 & ~U64(0x3f0000000000001b)))
 		{
 			p4 = 0x430;
 			hw_stq(p21 + 0x158, p4);
@@ -793,7 +796,7 @@ int CAlphaCPU::vmspal_call_rei()
 		ldq(r30 + 8, r3);
 		hw_ldq(p21 + 0x10, p6);
 		p5 = (p20 >> 56) & 0xff;
-		p7 += p6;
+		p7 = old_cm + p6;
 		p6 += p4;
 		p20 &= 0xffff;
 		p22 &= ~U64(0xffff);
@@ -811,6 +814,7 @@ int CAlphaCPU::vmspal_call_rei()
 
 	ldq(r30 + 0x38, p20);
 	state.bIntrFlag = false;
+	cSystem->cpu_clear_lock(state.iProcNum);
 	p7 = (p20 >> 8) & 0xff;
 	ldq(r30 + 0x10, state.r[4]);
 	ldq(r30 + 0x18, state.r[5]);
