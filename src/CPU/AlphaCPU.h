@@ -347,6 +347,8 @@ private:
   void service_interval_timer(std::chrono::steady_clock::time_point now);
 
   int             get_icache(u64 address, u32* data);
+  bool            icache_line_matches(int i, u64 address) const;
+  bool            icache_hit(int i, u64 address) const;
   int             FindTBEntry(u64 virt, int flags);
   int             initiate_acv_fault(u64 virt, int flags, u32 instruction);
   void            add_tb(u64 virt, u64 pte_phys, u64 pte_flags, int flags, int asn);
@@ -569,6 +571,12 @@ private:
   int   seq_offset;        // next word offset within the line
   int   seq_remaining;     // words left in this line
   u64   seq_next_pc;       // expected PC for sequential hit
+  int   seq_cm = -1;       // mode whose access was checked for the sequential span
+  int   ins_page_cm = -1;  // mode checked for rem_ins_in_page when icache is disabled
+
+  // Permission checks are independent for each mode (ARM 11.7.2). Keep this
+  // derived metadata outside state so the saved-state layout stays unchanged.
+  u8    icache_valid_modes[ICACHE_ENTRIES] = {};
 
   inline void break_seq_icache() {
     seq_remaining = 0;
@@ -628,6 +636,7 @@ private:
   // ASN switch: bump the chain epoch so compiled chain edges revalidate through the asn-keyed
   // lookup paths (the chain guard checks tag+epoch only). No-op in non-JIT builds.
   void jit_note_asn_change();
+  void jit_note_mode_change();
 
 #ifdef ES40_JIT
   // JIT block-discovery engine (per-CPU), allocated in init().
@@ -943,6 +952,19 @@ inline void CAlphaCPU::set_PAL_BASE(u64 pb)
  * code, that relies on the correct instruction stream to
  * remain in the cache.
  **/
+inline bool CAlphaCPU::icache_line_matches(int i, u64 address) const
+{
+  const auto& line = state.icache[i];
+  return line.valid && (line.asn == state.asn || line.asm_bit)
+    && line.address == (address & ICACHE_MATCH_MASK);
+}
+
+inline bool CAlphaCPU::icache_hit(int i, u64 address) const
+{
+  return icache_enabled && icache_line_matches(i, address)
+    && ((address & 1) || (icache_valid_modes[i] & (1u << state.cm)));
+}
+
 inline int CAlphaCPU::get_icache(u64 address, u32* data)
 {
   // Direct-map the icache: 2 KiB lines (ICACHE_LINE_SIZE * 4 == 2048 bytes).
@@ -957,10 +979,28 @@ inline int CAlphaCPU::get_icache(u64 address, u32* data)
 
   if (icache_enabled)
   {
+    bool hit = icache_line_matches(i, address);
+    if (hit && !(address & 1) && !(icache_valid_modes[i] & (1u << state.cm))) {
+      // A cached instruction is still subject to the current mode's access
+      // checks, including for ASM lines. Keep its bytes until IMB when the
+      // translation is unchanged; SRM can depend on the cached instruction.
+      result = virt2phys(address, &p_a, ACCESS_EXEC, &asm_bit, 0);
+      if (result) return result;
+      hit = p_a == state.icache[i].p_address + (address & ICACHE_BYTE_MASK);
+      if (hit) {
+        if (asm_bit != state.icache[i].asm_bit) {
+          // A newly checked process-specific mapping must not grant access
+          // to other ASNs through an older global cache line (or vice versa).
+          icache_valid_modes[i] = 0;
+          state.icache[i].asn = state.asn;
+          state.icache[i].asm_bit = asm_bit;
+        }
+        icache_valid_modes[i] |= (u8)(1u << state.cm);
+      }
+    }
+
     // ---- Fast hit probe
-    if (state.icache[i].valid &&
-      (state.icache[i].asn == state.asn || state.icache[i].asm_bit) &&
-      state.icache[i].address == (address & ICACHE_MATCH_MASK)) {
+    if (hit) {
 
       *data = endian_32(state.icache[i].data[(address >> 2) & ICACHE_INDEX_MASK]);
 
@@ -997,6 +1037,7 @@ inline int CAlphaCPU::get_icache(u64 address, u32* data)
       state.icache[i].asm_bit = asm_bit;
       state.icache[i].address = address & ICACHE_MATCH_MASK;
       state.icache[i].p_address = p_a;
+      icache_valid_modes[i] = (u8)(1u << state.cm);
 
       *data = endian_32(state.icache[i].data[(address >> 2) & ICACHE_INDEX_MASK]);
 
@@ -1033,10 +1074,11 @@ inline int CAlphaCPU::get_icache(u64 address, u32* data)
     state.rem_ins_in_page = 1;
   }
   else {
-    if (!state.rem_ins_in_page) {
+    if (!state.rem_ins_in_page || ins_page_cm != state.cm) {
       result = virt2phys(address, &state.pc_phys, ACCESS_EXEC, &asm_bit, 0);
       if (result) return result;
       state.rem_ins_in_page = 2048 - ((((u32)address) >> 2) & 2047);
+      ins_page_cm = state.cm;
     }
   }
 

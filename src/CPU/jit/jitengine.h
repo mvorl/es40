@@ -369,10 +369,12 @@ public:
   // ITB-generation counter for the indirect-chain staleness check (jit_indirect). Bumped on every
   // I-stream TB invalidate (tbia/tbiap/tbis, ACCESS_EXEC) ... those can remap a code page WITHOUT
   // flushing the JIT, so a chained block could run stale bytes.
-  enum BumpCause { kBumpRemap, kBumpTbia, kBumpTbiap, kBumpTbisGh, kBumpFlush, kBumpFlushAsm, kBumpEvict, kBumpReclaim, kBumpCauses };
+  enum BumpCause { kBumpRemap, kBumpTbia, kBumpTbiap, kBumpTbisGh, kBumpFlush, kBumpFlushAsm, kBumpEvict, kBumpReclaim, kBumpMode, kBumpCauses };
   inline void     note_itb_invalidate(int cause = kBumpTbia) { ++m_itb_gen; ++m_vgen_cur; invalidate_links(cause); }
   // ASN switch: only global-source edges can hold a wrong-ASN successor.
   inline void     note_asn_change()     { invalidate_links_global(); }
+  // Cached chains bypass translation; revalidate their targets in the new mode.
+  inline void     note_mode_change()    { ++m_vgen_cur; invalidate_links(kBumpMode); }
   // Combined validation epoch, maintained (not summed) so the emitted chain guard reads ONE qword.
   inline uint64_t vgen() const          { return m_vgen_cur; }
 #ifdef JIT_STATS

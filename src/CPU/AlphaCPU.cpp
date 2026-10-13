@@ -1035,6 +1035,16 @@ void CAlphaCPU::jit_note_asn_change()
 #endif
 }
 
+// Compiled successors must validate instruction permissions again in a new mode.
+void CAlphaCPU::jit_note_mode_change()
+{
+#ifdef ES40_JIT
+	if (m_jit)
+		m_jit->note_mode_change();
+	m_link_from = nullptr;
+#endif
+}
+
 #ifdef ES40_JIT
 // wrapper: LoadROM's SRM self-decompression drives CPU 0 from the main()
 // just before the CPU threads exist.
@@ -1303,9 +1313,7 @@ void CAlphaCPU::jit_run(int budget)
 			// Fast path: icache hit-probe reads phys straight from the line, read-only (no fill,
 			// no fault) -- get_icache's hit geometry minus the side effects. Covers warm code.
 			const int ici = (int)(((start_virt & ~U64(3)) >> 11) & (ICACHE_ENTRIES - 1));
-			if (icache_enabled && state.icache[ici].valid
-				&& (state.icache[ici].asn == state.asn || state.icache[ici].asm_bit)
-				&& state.icache[ici].address == (start_virt & ICACHE_MATCH_MASK))
+			if (icache_hit(ici, start_virt))
 			{
 				start_phys = state.icache[ici].p_address + (start_virt & ICACHE_BYTE_MASK);
 				start_asm = state.icache[ici].asm_bit;
@@ -1320,7 +1328,7 @@ void CAlphaCPU::jit_run(int budget)
 		auto live_exec_phys = [&](u64 v, u64* op) -> bool {
 			v &= ~U64(3);   // strip the PALmode tag bit / align -- the physical is page-determined
 			const int li = (int)((v >> 11) & (ICACHE_ENTRIES - 1));
-			if (icache_enabled && state.icache[li].valid && (state.icache[li].asn == state.asn || state.icache[li].asm_bit) && state.icache[li].address == (v & ICACHE_MATCH_MASK)) { *op = state.icache[li].p_address + (v & ICACHE_BYTE_MASK); return true; }
+			if (icache_hit(li, v)) { *op = state.icache[li].p_address + (v & ICACHE_BYTE_MASK); return true; }
 			bool ad; return virt2phys(v, op, ACCESS_EXEC | FAKE, &ad, 0) == 0;
 		};
 
@@ -1573,14 +1581,13 @@ void CAlphaCPU::jit_run(int budget)
 				// DRAM word, or a cached HW_ST can disappear from the reference store log.
 				// This is a read-only peek: a miss is still fetched/translated by execute().
 				u32 ins = vw[k];
-				if (state.pc == seq_next_pc && seq_remaining > 0)
+				if (state.pc == seq_next_pc && seq_remaining > 0 && seq_cm == state.cm)
 					ins = endian_32(seq_line_ptr[seq_offset]);
 				else if (icache_enabled)
 				{
 					const int li = (int)((state.pc >> 11) & (ICACHE_ENTRIES - 1));
 					const auto& line = state.icache[li];
-					if (line.valid && (line.asn == state.asn || line.asm_bit)
-						&& line.address == (state.pc & ICACHE_MATCH_MASK))
+					if (icache_hit(li, state.pc))
 						ins = endian_32(line.data[(state.pc >> 2) & ICACHE_INDEX_MASK]);
 				}
 				if (n_interp + k < 16) verify_words[n_interp + k] = ins;
@@ -2842,9 +2849,7 @@ void* CAlphaCPU::jit_indirect_impl(CAlphaCPU* cpu, u64 target, void* link_cache)
 	const u64 v = target & ~U64(3);
 	const int li = (int)((v >> 11) & (ICACHE_ENTRIES - 1));
 	u64 live;
-	if (cpu->icache_enabled && cpu->state.icache[li].valid
-		&& (cpu->state.icache[li].asn == cpu->state.asn || cpu->state.icache[li].asm_bit)
-		&& cpu->state.icache[li].address == (v & ICACHE_MATCH_MASK))
+	if (cpu->icache_hit(li, v))
 		live = cpu->state.icache[li].p_address + (v & ICACHE_BYTE_MASK);
 	else
 	{
@@ -3264,7 +3269,7 @@ _next_instruction:
 		// ---- Fast sequential icache path ----
 				// If PC matches expected sequential address and we have words remaining
 				// in the current icache line, read directly without any lookup.
-		if (state.pc == seq_next_pc && seq_remaining > 0)
+		if (state.pc == seq_next_pc && seq_remaining > 0 && seq_cm == state.cm)
 		{
 			ins = endian_32(seq_line_ptr[seq_offset]);
 #if defined(DEBUG_ARC)
@@ -3291,7 +3296,7 @@ _next_instruction:
 				goto _next_instruction;
 
 			// Set up sequential tracking from the cache hit
-			if (icache_enabled && !(state.pc & 1))
+			if (!(state.pc & 1) && icache_hit(state.last_found_icache, state.pc))
 			{
 				int _siq_line = state.last_found_icache;
 				seq_line_ptr = state.icache[_siq_line].data;
@@ -3299,6 +3304,7 @@ _next_instruction:
 				seq_offset = _siq_word + 1;
 				seq_remaining = ICACHE_LINE_SIZE - seq_offset;
 				seq_next_pc = (state.pc & ~U64(0x3)) + 4;
+				seq_cm = state.cm;
 			}
 			else
 			{
@@ -3315,7 +3321,7 @@ _next_instruction:
 		// within an interpreted run. A compiled block can't remap (it runs no PAL/TB ops), and any
 		// flush or IMB resets the cursor through break_seq_icache(), so stale lines can't be read.
 		// A TB-miss returns to the dispatcher (which re-dispatches at the fault handler).
-		if (state.pc == seq_next_pc && seq_remaining > 0)
+		if (state.pc == seq_next_pc && seq_remaining > 0 && seq_cm == state.cm)
 		{
 			ins = endian_32(seq_line_ptr[seq_offset]);
 			seq_offset++;
@@ -3331,7 +3337,7 @@ _next_instruction:
 			if (get_icache(state.pc, &ins))
 				return;
 
-			if (icache_enabled && !(state.pc & 1))
+			if (!(state.pc & 1) && icache_hit(state.last_found_icache, state.pc))
 			{
 				int _siq_line = state.last_found_icache;
 				seq_line_ptr = state.icache[_siq_line].data;
@@ -3339,6 +3345,7 @@ _next_instruction:
 				seq_offset = _siq_word + 1;
 				seq_remaining = ICACHE_LINE_SIZE - seq_offset;
 				seq_next_pc = (state.pc & ~U64(0x3)) + 4;
+				seq_cm = state.cm;
 			}
 			else
 			{
@@ -4101,6 +4108,8 @@ int CAlphaCPU::RestoreState(FILE* f)
 	// RAM and TB state now belong to the restored state. Restored icache stays. Rest gets chucked.
 	flush_data_page_cache();
 	break_seq_icache();
+	memset(icache_valid_modes, 0, sizeof(icache_valid_modes));
+	state.rem_ins_in_page = 0;
 #ifdef ES40_JIT
 	m_link_from = nullptr;      // pending link-patch request into pre-restore code
 	if (m_jit) m_jit->flush();  // epoch bump: blocks/traces re-hash against restored RAM before running

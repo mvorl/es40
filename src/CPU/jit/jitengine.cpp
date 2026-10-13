@@ -772,11 +772,12 @@ uint64_t CJitEngine::note_exec(uint32_t native_instr, uint32_t interp_instr, uin
     }
   }
   if (m_link_invalidations)
-    printf("[JIT][STATS][CPU%d] bump-cause: remap %llu | tbia %llu | tbiap %llu | tbis-gh %llu | flush %llu | flush-asm %llu | evict %llu | reclaim %llu\n",
+    printf("[JIT][STATS][CPU%d] bump-cause: remap %llu | tbia %llu | tbiap %llu | tbis-gh %llu | flush %llu | flush-asm %llu | evict %llu | reclaim %llu | mode %llu\n",
            m_cpu_id, (unsigned long long) m_bump_cause[kBumpRemap], (unsigned long long) m_bump_cause[kBumpTbia],
            (unsigned long long) m_bump_cause[kBumpTbiap], (unsigned long long) m_bump_cause[kBumpTbisGh],
            (unsigned long long) m_bump_cause[kBumpFlush], (unsigned long long) m_bump_cause[kBumpFlushAsm],
-           (unsigned long long) m_bump_cause[kBumpEvict], (unsigned long long) m_bump_cause[kBumpReclaim]);
+           (unsigned long long) m_bump_cause[kBumpEvict], (unsigned long long) m_bump_cause[kBumpReclaim],
+           (unsigned long long) m_bump_cause[kBumpMode]);
   if (m_direct_patches || m_patch_unreachable)
     printf("[JIT][STATS][CPU%d] direct-patch: %llu sites patched | %llu beyond rel32 reach (left unpatched)\n",
            m_cpu_id, (unsigned long long) m_direct_patches, (unsigned long long) m_patch_unreachable);
