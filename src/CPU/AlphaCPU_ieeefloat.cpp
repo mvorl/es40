@@ -201,8 +201,8 @@
 #define FMZERO  U64(0x8000000000000000) /* minus zero (fp) */
 #define FPINF   U64(0x7FF0000000000000) /* plus infinity (fp) */
 #define FMINF   U64(0xFFF0000000000000) /* minus infinity (fp) */
-#define FPMAX   U64(0x7FFFFFFFFFFFFFFF) /* plus MAX (fp) */
-#define FMMAX   U64(0xFFFFFFFFFFFFFFFF) /* minus MAX (fp) */
+#define FPMAX_T U64(0x7FEFFFFFFFFFFFFF) /* plus MAX (T) */
+#define FPMAX_S U64(0x47EFFFFFE0000000) /* plus MAX (S, register format) */
 #define IPMAX   U64(0x7FFFFFFFFFFFFFFF) /* plus MAX (int) */
 #define IMMAX   U64(0x8000000000000000) /* minus MAX (int) */
 #define FPSLOW  U64(0x000000001FFFFFFF) /* S lower bits <28:0> */
@@ -989,7 +989,8 @@ u64 CAlphaCPU::ieee_rpack(UFP* r, u32 ins, u32 dp)
 		ieee_trap(TRAP_INE, Q_SUI(ins), FPCR_INED, ins);  /* set inexact */
 		if (rndadd)  /* did we round? */
 			return(r->sign ? FMINF : FPINF);  /* return infinity */
-		return(r->sign ? FMMAX : FPMAX);
+		/* ARM 4.7.7.6: use the destination format's largest finite value. */
+		return (((u64)r->sign) << FPR_V_SIGN) | (dp == DT_S ? FPMAX_S : FPMAX_T);
 	} /* no, return max */
 
 	if (r->exp <= expmin[dp])
