@@ -3199,8 +3199,9 @@ _next_instruction:
 				// case, our VMS PALcode replacement routines are valid, and should be used as it is
 				// faster than using the original PALcode.
 
-				// irq<4> = halt / MP work request (TIG ev6_halt)
-				if (state.eir & state.eien & 0x10)
+				// Native PAL handles chipset errors on irq<0> (Tsunami HRM 6.3.1)
+				// and halt / MP work requests on irq<4>, before lower-priority interpreter work.
+				if (state.eir & state.eien & 0x11)
 				{
 					GO_PAL(AlphaPALException::Interrupt);
 					seq_remaining = 0;
