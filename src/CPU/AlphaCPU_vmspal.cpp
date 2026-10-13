@@ -1418,7 +1418,7 @@ int CAlphaCPU::vmspal_ent_itbm(int flags)
 	}
 
 	p4 &= ~U64(0x7);
-	if (virt2phys(p4, &pte_phys, ACCESS_READ | NO_CHECK | VPTE, NULL, 0))
+	if (virt2phys(p4, &pte_phys, ACCESS_READ | NO_CHECK | VPTE | VPTE_IFETCH, NULL, 0))
 		return -1;
 	p4 = cSystem->ReadMem(pte_phys, 64, this);
 
@@ -1543,7 +1543,9 @@ int CAlphaCPU::vmspal_ent_dtbm_double_3(int flags)
 	hw_stq(p21 + 0x150, p23);
 	p20 = t26 - p20;
 	t26 = p20 + 0x590;
-	if (!t26)
+	// HLE keeps the guest PC, so carry its I-fetch origin explicitly. 
+	// Only native PAL execution can identify this fault by the PAL return address.
+	if ((flags & VPTE_IFETCH) || ((state.exc_addr & 1) && !t26))
 	{
 		p5 = 1;
 		hw_stq(p21 + 0x160, p23);
