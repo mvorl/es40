@@ -93,13 +93,15 @@ void CMPU401::WriteMem(int index, u64 address, int dsize, u64 data)
 	{
 		return;
 	}
+	// Byte I/O ignores upper bits of the CPU register supplied by the caller.
+	const u8 byte = static_cast<u8>(data);
 	if (address & 1)
 	{
-		if (data == 0x3f)
+		if (byte == 0x3f)
 		{
 			midi_mpu_status &= ~0x80;
 		}
-		if (data == 0xff)
+		if (byte == 0xff)
 		{
 			bReset = true;
 			midi_ptr = 0;
@@ -110,14 +112,14 @@ void CMPU401::WriteMem(int index, u64 address, int dsize, u64 data)
 	{
 		if (!bReset)
 		{
-			if (midi_status_byte == 0xF0 && data != 0xF7) 
+			if (midi_status_byte == 0xF0 && byte != 0xF7)
 			{
-				sysex_data.push_back(data);
+				sysex_data.push_back(byte);
 				return;
 			}
-			if (midi_status_byte == 0xF0 && data == 0xF7)
+			if (midi_status_byte == 0xF0 && byte == 0xF7)
 			{
-				sysex_data.push_back(data);
+				sysex_data.push_back(byte);
 				hdr.dwBufferLength = sysex_data.size();
 				hdr.lpData = (LPSTR)sysex_data.data();
 				midiOutPrepareHeader(hmo, &hdr, sizeof(hdr));
@@ -127,13 +129,13 @@ void CMPU401::WriteMem(int index, u64 address, int dsize, u64 data)
 				midi_ptr = 0;
 				return;
 			}
-			if ((data & 0xF0) < 0x80 && midi_ptr == 0)
+			if ((byte & 0xF0) < 0x80 && midi_ptr == 0)
 			{
 				midi_buffer[0] = midi_status_byte;
 				midi_ptr = 1;
 			}
 
-			midi_buffer[midi_ptr++] = data;
+			midi_buffer[midi_ptr++] = byte;
 			midi_status_byte = midi_buffer[0];
 
 			if (midi_buffer[0] == 0xF0)
