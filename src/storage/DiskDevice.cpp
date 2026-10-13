@@ -289,7 +289,9 @@ size_t CDiskDevice::write_bytes(void* src, size_t bytes)
 		}
 	}
 
-	if ((byte_to != state.byte_pos + bytes) && (byte_to - byte_from > dev_block_size))
+	// Skip the trailing read only when the first read already preserved this sector.
+	if ((byte_to != state.byte_pos + bytes) &&
+		((byte_from == state.byte_pos) || (byte_to - byte_from > dev_block_size)))
 	{
 
 		// we don't write the entire last block, so we read it

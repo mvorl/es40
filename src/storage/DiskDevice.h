@@ -62,8 +62,8 @@ public:
 protected:
 #if defined(_WIN32)
   HANDLE  handle;
-  char* buffer;
-  size_t  buffer_size;
+  char* buffer = nullptr;
+  size_t  buffer_size = 0;
   size_t  dev_block_size;
 #else
   FILE* handle;
