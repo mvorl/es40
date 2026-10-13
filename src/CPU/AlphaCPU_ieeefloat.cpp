@@ -288,16 +288,14 @@ u64 CAlphaCPU::ieee_cvtst(u64 op, u32 ins)
 {
 	UFP b;
 
-	/* CVTST is the one operation where an S-denormal input is *not*
-	   exceptional — it's representable as a T-normal. Bypass ieee_unpack
-	   (which would unconditionally raise INV on denormals) and normalize
-	   directly. Per HRM 4.8.4, finite S inputs (including denormals) do
-	   not raise invalid-operation on CVTST. */
+	/* S-denormal conversion requires normalization and an exponent rebias
+	   to T format (ARM 4.10.14). This describes the numerical conversion;
+	   denormal-operand trap handling is a separate requirement. */
 	if (FPR_GETEXP(op) == 0 && FPR_GETFRAC(op) != 0
 	    && !(state.fpcr & FPCR_DNZ))
 	{
 		b.sign = FPR_GETSIGN(op);
-		b.exp = 0;
+		b.exp = 1; /* encoded exponent zero means 1 - S_BIAS (ARM 2.2.6.1) */
 		b.frac = FPR_GETFRAC(op) << FPR_GUARD;
 		ieee_norm(&b);                     /* renormalize denormal */
 		b.exp = b.exp + T_BIAS - S_BIAS;   /* rebias S-exp to T-exp */
@@ -854,6 +852,7 @@ int CAlphaCPU::ieee_unpack(u64 op, UFP* r, u32 ins)
 			return UFT_ZERO;
 		}
 
+		r->exp = 1; /* encoded exponent zero means 1 - T_BIAS (ARM 2.2.6.2) */
 		r->frac = r->frac << FPR_GUARD; /* guard fraction */
 		ieee_norm(r); /* normalize dnorm */
 		/* Denormal input operands take an *unmaskable* trap when
