@@ -96,6 +96,8 @@ pub fn build_echo_reply(req: &EchoRequest, router_mac: [u8; 6]) -> Vec<u8> {
     if icmp.len() >= 8 {
         icmp[0] = 0; // echo reply
         icmp[1] = 0; // code
+        icmp[2] = 0;
+        icmp[3] = 0;
     }
     let c = checksum(&icmp);
     if icmp.len() >= 4 {

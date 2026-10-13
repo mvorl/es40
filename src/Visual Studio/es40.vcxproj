@@ -2182,6 +2182,7 @@
   <PropertyGroup>
     <ES40GitCommit Condition="'$(ES40GitCommit)' == '' and '$(GITHUB_SHA)' != ''">$(GITHUB_SHA)</ES40GitCommit>
   </PropertyGroup>
+  <Import Project="es40-slirp.props" />
   <ItemGroup>
     <ClCompile Include="..\chipset\AliM1543C.cpp" />
     <ClCompile Include="..\chipset\AliM1543C_ide.cpp" />
@@ -2210,6 +2211,7 @@
     <ClCompile Include="..\network\DEC21143.cpp" />
     <ClCompile Include="..\network\NetworkBackend.cpp" />
     <ClCompile Include="..\network\NetworkPcap.cpp" />
+    <ClCompile Include="..\network\NetworkSlirp.cpp" />
     <ClCompile Include="..\network\NetworkTap.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
@@ -2331,6 +2333,7 @@
     <ClInclude Include="..\network\Ethernet.h" />
     <ClInclude Include="..\network\NetworkBackend.h" />
     <ClInclude Include="..\network\NetworkPcap.h" />
+    <ClInclude Include="..\network\NetworkSlirp.h" />
     <ClInclude Include="..\network\NetworkTap.h" />
     <ClInclude Include="..\network\NetworkVmnet.h" />
     <ClInclude Include="..\network\NetworkVmnetIPC.h" />
@@ -2383,6 +2386,7 @@
     <None Include="..\..\.github\workflows\build.yml" />
     <None Include="..\..\.github\workflows\release.yml" />
     <None Include="..\..\autogen.sh" />
+    <None Include="..\..\build.bat" />
     <None Include="..\..\ChangeLog" />
     <None Include="..\..\configure.ac" />
     <None Include="..\..\CONTRIBUTING.md" />
@@ -2394,6 +2398,14 @@
     <None Include="..\config.h.cmake" />
     <None Include="..\es40.cfg" />
     <None Include="..\Makefile.am" />
+    <!-- Cargo inputs are visible for editing; Rust is built separately. -->
+    <None Include="..\network\slirp-rs\.gitignore" />
+    <None Include="..\network\slirp-rs\Cargo.lock" />
+    <None Include="..\network\slirp-rs\Cargo.toml" />
+    <None Include="..\network\slirp-rs\src\dns.rs" />
+    <None Include="..\network\slirp-rs\src\icmp.rs" />
+    <None Include="..\network\slirp-rs\src\lib.rs" />
+    <None Include="es40-slirp.props" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="..\..\CMakeLists.txt" />

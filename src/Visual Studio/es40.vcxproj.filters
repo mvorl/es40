@@ -55,6 +55,13 @@
     <Filter Include="Source Files\network">
       <UniqueIdentifier>{b29c1411-aef3-4be3-bdc3-1ac39d8d7aa1}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\network\slirp-rs">
+      <UniqueIdentifier>{5e95b1c2-b122-4b92-bd97-e2233c53314f}</UniqueIdentifier>
+      <Extensions>rs</Extensions>
+    </Filter>
+    <Filter Include="Resource Files\slirp-rs">
+      <UniqueIdentifier>{36302de9-58a6-44bd-88c9-f4f821a18f5a}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Source Files\graphics">
       <UniqueIdentifier>{76aece89-c338-4804-88e4-094c4624fa04}</UniqueIdentifier>
     </Filter>
@@ -148,6 +155,9 @@
       <Filter>Source Files\network</Filter>
     </ClCompile>
     <ClCompile Include="..\network\NetworkPcap.cpp">
+      <Filter>Source Files\network</Filter>
+    </ClCompile>
+    <ClCompile Include="..\network\NetworkSlirp.cpp">
       <Filter>Source Files\network</Filter>
     </ClCompile>
     <ClCompile Include="..\network\NetworkTap.cpp">
@@ -455,6 +465,9 @@
     <ClInclude Include="..\network\NetworkPcap.h">
       <Filter>Header Files\network</Filter>
     </ClInclude>
+    <ClInclude Include="..\network\NetworkSlirp.h">
+      <Filter>Header Files\network</Filter>
+    </ClInclude>
     <ClInclude Include="..\network\NetworkTap.h">
       <Filter>Header Files\network</Filter>
     </ClInclude>
@@ -648,6 +661,30 @@
   <ItemGroup>
     <None Include="..\..\README.md">
       <Filter>Resource Files</Filter>
+    </None>
+    <None Include="..\..\build.bat">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="es40-slirp.props">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="..\network\slirp-rs\.gitignore">
+      <Filter>Resource Files\slirp-rs</Filter>
+    </None>
+    <None Include="..\network\slirp-rs\Cargo.lock">
+      <Filter>Resource Files\slirp-rs</Filter>
+    </None>
+    <None Include="..\network\slirp-rs\Cargo.toml">
+      <Filter>Resource Files\slirp-rs</Filter>
+    </None>
+    <None Include="..\network\slirp-rs\src\dns.rs">
+      <Filter>Source Files\network\slirp-rs</Filter>
+    </None>
+    <None Include="..\network\slirp-rs\src\icmp.rs">
+      <Filter>Source Files\network\slirp-rs</Filter>
+    </None>
+    <None Include="..\network\slirp-rs\src\lib.rs">
+      <Filter>Source Files\network\slirp-rs</Filter>
     </None>
     <None Include="..\..\autogen.sh">
       <Filter>Resource Files</Filter>

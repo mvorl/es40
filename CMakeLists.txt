@@ -51,8 +51,17 @@ set(ES40_HAVE_PCAP FALSE)
 set(ES40_HAVE_TAP FALSE)
 set(ES40_HAVE_SLIRP FALSE)
 
+# OpenVMS has no Rust compiler. Check the compiler as well as the system name
+# so defining __VMS cannot enable a Cargo build on a differently named host.
+include(CheckCXXSymbolExists)
+check_cxx_symbol_exists(__VMS "" ES40_COMPILER_IS_VMS)
+set(ES40_HOST_IS_VMS FALSE)
+if (ES40_COMPILER_IS_VMS OR CMAKE_SYSTEM_NAME MATCHES "^(OpenVMS|VMS)$")
+    set(ES40_HOST_IS_VMS TRUE)
+endif()
+
 # The Rust userspace ("slirp") backend needs no host libraries, only cargo.
-if (NOT ES40_DISABLE_NETWORKING AND NOT ES40_DISABLE_SLIRP)
+if (NOT ES40_HOST_IS_VMS AND NOT ES40_DISABLE_NETWORKING AND NOT ES40_DISABLE_SLIRP)
     find_program(CARGO_EXECUTABLE cargo)
     if (CARGO_EXECUTABLE)
         set(ES40_HAVE_SLIRP TRUE)
@@ -464,7 +473,6 @@ list(APPEND ES40_SOURCES
     src/network/NetworkTap.cpp
     src/network/NetworkVmnet.cpp
     src/network/NetworkVmnetIPC.cpp
-    src/network/NetworkSlirp.cpp
     src/emu/PCIDevice.cpp
     src/graphics/Permedia2.cpp
     src/io/Port80.cpp
@@ -539,6 +547,7 @@ if (NOT ES40_DISABLE_NETWORKING)
         list(APPEND ES40_LIBRARIES $<LINK_LIBRARY:FRAMEWORK,vmnet>)
     endif()
     if (ES40_HAVE_SLIRP)
+        list(APPEND ES40_SOURCES src/network/NetworkSlirp.cpp)
         list(APPEND ES40_DEFINITIONS HAVE_SLIRP)
         list(APPEND ES40_LIBRARIES ${ES40_SLIRP_LINK_LIBRARIES})
     endif()

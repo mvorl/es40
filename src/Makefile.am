@@ -224,7 +224,6 @@ es40_SOURCES = chipset/AliM1543C.cpp \
        network/NetworkVmnet.cpp \
        network/NetworkVmnetIPC.cpp \
        network/NetworkVmnetIPC.h \
-       network/NetworkSlirp.cpp \
        emu/PCIDevice.cpp \
        io/Port80.cpp \
        graphics/S3Trio64.cpp \
@@ -265,6 +264,10 @@ es40_SOURCES = chipset/AliM1543C.cpp \
 	gui/sdl_media.cpp \
 	gui/sdl_media.h \
 	base/Exception.cpp
+
+if HAVE_SLIRP
+es40_SOURCES += network/NetworkSlirp.cpp
+endif
 
 if ENABLE_ASMJIT
 include CPU/jit/asmjit.am

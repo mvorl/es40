@@ -184,7 +184,7 @@
   **/
 #include "StdAfx.h"
 
-#if defined(HAVE_PCAP) || defined(HAVE_TAP_NET)
+#if defined(HAVE_PCAP) || defined(HAVE_TAP_NET) || defined(HAVE_SLIRP)
 #include "DEC21143.h"
 #include "system/System.h"
 #include <string.h>
@@ -2470,4 +2470,4 @@ void CDEC21143::update_irq()
 }
 
 
-#endif //defined(HAVE_PCAP) || defined(HAVE_TAP_NET)
+#endif //defined(HAVE_PCAP) || defined(HAVE_TAP_NET) || defined(HAVE_SLIRP)

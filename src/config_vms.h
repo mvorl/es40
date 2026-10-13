@@ -40,6 +40,9 @@
   /* Version number of package */
 #define VERSION "0.91.1"
 
+/* Rust is unavailable on OpenVMS; command-line defines cannot enable SLIRP. */
+#undef HAVE_SLIRP
+
 /* Define to 1 if you have the `alarm' function. */
 #define HAVE_ALARM 1
 

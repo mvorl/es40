@@ -164,6 +164,11 @@
 #error "Need a config.h"
 #endif
 
+/* Also enforce this when HAVE_CONFIG_H selects a generated configuration. */
+#if defined(__VMS)
+#undef HAVE_SLIRP
+#endif
+
 #include "datatypes.h"
 
 #if defined(HAVE_WINDOWS_H)

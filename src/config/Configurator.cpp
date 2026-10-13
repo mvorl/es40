@@ -155,7 +155,7 @@
 #endif
 #include "storage/FloppyController.h"
 #include "gui/plugin.h"
-#if defined(HAVE_PCAP) || defined(HAVE_TAP_NET) || defined(HAVE_VMNET)
+#if defined(HAVE_PCAP) || defined(HAVE_TAP_NET) || defined(HAVE_VMNET) || defined(HAVE_SLIRP)
 #include "network/DEC21143.h"
 #endif
 #include "storage/LSI53C1020.h"
@@ -1070,7 +1070,7 @@ void CConfigurator::initialize()
 		break;
 #endif
 
-#if defined(HAVE_PCAP) || defined(HAVE_TAP_NET)
+#if defined(HAVE_PCAP) || defined(HAVE_TAP_NET) || defined(HAVE_SLIRP)
 
 	case c_dec21143:
 		myDevice = new CDEC21143(this, (CSystem*)pParent->get_device(), pcibus,

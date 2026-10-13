@@ -73,6 +73,10 @@ jobs:
         with:
           submodules: true
 
+      - name: Install Rust for networked configurations
+        if: ${{ !contains(matrix.configuration, 'NN') }}
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install build dependencies
         run: |
           set -euo pipefail
@@ -187,8 +191,10 @@ jobs:
           fi
 
           if [[ "$is_no_network" -eq 1 ]]; then
-            echo "Configuring without pcap for NN configuration: $configuration"
-            configure_args+=(--disable-pcap)
+            echo "Configuring without networking for NN configuration: $configuration"
+            configure_args+=(--disable-pcap --disable-tap --disable-vmnet --disable-slirp)
+          else
+            configure_args+=(--enable-slirp)
           fi
 
           if [[ "$is_no_screen" -eq 1 ]]; then
@@ -202,6 +208,15 @@ jobs:
             env "${configure_env[@]}" ./configure "${configure_args[@]}"
           else
             env "${configure_env[@]}" ./configure
+          fi
+
+          if [[ "$is_no_network" -eq 1 ]] && grep -Eq -- '-DHAVE_(PCAP|TAP_NET|VMNET|SLIRP)' src/Makefile; then
+            echo "The NN configuration was configured with a network backend: $configuration"
+            exit 1
+          fi
+          if [[ "$is_no_network" -eq 0 ]] && ! grep -q -- '-DHAVE_SLIRP' src/Makefile; then
+            echo "The networked configuration was configured without SLIRP support: $configuration"
+            exit 1
           fi
 
           # vmnet is a macOS-only backend; it must never be enabled on Linux.
@@ -309,6 +324,10 @@ jobs:
         uses: actions/checkout@v5
         with:
           submodules: true
+
+      - name: Install Rust for networked configurations
+        if: ${{ !contains(matrix.configuration, 'NN') }}
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v3
@@ -456,12 +475,21 @@ jobs:
             throw "Windows projects reference vmnet, which is macOS-only."
           }
 
+      - name: Build Rust networking library
+        if: ${{ !contains(matrix.configuration, 'NN') }}
+        shell: pwsh
+        run: |
+          cargo build --release --locked --manifest-path "src/network/slirp-rs/Cargo.toml"
+          if ($LASTEXITCODE -ne 0) { throw "The Rust SLIRP library failed to build." }
+
       - name: Build solution
         shell: pwsh
         run: |
           # Every project defines every configuration, so NN/NS drop pcap/SDL rather than
           # needing an SDK the runner skipped provisioning.
-          msbuild "src/Visual Studio/es40.sln" /m /p:Configuration="${{ matrix.configuration }}" /p:Platform="x64" /p:WindowsTargetPlatformVersion="10.0" /p:ES40GitCommit="$env:GITHUB_SHA"
+          $configuration = "${{ matrix.configuration }}"
+          $enableSlirp = if ($configuration -match '(^| )NN( |$)') { "false" } else { "true" }
+          msbuild "src/Visual Studio/es40.sln" /m /p:Configuration="$configuration" /p:Platform="x64" /p:WindowsTargetPlatformVersion="10.0" /p:ES40GitCommit="$env:GITHUB_SHA" /p:Es40EnableSlirp="$enableSlirp"
 
       - name: Include SDL3 runtime with built binaries
         if: ${{ !contains(matrix.configuration, 'NS') }}
@@ -546,6 +574,10 @@ jobs:
         uses: actions/checkout@v5
         with:
           submodules: true
+
+      - name: Install Rust for networked configurations
+        if: ${{ !contains(matrix.configuration, 'NN') }}
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install build dependencies
         run: |
@@ -658,11 +690,10 @@ jobs:
           fi
 
           if [[ "$is_no_network" -eq 1 ]]; then
-            echo "Configuring without pcap for NN configuration: $configuration"
-            configure_args+=(--disable-pcap)
-            # vmnet needs no external package, so it stays on unless asked to
-            # go away; NN builds must stay networkless.
-            configure_args+=(--disable-vmnet)
+            echo "Configuring without networking for NN configuration: $configuration"
+            configure_args+=(--disable-pcap --disable-tap --disable-vmnet --disable-slirp)
+          else
+            configure_args+=(--enable-slirp)
           fi
 
           if [[ "$is_no_screen" -eq 1 ]]; then
@@ -676,6 +707,15 @@ jobs:
             env "${configure_env[@]}" ./configure "${configure_args[@]}"
           else
             env "${configure_env[@]}" ./configure
+          fi
+
+          if [[ "$is_no_network" -eq 1 ]] && grep -Eq -- '-DHAVE_(PCAP|TAP_NET|VMNET|SLIRP)' src/Makefile; then
+            echo "The NN configuration was configured with a network backend: $configuration"
+            exit 1
+          fi
+          if [[ "$is_no_network" -eq 0 ]] && ! grep -q -- '-DHAVE_SLIRP' src/Makefile; then
+            echo "The networked configuration was configured without SLIRP support: $configuration"
+            exit 1
           fi
 
           # vmnet is macOS-only, and is expected on every networked macOS build.
@@ -753,6 +793,9 @@ jobs:
         uses: actions/checkout@v5
         with:
           submodules: true
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install build dependencies
         run: |
@@ -832,8 +875,12 @@ jobs:
             CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }-g -O2 -fpermissive" \
             CPPFLAGS="-I$PWD/src/emu" \
             PKG_CONFIG_PATH="$PWD/.github/pkgconfig:/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" \
-            ./configure --enable-asmjit --enable-pcap --enable-tui
+            ./configure --enable-asmjit --enable-pcap --enable-slirp --enable-tui
 
+          if ! grep -q -- '-DHAVE_SLIRP' src/Makefile; then
+            echo "The macOS x86-64 JIT build was configured without SLIRP support."
+            exit 1
+          fi
           if ! grep -q -- '-DHAVE_PCAP' src/Makefile; then
             echo "The macOS x86-64 JIT build was configured without pcap support."
             exit 1

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- Native projects do not build Rust. To use a separately built MSVC x64
+       Cargo static library, pass /p:Es40EnableSlirp=true to the solution and
+       optionally /p:Es40SlirpLibrary=path\to\es40_slirp.lib. NN stays networkless. -->
+  <PropertyGroup>
+    <Es40EnableSlirp Condition="'$(Es40EnableSlirp)'==''">false</Es40EnableSlirp>
+    <Es40SlirpLibrary Condition="'$(Es40SlirpLibrary)'==''">$(MSBuildThisFileDirectory)..\network\slirp-rs\target\release\es40_slirp.lib</Es40SlirpLibrary>
+    <Es40HasSlirp>false</Es40HasSlirp>
+    <Es40HasSlirp Condition="'$(Es40EnableSlirp)'=='true' And !$(Configuration.Contains(' NN'))">true</Es40HasSlirp>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Es40HasSlirp)'=='true'">
+    <ClCompile>
+      <PreprocessorDefinitions>HAVE_SLIRP;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Es40HasSlirp)'=='true' And '$(MSBuildProjectName)'=='es40'">
+    <Link>
+      <AdditionalDependencies>$(Es40SlirpLibrary);ws2_32.lib;dbghelp.lib;iphlpapi.lib;userenv.lib;ntdll.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <Target Name="ValidateEs40SlirpLibrary" BeforeTargets="PrepareForBuild"
+          Condition="'$(Es40HasSlirp)'=='true' And '$(MSBuildProjectName)'=='es40'">
+    <Error Condition="!Exists('$(Es40SlirpLibrary)')"
+           Text="SLIRP requires a separately built Rust MSVC x64 static library at $(Es40SlirpLibrary). Build src/network/slirp-rs with cargo, set Es40SlirpLibrary, or disable Es40EnableSlirp." />
+  </Target>
+</Project>

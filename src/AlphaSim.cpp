@@ -327,6 +327,9 @@ int main(int argc, char* argv[])
 #ifdef HAVE_VMNET
 		printf(" vmnet"); ++features;
 #endif
+#ifdef HAVE_SLIRP
+		printf(" slirp"); ++features;
+#endif
 		if (features == 0)
 			printf(" (none)");
 		printf("\n");

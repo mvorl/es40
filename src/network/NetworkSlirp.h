@@ -39,6 +39,8 @@
 #ifndef INCLUDED_NETWORK_SLIRP_H_
 #define INCLUDED_NETWORK_SLIRP_H_
 
+#if !defined(__VMS)
+
 #include "NetworkBackend.h"
 
 #if defined(HAVE_SLIRP)
@@ -68,5 +70,7 @@ private:
 };
 
 #endif /* defined(HAVE_SLIRP)  */
+
+#endif /* !defined(__VMS) */
 
 #endif /* !defined(INCLUDED_NETWORK_SLIRP_H_)  */

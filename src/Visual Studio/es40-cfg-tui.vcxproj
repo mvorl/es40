@@ -155,7 +155,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <!-- _HAS_STD_BYTE=0: the TUI's "using namespace std" makes std::byte clash with the SDK's byte. -->
-      <PreprocessorDefinitions>WIN32;_CONSOLE;CONFIGURATION_ONLY;_HAS_STD_BYTE=0;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;HAVE_SLIRP;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;_CONSOLE;CONFIGURATION_ONLY;_HAS_STD_BYTE=0;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>..;..\..\third_party\PDCursesMod;..\..\third_party\netbsd-curses\libform;..\..\third_party\netbsd-curses\libmenu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
@@ -221,6 +221,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
     </Link>
   </ItemDefinitionGroup>
+  <Import Project="es40-slirp.props" />
   <ItemGroup>
     <ClCompile Include="..\config\es40-cfg-tui.cpp" />
     <ClCompile Include="..\config\Configurator.cpp" />
@@ -241,6 +242,9 @@
     <ProjectReference Include="curses-win32.vcxproj">
       <Project>{6C1F0A3E-5B2D-4E8A-9C71-2D3E4F5A6B01}</Project>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="es40-slirp.props" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

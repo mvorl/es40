@@ -274,7 +274,17 @@ AM_CONDITIONAL([HAVE_VMNET], [test "x$have_vmnet" = "xyes"])
 # needed.
 have_slirp=no
 AC_ARG_VAR([CARGO], [cargo executable used to build the slirp backend])
-AS_IF([test "x$enable_slirp" != "xno"], [
+# OpenVMS has no Rust compiler. Also test __VMS for nonstandard host triples.
+AC_LANG_PUSH([C++])
+AC_COMPILE_IFELSE([AC_LANG_SOURCE([[
+#ifndef __VMS
+#error Not an OpenVMS compiler
+#endif
+int main() { return 0; }
+]])], [es40_host_is_vms=yes], [es40_host_is_vms=no])
+AC_LANG_POP([C++])
+AS_CASE([$host_os], [vms*|openvms*], [es40_host_is_vms=yes])
+AS_IF([test "x$es40_host_is_vms" != "xyes" -a "x$enable_slirp" != "xno"], [
   AS_IF([test -z "$CARGO"], [AC_PATH_PROG([CARGO], [cargo], [no])])
   AS_IF([test "x$CARGO" != "xno" -a -n "$CARGO"], [
     AC_DEFINE([HAVE_SLIRP],[1],[Use Rust userspace (slirp) networking])

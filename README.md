@@ -6,7 +6,9 @@ For building and installation instructions please see below.
 
 Windows 11 with VS2026 and X64 builds only is the main development environment.
 
-Requires npcap for networking. Use "NN" builds if you do not need networking.
+Npcap provides bridged networking; the Rust SLIRP backend provides userspace NAT.
+macOS VMnet support exists as well as TAP networking support for non-windows hosts.
+Use "NN" builds if you do not need networking.
 
 Latest VC redist may be required to run binaries, available here:  
 https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist  
@@ -47,7 +49,7 @@ We'll need both npcap and SDL-3.4 for full featured es40 builds.
 If you build only NS target configurations, then you do not need SDL.  
 If you build only NN target configurations, then you do not need npcap.  
 If you build NS NN target configurations, then you do not need either.  
-
+  
 ## SDL:
 
 Retrieve SDL from https://github.com/libsdl-org/SDL
@@ -100,6 +102,23 @@ by default is fine, however.
 Resulting binaries will be in x64\Debug, x64\Release, x64\Release IDB, etc,
 with the binary names being similar to es40 Release NS NN.exe.
 
+## Rust SLIRP networking:  
+  
+Visual Studio lists the Rust sources in the Network filters but does not build  
+them. Build the x64 MSVC static library separately with Rust 1.89 or newer, then  
+enable it for the solution and its configuration tools:  
+  
+```bat
+cargo build --release --locked --manifest-path src/network/slirp-rs/Cargo.toml
+msbuild "src/Visual Studio/es40.sln" /m /p:Configuration=Release /p:Platform=x64 /p:Es40EnableSlirp=true
+```
+  
+The default library path is `src/network/slirp-rs/target/release/es40_slirp.lib`.  
+Use `/p:Es40SlirpLibrary=path\to\es40_slirp.lib` to select another prebuilt library.  
+SLIRP stays disabled in NN configurations. CI builds it for every networked  
+configuration alongside the other supported features. OpenVMS always excludes  
+SLIRP, including when `HAVE_SLIRP` is explicitly defined.  
+  
 ------------------------------------------------------------------------
 
 # Building Instructions for Linux

@@ -158,7 +158,7 @@
       <TargetEnvironment>X64</TargetEnvironment>
     </Midl>
     <ClCompile>
-      <PreprocessorDefinitions>WIN32;_CONSOLE;HAVE_SLIRP;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>$(ProjectDir)..;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PrecompiledHeader>
       </PrecompiledHeader>
@@ -226,6 +226,7 @@
       <PreserveSbr>true</PreserveSbr>
     </Bscmake>
   </ItemDefinitionGroup>
+  <Import Project="es40-slirp.props" />
   <ItemGroup>
     <ClCompile Include="..\config\es40-cfg.cpp" />
     <ClCompile Include="..\base\Exception.cpp" />
@@ -239,6 +240,9 @@
     <ClInclude Include="..\config\Question.h" />
     <ClInclude Include="..\io\SerialListenAddress.h" />
     <ClInclude Include="..\config\ShrinkingChoiceQuestion.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="es40-slirp.props" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

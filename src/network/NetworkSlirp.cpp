@@ -23,6 +23,8 @@
  *
  */
 
+#if !defined(__VMS)
+
 #include "../StdAfx.h"
 
 #if defined(HAVE_SLIRP)
@@ -150,3 +152,5 @@ int CNetworkSlirp::get_wait_fd()
 }
 
 #endif /* defined(HAVE_SLIRP)  */
+
+#endif /* !defined(__VMS) */

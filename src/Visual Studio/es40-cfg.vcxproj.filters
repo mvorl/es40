@@ -57,4 +57,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
+  <ItemGroup>
+    <None Include="es40-slirp.props">
+      <Filter>Resource Files</Filter>
+    </None>
+  </ItemGroup>
 </Project>
