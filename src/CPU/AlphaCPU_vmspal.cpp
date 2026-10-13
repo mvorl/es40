@@ -304,6 +304,9 @@ void CAlphaCPU::vmspal_call_swpctx()
 
 	r30 = p6;
 	hw_stq(p21 + 0x10, r16);
+
+	// Revalidate instruction fetch in the new context without discarding ASN-tagged cache lines.
+	set_pc(state.pc);
 }
 
 /**
