@@ -1302,9 +1302,15 @@ int CAlphaCPU::vmspal_ent_dtbm_single(int flags)
 	}
 
 	p4 &= ~U64(0x7);
+	// A nested VPTE miss reuses p5/p7 in the double-miss handler. Preserve
+	// MM_STAT and EXC_SUM so leaf faults still describe the original access.
+	const u64 saved_mm_stat = p5;
+	const u64 saved_exc_sum = p7;
 	if (virt2phys(p4, &pte_phys, ACCESS_READ | NO_CHECK | VPTE | (flags & (PROBE | PROBEW)),
 		NULL, 0))
 		return -1;
+	p5 = saved_mm_stat;
+	p7 = saved_exc_sum;
 	p4 = cSystem->ReadMem(pte_phys, 64, this);
 
 	if (!test_bit_64(p4, 0))
