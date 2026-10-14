@@ -4261,7 +4261,8 @@ int CAlphaCPU::initiate_acv_fault(u64 virt, int flags, u32 ins)
  *                  - ACCESS_EXEC   Code-read-access.
  *                  - NO_CHECK      Do not perform access checks.
  *                  - VPTE          VPTE access; if this misses, it's a double miss.
- *                  - VPTE_IFETCH   HLE instruction-fetch origin for a VPTE data read.
+ *                  - VPTE_IFETCH   interpreter instruction-fetch origin for a VPTE data read.
+ *                  - PAL_KSTACK    interpreter kernel-stack access; faults require a halt.
  *                  - FAKE          Access is not initiated by executing code, but by
  *                                  the debugger. If a translation can't be found
  *                                  through the translation buffer, don't bother.

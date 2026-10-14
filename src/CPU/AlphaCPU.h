@@ -459,6 +459,7 @@ private:
   /* VMS PALcode internal: */
   int             vmspal_int_initiate_exception();
   int             vmspal_int_initiate_interrupt();
+  int             vmspal_int_kernel_stack_not_valid();
 
   // New FP helpers.....
   void write_fpcr_arch(u64 arch_val);

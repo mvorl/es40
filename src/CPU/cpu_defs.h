@@ -862,7 +862,8 @@ inline u64 fsqrt64(u64 asig, s32 exp)
 #define RECUR         128
 #define PROBE         256
 #define PROBEW        512
-#define VPTE_IFETCH   1024   /* HLE VPTE data read on behalf of an instruction fetch */
+#define VPTE_IFETCH   1024   /* interpreter VPTE data read on behalf of an instruction fetch */
+#define PAL_KSTACK    2048   /* interpreter kernel-stack access: memory faults must halt */
 
 #define FPSTART       if(state.fpen == 0) /* flt point disabled? */ \
   {                                                                 \

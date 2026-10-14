@@ -139,10 +139,14 @@
 
 #define hw_stq(a, b)  cSystem->WriteMem((a) &~U64(0x7), 64, b, this)
 #define hw_stl(a, b)  cSystem->WriteMem((a) &~U64(0x3), 32, b, this)
-#define stq(a, b)                                        \
-  if(virt2phys(a, &phys_address, ACCESS_WRITE, NULL, 0)) \
+#define kstq(a, b)                                        \
+  if(virt2phys(a, &phys_address, ACCESS_WRITE | PAL_KSTACK, NULL, 0)) \
     return -1;                                           \
   cSystem->WriteMem(phys_address, 64, b, this);
+#define kldq(a, b)                                       \
+  if(virt2phys(a, &phys_address, ACCESS_READ | PAL_KSTACK, NULL, 0)) \
+    return -1;                                          \
+  b = cSystem->ReadMem(phys_address, 64, this);
 #define ldq(a, b)                                       \
   if(virt2phys(a, &phys_address, ACCESS_READ, NULL, 0)) \
     return -1;                                          \
@@ -815,18 +819,20 @@ int CAlphaCPU::vmspal_call_rei()
 		return 0;
 	}
 
-	ldq(r30 + 0x38, p20);
+	// A kernel-stack fault must report the REI itself, not its next PC.
+	hw_stq(p21 + 0x150, state.current_pc);
+	kldq(r30 + 0x38, p20);
 	state.bIntrFlag = false;
 	cSystem->cpu_clear_lock(state.iProcNum);
 	p7 = (p20 >> 8) & 0xff;
-	ldq(r30 + 0x10, state.r[4]);
-	ldq(r30 + 0x18, state.r[5]);
-	ldq(r30 + 0x20, state.r[6]);
-	ldq(r30 + 0x28, state.r[7]);
-	ldq(r30, r2);
-	ldq(r30 + 8, r3);
+	kldq(r30 + 0x10, state.r[4]);
+	kldq(r30 + 0x18, state.r[5]);
+	kldq(r30 + 0x20, state.r[6]);
+	kldq(r30 + 0x28, state.r[7]);
+	kldq(r30, r2);
+	kldq(r30 + 8, r3);
 	p4 = p20 & 0x18;    // new cm
-	ldq(r30 + 0x30, p23);
+	kldq(r30 + 0x30, p23);
 
 	if (p4)
 	{
@@ -940,6 +946,23 @@ void CAlphaCPU::vmspal_call_write_unq()
 
  //\{
 
+/**
+ * Enter the native console halt path after an HLE kernel-stack fault.
+ **/
+int CAlphaCPU::vmspal_int_kernel_stack_not_valid()
+{
+	// ARM 14.7: kernel-stack TNV/ACV/FOR/FOW cannot use an OS fault frame.
+	// Use the same native halt handoff as a PAL-mode I-stream access violation.
+	p20 = 2; // HWRPB reason for halt: Kernel Stack Not Valid (ARM 26.1.3).
+	hw_stq(p21 + 0xc8, p20);
+	hw_ldq(p21 + 0x150, p23);
+	// Frame entry may have switched stacks before updating the saved PS.
+	// The native halt path must save R30 in the kernel PCB slot.
+	p22 &= ~U64(0x1b);
+	set_pc(0xde01);
+	return -1;
+}
+
  /**
   * Pass control to the OS for handling the exception.
   **/
@@ -968,14 +991,14 @@ int CAlphaCPU::vmspal_int_initiate_exception()
 
 	p20 = r30 & U64(0x3f);
 	r30 &= ~U64(0x3f);
-	stq(r30 - U64(0x40), r2);
-	stq(r30 - U64(0x38), r3);
+	kstq(r30 - U64(0x40), r2);
+	kstq(r30 - U64(0x38), r3);
 	hw_stq(p21 + U64(0xf0), r1);
 	r3 = p21;
-	stq(r30 - U64(0x30), state.r[4]);
-	stq(r30 - U64(0x28), state.r[5]);
-	stq(r30 - U64(0x20), state.r[6]);
-	stq(r30 - U64(0x18), state.r[7]);
+	kstq(r30 - U64(0x30), state.r[4]);
+	kstq(r30 - U64(0x28), state.r[5]);
+	kstq(r30 - U64(0x20), state.r[6]);
+	kstq(r30 - U64(0x18), state.r[7]);
 	hw_ldq(state.r[3] + U64(0x160), state.r[4]);
 	hw_ldq(state.r[3] + U64(0x168), state.r[5]);
 	hw_ldq(p21 + U64(0xf0), r1);
@@ -991,8 +1014,8 @@ int CAlphaCPU::vmspal_int_initiate_exception()
 	r30 -= U64(0x40);
 	hw_ldq(p21 + U64(0x150), p6);
 	r2 &= ~U64(0x3);
-	stq(r30 + U64(0x38), p20);
-	stq(r30 + U64(0x30), p6);
+	kstq(r30 + U64(0x38), p20);
+	kstq(r30 + U64(0x30), p6);
 
 	set_pc(r2);
 	return -1;
@@ -1025,14 +1048,14 @@ int CAlphaCPU::vmspal_int_initiate_interrupt()
 
 	p20 = r30 & U64(0x3f);
 	r30 &= ~U64(0x3f);
-	stq(r30 - U64(0x40), r2);
-	stq(r30 - U64(0x38), r3);
+	kstq(r30 - U64(0x40), r2);
+	kstq(r30 - U64(0x38), r3);
 	hw_stq(p21 + U64(0xf0), r1);
 	r3 = p21;
-	stq(r30 - U64(0x30), state.r[4]);
-	stq(r30 - U64(0x28), state.r[5]);
-	stq(r30 - U64(0x20), state.r[6]);
-	stq(r30 - U64(0x18), state.r[7]);
+	kstq(r30 - U64(0x30), state.r[4]);
+	kstq(r30 - U64(0x28), state.r[5]);
+	kstq(r30 - U64(0x20), state.r[6]);
+	kstq(r30 - U64(0x18), state.r[7]);
 	hw_ldq(state.r[3] + U64(0x160), state.r[4]);
 	hw_ldq(state.r[3] + U64(0x168), state.r[5]);
 	hw_ldq(p21 + U64(0xf0), r1);
@@ -1050,8 +1073,8 @@ int CAlphaCPU::vmspal_int_initiate_interrupt()
 	r30 -= U64(0x40);
 	hw_ldq(p21 + U64(0x150), p6);
 	r2 &= ~U64(0x3);
-	stq(r30 + U64(0x38), p20);
-	stq(r30 + U64(0x30), p6);
+	kstq(r30 + U64(0x38), p20);
+	kstq(r30 + U64(0x30), p6);
 
 	set_pc(r2);
 	return -1;
@@ -1313,7 +1336,7 @@ int CAlphaCPU::vmspal_ent_dtbm_single(int flags)
 	// MM_STAT and EXC_SUM so leaf faults still describe the original access.
 	const u64 saved_mm_stat = p5;
 	const u64 saved_exc_sum = p7;
-	if (virt2phys(p4, &pte_phys, ACCESS_READ | NO_CHECK | VPTE | (flags & (PROBE | PROBEW)),
+	if (virt2phys(p4, &pte_phys, ACCESS_READ | NO_CHECK | VPTE | (flags & (PROBE | PROBEW | PAL_KSTACK)),
 		NULL, 0))
 		return -1;
 	p5 = saved_mm_stat;
@@ -1322,6 +1345,9 @@ int CAlphaCPU::vmspal_ent_dtbm_single(int flags)
 
 	if (!test_bit_64(p4, 0))
 	{
+		if (flags & PAL_KSTACK)
+			return vmspal_int_kernel_stack_not_valid();
+
 		if (flags & PROBE)
 		{
 			t25 = U64(0x30000);
@@ -1486,6 +1512,9 @@ int CAlphaCPU::vmspal_ent_dtbm_double_3(int flags)
 		}
 	}
 
+	if (flags & PAL_KSTACK)
+		return vmspal_int_kernel_stack_not_valid();
+
 	// PAGE FAULT...
 	p4 = p5;          // return address...
 	p5 = p7 >> 0x10;
@@ -1603,6 +1632,9 @@ int CAlphaCPU::vmspal_ent_iacv(int flags)
  **/
 int CAlphaCPU::vmspal_ent_dfault(int flags)
 {
+	if (flags & PAL_KSTACK)
+		return vmspal_int_kernel_stack_not_valid();
+
 	u64 t25;
 
 	u64 t26;
