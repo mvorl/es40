@@ -490,9 +490,11 @@ void CAlphaCPU::vmspal_call_mtpr_scbb()
  **/
 void CAlphaCPU::vmspal_call_mtpr_sirr()
 {
-	if (r16 > 0 && r16 < 16)
+	// ARM 13.3.15: R16<63:4> are ignored; level zero makes no request.
+	const int level = (int)(r16 & 0xf);
+	if (level)
 	{
-		state.sir |= 1 << r16;
+		state.sir |= 1 << level;
 		kick_int_if_pending();
 	}
 }
