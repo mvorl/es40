@@ -206,7 +206,7 @@ public:
 private:
   // Host wiring; the PMU's selector bytes already live in saved PCI state.
   CAliM1543C_pmu* docking_pmu = nullptr;
-  CThread* myThread;
+  CThread* myThread = nullptr;
   CMutex* myRegLock;
   bool      StopThread;
 
@@ -354,7 +354,7 @@ private:
     u8        isapnp_wake_csn = 0;
   } state;
 
-  FILE* lpt;
+  FILE* lpt = nullptr;
 
   // sys0 "arc_year_compat" config: when true, encode TOY year as offset
   // from 1980 so the ARC console displays the correct year. Off by default

@@ -306,6 +306,8 @@ CAliM1543C_ide::CAliM1543C_ide(CConfigurator* cfg, CSystem* c, int pcibus, int p
 	: CPCIDevice(cfg, c, pcibus, pcidev),
 	CDiskController(2, 2)
 {
+	// Disk setup can fail before init(); cleanup still calls stop_threads().
+	thrController[0] = thrController[1] = nullptr;
 	if (theIDE != 0)
 		FAILURE(Configuration, "More than one IDE controller");
 	theIDE = this;

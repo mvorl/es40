@@ -340,7 +340,7 @@ private:
 
   // Immutable for the CPU lifetime; deliberately outside the saved state.
   const AlphaCPUProfile m_profile;
-  CThread* myThread;
+  CThread* myThread = nullptr;
   CSemaphore mySemaphore;
   CHostWakeEvent m_idle_wake;  // Host scheduling only; outside saved/model state.
   std::atomic<bool> StopThread{false};

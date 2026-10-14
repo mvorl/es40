@@ -105,7 +105,7 @@ private:
   // Borrowed routing owner; not part of the saved device state.
   const CAliM1543C* isa_bridge = nullptr;
 
-  CThread* myThread;
+  CThread* myThread = nullptr;
   bool      StopThread;
 
   CFastMutex kbdLock{ "kbd" };
