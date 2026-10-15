@@ -1314,7 +1314,7 @@ std::string CDiskFile::snapshot_identity() const
     out << "cue:" << track_count << ':';
     // The CUE itself is closed after parsing. But, we need to show guest the correct
     // layout, even if it changed somehow....
-    std::unique_ptr<FILE, decltype(&fclose)> cue(
+    std::unique_ptr<FILE, int (*)(FILE*)> cue(
         fopen(filename.c_str(), "rb"), &fclose);
     if (!cue)
         FAILURE_1(Runtime, "Cannot identify mounted CUE: %s", filename.c_str());

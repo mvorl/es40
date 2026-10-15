@@ -1131,13 +1131,13 @@ void CVGA::unimplemented_map(address_map& map, const char* what)
 {
 	map.unmap_value_high();
 	map(0, map.size() - 1).lrw8(
-		NAME([=](offs_t index) -> u8 {
+		NAME(([this, what](offs_t index) -> u8 {
 			report_unimplemented(what, index, 0, false);
 			return 0xff;
-			}),
-		NAME([=](offs_t index, u8 data) {
+			})),
+		NAME(([this, what](offs_t index, u8 data) {
 			report_unimplemented(what, index, data, true);
-			}));
+			})));
 }
 
 /**
