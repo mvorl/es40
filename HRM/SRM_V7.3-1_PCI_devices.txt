@@ -1,0 +1,188 @@
+Accelerator - AXL300 Accelerator - 1340:2010 / subsystem 11E3:0001
+ATM - 3X-DAPBA-FB ATM155 - 1127:0400 / subsystem 103C:121E
+ATM - 3X-DAPBA-UB ATM155 - 1127:0400 / subsystem 103C:121F
+ATM - 3X-DAPCA-FB ATM622 - 1127:0400 / subsystem 103C:121D
+ATM - DAPBA-FA ATM155 MMF - 1127:0400 / subsystem 0E11:0100
+ATM - DAPBA-UA ATM155 UTP - 1127:0400 / subsystem 0E11:0200
+ATM - DAPCA-FA ATM622 MMF - 1127:0400 / subsystem 0E11:0300
+ATM - Digital ATMworks 350 - 1011:0016
+ATM - Digital ATMworks 351 - 102F:0020 / subsystem 1011:0058
+ATM - Digital ATMworks 351 - 102F:0020 / subsystem 1011:0078
+ATM - Fore ATM 155/622 Adapter - 1127:0400 / subsystem 1127:0400
+ATM - Toshiba Meteor - 102F:0020
+Audio - Ensoniq Sound Card - 1274:1371
+CardBus bridge - PCI to CardBus - 104C:AC12
+Clock - DEC RT clock - 1011:001E
+DSSI - DEC KFPSA - 1000:8003 (SRM lookup ID; hardware 1000:0003 with DSSI ROM)
+EISA bridge - Intel 82375 - 8086:0482
+Ethernet - BCM5703 Gigabit Ethernet - 14E4:16A7 / subsystem 14E4:0009
+Ethernet - BCM5703c (LOM) - 14E4:16A7 / subsystem 0E11:00AF
+Ethernet - BCM5703c (LOM) - 14E4:16A7 / subsystem 0E11:00C8
+Ethernet - DE500-AA Network Controller - 1011:0009 / subsystem 1011:500A
+Ethernet - DE500-BA Network Controller - 1011:0019 / subsystem 1011:500B
+Ethernet - DE500-FA Network Controller - 1011:0019 / subsystem 1011:500F
+Ethernet - DE600-AA - 8086:1229 / subsystem 0E11:B144
+Ethernet - DE602-AA - 8086:1229 / subsystem 0E11:B0DD
+Ethernet - DE602-B* - 8086:1229 / subsystem 0E11:B163
+Ethernet - DE602-F* - 8086:1229 / subsystem 0E11:B0E1
+Ethernet - DE602-T* - 8086:1229 / subsystem 0E11:B164
+Ethernet - DECchip 21040-AA - 1011:0002
+Ethernet - DECchip 21041-AA - 1011:0014
+Ethernet - DECchip 21140-AA - 1011:0009
+Ethernet - DECchip 21143-AA - 1011:0019
+Ethernet - DEGPA-SA - 12AE:0001 / subsystem 1011:600A
+Ethernet - DEGPA-TA - 12AE:0002 / subsystem 1011:600D
+Ethernet - DEGX2-SA Gigabit Ethernet - 14E4:16A8 / subsystem 0E11:00C7
+Ethernet - DEGX2-TA Gigabit Ethernet - 14E4:1648 / subsystem 0E11:00C9
+Ethernet - DEGXA-LA Gigabit Ethernet - 14E4:16A7 / subsystem 0E11:601C
+Ethernet - DEGXA-S* Gigabit Ethernet - 14E4:16C7 / subsystem 0E11:601A
+Ethernet - DEGXA-SA Gigabit Ethernet - 14E4:16A7 / subsystem 0E11:601A
+Ethernet - DEGXA-T* Gigabit Ethernet - 14E4:16C7 / subsystem 0E11:601B
+Ethernet - DEGXA-TA Gigabit Ethernet - 14E4:16A7 / subsystem 0E11:601B
+Ethernet - Intel 82559ER Ethernet - 8086:1209
+Ethernet - Intel 8255x Ethernet - 8086:1229
+Fault management - 3X-KPCON-AA Fault Mgmt Control - 1011:2000
+FDDI - DEC PCI FDDI - 1011:000F
+FDDI - DEFPA - 1011:000F / subsystem 1011:DEF1
+Fibre Channel - FCA-2354 - 10DF:F900
+Fibre Channel - FCA-2384 - 10DF:F980
+Fibre Channel - FCA-2684 - 10DF:FA00
+Fibre Channel - KGPBA - 1077:2100
+Fibre Channel - KGPSA-A - 10DF:1AE5
+Fibre Channel - KGPSA-B - 10DF:F700
+Fibre Channel - KGPSA-C - 10DF:F800
+Fibre Channel - LSI FC909 - 1000:0621
+Fibre Channel - LSI FC919 - 1000:0624
+Fibre Channel - LSI FC929 - 1000:0622
+Fibre Channel - QLogic QLA2100 - 1077:2100 / subsystem 1077:0001
+Fibre Channel - QLogic QLA2200 - 1077:2200 / subsystem 1077:0002
+Fibre Channel - QLogic QLA2300 - 1077:2300 / subsystem 1077:0003
+Graphics - 3D Labs OXYGEN VX1 - 3D3D:000A / subsystem 3D3D:0121
+Graphics - 3D Labs OXYGEN VX1 AGP - 3D3D:000C / subsystem 3D3D:0144
+Graphics - ATI Mach32 - 1002:4158
+Graphics - ATI Mach64 - 1002:4354
+Graphics - ATI Radeon AGP - 1002:5144 / subsystem 1002:0538
+Graphics - Cateyes - 4D51T Graphics Controller - 1091:00EB
+Graphics - Cirrus CL-GD5430 - 1013:00A0
+Graphics - Cirrus CL-GD5434 - 1013:00A8
+Graphics - Compaq 1280/P - 0E11:3032
+Graphics - Compaq 2000/P - 102B:0518
+Graphics - DEC PowerStorm - 1011:000D
+Graphics - DEC PV-PCI Graphics - 1011:0017
+Graphics - DECchip ZLXp 21030 - 1011:0004
+Graphics - Digital 2T-PMPAA/Pixelwork - 5333:88F0
+Graphics - ELSA GLoria Synergy - 104C:3D07 / subsystem 1048:0A32
+Graphics - Permedia - P2V Graphics Controller - 3D3D:0009 / subsystem 13E9:0002
+Graphics - Permedia - P2V Graphics Controller - 3D3D:0009 / subsystem 13E9:0100
+Graphics - PowerStorm 300 - 10BA:0304 / subsystem 0E11:4D31
+Graphics - PowerStorm 350 - 10BA:0304 / subsystem 1011:4D35
+Graphics - PowerStorm 350D - 10BA:0304 / subsystem 1011:4D36
+Graphics - PowerStorm 4D10 - 104C:3D07 / subsystem 1011:4D10
+Graphics - Radeon 7500 AGP - 1002:5157 / subsystem 1002:013A
+Graphics - Radeon 7500 PCI - 1002:5157 / subsystem 1002:013B
+Graphics - S3 Savage 4 - 5333:8A22
+Graphics - S3 Trio64/Trio32 - 5333:8811
+Graphics - S3 Trio864 - 5333:88C0
+HIPPI - EssCom HiPPI - 120F:0001
+I/O controller - Intel 80312 I/O - 8086:030D
+I2O - AMI 431 - 8086:1960 / subsystem 113C:03A2 / PCI base class 0E
+I2O - I2O - PCI base class 0E
+IDE - Acer Labs M1543C IDE - 10B9:5229
+IDE - CMD 649 PCI-IDE - 1095:0649 / subsystem 1095:0649
+IDE - CMD PCI0646 IDE - 1095:0646
+IDE - Cypress 82C693 IDE - 1080:C693 / class 0101
+Interconnect - CIPCA - 1095:0660
+Interconnect - QSW ELan3 - 14FC:0000
+ISA bridge - Acer Labs M1543C - 10B9:1533
+ISA bridge - Cypress 82C693 - 1080:C693
+ISA bridge - Intel 82378 - 8086:0484
+Memory Channel - DEC PCI MC - 1011:0018
+NVRAM - DEC PCI NVRAM - 1011:0007
+PC Card bridge - Cirrus PD6729 - 1013:1100
+PC Card bridge - PCI to PC Card - 104C:AC13
+PCI bridge - BIT 3/IBM PCI-to-PCI Bridge - 1014:0022
+PCI bridge - DECchip 21050-AA - 1011:0001
+PCI bridge - DECchip 21052-AA - 1011:0021
+PCI bridge - DECchip 21152-AA - 1011:0024
+PCI bridge - DECchip 21153-AA - 1011:0025
+PCI bridge - DECchip 21154-AA - 1011:0026
+PCI bridge - DECchip 21554-AA - 1011:0046
+PCI bridge - IBM PCI-X Bridge - 1014:01A7
+PCI bridge - Intel 21154-*E - 8086:B154
+PCI hot-plug controller - Yukon PCI Hot-Plug Controller - 0E11:A0F7
+Power management - Acer Labs M1543C PMU - 10B9:7101
+RAID - DPT PM3755 - 1044:1012
+RAID - HP CYLO Test Board - 0E11:0046 / subsystem 0E11:4099
+RAID - HP Smart Array 5300A - 0E11:B060 / subsystem 0E11:4070
+RAID - HP Smart Array 5312A - 0E11:B178 / subsystem 0E11:4083
+RAID - HP Smart Array 6400 - 0E11:0046 / subsystem 0E11:409C
+RAID - HP Smart Array 641A - 0E11:0046 / subsystem 0E11:409A
+RAID - HP Smart Array 642A - 0E11:0046 / subsystem 0E11:409B
+RAID - Mylex AcceleRAID 150 - 1069:0010 / subsystem 1069:0010
+RAID - Mylex DAC960 - 1069:0001
+RAID - Mylex eXtremeRAID 1100 - 1011:1065 / subsystem 1069:0020
+RAID - Mylex eXtremeRAID 2000 - 1069:BA56 / subsystem 1069:0040
+RAID - Smart Array 6400 EM - 0E11:0046 / subsystem 0E11:409D
+SCSI - Adaptec 29160 - 9005:0080
+SCSI - Adaptec 2940U2W - 9005:0010
+SCSI - Adaptec 2940UW - 9004:8178
+SCSI - Adaptec AIC-7880 - 9004:8178
+SCSI - Adaptec AIC-7891 - 9005:001F
+SCSI - Adaptec AIC-7892 - 9005:0080 / subsystem 14D9:8002
+SCSI - Adaptec AIC-7892 - 9005:008F / subsystem 9005:FFFF
+SCSI - Adaptec AIC-7895 - 9004:7895
+SCSI - Adaptec AIC-7897 - 9005:0050
+SCSI - Adaptec AIC-7899 - 9005:00C0
+SCSI - Adaptec AIC-7899 - 9005:00CF
+SCSI - Adaptec AIC-78xx - 9004:0000
+SCSI - Adaptec AIC-78xx - 9005:0000
+SCSI - Adaptec ASC-29160LP - 9005:0080 / subsystem 9005:E220
+SCSI - DEC KZPSA - 1011:0008
+SCSI - LSI 53C1030 - 1000:0030
+SCSI - NCR 53C810 - 1000:0001
+SCSI - NCR 53C825 - 1000:0003
+SCSI - NCR 53C875 - 1000:000F
+SCSI - NCR 53C895 - 1000:000C
+SCSI - NCR 53C895A - 1000:0012
+SCSI - NCR 53C896 - 1000:000B
+SCSI - QLogic ISP10x0 - 1077:1020
+SCSI - SYM 53C1000 - 1000:0021
+SCSI - SYM 53C1010 - 1000:0020
+SCSI - SYM 53C1010-66 - 1000:0021
+Serial/WAN - Arnet Sync 570 IP - 112F:5001
+Serial/WAN - DataFire SYNC 2000 2P - 114F:0022
+Serial/WAN - DataFire SYNC 2000 4P - 114F:0021
+Serial/WAN - PBXDA-AA/AB - 114F:0009
+Serial/WAN - PBXDA-AC - 114F:0004
+Serial/WAN - PBXDA-BA - 114F:0026
+Serial/WAN - PBXDA-BB - 114F:0027
+Serial/WAN - PBXDP-AA - 10B5:906D / subsystem 10DF:1133
+Serial/WAN - PBXDP-AA - 10B5:9080 / subsystem 10DF:1133
+Serial/WAN - PBXDP-AB - 10B5:906D / subsystem 10DF:1155
+Serial/WAN - PBXDP-AB - 10B5:9080 / subsystem 10DF:1155
+Serial/WAN - PBXDP-AC - 10B5:906D / subsystem 10DF:1156
+Serial/WAN - PBXDP-AC - 10B5:9080 / subsystem 10DF:1156
+Serial/WAN - PBXDP-AD - 10DF:1131
+Serial/WAN - PBXDP-AE - 10DF:1151
+Serial/WAN - PBXDP-AF - 10DF:1152
+Serial/WAN - PDXDP-AA - 10B5:90B0 / subsystem 10DF:1326
+Serial/WAN - PDXDP-AB - 10B5:90B0 / subsystem 10DF:1155
+Serial/WAN - PDXDP-AC - 10B5:90B0 / subsystem 10DF:1156
+Serial/WAN - Systech EtPlex 7302 - 11A8:7302
+Serial/WAN - Systech EtPlex 7308 - 11A8:7308
+Serial/WAN - Systech EtPlex 7402 - 11A8:7402
+Serial/WAN - Systech EtPlex 7408 - 11A8:7408
+Storage HBA - QLogic Orion HBA - 1077:8000 / subsystem 1077:000A
+Token Ring - PBXNP-AA Token Ring - 10DA:0508
+Token Ring - SN-PBXNP-AC Token Ring - 10EF:8154
+USB - Acer Labs M1543C USB - 10B9:5237
+USB - CMD CSA-6730 USB - 1095:0673
+USB - Cypress 82C693 USB - 1080:C693 / class 0C03
+USB - USB - 1131:1561
+USB - USB - 11C1:5803 / subsystem 11C1:5803
+USB - USB 2.0 - 1131:1562
+Video capture - AV301 - 1011:0013
+Video capture - AV321 - 1011:000E
+Video capture - AV901 - 109E:0350
+VME bridge - DECchip 7407 - 1011:0010
+VME bridge - Tundra Universe II - 10E3:0000
