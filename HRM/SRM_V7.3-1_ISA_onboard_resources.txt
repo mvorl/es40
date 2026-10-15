@@ -1,0 +1,6 @@
+Floppy controller - FLOPPY - I/O 0x03F0 / IRQ 6 / DMA 2
+Keyboard - KBD - I/O 0x0060 / IRQ 1
+Mouse - MOUSE - I/O 0x0060 / IRQ 12
+Parallel port - LPT1 - I/O 0x0378 / IRQ 7 / DMA 3
+Serial port - COM1 - I/O 0x03F8 / IRQ 4
+Serial port - COM2 - I/O 0x02F8 / IRQ 3

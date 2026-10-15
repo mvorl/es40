@@ -1,0 +1,3 @@
+Graphics - 3D Labs OXYGEN VX1 AGP - 3D3D:000C / subsystem 3D3D:0144
+Graphics - ATI Radeon AGP - 1002:5144 / subsystem 1002:0538
+Graphics - Radeon 7500 AGP - 1002:5157 / subsystem 1002:013A
