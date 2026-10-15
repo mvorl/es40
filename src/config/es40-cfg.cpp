@@ -287,6 +287,21 @@ void add_disks(ShrinkingChoiceQuestion* disk_q, ostream* os, bool floppy = false
 				*os << "      cdrom = " << cdrom_q.ask() << ";\n";
 		}
 
+		std::string disk_image_format = "auto";
+		if (type_q.getAnswer() == "file" && cdrom_q.getAnswer() != "true" && !floppy)
+		{
+			MultipleChoiceQuestion format_q;
+			format_q.setQuestion("What format is this disk image?");
+			format_q.setExplanation("Detect an existing image from its header, or choose an explicit format.");
+			format_q.addAnswer("auto", "auto", "Detect from the image header; unrecognized files are raw (the default)");
+			format_q.addAnswer("raw", "raw", "Raw disk image");
+			format_q.addAnswer("qcow2", "qcow2", "QCOW2 disk image");
+			format_q.setDefault("auto");
+			format_q.explain();
+			disk_image_format = format_q.ask();
+			*os << "      format = \"" << disk_image_format << "\";\n";
+		}
+
 		if (type_q.getAnswer() == "file" && cdrom_q.getAnswer() != "true")
 		{
 			/* For a file, we need to know whether to create
@@ -301,6 +316,17 @@ void add_disks(ShrinkingChoiceQuestion* disk_q, ostream* os, bool floppy = false
 			create_q.ask();
 			if (create_q.getAnswer() == "yes")
 			{
+				if (!floppy)
+				{
+					MultipleChoiceQuestion create_format_q;
+					create_format_q.setQuestion("What format should a new disk image use?");
+					create_format_q.setExplanation("This applies only when the file is missing. It must match an explicit image format override; existing files are unchanged.");
+					create_format_q.addAnswer("raw", "raw", "Raw disk image");
+					create_format_q.addAnswer("qcow2", "qcow2", "QCOW2 disk image");
+					create_format_q.setDefault(disk_image_format == "auto" ? "raw" : disk_image_format);
+					create_format_q.explain();
+					*os << "      autocreate_format = \"" << create_format_q.ask() << "\";\n";
+				}
 				/* If we should create the file, we need to
 				 * know it's size.
 				 */

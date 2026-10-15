@@ -762,7 +762,8 @@ static const char* const kv_dec21143[] = {
   "network", "gateway", "dhcp_start", "dhcp_end", "dns", "dhcp_lease", 0 };
 static const char* const kv_disk_file[] = {
   "file", "model_number", "serial_number", "serial_num", "rev_number",
-  "rev_num", "read_only", "cdrom", "autocreate_size", 0 };
+  "rev_num", "read_only", "cdrom", "autocreate_size", "format",
+  "autocreate_format", 0 };
 static const char* const kv_disk_device[] = {
   "device", "model_number", "serial_number", "serial_num", "rev_number",
   "rev_num", "read_only", "cdrom", 0 };

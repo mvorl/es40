@@ -1265,6 +1265,18 @@ void validation_disk_autocreate_size(FIELD *field)
     set_field_type(field, TYPE_REGEXP, "^ *([0-9]+[KkMmGg])? *$");
 }
 
+void validation_disk_format(FIELD *field)
+{
+    const char *choices[] = {"auto", "raw", "qcow2", NULL};
+    set_field_type(field, TYPE_ENUM, choices, FALSE, TRUE);
+}
+
+void validation_disk_autocreate_format(FIELD *field)
+{
+    const char *choices[] = {"raw", "qcow2", NULL};
+    set_field_type(field, TYPE_ENUM, choices, FALSE, TRUE);
+}
+
 bool check_add_disks(FormEntry_t entry[], int num_entries, FormValues_t values)
 {
     int idx = fentry_index(entry, num_entries, "Type");
@@ -1287,6 +1299,16 @@ bool check_add_disks(FormEntry_t entry[], int num_entries, FormValues_t values)
         return FALSE;
     }
 
+    const char *format = values[fentry_index(entry, num_entries, "Image format (auto, raw, qcow2)")];
+    const char *create_format = values[fentry_index(entry, num_entries, "Autocreate format (raw, qcow2)")];
+    const bool non_raw = (strcmp(format, "auto") && strcmp(format, "raw")) || strcmp(create_format, "raw");
+    if (non_raw && (strcmp(disk_type, "file") ||
+        !strcmp(values[fentry_index(entry, num_entries, "Harddisk or CD-ROM")], "cd-rom")))
+    {
+        show_text("Error", "Non-raw image formats require a file-backed hard disk.");
+        return FALSE;
+    }
+
     return TRUE;
 }
 
@@ -1303,6 +1325,17 @@ void add_disks(const char *title, const char *disk_name, CConfigurator *parent)
          "Enter the path to the file or device to use for this disk.\n"
          "This parameter is ignored for type 'ramdisk'.",
          validation_disk_file},
+        {"Image format (auto, raw, qcow2)", "auto", "format",
+         "Use Tab or Left/Right to select a format.\n"
+         "Auto detects an existing image by its header; unrecognized files are raw.\n"
+         "Non-raw image formats require a fixed hard disk. Auto is the default.",
+         validation_disk_format},
+        {"Autocreate format (raw, qcow2)", "raw", "autocreate_format",
+         "Format to create when a file is missing and Autocreate size is set.\n"
+         "Use Tab or Left/Right to select a format.\n"
+         "Choose a supported disk image format; raw is the default. Existing files are unchanged.\n"
+         "For a missing file this must match any explicit Image format override.",
+         validation_disk_autocreate_format},
         {"Harddisk or CD-ROM", "disk", "cdrom",
          "Do you want the OS to see this as a hard-disk, or as a cd-rom?\n"
          "This parameter is ignored for type 'ramdisk' and floppy drives, as they always are disks.",
@@ -1402,6 +1435,18 @@ void add_disks(const char *title, const char *disk_name, CConfigurator *parent)
         idx = fentry_index(entry, num_entries, "Harddisk or CD-ROM");
         bool is_cdrom = !strcmp(values[idx], "cd-rom");
         bool is_floppy = !strcmp(parent->get_myName(), "fdc0");
+        const char *format = values[fentry_index(entry, num_entries, "Image format (auto, raw, qcow2)")];
+        const char *create_format = values[fentry_index(entry, num_entries, "Autocreate format (raw, qcow2)")];
+        if (is_floppy && ((strcmp(format, "auto") && strcmp(format, "raw")) ||
+                         strcmp(create_format, "raw")))
+        {
+            show_text("Error", "Floppy drives require raw images.");
+            for (int i = 0; i < num_entries; ++i)
+                free(values[i]);
+            free(values);
+            free(preset);
+            return;
+        }
         if (is_cdrom && (is_ramdisk || is_floppy))
         {
             free(values[idx]);
@@ -1437,6 +1482,10 @@ void add_disks(const char *title, const char *disk_name, CConfigurator *parent)
 
             if (entry[i].name != NULL)
             {
+                if ((!strcmp(entry[i].name, "format") ||
+                     !strcmp(entry[i].name, "autocreate_format")) &&
+                    strcmp(disk_type, "file"))
+                    continue;
                 c->set_value(strdup(entry[i].name), strdup(values[i]));
                 continue;
             }
