@@ -1,5 +1,6 @@
 /* ES40 Emulator.
  * Copyright (C) 2007-2008 by the ES40 Emulator Project
+ * Copyright (C) 2026 by gdwnldsKSC
  *
  * WWW    : https://github.com/ES40-Emu/es40
  *
@@ -25,7 +26,7 @@
 
  /**
   * \file
-  * Contains macro's for byte-swapping on big-endian host architectures.
+  * Contains byte-order conversion helpers.
   *
   * $Id$
   *
@@ -83,6 +84,44 @@
 #endif
 #endif // defined (_WIN32) || defined(__VMS)
 #endif // !defined(ES40_LITTLE_ENDIAN) && !defined(ES40_BIG_ENDIAN)
+
+// Big-endian byte buffers; no host byte-order or alignment assumptions.
+inline u16 get_be16(const u8* p)
+{
+  return u16((u16(p[0]) << 8) | p[1]);
+}
+
+inline u32 get_be32(const u8* p)
+{
+  return (u32(p[0]) << 24) | (u32(p[1]) << 16) |
+      (u32(p[2]) << 8) | p[3];
+}
+
+inline u64 get_be64(const u8* p)
+{
+  return (u64(get_be32(p)) << 32) | get_be32(p + 4);
+}
+
+inline void put_be16(u8* p, u16 value)
+{
+  p[0] = u8(value >> 8);
+  p[1] = u8(value);
+}
+
+inline void put_be32(u8* p, u32 value)
+{
+  p[0] = u8(value >> 24);
+  p[1] = u8(value >> 16);
+  p[2] = u8(value >> 8);
+  p[3] = u8(value);
+}
+
+inline void put_be64(u8* p, u64 value)
+{
+  put_be32(p, u32(value >> 32));
+  put_be32(p + 4, u32(value));
+}
+
 #define swap_64(x)                                          \
     (                                                       \
       (((x) & U64(0x00000000000000ff)) << 56) |             \

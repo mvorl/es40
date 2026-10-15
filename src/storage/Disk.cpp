@@ -889,17 +889,6 @@ static inline int cdb_len_for_opcode(u8 op)
 	return -1; // unknown/unsupported
 }
 
-static inline void put_be16(u8* p, u16 v) { p[0] = u8(v >> 8); p[1] = u8(v); }
-static inline void put_be32(u8* p, u32 v) {
-	p[0] = u8(v >> 24); p[1] = u8(v >> 16); p[2] = u8(v >> 8); p[3] = u8(v);
-
-}
-
-static inline uint16_t read_16bit(const uint8_t* buf)
-{
-	return (buf[0] << 8) | buf[1];
-}
-
 // some packet handling macros
 #define EXTRACT_FIELD(arr,byte,start,num_bits) (((arr)[(byte)] >> (start)) & ((1 << (num_bits)) - 1))
 #define get_packet_field(arr,b,s,n) (EXTRACT_FIELD((arr),(b),(s),(n)))
@@ -1187,7 +1176,7 @@ int CDisk::do_scsi_command()
 		// Straight copied out of Bochs.
 		bool polled = (state.scsi.cmd.data[1] & (1 << 0)) > 0;
 		int event_length, request = state.scsi.cmd.data[4];
-		uint16_t alloc_length = read_16bit(state.scsi.cmd.data + 7);
+		uint16_t alloc_length = get_be16(state.scsi.cmd.data + 7);
 		bool inserted = media_present();
 		if (polled) {
 			// we currently only support the MEDIA event (bit 4)
@@ -1383,8 +1372,8 @@ int CDisk::do_scsi_command()
 			do_scsi_error(SCSI_ILL_CMD);
 			break;
 		}
-		uint16_t start_feature = read_16bit(state.scsi.cmd.data + 2);
-		uint16_t alloc_length = read_16bit(state.scsi.cmd.data + 7);
+		uint16_t start_feature = get_be16(state.scsi.cmd.data + 2);
+		uint16_t alloc_length = get_be16(state.scsi.cmd.data + 7);
 		uint8_t *feature_ptr = state.scsi.dati.data;
 		bool inserted = media_present();
 
