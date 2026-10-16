@@ -123,6 +123,7 @@
 #include <string.h>
 #include <cerrno>
 #include <climits>
+#include <limits>
 #include <sstream>
 #include <sys/stat.h>
 #if defined(_WIN32)
@@ -650,6 +651,38 @@ bool CDiskFile::load_file_transactional(const char* _filename,
     // failure here is harmless.
     std::string new_filename(_filename);
 
+    enum Format { Auto, Raw, Iso, BinCue, Qcow2 };
+
+    const char* format_name = myCfg->get_text_value("format");
+
+    Format requested_format;
+
+    if (!format_name || !strcmp(format_name, "auto")) requested_format = Auto;
+    else if (!strcmp(format_name, "raw")) requested_format = Raw;
+    else if (!strcmp(format_name, "iso")) requested_format = Iso;
+    else if (!strcmp(format_name, "bincue")) requested_format = BinCue;
+    else if (!strcmp(format_name, "qcow2")) requested_format = Qcow2;
+    else FAILURE_1(Configuration, "Unknown image format: %s", format_name);
+    
+    const char* suffix = strrchr(_filename, '.');
+    const char* extension = suffix ? suffix : "";
+    
+    Format extension_format = Auto;
+    
+    if (!strcasecmp(extension, ".raw")) extension_format = Raw;
+    else if (!strcasecmp(extension, ".qcow2")) extension_format = Qcow2;
+    else if (cdrom() && !strcasecmp(extension, ".iso")) extension_format = Iso;
+    else if (cdrom() && !strcasecmp(extension, ".bin")) extension_format = Raw;
+    else if (!strcasecmp(extension, ".cue")) extension_format = BinCue;
+
+    // CUE files are descriptors. Other extensions allow explicit auto detection.
+    Format format = requested_format;
+    
+    if (extension_format == BinCue || (extension_format != Auto &&
+        (!format_name || requested_format != Auto)))
+        format = extension_format;
+    const bool removable = cdrom() || floppy_device;
+
     // Keep the mounted image mounted until we've opened the replacement
     // this way, a failed selection returns cleanly without changing anything
     struct MountedState
@@ -726,10 +759,9 @@ bool CDiskFile::load_file_transactional(const char* _filename,
     {
         bool loaded = false;
 
-        // ---- detect .cue extension (case-insensitive, cross-platform) ----
-        if (has_cue_extension(_filename))
+        if (format == BinCue)
         {
-            printf("%s: Detected .cue extension, attempting BIN/CUE parse...\n",
+            printf("%s: Loading BIN/CUE image...\n",
                    devid_string);
 
             if (try_parse_cue(_filename))
@@ -775,6 +807,48 @@ bool CDiskFile::load_file_transactional(const char* _filename,
                 handle = fopen(_filename, "rb");
             else
                 handle = fopen_large(_filename, "rb+");
+
+            if (!handle && format != BinCue)
+            {
+                const int open_error = errno;
+                const char* create_name = myCfg->get_text_value("autocreate_format", "raw");
+
+                Format create_format = Raw;
+
+                if (!strcmp(create_name, "qcow2"))
+                    create_format = Qcow2;
+                else if (strcmp(create_name, "raw"))
+                    FAILURE(Configuration, "autocreate_format must be raw or qcow2");
+
+                if (requested_format != Auto && requested_format != create_format)
+                    FAILURE(Configuration, "Missing disk: format must match autocreate_format (default raw)");
+
+                format = create_format;
+
+                if (format == Qcow2)
+                {
+                    if (open_error != ENOENT)
+                        FAILURE_2(IO, "Could not open disk image %s: %s", _filename, strerror(open_error));
+
+                    if (removable)
+                        FAILURE(Configuration, "QCOW2 images require a fixed hard disk");
+
+                    const u64 size = allow_autocreate ? myCfg->get_num_value("autocreate_size", false, 0) : 0;
+
+                    if (!size || read_only)
+                        FAILURE_1(IO, "%s: QCOW2 file is missing; set autocreate_size for a writable disk to create it", _filename);
+
+                    if (size % 512 || size > static_cast<u64>((std::numeric_limits<off_t_large>::max)()))
+                        FAILURE_1(IO, "%s: QCOW2 size must be sector-aligned and fit this host's file offsets", _filename);
+
+                    handle = fopen_large(_filename, "w+bx");
+
+                    if (!handle)
+                        FAILURE_2(IO, "Could not create QCOW2 image %s: %s", _filename, strerror(errno));
+
+                    qcow2_create(size);
+                }
+            }
 
             if (!handle)
             {
@@ -858,23 +932,40 @@ bool CDiskFile::load_file_transactional(const char* _filename,
                        devid_string, sz, _filename);
             }
 
-            if (fseek_large(handle, 0, SEEK_END) != 0)
+            if (format == Auto)
+                format = qcow2_probe() ? Qcow2 : Raw;
+            // An unrecognized header with a QCOW2 extension uses the raw fallback.
+            else if (format == Qcow2 && extension_format == Qcow2 && !qcow2_probe())
+                format = Raw;
+
+            if (format == Qcow2)
             {
-                restore_old();
-                return false;
+                if (removable)
+                    FAILURE(Configuration, "QCOW2 images require a fixed hard disk");
+                qcow2_open();
             }
-            byte_size = ftell_large(handle);
-            if (byte_size < (off_t_large)state.block_size ||
-                fseek_large(handle, 0, SEEK_SET) != 0)
+
+            if (!qcow2)
             {
-                restore_old();
-                return false;
-            }
-            state.byte_pos = ftell_large(handle);
-            if (state.byte_pos != 0)
-            {
-                restore_old();
-                return false;
+                // Raw and ISO images both expose the file's bytes directly.
+                if (fseek_large(handle, 0, SEEK_END) != 0)
+                {
+                    restore_old();
+                    return false;
+                }
+                byte_size = ftell_large(handle);
+                if (byte_size < (off_t_large)state.block_size ||
+                    fseek_large(handle, 0, SEEK_SET) != 0)
+                {
+                    restore_old();
+                    return false;
+                }
+                state.byte_pos = ftell_large(handle);
+                if (state.byte_pos != 0)
+                {
+                    restore_old();
+                    return false;
+                }
             }
 
             sectors = 32;
@@ -1033,6 +1124,10 @@ int CDiskFile::RestoreState(FILE* f)
     if (result != 0)
         return result;
 
+    // QCOW2 translates the restored logical position on the next I/O.
+    if (qcow2)
+        return 0;
+
     // seek_byte() and read_bytes() keep the saved position equal to the BIN/CUE 
     // logical position. Physical seeks happen on read.
     if (is_bincue)
@@ -1084,6 +1179,14 @@ bool CDiskFile::seek_byte(off_t_large byte)
 {
     if (!media_present())
         return false;
+
+    if (qcow2)
+    {
+        if (byte < 0 || byte > byte_size)
+            FAILURE_1(InvalidArgument, "%s: Seek is outside the image", devid_string);
+        state.byte_pos = byte;
+        return true;
+    }
 
     if (is_bincue)
     {
@@ -1193,6 +1296,13 @@ size_t CDiskFile::read_bytes(void* dest, size_t bytes)
     if (!handle)
         return 0;
 
+    if (qcow2)
+    {
+        qcow2_read(static_cast<u64>(state.byte_pos), dest, bytes);
+        state.byte_pos += static_cast<off_t_large>(bytes);
+        return bytes;
+    }
+
     // --- original plain-file path (unchanged) ---
     size_t r = fread(dest, 1, bytes, handle);
     state.byte_pos = ftell_large(handle);
@@ -1222,9 +1332,51 @@ size_t CDiskFile::write_bytes(void* src, size_t bytes)
     if (!handle)
         return 0;
 
+    if (qcow2)
+    {
+        qcow2_write(static_cast<u64>(state.byte_pos), src, bytes);
+        state.byte_pos += static_cast<off_t_large>(bytes);
+        return bytes;
+    }
+
     size_t r = fwrite(src, 1, bytes, handle);
     state.byte_pos = ftell_large(handle);
     return r;
+}
+
+size_t CDiskFile::read_file(FILE* image, u64 offset, void* data,
+                           size_t count, bool exact)
+{
+    if (offset > u64((std::numeric_limits<off_t_large>::max)()))
+        FAILURE_1(IO, "%s: File offset is too large for this host", devid_string);
+
+    clearerr(image);
+
+    if (fseek_large(image, static_cast<off_t_large>(offset), SEEK_SET) != 0)
+        FAILURE_2(IO, "%s: Cannot seek image: %s", devid_string, strerror(errno));
+
+    const size_t stored = fread(data, 1, count, image);
+
+    if (ferror(image) || (stored != count && (exact || !feof(image))))
+        FAILURE_2(IO, "%s: Cannot read image: %s", devid_string,
+            ferror(image) ? strerror(errno) : "unexpected end of file");
+
+    return stored;
+}
+
+void CDiskFile::write_file(FILE* image, u64 offset, const void* data,
+                          size_t count)
+{
+    if (offset > u64((std::numeric_limits<off_t_large>::max)()))
+        FAILURE_1(IO, "%s: File offset is too large for this host", devid_string);
+
+    if (fseek_large(image, static_cast<off_t_large>(offset), SEEK_SET) != 0)
+        FAILURE_2(IO, "%s: Cannot seek image: %s", devid_string, strerror(errno));
+
+    const size_t stored = fwrite(data, 1, count, image);
+
+    if (stored != count || ferror(image))
+        FAILURE_2(IO, "%s: Cannot write image: %s", devid_string, strerror(errno));
 }
 
 /**
@@ -1236,6 +1388,27 @@ size_t CDiskFile::write_bytes(void* src, size_t bytes)
  **/
 void CDiskFile::flush()
 {
+    if (qcow2)
+    {
+        if (qcow2->failed)
+            FAILURE_1(IO, "%s: QCOW2: image is unavailable after an I/O failure; "
+                "close and inspect it", devid_string);
+
+        if (!read_only)
+        {
+            try
+            {
+                qcow2_set_dirty(false);
+            }
+            catch (...)
+            {
+                qcow2->failed = true;
+                throw;
+            }
+        }
+
+        return;
+    }
     if (is_bincue)
         return;
 
@@ -1246,9 +1419,17 @@ void CDiskFile::flush()
 
 void CDiskFile::prepare_snapshot()
 {
-    flush();
-    if (!handle || read_only || is_bincue)
-        return;
+    if (qcow2)
+        flush();
+    else if (handle && !read_only && !is_bincue)
+        sync_image();
+}
+
+void CDiskFile::sync_image()
+{
+    if (fflush(handle) != 0 || ferror(handle))
+        FAILURE_2(Runtime, "Could not flush image %s: %s",
+                  filename.c_str(), strerror(errno));
 #if defined(_WIN32)
     const int result = _commit(_fileno(handle));
 #else
@@ -1306,7 +1487,7 @@ std::string CDiskFile::snapshot_identity() const
     }
     if (!is_bincue)
     {
-        out << "raw:";
+        out << (qcow2 ? "qcow2:" : "raw:");
         append_identity_string(out, image_identity(handle, filename));
         return out.str();
     }
@@ -1376,23 +1557,6 @@ char CDiskFile::path_separator()
 #else
     return '/';
 #endif
-}
-
-/**
- * \brief Return true when \a path ends with ".cue" (case-insensitive).
- **/
-bool CDiskFile::has_cue_extension(const char* path)
-{
-    if (!path) return false;
-
-    size_t len = strlen(path);
-    if (len < 4) return false;
-
-    const char* ext = path + len - 4;
-    return (tolower((unsigned char)ext[0]) == '.' &&
-            tolower((unsigned char)ext[1]) == 'c' &&
-            tolower((unsigned char)ext[2]) == 'u' &&
-            tolower((unsigned char)ext[3]) == 'e');
 }
 
 /**

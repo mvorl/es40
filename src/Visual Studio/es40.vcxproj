@@ -2228,6 +2228,7 @@
     <ClCompile Include="..\storage\DiskController.cpp" />
     <ClCompile Include="..\storage\DiskDevice.cpp" />
     <ClCompile Include="..\storage\DiskFile.cpp" />
+    <ClCompile Include="..\storage\DiskFileQcow2.cpp" />
     <ClCompile Include="..\storage\DiskRam.cpp" />
     <ClCompile Include="..\chipset\DMA.cpp" />
     <ClCompile Include="..\system\DPR.cpp" />

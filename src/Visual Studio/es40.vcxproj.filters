@@ -184,6 +184,9 @@
     <ClCompile Include="..\storage\DiskFile.cpp">
       <Filter>Source Files\storage</Filter>
     </ClCompile>
+    <ClCompile Include="..\storage\DiskFileQcow2.cpp">
+      <Filter>Source Files\storage</Filter>
+    </ClCompile>
     <ClCompile Include="..\storage\DiskRam.cpp">
       <Filter>Source Files\storage</Filter>
     </ClCompile>

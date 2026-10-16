@@ -205,6 +205,7 @@ es40_SOURCES = chipset/AliM1543C.cpp \
        storage/DiskController.cpp \
        storage/DiskDevice.cpp \
        storage/DiskFile.cpp \
+       storage/DiskFileQcow2.cpp \
        storage/DiskRam.cpp \
        graphics/ibm8514a.cpp \
        chipset/DMA.cpp \

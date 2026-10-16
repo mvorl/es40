@@ -453,6 +453,7 @@ list(APPEND ES40_SOURCES
     src/storage/DiskController.cpp
     src/storage/DiskDevice.cpp
     src/storage/DiskFile.cpp
+    src/storage/DiskFileQcow2.cpp
     src/storage/DiskRam.cpp
     src/chipset/DMA.cpp
     src/dox.cpp

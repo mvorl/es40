@@ -66,6 +66,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 enum class EDiskFileMediaAction
 {
@@ -138,11 +139,12 @@ private:
 /**
  * \brief Emulated disk that uses an image file.
  *
- * Supports raw/ISO images (existing behaviour, unchanged) and BIN/CUE
- * images (new). BIN/CUE support is activated automatically when the
- * configured filename ends in .cue (case-insensitive). If the .cue
- * cannot be parsed the code falls back to treating the file as a raw
- * image so that no existing configuration is broken.
+ * Supports raw/ISO images, fixed QCOW2 disks, and BIN/CUE images.
+ * CUE files always select BIN/CUE. Other recognized extensions select the
+ * reader unless explicit auto enables header detection. Otherwise format
+ * selects the reader for an unknown extension. Unrecognized image content
+ * falls back to raw. CUE parse failures retain the raw fallback on initial
+ * loading; a failed media change keeps the mounted image.
  **/
 class CDiskFile : public CDisk
 {
@@ -205,6 +207,19 @@ protected:
 private:
   virtual void    media_lock_changed(bool locked) override;
 
+  struct Qcow2State
+  {
+    u64 cluster_size = 0;
+    u64 l1_offset = 0;
+    u64 refcount_table_offset = 0;
+    u64 incompatible = 0;
+    u32 version = 0;
+    u32 refcount_table_clusters = 0;
+    std::vector<u64> l1;
+    std::vector<u64> refcount_table;
+    bool failed = false;
+  };
+  std::unique_ptr<Qcow2State> qcow2;
   bool            floppy_device = false;
   std::shared_ptr<CDiskFileMediaMailbox> media_mailbox;
   std::recursive_mutex media_action_mutex;
@@ -233,6 +248,25 @@ private:
   bool            flush_before_media_change();
   bool            close_image(FILE*& image, const char* path) const noexcept;
 
+  // I/O at physical file offsets; callers maintain the logical disk position.
+  size_t          read_file(FILE* image, u64 offset, void* data,
+                            size_t count, bool exact = true);
+  void            write_file(FILE* image, u64 offset, const void* data,
+                             size_t count);
+  void            sync_image();
+
+  // QCOW2 metadata and cluster translation; the file remains owned here.
+  bool            qcow2_probe();
+  void            qcow2_create(u64 size);
+  void            qcow2_open();
+  void            qcow2_read(u64 offset, void* data, size_t count);
+  void            qcow2_write(u64 offset, const void* data, size_t count);
+  void            qcow2_parse_header(u64 physical_size);
+  void            qcow2_check_metadata(u64 physical_size);
+  u64             qcow2_read_l2_entry(u64 index, u64* table = nullptr);
+  void            qcow2_set_dirty(bool dirty);
+  u64             qcow2_allocate_cluster(const u8* contents);
+
   CueTrackMode    parse_mode_string(const char* mode_str,
                                     int& sector_size,
                                     int& data_offset,
@@ -245,7 +279,6 @@ private:
                                        // MSF <-> LBA helpers (static: no instance state required)
                                        static long     msf_to_lba(int m, int s, int f);
                                        static void     lba_to_msf(long lba, int& m, int& s, int& f);
-                                       static bool     has_cue_extension(const char* path);
                                        static char     path_separator();
 };
 
