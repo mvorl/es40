@@ -616,6 +616,9 @@ bool CDiskFile::set_read_only(bool desired_read_only)
     // BIN/CUE media are read-only in this backend.
     if (is_bincue)
         return false;
+    // Backed QCOW2 images support reads only until copy-on-write is implemented.
+    if (!desired_read_only && qcow2 && qcow2->backing)
+        return false;
     if (!handle || filename.empty())
         return false;
 
@@ -942,7 +945,7 @@ bool CDiskFile::load_file_transactional(const char* _filename,
             {
                 if (removable)
                     FAILURE(Configuration, "QCOW2 images require a fixed hard disk");
-                qcow2_open();
+                qcow2_open(_filename);
             }
 
             if (!qcow2)
@@ -1342,6 +1345,25 @@ size_t CDiskFile::write_bytes(void* src, size_t bytes)
     size_t r = fwrite(src, 1, bytes, handle);
     state.byte_pos = ftell_large(handle);
     return r;
+}
+
+std::string CDiskFile::file_identity(FILE* image) const
+{
+    std::ostringstream out;
+#if defined(_WIN32)
+    BY_HANDLE_FILE_INFORMATION info;
+    if (!GetFileInformationByHandle((HANDLE)_get_osfhandle(_fileno(image)), &info))
+        FAILURE_2(IO, "%s: Cannot identify image (error %lu)",
+                  devid_string, GetLastError());
+    out << info.dwVolumeSerialNumber << ':'
+        << info.nFileIndexHigh << ':' << info.nFileIndexLow;
+#else
+    struct stat info;
+    if (fstat(fileno(image), &info) != 0)
+        FAILURE_2(IO, "%s: Cannot identify image: %s", devid_string, strerror(errno));
+    out << info.st_dev << ':' << info.st_ino;
+#endif
+    return out.str();
 }
 
 size_t CDiskFile::read_file(FILE* image, u64 offset, void* data,

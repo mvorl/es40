@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <filesystem>
 #include <limits>
 
 static const u64 QCOW2_COPIED = u64(1) << 63;
@@ -40,7 +41,7 @@ static const u64 QCOW2_MAX_L1_BYTES = 32 * 1024 * 1024;
 static const u64 QCOW2_MAX_REFCOUNT_TABLE_BYTES = 8 * 1024 * 1024;
 static const u64 QCOW2_MAX_CHECK_BYTES = 64 * 1024 * 1024;
 
-void CDiskFile::qcow2_open()
+void CDiskFile::qcow2_open(const char* image_path)
 {
 	qcow2 = std::make_unique<Qcow2State>();
 
@@ -70,6 +71,38 @@ void CDiskFile::qcow2_open()
 					devid_string);
 			// Exact refcount agreement was established; there is no repair.
 			qcow2_set_dirty(false);
+		}
+
+		if (!qcow2->backing_filename.empty())
+		{
+			std::error_code error;
+			const std::filesystem::path base = std::filesystem::absolute(
+				std::filesystem::path(image_path).parent_path() /
+				qcow2->backing_filename, error);
+			if (error)
+				FAILURE_2(IO, "%s: QCOW2: cannot resolve backing file: %s",
+					devid_string, error.message().c_str());
+			qcow2->backing_filename = base.string();
+			qcow2->backing.reset(fopen_large(qcow2->backing_filename.c_str(), "rb"));
+			if (!qcow2->backing)
+				FAILURE_2(IO, "%s: QCOW2: cannot open backing file: %s",
+					devid_string, qcow2->backing_filename.c_str());
+
+			qcow2->backing_identity = file_identity(qcow2->backing.get());
+			if (qcow2->backing_identity == file_identity(handle))
+				FAILURE_1(IO, "%s: QCOW2: backing file is the image itself",
+					devid_string);
+			if (fseek_large(qcow2->backing.get(), 0, SEEK_END) != 0)
+				FAILURE_2(IO, "%s: QCOW2: cannot seek backing file: %s",
+					devid_string, strerror(errno));
+			const off_t_large size = ftell_large(qcow2->backing.get());
+			if (size < 0)
+				FAILURE_2(IO, "%s: QCOW2: cannot size backing file: %s",
+					devid_string, strerror(errno));
+			qcow2->backing_size = static_cast<u64>(size);
+			if (size != byte_size)
+				FAILURE_1(IO, "%s: QCOW2: raw backing file size must match virtual disk size",
+					devid_string);
 		}
 	}
 	catch (...)
@@ -157,17 +190,29 @@ void CDiskFile::qcow2_parse_header(u64 physical_size)
 				devid_string);
 	}
 
-	if (get_be64(header + 8) || get_be32(header + 16))
-		FAILURE_1(IO, "%s: QCOW2: backing files (differencing images) are "
-			"unsupported",
-			devid_string);
+	const u64 backing_offset = get_be64(header + 8);
+	const u32 backing_size = get_be32(header + 16);
+	if (backing_offset || backing_size)
+	{
+		if (!backing_offset || !backing_size || backing_size > 1023 ||
+			backing_offset < header_length || backing_offset > qcow2->cluster_size ||
+			backing_size > qcow2->cluster_size - backing_offset ||
+			backing_offset > physical_size || backing_size > physical_size - backing_offset)
+			FAILURE_1(IO, "%s: QCOW2: invalid backing filename bounds",
+				devid_string);
+		if (!read_only)
+			FAILURE_1(IO, "%s: QCOW2: images with a backing file require read_only = true",
+				devid_string);
+	}
 
 	// Unknown harmless extensions are preserved because header updates
 	// touch only flags.
 	u64 pos = header_length;
+	const u64 extension_end = backing_offset ? backing_offset : qcow2->cluster_size;
 	bool found_end = false;
+	bool raw_backing = false;
 
-	while (pos + 8 <= qcow2->cluster_size)
+	while (pos + 8 <= extension_end)
 	{
 		u8 ext[8];
 
@@ -188,9 +233,22 @@ void CDiskFile::qcow2_parse_header(u64 physical_size)
 
 		const u64 padded = (u64(length) / 8 + (length % 8 != 0)) * 8;
 
-		if (padded > qcow2->cluster_size - pos)
-			FAILURE_1(IO, "%s: QCOW2: header extension exceeds first cluster",
+		if (padded > extension_end - pos)
+			FAILURE_1(IO, "%s: QCOW2: header extension exceeds extension area",
 				devid_string);
+
+		if (kind == 0xe2792aca && backing_offset)
+		{
+			if (raw_backing || length != 3)
+				FAILURE_1(IO, "%s: QCOW2: expected a single raw backing format extension",
+					devid_string);
+			u8 format[3];
+			read_file(handle, pos, format, sizeof(format));
+			if (memcmp(format, "raw", sizeof(format)))
+				FAILURE_1(IO, "%s: QCOW2: only raw backing files are supported",
+					devid_string);
+			raw_backing = true;
+		}
 
 		if (kind == 0x23852875 || kind == 0x0537be77 || kind == 0x44415441)
 			FAILURE_1(IO, "%s: QCOW2: bitmap, encryption or external-data "
@@ -203,6 +261,18 @@ void CDiskFile::qcow2_parse_header(u64 physical_size)
 	if (!found_end)
 		FAILURE_1(IO, "%s: QCOW2: missing header extension terminator",
 			devid_string);
+
+	if (backing_offset)
+	{
+		if (!raw_backing)
+			FAILURE_1(IO, "%s: QCOW2: backing file must explicitly specify raw format",
+				devid_string);
+		qcow2->backing_filename.resize(backing_size);
+		read_file(handle, backing_offset, &qcow2->backing_filename[0], backing_size);
+		if (qcow2->backing_filename.find('\0') != std::string::npos)
+			FAILURE_1(IO, "%s: QCOW2: backing filename contains a NUL byte",
+				devid_string);
+	}
 
 	const u32 l1_entries = get_be32(header + 36);
 
@@ -428,9 +498,9 @@ void CDiskFile::qcow2_read(u64 offset, void* out, size_t count)
 		const size_t chunk = static_cast<size_t>(std::min<u64>(count, qcow2->cluster_size - offset % qcow2->cluster_size));
 		const u64 entry = qcow2_read_l2_entry(offset / qcow2->cluster_size);
 		
-		if ((entry & QCOW2_ZERO) || !(entry & QCOW2_OFFSET_MASK))
+		if (entry & QCOW2_ZERO)
 			memset(data, 0, chunk);
-		else
+		else if (entry & QCOW2_OFFSET_MASK)
 		{
 			const u64 host = (entry & QCOW2_OFFSET_MASK) + offset % qcow2->cluster_size;
 			// A partially stored final data cluster has an implicit zero tail.
@@ -438,6 +508,10 @@ void CDiskFile::qcow2_read(u64 offset, void* out, size_t count)
 			if (stored < chunk)
 				memset(data + stored, 0, chunk - stored);
 		}
+		else if (qcow2->backing)
+			read_file(qcow2->backing.get(), offset, data, chunk);
+		else
+			memset(data, 0, chunk);
 		
 		offset += chunk;
 		data += chunk;
