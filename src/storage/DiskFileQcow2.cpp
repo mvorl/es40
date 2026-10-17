@@ -65,33 +65,22 @@ void CDiskFile::qcow2_open(const char* image_path)
 
 		if (!qcow2->backing_filename.empty())
 		{
-			std::error_code error;
-			const std::filesystem::path base = std::filesystem::absolute(
-				std::filesystem::path(image_path).parent_path() /
-				qcow2->backing_filename, error);
-			if (error)
-				FAILURE_2(IO, "%s: QCOW2: cannot resolve backing file: %s",
-					devid_string, error.message().c_str());
-			qcow2->backing_filename = base.string();
-			qcow2->backing.reset(open_image(qcow2->backing_filename.c_str(), "rb"));
-			if (!qcow2->backing)
-				FAILURE_2(IO, "%s: QCOW2: cannot open backing file: %s",
-					devid_string, qcow2->backing_filename.c_str());
-
+			qcow2->backing.reset(qcow2_open_backing(image_path,
+				qcow2->backing_filename, u64(byte_size)));
 			qcow2->backing_identity = file_identity(qcow2->backing.get());
-			if (qcow2->backing_identity == file_identity(handle))
-				FAILURE_1(IO, "%s: QCOW2: backing file is the image itself",
+			qcow2->backing_size = u64(byte_size);
+		}
+
+		if (*myCfg->get_text_value("overlay_file", ""))
+		{
+			if (!qcow2->backing)
+				FAILURE_1(Configuration, "%s: QCOW2: overlay_file must name an image with a backing file",
 					devid_string);
-			if (fseek_large(qcow2->backing.get(), 0, SEEK_END) != 0)
-				FAILURE_2(IO, "%s: QCOW2: cannot seek backing file: %s",
-					devid_string, strerror(errno));
-			const off_t_large size = ftell_large(qcow2->backing.get());
-			if (size < 0)
-				FAILURE_2(IO, "%s: QCOW2: cannot size backing file: %s",
-					devid_string, strerror(errno));
-			qcow2->backing_size = static_cast<u64>(size);
-			if (size != byte_size)
-				FAILURE_1(IO, "%s: QCOW2: raw backing file size must match virtual disk size",
+			std::string expected(myCfg->get_text_value("file", ""));
+			std::unique_ptr<FILE, int (*)(FILE*)> backing(
+				qcow2_open_backing("", expected, u64(byte_size)), &fclose);
+			if (file_identity(backing.get()) != qcow2->backing_identity)
+				FAILURE_1(Configuration, "%s: QCOW2: file does not match the overlay's backing file",
 					devid_string);
 		}
 
@@ -110,6 +99,36 @@ void CDiskFile::qcow2_open(const char* image_path)
 		qcow2.reset();
 		throw;
 	}
+}
+
+FILE* CDiskFile::qcow2_open_backing(const char* image_path,
+	std::string& backing_filename, u64 size)
+{
+	std::error_code error;
+	const std::filesystem::path base = std::filesystem::absolute(
+		std::filesystem::path(image_path).parent_path() / backing_filename, error);
+	if (error)
+		FAILURE_2(IO, "%s: QCOW2: cannot resolve backing file: %s",
+			devid_string, error.message().c_str());
+	backing_filename = base.string();
+	std::unique_ptr<FILE, int (*)(FILE*)> backing(
+		open_image(backing_filename.c_str(), "rb"), &fclose);
+	if (!backing)
+		FAILURE_2(IO, "%s: QCOW2: cannot open backing file: %s",
+			devid_string, backing_filename.c_str());
+	if (handle && file_identity(backing.get()) == file_identity(handle))
+		FAILURE_1(IO, "%s: QCOW2: backing file is the image itself", devid_string);
+	if (fseek_large(backing.get(), 0, SEEK_END) != 0)
+		FAILURE_2(IO, "%s: QCOW2: cannot seek backing file: %s",
+			devid_string, strerror(errno));
+	const off_t_large end = ftell_large(backing.get());
+	if (end < 0)
+		FAILURE_2(IO, "%s: QCOW2: cannot size backing file: %s",
+			devid_string, strerror(errno));
+	if (size && u64(end) != size)
+		FAILURE_1(IO, "%s: QCOW2: raw backing file size must match virtual disk size",
+			devid_string);
+	return backing.release();
 }
 
 void CDiskFile::qcow2_parse_header(u64 physical_size)
@@ -690,13 +709,13 @@ void CDiskFile::qcow2_write(u64 offset, const void* in, size_t count)
 	}
 }
 
-bool CDiskFile::qcow2_probe()
+bool CDiskFile::qcow2_probe(FILE* image)
 {
-	if (fseek_large(handle, 0, SEEK_END) != 0)
+	if (fseek_large(image, 0, SEEK_END) != 0)
 		FAILURE_2(IO, "%s: QCOW2: cannot seek image: %s",
 			devid_string, strerror(errno));
 	
-	const off_t_large end = ftell_large(handle);
+	const off_t_large end = ftell_large(image);
 	
 	if (end < 0)
 		FAILURE_2(IO, "%s: QCOW2: cannot size image: %s",
@@ -708,7 +727,7 @@ bool CDiskFile::qcow2_probe()
 	if (physical_size < 72)
 		return false;
 	
-	read_file(handle, 0, header, 72);
+	read_file(image, 0, header, 72);
 	
 	const u32 version = get_be32(header + 4);
 	
@@ -729,7 +748,7 @@ bool CDiskFile::qcow2_probe()
 		if (physical_size < sizeof(header))
 			return false;
 		
-		read_file(handle, 72, header + 72, 32);
+		read_file(image, 72, header + 72, 32);
 		
 		length = get_be32(header + 100);
 		
@@ -765,7 +784,7 @@ bool CDiskFile::qcow2_probe()
 	return true;
 }
 
-void CDiskFile::qcow2_create(u64 size)
+void CDiskFile::qcow2_create(u64 size, const char* backing_file)
 {
 	const u64 cluster_size = 65536;
 	const u64 data_clusters = size / cluster_size + (size % cluster_size != 0);
@@ -829,6 +848,17 @@ void CDiskFile::qcow2_create(u64 size)
 	put_be64(block.data() + 72, QCOW2_DIRTY);
 	put_be32(block.data() + 96, 4);
 	put_be32(block.data() + 100, 104);
+	if (*backing_file)
+	{
+		const u32 length = static_cast<u32>(strlen(backing_file));
+		put_be64(block.data() + 8, 128);
+		put_be32(block.data() + 16, length);
+		put_be32(block.data() + 104, 0xe2792aca);
+		put_be32(block.data() + 108, 3);
+		memcpy(block.data() + 112, "raw", 3);
+		// The zero extension terminator occupies bytes 120 through 127.
+		memcpy(block.data() + 128, backing_file, length);
+	}
 	write_file(handle, 0, block.data(), block.size());
 	sync_image();
 	

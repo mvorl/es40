@@ -1465,9 +1465,13 @@ void add_disks(const char *title, const char *disk_name, CConfigurator *parent)
             values[idx] = strdup(STR_YES);
         }
 
+        // Preserve a manually configured overlay without exposing it in the form.
+        const std::string overlay_file = c ? c->get_text_value("overlay_file", "") : "";
         if (c != nullptr)
             parent->remove_child(c->get_myName());
         c = new CConfigurator(parent, (char *)disk_name, disk_type);
+        if (!overlay_file.empty() && !strcmp(disk_type, "file") && !is_cdrom && !is_floppy)
+            c->set_value(strdup("overlay_file"), strdup(overlay_file.c_str()));
 
         for (int i = 0; i < num_entries; ++i)
         {

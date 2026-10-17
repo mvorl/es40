@@ -763,7 +763,7 @@ static const char* const kv_dec21143[] = {
 static const char* const kv_disk_file[] = {
   "file", "model_number", "serial_number", "serial_num", "rev_number",
   "rev_num", "read_only", "cdrom", "autocreate_size", "format",
-  "autocreate_format", 0 };
+  "autocreate_format", "overlay_file", 0 };
 static const char* const kv_disk_device[] = {
   "device", "model_number", "serial_number", "serial_num", "rev_number",
   "rev_num", "read_only", "cdrom", 0 };

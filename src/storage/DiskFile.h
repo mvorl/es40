@@ -262,9 +262,11 @@ private:
   std::string     file_identity(FILE* image) const;
 
   // QCOW2 metadata and cluster translation; the file remains owned here.
-  bool            qcow2_probe();
-  void            qcow2_create(u64 size);
+  bool            qcow2_probe(FILE* image);
+  void            qcow2_create(u64 size, const char* backing_file);
   void            qcow2_open(const char* image_path);
+  FILE*           qcow2_open_backing(const char* image_path,
+                                     std::string& backing_filename, u64 size);
   void            qcow2_read(u64 offset, void* data, size_t count);
   void            qcow2_write(u64 offset, const void* data, size_t count);
   void            qcow2_parse_header(u64 physical_size);

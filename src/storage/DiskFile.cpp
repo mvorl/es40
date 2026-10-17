@@ -119,6 +119,7 @@
 
 #include <ctype.h>
 #include <exception>
+#include <filesystem>
 #include <string>
 #include <string.h>
 #include <cerrno>
@@ -405,6 +406,10 @@ CDiskFile::CDiskFile(CConfigurator* cfg, CSystem* sys, CDiskController* c,
     floppy_device    = myCfg->get_myParent() != nullptr &&
                         myCfg->get_myParent()->get_class_id() == c_floppy;
     char* configured_filename = myCfg->get_text_value("file");
+    const char* overlay_filename = myCfg->get_text_value("overlay_file", "");
+    if (*overlay_filename && (floppy_device || cdrom() ||
+        !configured_filename || !*configured_filename))
+        FAILURE(Configuration, "overlay_file requires a fixed hard disk with a base file");
     const bool start_without_media = (floppy_device || cdrom()) &&
                                      (!configured_filename ||
                                       !*configured_filename);
@@ -413,7 +418,7 @@ CDiskFile::CDiskFile(CConfigurator* cfg, CSystem* sys, CDiskController* c,
         FAILURE_1(Configuration, "%s: Disk has no file attached!\n", devid_string);
     }
 
-    if (!start_without_media && !reload_file(configured_filename))
+    if (!start_without_media && !reload_file(*overlay_filename ? overlay_filename : configured_filename))
         FAILURE_1(Runtime, "%s: Could not mount configured disk image", devid_string);
     state.scsi.media_changed = 0;
 
@@ -729,7 +734,9 @@ bool CDiskFile::load_file_transactional(const char* _filename,
     else if (!strcmp(format_name, "qcow2")) requested_format = Qcow2;
     else FAILURE_1(Configuration, "Unknown image format: %s", format_name);
     
-    const char* suffix = strrchr(_filename, '.');
+    const bool overlay = *myCfg->get_text_value("overlay_file", "") != 0;
+    const char* base_file = overlay ? myCfg->get_text_value("file", "") : "";
+    const char* suffix = strrchr(overlay ? base_file : _filename, '.');
     const char* extension = suffix ? suffix : "";
     
     Format extension_format = Auto;
@@ -747,6 +754,8 @@ bool CDiskFile::load_file_transactional(const char* _filename,
         (!format_name || requested_format != Auto)))
         format = extension_format;
     const bool removable = cdrom() || floppy_device;
+    if (overlay && removable)
+        FAILURE(Configuration, "overlay_file requires a fixed hard disk");
 
     // Keep the mounted image mounted until we've opened the replacement
     // this way, a failed selection returns cleanly without changing anything
@@ -826,8 +835,25 @@ bool CDiskFile::load_file_transactional(const char* _filename,
 
     try
     {
+        // Hold the base's shared lock from validation through mounting the child.
+        std::unique_ptr<FILE, int (*)(FILE*)> backing(nullptr, &fclose);
+        std::string backing_file(base_file);
+        u64 backing_size = 0;
         bool loaded = false;
         bool protected_image = false;
+
+        if (overlay)
+        {
+            backing.reset(qcow2_open_backing("", backing_file, 0));
+            backing_size = static_cast<u64>(ftell_large(backing.get()));
+            if (format == Auto)
+                format = qcow2_probe(backing.get()) ? Qcow2 : Raw;
+            else if (format == Qcow2 && extension_format == Qcow2 && !qcow2_probe(backing.get()))
+                format = Raw;
+            if (format != Raw)
+                FAILURE(Configuration, "overlay_file currently requires a raw base image");
+            format = Qcow2;
+        }
 
         if (format == BinCue)
         {
@@ -893,7 +919,9 @@ bool CDiskFile::load_file_transactional(const char* _filename,
                 else if (strcmp(create_name, "raw"))
                     FAILURE(Configuration, "autocreate_format must be raw or qcow2");
 
-                if (requested_format != Auto && requested_format != create_format)
+                if (overlay && create_format != Qcow2)
+                    FAILURE(Configuration, "Creating an overlay requires autocreate_format = qcow2");
+                if (!overlay && requested_format != Auto && requested_format != create_format)
                     FAILURE(Configuration, "Missing disk: format must match autocreate_format (default raw)");
 
                 format = create_format;
@@ -911,13 +939,27 @@ bool CDiskFile::load_file_transactional(const char* _filename,
                     if (size % 512 || size > static_cast<u64>((std::numeric_limits<off_t_large>::max)()))
                         FAILURE_1(IO, "%s: QCOW2 size must be sector-aligned and fit this host's file offsets", _filename);
 
+                    if (overlay)
+                    {
+                        if (size != backing_size)
+                            FAILURE(Configuration, "autocreate_size must match the base file size");
+                        std::error_code error;
+                        const std::filesystem::path child = std::filesystem::absolute(_filename, error);
+                        if (error)
+                            FAILURE_1(IO, "Cannot resolve overlay_file: %s", error.message().c_str());
+                        const std::filesystem::path relative = std::filesystem::path(backing_file).lexically_relative(child.parent_path());
+                        if (!relative.empty())
+                            backing_file = relative.generic_string();
+                        if (backing_file.size() > 1023)
+                            FAILURE(Configuration, "QCOW2 backing filename must not exceed 1023 bytes");
+                    }
                     handle = open_image(_filename, "w+bx");
 
                     if (!handle)
                         FAILURE_2(IO, "Could not create QCOW2 image %s: %s", _filename, strerror(errno));
 
                     protected_image = true;
-                    qcow2_create(size);
+                    qcow2_create(size, backing_file.c_str());
                 }
             }
 
@@ -1004,9 +1046,9 @@ bool CDiskFile::load_file_transactional(const char* _filename,
             }
 
             if (format == Auto)
-                format = qcow2_probe() ? Qcow2 : Raw;
+                format = qcow2_probe(handle) ? Qcow2 : Raw;
             // An unrecognized header with a QCOW2 extension uses the raw fallback.
-            else if (format == Qcow2 && extension_format == Qcow2 && !qcow2_probe())
+            else if (!overlay && format == Qcow2 && extension_format == Qcow2 && !qcow2_probe(handle))
                 format = Raw;
 
             if (format == Qcow2)
@@ -1021,6 +1063,8 @@ bool CDiskFile::load_file_transactional(const char* _filename,
                         FAILURE_2(IO, "Could not protect disk image %s: %s", _filename, strerror(errno));
                 }
                 qcow2_open(_filename);
+                if (backing && file_identity(backing.get()) != qcow2->backing_identity)
+                    FAILURE_1(IO, "%s: Base file changed while mounting the overlay", _filename);
             }
 
             if (!qcow2)
