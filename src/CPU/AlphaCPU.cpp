@@ -1624,17 +1624,19 @@ void CAlphaCPU::jit_run(int budget)
 					if (opc == 0x0b) eva &= ~U64(7);   // LDQ_U: address forced to 8-byte alignment
 				}
 				// Stores touch memory, not GPRs, so record (addr,value) for the compiled-pass
-				// compare. Ra (lra) is the value source; Rb is the base. HW_ST physical (0x1f func
-				// 0/1) stores too, with a physical (untranslated) address and a 12-bit disp.
+				// compare. Ra (lra) is the value source; Rb is the base. Hardware stores
+				// use the family-selected compiled forms and original physical address.
 				const bool is_sc = (opc == 0x2e || opc == 0x2f);   // STL_C/STQ_C: store-conditional (success in Ra)
-				const bool is_hwst = (opc == 0x1f) && (((ins >> 12) & 0xf) <= 1);
+				const auto hw_store = (opc == 0x1f)
+					? alpha_decode_hw_store(m_profile.hw_store, ins) : AlphaHWStoreDescriptor{};
+				const bool is_hwst = (opc == 0x1f) && alpha_hw_store_compilable(hw_store);
 				const bool is_fpst = (opc == 0x26 || opc == 0x27 || opc == 0x24 || opc == 0x25);   // STS/STT/STF/STG: value source is f[lra]
 				const bool isst = (opc == 0x2c || opc == 0x2d || opc == 0x0d || opc == 0x0e || opc == 0x0f || is_sc || is_hwst || is_fpst);  // +STx_C +STQ_U +STS/STT
 				u64 sva = 0, sval = 0;
 				if (isst)
 				{
 					const int srb = (ins >> 16) & 0x1F;
-					const int sdisp = is_hwst ? (int)((int32_t)(ins << 20) >> 20)   // HW_ST: 12-bit
+					const int sdisp = is_hwst ? hw_store.displacement
 						: (int)(int16_t)(ins & 0xFFFF);        // STx:   16-bit
 					sva = (srb == 31 ? (u64)0 : state.r[RREG(srb)]) + (u64)sdisp;
 					if (opc == 0x0f) sva &= ~U64(7);   // STQ_U: address forced to 8-byte alignment
@@ -3866,12 +3868,14 @@ _next_instruction:
 		OP(HW_RET, RET);
 
 	case 0x1f:          // HW_ST (PALRES)
+	{
 		if (!pal_hardware_instruction_valid(ins)) {
 			GO_PAL(AlphaPALException::OpcodeDecode);
 			ES40_EXECUTE_END();
 		}
-		function = (ins >> 12) & 0xf;
-		if (function & 1)
+		const auto hw_store = alpha_decode_hw_store(m_profile.hw_store, ins);
+		function = (ins >> 12) & 0xf; // Debug formatting / unknown-form diagnostics only.
+		if (hw_store.size_bits == 64)
 		{
 			OP(HW_STQ, HW_ST);
 		}
@@ -3879,6 +3883,7 @@ _next_instruction:
 		{
 			OP(HW_STL, HW_ST);
 		}
+	}
 
 	case 0x20:
 		OP(LDF, FMEM);

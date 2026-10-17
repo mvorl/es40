@@ -125,60 +125,27 @@
 #define DO_HW_LDL DO_HW_LD
 #define DO_HW_LDQ DO_HW_LD
 
-#define DO_HW_STL   switch(function)                                          \
-  {                                                                           \
-  case 0:       /* longword physical */                                       \
-    phys_address = state.r[REG_2] + DISP_12;                                  \
-    WRITE_PHYS_NT(state.r[REG_1], 32);                                        \
-    break;                                                                    \
-                                                                           \
-  case 2:       /* longword physical conditional */                           \
-    phys_address = state.r[REG_2] + DISP_12;                                  \
-    state.r[REG_1] = cSystem->cpu_stx_c(state.iProcNum, phys_address, 32,     \
-                                        state.r[REG_1], dram_ptr, dram_size, this); \
-    break;                                                                    \
-                                                                           \
-  case 4:       /* longword virtual (HRM 6.4.1 Table 6-4 TYPE 0102) -- write \
-                 * checked against current mode, matching QEMU brokenpipe      \
-                 * AlphaMMUIdx_Privileged. */                                  \
-    DATA_PHYS_NT(state.r[REG_2] + DISP_12, ACCESS_WRITE);                     \
-    WRITE_PHYS_NT(state.r[REG_1], 32);                                        \
-    break;                                                                    \
-                                                                           \
-  case 12:      /* longword virtual alt (HRM TYPE 1102) -- write checked     \
-                 * using DTB_ALT_MODE, matching brokenpipe AlphaMMUIdx_AltMode.*/\
-    DATA_PHYS_NT(state.r[REG_2] + DISP_12, ACCESS_WRITE | ALT);               \
-    WRITE_PHYS_NT(state.r[REG_1], 32);                                        \
-    break;                                                                    \
-                                                                           \
-  default:                                                                    \
-    UNKNOWN2;                                                                 \
-  }
+// Family decoding feeds the shared store executor. Faults exit in the caller.
+#define DO_HW_ST do {                                                          \
+  if (!alpha_hw_store_valid(hw_store)) { UNKNOWN2; }                           \
+  const u64 hw_address = state.r[REG_2] + (u64)hw_store.displacement;          \
+  if (hw_store.address == AlphaHWStoreAddress::Virtual) {                      \
+    if (hw_store.alternate) {                                                  \
+      DATA_PHYS_NT(hw_address, ACCESS_WRITE | ALT);                            \
+    } else {                                                                   \
+      DATA_PHYS_NT(hw_address, ACCESS_WRITE);                                  \
+    }                                                                          \
+  } else {                                                                     \
+    phys_address = hw_address;                                                 \
+  }                                                                            \
+  /* Evaluate the source after translation, before any conditional result. */  \
+  if (hw_store.conditional) {                                                  \
+    state.r[REG_1] = cSystem->cpu_stx_c(state.iProcNum, phys_address,          \
+      hw_store.size_bits, state.r[REG_1], dram_ptr, dram_size, this);          \
+  } else {                                                                     \
+    WRITE_PHYS_NT(state.r[REG_1], hw_store.size_bits);                         \
+  }                                                                            \
+} while (0)
 
-#define DO_HW_STQ   switch(function)                                           \
-  {                                                                            \
-  case 1:       /* quadword physical */                                        \
-    phys_address = state.r[REG_2] + DISP_12;                                   \
-    WRITE_PHYS_NT(state.r[REG_1], 64);                                         \
-    break;                                                                     \
-                                                                            \
-  case 3:       /* quadword physical conditional */                            \
-    phys_address = state.r[REG_2] + DISP_12;                                   \
-    state.r[REG_1] = cSystem->cpu_stx_c(state.iProcNum, phys_address, 64,      \
-                                        state.r[REG_1], dram_ptr, dram_size, this); \
-    break;                                                                     \
-                                                                            \
-  case 5:       /* quadword virtual (HRM 6.4.1 Table 6-4 TYPE 0102) --       \
-                 * see HW_STL case 4. */                                       \
-    DATA_PHYS_NT(state.r[REG_2] + DISP_12, ACCESS_WRITE);                     \
-    WRITE_PHYS_NT(state.r[REG_1], 64);                                        \
-    break;                                                                    \
-                                                                           \
-  case 13:      /* quadword virtual alt (HRM TYPE 1102) -- see HW_STL 12. */ \
-    DATA_PHYS_NT(state.r[REG_2] + DISP_12, ACCESS_WRITE | ALT);               \
-    WRITE_PHYS_NT(state.r[REG_1], 64);                                        \
-    break;                                                                    \
-                                                                            \
-  default:                                                                     \
-    UNKNOWN2;                                                                  \
-  }
+#define DO_HW_STL DO_HW_ST
+#define DO_HW_STQ DO_HW_ST

@@ -1204,7 +1204,8 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block,
     const AlphaIPRReadPolicy& ipr_read = kEv68IPRReadPolicy,
     const AlphaIPRWritePolicy& ipr_write = kEv68IPRWritePolicy,
     const AlphaPALPolicy& pal = kEv68PALPolicy,
-    const AlphaHWLoadPolicy& hw_load = kEv68HWLoadPolicy) noexcept
+    const AlphaHWLoadPolicy& hw_load = kEv68HWLoadPolicy,
+    const AlphaHWStorePolicy& hw_store = kEv68HWStorePolicy) noexcept
 {
   const uint32_t opcode = ins >> 26;
   const uint32_t func = (ins >> 5) & 0x7fu;
@@ -1246,12 +1247,12 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block,
       }
       break;
     }
-    case 0x1f: {   // HW_ST (PALmode): physical funcs 0/1 only (x64 parity)
+    case 0x1f: {   // HW_ST (PALmode): the family admits compiled-safe physical stores.
       if (!pal_block || !pal.hardware_instruction_access
           || !alpha_pal_instruction_compilable(pal.hardware_instruction_access(ins)))
         break;
-      const uint32_t hwf = (ins >> 12) & 0xfu;
-      if (hwf == 0 || hwf == 1)
+      const auto descriptor = alpha_decode_hw_store(hw_store, ins);
+      if (alpha_hw_store_compilable(descriptor))
         return {A64OpKind::kHwSt, A64TerminatorKind::kNone, 0, 0};
       break;
     }
@@ -1474,9 +1475,11 @@ static constexpr A64DecodedOp decode_a64_op(uint32_t ins, bool pal_block,
     const AlphaIPRReadPolicy& ipr_read = kEv68IPRReadPolicy,
     const AlphaIPRWritePolicy& ipr_write = kEv68IPRWritePolicy,
     const AlphaPALPolicy& pal = kEv68PALPolicy,
-    const AlphaHWLoadPolicy& hw_load = kEv68HWLoadPolicy) noexcept
+    const AlphaHWLoadPolicy& hw_load = kEv68HWLoadPolicy,
+    const AlphaHWStorePolicy& hw_store = kEv68HWStorePolicy) noexcept
 {
-  const A64OpClass classification = classify_a64_op(ins, pal_block, ipr_read, ipr_write, pal, hw_load);
+  const A64OpClass classification = classify_a64_op(
+      ins, pal_block, ipr_read, ipr_write, pal, hw_load, hw_store);
   A64DecodedOp decoded{};
   decoded.ins = ins;
   decoded.kind = classification.kind;
@@ -1521,7 +1524,7 @@ static uint32_t load_a64_guest_u32(const uint8_t* source) noexcept
 static A64BlockPlan plan_a64_block(const CJitEngine::JitBlock& block,
     const uint8_t* dram, uint64_t dram_size, const AlphaIPRReadPolicy& ipr_read,
     const AlphaIPRWritePolicy& ipr_write, const AlphaPALPolicy& pal,
-    const AlphaHWLoadPolicy& hw_load) noexcept
+    const AlphaHWLoadPolicy& hw_load, const AlphaHWStorePolicy& hw_store) noexcept
 {
   A64BlockPlan plan{};
   if (block.n_instr == 0) {
@@ -1538,7 +1541,8 @@ static A64BlockPlan plan_a64_block(const CJitEngine::JitBlock& block,
   const bool pal_block = (block.tag & 1u) != 0;
   for (uint32_t i = 0; i < limit.count; ++i) {
     const uint32_t word = load_a64_guest_u32(source + static_cast<size_t>(i) * 4);
-    const A64DecodedOp decoded = decode_a64_op(word, pal_block, ipr_read, ipr_write, pal, hw_load);
+    const A64DecodedOp decoded = decode_a64_op(
+        word, pal_block, ipr_read, ipr_write, pal, hw_load, hw_store);
     if (decoded.kind == A64OpKind::kUnsupported) {
       plan.breaker_word = word;
       plan.stop = A64PlanStop::kUnsupported;
@@ -3125,7 +3129,7 @@ static A64OpEmitReceipt emit_a64_ints_zap(A64EmitContext& context,
 
 // Memory ops run through jit_read/jit_write only.
 
-// VA = Rb + normalized displacement. Hardware loads supply their family descriptor.
+// VA = Rb + normalized displacement. Hardware accesses supply their family descriptor.
 static asmjit::Error emit_a64_mem_va_displacement(A64EmitContext& context,
     const A64DecodedOp& op, bool force_align, int64_t disp)
 {
@@ -3164,14 +3168,11 @@ static asmjit::Error emit_a64_mem_va_displacement(A64EmitContext& context,
   return err;
 }
 
-// Ordinary memory forms retain their 16-bit displacement; HW_ST retains 12 bits.
+// Ordinary memory forms retain their 16-bit displacement.
 static asmjit::Error emit_a64_mem_va(A64EmitContext& context,
-                                     const A64DecodedOp& op, bool force_align,
-                                     bool hw_disp12 = false)
+                                     const A64DecodedOp& op, bool force_align)
 {
-  const int64_t disp = hw_disp12
-      ? (static_cast<int32_t>(op.ins << 20) >> 20)
-      : static_cast<int16_t>(op.ins & 0xffffu);
+  const int64_t disp = static_cast<int16_t>(op.ins & 0xffffu);
   return emit_a64_mem_va_displacement(context, op, force_align, disp);
 }
 
@@ -4516,8 +4517,10 @@ static A64OpEmitReceipt emit_a64_hw_st(A64EmitContext& context,
   using namespace asmjit;
   a64::Assembler& a = context.assembler;
 
-  const int size_bits = (((op.ins >> 12) & 0xfu) & 1u) ? 64 : 32;
-  Error err = emit_a64_mem_va(context, op, false, true);
+  const auto store = alpha_decode_hw_store(context.profile.hw_store, op.ins);
+  if (!alpha_hw_store_compilable(store)) return {Error::kInvalidArgument, op.kind};
+  const int size_bits = static_cast<int>(store.size_bits);
+  Error err = emit_a64_mem_va_displacement(context, op, false, store.displacement);
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
 
 #ifndef JIT_VERIFY
@@ -6333,7 +6336,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 
   const A64BlockPlan plan = plan_a64_block(
       *b, dram, dram_size, m_profile.ipr_read, m_profile.ipr_write, m_profile.pal,
-      m_profile.hw_load);
+      m_profile.hw_load, m_profile.hw_store);
 #ifdef JIT_STATS
   if (plan.stop == A64PlanStop::kUnsupported) {
     const uint32_t bop = plan.breaker_word >> 26;

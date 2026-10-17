@@ -2287,6 +2287,8 @@
     <ClInclude Include="..\CPU\Ev68MMU.h" />
     <ClInclude Include="..\CPU\AlphaHWLoad.h" />
     <ClInclude Include="..\CPU\Ev68HWLoad.h" />
+    <ClInclude Include="..\CPU\AlphaHWStore.h" />
+    <ClInclude Include="..\CPU\Ev68HWStore.h" />
     <ClInclude Include="..\emu\attotime.h" />
     <ClInclude Include="..\banner.h" />
     <ClInclude Include="..\base\Exception.h" />

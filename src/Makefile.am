@@ -88,6 +88,8 @@ noinst_HEADERS = CPU/AlphaCPU.h \
        CPU/Ev68MMU.h \
        CPU/AlphaHWLoad.h \
        CPU/Ev68HWLoad.h \
+       CPU/AlphaHWStore.h \
+       CPU/Ev68HWStore.h \
        CPU/cpu_arith.h \
        CPU/cpu_bwx.h \
        CPU/cpu_control.h \

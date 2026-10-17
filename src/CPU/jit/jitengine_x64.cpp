@@ -111,7 +111,7 @@ enum SafeOp {
   OP_HW_LD_VIRT,                 // HW_LD: normalized virtual loads with family-selected access flags
   OP_HW_MTPR,                    // HW_MTPR (0x1d): family-approved helper writes, PALmode only
   OP_HW_MTPR_TERM,               // HW_MTPR: a family write changes compiled assumptions -> redispatch
-  OP_HW_STL, OP_HW_STQ,          // HW_ST (0x1f) physical func 0/1, PALmode only: phys[Rb+disp12] = Ra
+  OP_HW_STL, OP_HW_STQ,          // HW_ST (0x1f): normalized physical longword/quadword stores
   OP_JMP,                        // JMP/JSR/RET (0x1a): Ra = PC+4; PC = Rb & ~3 (computed target)
   OP_HW_RET,                     // HW_RET (0x1e), PALmode: PC = Rb & ~2 (computed jump, the PAL return)
   OP_CALL_PAL,                   // CALL_PAL (0x00): save R23/exc_addr; PC = pal_base | entry offset
@@ -143,7 +143,7 @@ static bool host_has_bmi2() {
 // compile them when the block is PALmode (the dispatcher keys blocks by PC bit 0).
 SafeOp classify(uint32_t ins, bool pal_block, const AlphaIPRReadPolicy& ipr_read,
     const AlphaIPRWritePolicy& ipr_write, const AlphaPALPolicy& pal,
-    const AlphaHWLoadPolicy& hw_load)
+    const AlphaHWLoadPolicy& hw_load, const AlphaHWStorePolicy& hw_store)
 {
   uint32_t opcode = ins >> 26;
   uint32_t func = (ins >> 5) & 0x7F;
@@ -345,16 +345,13 @@ SafeOp classify(uint32_t ins, bool pal_block, const AlphaIPRReadPolicy& ipr_read
       }
       return OP_NONE;
     }
-    case 0x1f: {                // HW_ST (PALmode): compile physical longword/quadword (func 0/1).
-      // Store-conditional (2/3) does LL/SC, virtual (4/5) and virtual-alt (12/13) translate with
-      // side effects -> interpret. Mirrors HW_LD; the value is Ra, base Rb, displacement 12-bit.
+    case 0x1f: {                // HW_ST: the family declares normalized compiled-safe physical writes.
       if (!pal_block || !pal.hardware_instruction_access
           || !alpha_pal_instruction_compilable(pal.hardware_instruction_access(ins)))
         return OP_NONE;
-      const uint32_t f = (ins >> 12) & 0xf;
-      if (f == 0) return OP_HW_STL;
-      if (f == 1) return OP_HW_STQ;
-      return OP_NONE;
+      const auto descriptor = alpha_decode_hw_store(hw_store, ins);
+      if (!alpha_hw_store_compilable(descriptor)) return OP_NONE;
+      return descriptor.size_bits == 32 ? OP_HW_STL : OP_HW_STQ;
     }
     case 0x1a: return OP_JMP;   // JMP/JSR/RET: computed jump (target = Rb & ~3). Now compiled --
                                 // chained in-frame via a block-cache lookup (jit_indirect), which
@@ -745,7 +742,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
     bool islit = ((ins >> 12) & 1) != 0;
     uint32_t lit = (ins >> 13) & 0xFF;
     SafeOp op = classify(ins, pal_block, m_profile.ipr_read, m_profile.ipr_write,
-        m_profile.pal, m_profile.hw_load);
+        m_profile.pal, m_profile.hw_load, m_profile.hw_store);
 
     // A nearby ordinary memory op can reuse the previous op's translated page.
     const bool prev_dpc_live = regalloc.dpc_live;
@@ -1446,12 +1443,12 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             continue;
         }
 
-        // HW_ST physical (PALmode func 0/1): phys[Rb + disp12] = Ra, no translation.
+        // HW_ST physical: the family selects the width and displacement; the source is Ra.
         // DRAM writes inline; the helper retains verification replay and MMIO retry.
         if (op == OP_HW_STL || op == OP_HW_STQ) {
-            const int disp = (int)((int32_t)(ins << 20) >> 20);    // sign-extend 12-bit displacement
-            const int size_bits = (op == OP_HW_STQ) ? 64 : 32;
-            emit_address(disp);                                      // phys addr -> RDX
+            const auto store = alpha_decode_hw_store(m_profile.hw_store, ins);
+            const int size_bits = static_cast<int>(store.size_bits);
+            emit_address(store.displacement);                         // phys addr -> RDX
 #ifndef JIT_VERIFY
             const Label physical_slow = a.new_label(), physical_done = a.new_label();
             a.cmp(x86::rdx, x86::qword_ptr(x86::rbp, m_off.dram_size));
@@ -2506,7 +2503,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
          && (phys + (uint64_t) plen * 4) < page_end)
   {
     SafeOp sop = classify(words[plen], pal_block, m_profile.ipr_read, m_profile.ipr_write,
-        m_profile.pal, m_profile.hw_load);
+        m_profile.pal, m_profile.hw_load, m_profile.hw_store);
     if (sop == OP_NONE) {               // uncompilable op ends the straight-line prefix
 #ifdef JIT_STATS
       const uint32_t bop = words[plen] >> 26;
