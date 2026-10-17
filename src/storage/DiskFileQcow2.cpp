@@ -63,16 +63,6 @@ void CDiskFile::qcow2_open(const char* image_path)
 		// Validate all metadata before exposing any guest data or writes.
 		qcow2_check_metadata(physical_size);
 
-		if (qcow2->incompatible & QCOW2_DIRTY)
-		{
-			if (read_only)
-				FAILURE_1(IO, "%s: QCOW2: unclean read-only image; open it "
-					"writable for a consistency check",
-					devid_string);
-			// Exact refcount agreement was established; there is no repair.
-			qcow2_set_dirty(false);
-		}
-
 		if (!qcow2->backing_filename.empty())
 		{
 			std::error_code error;
@@ -103,6 +93,16 @@ void CDiskFile::qcow2_open(const char* image_path)
 			if (size != byte_size)
 				FAILURE_1(IO, "%s: QCOW2: raw backing file size must match virtual disk size",
 					devid_string);
+		}
+
+		if (qcow2->incompatible & QCOW2_DIRTY)
+		{
+			if (read_only)
+				FAILURE_1(IO, "%s: QCOW2: unclean read-only image; open it "
+					"writable for a consistency check",
+					devid_string);
+			// Metadata and the backing file are valid before changing the image.
+			qcow2_set_dirty(false);
 		}
 	}
 	catch (...)
@@ -199,9 +199,6 @@ void CDiskFile::qcow2_parse_header(u64 physical_size)
 			backing_size > qcow2->cluster_size - backing_offset ||
 			backing_offset > physical_size || backing_size > physical_size - backing_offset)
 			FAILURE_1(IO, "%s: QCOW2: invalid backing filename bounds",
-				devid_string);
-		if (!read_only)
-			FAILURE_1(IO, "%s: QCOW2: images with a backing file require read_only = true",
 				devid_string);
 	}
 
@@ -636,9 +633,14 @@ void CDiskFile::qcow2_write(u64 offset, const void* in, size_t count)
 				write_file(handle, (entry & QCOW2_OFFSET_MASK) + within, data, chunk);
 			else
 			{
-				// Unallocated and zero clusters read as zero. Initialize the
-				// whole cluster before publishing a partial guest write.
+				// Preserve inherited bytes before publishing a partial write.
 				cluster.assign(static_cast<size_t>(qcow2->cluster_size), 0);
+				if (qcow2->backing && chunk < qcow2->cluster_size)
+				{
+					const u64 start = offset - within;
+					qcow2_read(start, cluster.data(), static_cast<size_t>(
+						std::min<u64>(qcow2->cluster_size, u64(byte_size) - start)));
+				}
 				memcpy(cluster.data() + within, data, chunk);
 				qcow2_set_dirty(true);
 				

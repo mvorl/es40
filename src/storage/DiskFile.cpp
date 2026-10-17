@@ -618,8 +618,8 @@ bool CDiskFile::set_read_only(bool desired_read_only)
     // BIN/CUE media are read-only in this backend.
     if (is_bincue)
         return false;
-    // Backed and version 2 QCOW2 images remain read-only.
-    if (!desired_read_only && qcow2 && (qcow2->backing || qcow2->version != 3))
+    // Version 2 QCOW2 images remain read-only.
+    if (!desired_read_only && qcow2 && qcow2->version != 3)
         return false;
     if (!handle || filename.empty())
         return false;
@@ -668,6 +668,8 @@ bool CDiskFile::set_read_only(bool desired_read_only)
             if (image_identity(handle, filename) != identity)
                 FAILURE_1(IO, "%s: Image changed while reopening", devid_string);
             qcow2_open(filename.c_str());
+            if (qcow2->backing_identity != old_qcow2->backing_identity)
+                FAILURE_1(IO, "%s: Backing file changed while reopening", devid_string);
         }
         catch (...)
         {
