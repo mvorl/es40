@@ -1,0 +1,16 @@
+<map id="network" name="network">
+<area shape="rect" id="node3" href="dir_450cafc1c0b54ccdbdec0997809be7cf.html" title="emu" alt="" coords="5,101,52,128"/>
+<area shape="poly" id="edge1" href="dir_000013_000006.html" alt="" coords="123,55,62,95,60,90,121,51"/>
+<area shape="rect" id="edge1-headlabel" href="dir_000013_000006.html" title="1" alt="" coords="64,90,71,106"/>
+<area shape="rect" id="node4" href="dir_e914ee4d4a44400f1fdb170cb4ead18a.html" title="base" alt="" coords="76,101,125,128"/>
+<area shape="poly" id="edge4" href="dir_000013_000001.html" alt="" coords="136,52,117,89,113,86,132,55"/>
+<area shape="rect" id="edge4-headlabel" href="dir_000013_000001.html" title="1" alt="" coords="120,81,127,97"/>
+<area shape="rect" id="node5" href="dir_e8522150b400a43ebfdbd1fed060b8e2.html" title="system" alt="" coords="150,101,214,128"/>
+<area shape="poly" id="edge3" href="dir_000013_000022.html" alt="" coords="149,51,170,88,164,87,146,56"/>
+<area shape="rect" id="edge3-headlabel" href="dir_000013_000022.html" title="1" alt="" coords="169,73,176,89"/>
+<area shape="rect" id="node6" href="dir_9f351d46ce3cc29445a41dc3a31e6919.html" title="config" alt="" coords="238,101,294,128"/>
+<area shape="poly" id="edge2" href="dir_000013_000003.html" alt="" coords="162,51,233,93,228,94,160,56"/>
+<area shape="rect" id="edge2-headlabel" href="dir_000013_000003.html" title="2" alt="" coords="229,76,236,92"/>
+<area shape="rect" id="node2" href="dir_86cd378ccadc86853e904eb755c5658b.html" title="slirp&#45;rs" alt="" coords="198,27,259,53"/>
+<area shape="rect" id="clust1" href="dir_c901c14b65aa229498a52b725b3d4a2c.html" alt="" coords="96,16,270,64"/>
+</map>

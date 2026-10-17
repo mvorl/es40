@@ -1,0 +1,9 @@
+<map id="emu/SystemComponent.h" name="emu/SystemComponent.h">
+<area shape="rect" id="Node000001" title="Contains definitions for the base class for devices that connect to the chipset." alt="" coords="54,5,227,32"/>
+<area shape="rect" id="Node000002" href="$da/d00/a00080.html" title="Contains the definitions for the configuration file interpreter." alt="" coords="5,80,148,107"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="128,35,100,70,96,66,131,30"/>
+<area shape="rect" id="Node000004" title=" " alt="" coords="172,80,240,107"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="153,30,187,68,182,69,151,35"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="50,155,103,181"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="78,105,79,140,74,138,75,109"/>
+</map>

@@ -1,0 +1,5 @@
+<map id="Graphical Class Hierarchy" name="Graphical Class Hierarchy">
+<area shape="rect" id="Node000000" href="$dc/d00/a01426.html" title="Abstract base class for GUI implementations." alt="" coords="5,5,79,32"/>
+<area shape="rect" id="Node000001" href="$de/d00/a01462.html" title="GUI implementation using SDL3." alt="" coords="127,5,224,32"/>
+<area shape="poly" id="edge1_Node000000_Node000001" title=" " alt="" coords="94,16,129,18,123,19,94,21"/>
+</map>

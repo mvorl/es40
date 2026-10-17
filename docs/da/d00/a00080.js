@@ -1,0 +1,35 @@
+var a00080 =
+[
+    [ "CConfigurator", "df/d00/a00874.html", "df/d00/a00874" ],
+    [ "CConfigurator::SCfg_Value", "d5/d00/a00878.html", "d5/d00/a00878" ],
+    [ "CFG_MAX_CHILDREN", "da/d00/a00080.html#a9e4b15856c5b7125d730771228ac1cbd", null ],
+    [ "CFG_MAX_VALUES", "da/d00/a00080.html#ae95bf5de84faf510ad3c96fe84e48250", null ],
+    [ "classid", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78", [
+      [ "c_none", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78ad17363e03acfb84b492f642930e872bb", null ],
+      [ "c_tsunami", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a6a06a51666a0f4f1faac9f6ad6dfedc4", null ],
+      [ "c_ev68cb", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78adfd0c06f2000ee2af6890f3bd0f072ef", null ],
+      [ "c_serial", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a6a380bb72ab3d28f2af12a01ec8ee992", null ],
+      [ "c_floppy", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a20bc8a84fbbf7e2719fe7d4afa36b659", null ],
+      [ "c_ali", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78afec9307848c76c8cb0f89c02e7ecde00", null ],
+      [ "c_ali_ide", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78ae4e258ee47ec7746d921ca5bf254b544", null ],
+      [ "c_ali_usb", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a309b0ac1a51e4a39665ca89fcd843916", null ],
+      [ "c_ali_pmu", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78af2622a1125274a96ddf4ca435ecb71f4", null ],
+      [ "c_s3", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a56508c5b1470372a32984b3dbf22fd66", null ],
+      [ "c_gloria", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a89e0c343816a833fafe7a3f5a667d290", null ],
+      [ "c_cirrus", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78aea964c160b9af5f3f28ee85650171935", null ],
+      [ "c_radeon", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a339761a9dc6d943c103a8af84b14cb5e", null ],
+      [ "c_powerstorm", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a6ee070aa05d1cd2e39b2a97ca4137c88", null ],
+      [ "c_dec21143", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a1c0baeada57079cf2794bcc8792f0e5e", null ],
+      [ "c_lsi53c1020", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a89046cfeb9d3e9ce9d9be69014007514", null ],
+      [ "c_sym53c895", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a4635c459189e858b783ad607df3d1efa", null ],
+      [ "c_sym53c810", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a568b6903213bf76cf2929189db4ff91a", null ],
+      [ "c_mpu401", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a9b4dfe7abdeced7a557a1a14e9b01c3d", null ],
+      [ "c_es1370", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a038be3af052d42ffe593358c12584af8", null ],
+      [ "c_file", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78ab9a1a0dc1602a2140a393de93a0cff8a", null ],
+      [ "c_device", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a2269e5684b570e29b898c895e775d489", null ],
+      [ "c_ramdisk", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78ae0e0cfb9a99b311957430659fdd41dfc", null ],
+      [ "c_sdl", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a852eb387e5eea8ca50565cf232285b0b", null ],
+      [ "c_win32", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a0ac42c5cbf5c2d7b82c2ca2b8126c117", null ],
+      [ "c_x11", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a9b0d390668d361bcb43d441704548ae6", null ]
+    ] ]
+];

@@ -1,0 +1,25 @@
+var a00023 =
+[
+    [ "CException", "d8/d00/a00674.html", "d8/d00/a00674" ],
+    [ "CLogicException", "da/d00/a00678.html", "da/d00/a00678" ],
+    [ "CAssertionViolationException", "d7/d00/a00682.html", "d7/d00/a00682" ],
+    [ "CNullPointerException", "df/d00/a00686.html", "df/d00/a00686" ],
+    [ "CBugcheckException", "da/d00/a00690.html", "da/d00/a00690" ],
+    [ "CInvalidArgumentException", "da/d00/a00694.html", "da/d00/a00694" ],
+    [ "CNotImplementedException", "df/d00/a00698.html", "df/d00/a00698" ],
+    [ "CIllegalStateException", "dd/d00/a00702.html", "dd/d00/a00702" ],
+    [ "CRuntimeException", "d8/d00/a00706.html", "d8/d00/a00706" ],
+    [ "CSystemException", "d4/d00/a00710.html", "d4/d00/a00710" ],
+    [ "COutOfMemoryException", "df/d00/a00714.html", "df/d00/a00714" ],
+    [ "CIOException", "dc/d00/a00718.html", "dc/d00/a00718" ],
+    [ "CFileException", "db/d00/a00722.html", "db/d00/a00722" ],
+    [ "CFileNotFoundException", "d6/d00/a00726.html", "d6/d00/a00726" ],
+    [ "CConfigurationException", "d2/d00/a00730.html", "d2/d00/a00730" ],
+    [ "CThreadException", "d6/d00/a00734.html", "d6/d00/a00734" ],
+    [ "CWin32Exception", "d1/d00/a00738.html", "d1/d00/a00738" ],
+    [ "CSDLException", "d4/d00/a00742.html", "d4/d00/a00742" ],
+    [ "CGracefulException", "d4/d00/a00746.html", "d4/d00/a00746" ],
+    [ "CAbortException", "d9/d00/a00750.html", "d9/d00/a00750" ],
+    [ "ES40_DECLARE_EXCEPTION", "d3/d00/a00023.html#ae075d449e84c3af1e2f73368ff4b28a8", null ],
+    [ "ES40_IMPLEMENT_EXCEPTION", "d3/d00/a00023.html#a371dfcc5322b2e178a025c1f8f98edd9", null ]
+];

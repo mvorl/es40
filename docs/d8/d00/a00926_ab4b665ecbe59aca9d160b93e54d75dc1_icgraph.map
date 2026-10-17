@@ -1,0 +1,10 @@
+<map id="CAlphaCPU::flush_icache_asm" name="CAlphaCPU::flush_icache_asm">
+<area shape="rect" id="Node000001" title="Empty the instruction cache of lines with the ASM bit clear." alt="" coords="224,88,430,115"/>
+<area shape="rect" id="Node000002" href="$d8/d00/a00926.html#ab850857ac21880bcea9f51df94f3fe4e" title=" " alt="" coords="9,29,172,56"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="253,85,147,59,147,54,258,82"/>
+<area shape="rect" id="Node000003" href="$d8/d00/a00926.html#a30604feb5e8b442dd00cf55044ff03e0" title="Implementation of CALL_PAL MTPR_TBIAP opcode." alt="" coords="5,80,176,123"/>
+<area shape="poly" id="edge3_Node000001_Node000003" title=" " alt="" coords="205,102,176,104,176,99,210,101"/>
+<area shape="rect" id="Node000004" href="$dc/d00/a01006.html#a75e12b6679eb57f5eb85a3862ed85ddb" title=" " alt="" coords="35,147,146,173"/>
+<area shape="poly" id="edge4_Node000001_Node000004" title=" " alt="" coords="258,119,147,149,145,144,253,119"/>
+<area shape="poly" id="edge2_Node000002_Node000002" title=" " alt="" coords="130,15,118,10,90,8,66,10,52,15,49,20,56,28,50,29,44,21,49,11,64,5,91,3,119,5,135,14"/>
+</map>

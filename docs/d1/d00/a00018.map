@@ -1,0 +1,7 @@
+<map id="banner.h" name="banner.h">
+<area shape="rect" id="Node000001" title="Startup banner shared by the es40 and es40&#45;cfg executables." alt="" coords="42,5,114,32"/>
+<area shape="rect" id="Node000002" title=" " alt="" coords="5,80,66,107"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="73,31,53,68,48,65,69,34"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="90,80,154,107"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="87,30,109,67,104,67,85,35"/>
+</map>

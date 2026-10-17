@@ -1,0 +1,4 @@
+<map id="bx_keymap_c::loadKeymap" name="bx_keymap_c::loadKeymap">
+<area shape="rect" id="Node000001" title="Loads the configuration specified keymap file if keymapping is enabled using convertStringToSymbol to..." alt="" coords="5,29,188,56"/>
+<area shape="poly" id="edge1_Node000001_Node000001" title=" " alt="" coords="126,14,117,10,96,8,78,10,67,15,65,20,70,29,65,28,60,21,64,11,76,5,97,3,118,5,131,14"/>
+</map>

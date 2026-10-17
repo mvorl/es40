@@ -1,0 +1,77 @@
+<map id="CPU/AlphaCPU.h" name="CPU/AlphaCPU.h">
+<area shape="rect" id="Node000001" title="Contains the definitions for the emulated DecChip 21264CB EV68 Alpha processor." alt="" coords="995,5,1122,32"/>
+<area shape="rect" id="Node000002" title=" " alt="" coords="896,155,957,181"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="1043,31,1014,55,986,82,962,112,942,143,939,139,958,109,982,78,1011,51,1038,34"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="1197,80,1254,107"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="1088,30,1185,74,1180,73,1087,35"/>
+<area shape="rect" id="Node000004" href="$d6/d00/a00026.html" title=" " alt="" coords="156,80,316,107"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="994,28,331,86,330,81,995,23"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="206,155,266,181"/>
+<area shape="poly" id="edge10_Node000001_Node000005" title=" " alt="" coords="992,23,771,41,632,58,493,83,377,116,281,151,279,146,375,110,491,77,631,52,771,35,997,21"/>
+<area shape="rect" id="Node000009" href="$d6/d00/a00233.html" title=" " alt="" coords="1278,80,1373,107"/>
+<area shape="poly" id="edge8_Node000001_Node000009" title=" " alt="" coords="1105,30,1267,75,1261,76,1105,35"/>
+<area shape="rect" id="Node000011" href="$d6/d00/a00287.html" title="Contains definitions for the base class for devices that connect to the chipset." alt="" coords="1531,155,1704,181"/>
+<area shape="poly" id="edge11_Node000001_Node000011" title=" " alt="" coords="1073,30,1121,68,1153,88,1186,104,1233,115,1318,127,1518,155,1512,155,1317,133,1232,120,1184,109,1150,93,1118,72,1072,35"/>
+<area shape="rect" id="Node000015" href="$d7/d00/a00614.html" title="Contains the definitions for the emulated Typhoon Chipset devices." alt="" coords="996,80,1121,107"/>
+<area shape="poly" id="edge15_Node000001_Node000015" title=" " alt="" coords="1060,30,1061,66,1057,63,1057,35"/>
+<area shape="rect" id="Node000022" href="$d7/d00/a00182.html" title="Contains some macro definitions and some inline functions for the Alpha CPU." alt="" coords="1397,80,1483,107"/>
+<area shape="poly" id="edge30_Node000001_Node000022" title=" " alt="" coords="1123,28,1385,79,1380,80,1123,34"/>
+<area shape="rect" id="Node000023" href="$d9/d00/a00146.html" title=" " alt="" coords="504,80,635,107"/>
+<area shape="poly" id="edge31_Node000001_Node000023" title=" " alt="" coords="992,30,651,83,650,77,997,28"/>
+<area shape="poly" id="edge4_Node000004_Node000005" title=" " alt="" coords="237,105,238,140,234,138,235,110"/>
+<area shape="rect" id="Node000006" title=" " alt="" coords="5,155,131,181"/>
+<area shape="poly" id="edge5_Node000004_Node000006" title=" " alt="" coords="205,109,113,150,110,146,208,105"/>
+<area shape="rect" id="Node000007" title=" " alt="" coords="468,304,529,331"/>
+<area shape="poly" id="edge6_Node000004_Node000007" title=" " alt="" coords="224,105,210,124,198,142,192,161,196,180,218,212,247,238,280,260,316,277,390,299,456,312,450,312,389,304,314,282,278,264,244,242,214,215,191,182,187,161,193,140,206,121,220,109"/>
+<area shape="rect" id="Node000008" title=" " alt="" coords="815,155,873,181"/>
+<area shape="poly" id="edge7_Node000004_Node000008" title=" " alt="" coords="316,96,532,113,664,129,802,154,797,155,664,134,531,118,316,101"/>
+<area shape="rect" id="Node000010" title=" " alt="" coords="1728,155,1789,181"/>
+<area shape="poly" id="edge9_Node000009_Node000010" title=" " alt="" coords="1373,102,1386,104,1476,118,1548,126,1621,135,1716,154,1711,154,1620,140,1548,131,1476,123,1385,109,1373,107"/>
+<area shape="rect" id="Node000012" href="$da/d00/a00080.html" title="Contains the definitions for the configuration file interpreter." alt="" coords="1530,229,1672,256"/>
+<area shape="poly" id="edge12_Node000011_Node000012" title=" " alt="" coords="1617,180,1609,216,1606,212,1613,184"/>
+<area shape="rect" id="Node000014" title=" " alt="" coords="1697,229,1764,256"/>
+<area shape="poly" id="edge14_Node000011_Node000014" title=" " alt="" coords="1638,179,1701,221,1695,220,1636,184"/>
+<area shape="rect" id="Node000013" title=" " alt="" coords="1520,304,1573,331"/>
+<area shape="poly" id="edge13_Node000012_Node000013" title=" " alt="" coords="1594,255,1567,294,1564,289,1589,258"/>
+<area shape="poly" id="edge23_Node000015_Node000002" title=" " alt="" coords="1038,106,964,150,962,145,1033,108"/>
+<area shape="poly" id="edge24_Node000015_Node000005" title=" " alt="" coords="994,100,708,123,330,157,282,163,281,158,329,152,708,118,999,98"/>
+<area shape="poly" id="edge26_Node000015_Node000008" title=" " alt="" coords="1024,107,888,155,886,150,1019,108"/>
+<area shape="poly" id="edge16_Node000015_Node000011" title=" " alt="" coords="1121,101,1140,104,1518,154,1512,155,1140,109,1121,107"/>
+<area shape="poly" id="edge27_Node000015_Node000013" title=" " alt="" coords="1121,102,1132,104,1208,110,1305,116,1401,127,1440,138,1470,153,1537,291,1532,289,1466,157,1438,143,1400,133,1305,121,1207,115,1132,109,1122,108"/>
+<area shape="rect" id="Node000016" href="$d7/d00/a00254.html" title="Contains the definitions for the CPU tracing engine." alt="" coords="1318,155,1456,181"/>
+<area shape="poly" id="edge17_Node000015_Node000016" title=" " alt="" coords="1116,105,1317,151,1312,151,1116,110"/>
+<area shape="rect" id="Node000018" href="$d4/d00/a00608.html" title=" " alt="" coords="1032,155,1109,181"/>
+<area shape="poly" id="edge19_Node000015_Node000018" title=" " alt="" coords="1062,105,1068,141,1064,138,1059,109"/>
+<area shape="rect" id="Node000019" title=" " alt="" coords="969,229,1026,256"/>
+<area shape="poly" id="edge29_Node000015_Node000019" title=" " alt="" coords="1051,106,1022,156,1004,216,1000,212,1018,154,1047,109"/>
+<area shape="rect" id="Node000020" title=" " alt="" coords="1175,229,1244,256"/>
+<area shape="poly" id="edge25_Node000015_Node000020" title=" " alt="" coords="1122,103,1202,123,1236,137,1257,153,1263,170,1259,188,1236,221,1234,216,1254,186,1258,171,1253,156,1233,142,1200,128,1121,108"/>
+<area shape="rect" id="Node000021" title=" " alt="" coords="1133,155,1243,181"/>
+<area shape="poly" id="edge28_Node000015_Node000021" title=" " alt="" coords="1082,105,1155,147,1149,146,1081,110"/>
+<area shape="rect" id="Node000017" href="$d9/d00/a00257.html" title="Contains the datatype definitions for use with Microsoft Visual C++ and Linux." alt="" coords="1342,229,1431,256"/>
+<area shape="poly" id="edge18_Node000016_Node000017" title=" " alt="" coords="1388,180,1389,215,1385,212,1385,184"/>
+<area shape="poly" id="edge20_Node000018_Node000007" title=" " alt="" coords="1072,180,1065,220,1055,241,1040,258,1001,278,946,294,880,305,807,312,660,319,544,320,544,314,660,314,806,307,879,299,945,288,999,273,1037,254,1051,238,1060,218,1068,183"/>
+<area shape="poly" id="edge21_Node000018_Node000019" title=" " alt="" coords="1060,181,1022,221,1020,216,1055,183"/>
+<area shape="poly" id="edge22_Node000018_Node000020" title=" " alt="" coords="1095,179,1174,222,1169,221,1094,184"/>
+<area shape="poly" id="edge32_Node000023_Node000007" title=" " alt="" coords="501,103,401,124,358,139,331,157,316,181,311,205,316,229,330,254,355,279,387,296,421,306,456,314,450,314,420,311,385,301,352,283,326,258,311,231,306,205,311,179,327,153,355,134,400,119,505,101"/>
+<area shape="rect" id="Node000024" href="$d1/d00/a00230.html" title=" " alt="" coords="341,155,427,181"/>
+<area shape="poly" id="edge33_Node000023_Node000024" title=" " alt="" coords="535,108,432,151,430,146,540,106"/>
+<area shape="rect" id="Node000026" href="$dd/d00/a00221.html" title=" " alt="" coords="451,155,536,181"/>
+<area shape="poly" id="edge36_Node000023_Node000026" title=" " alt="" coords="558,106,519,146,516,142,554,109"/>
+<area shape="rect" id="Node000028" href="$d9/d00/a00227.html" title=" " alt="" coords="560,155,654,181"/>
+<area shape="poly" id="edge39_Node000023_Node000028" title=" " alt="" coords="577,105,596,142,591,140,575,110"/>
+<area shape="rect" id="Node000030" href="$d3/d00/a00215.html" title=" " alt="" coords="678,155,791,181"/>
+<area shape="poly" id="edge42_Node000023_Node000030" title=" " alt="" coords="598,105,694,148,689,148,598,110"/>
+<area shape="rect" id="Node000025" href="$dc/d00/a00167.html" title=" " alt="" coords="341,229,430,256"/>
+<area shape="poly" id="edge34_Node000024_Node000025" title=" " alt="" coords="386,180,387,215,383,212,383,184"/>
+<area shape="poly" id="edge35_Node000025_Node000007" title=" " alt="" coords="406,254,469,296,463,295,404,259"/>
+<area shape="rect" id="Node000027" href="$d6/d00/a00161.html" title=" " alt="" coords="454,229,543,256"/>
+<area shape="poly" id="edge37_Node000026_Node000027" title=" " alt="" coords="496,180,499,215,494,212,493,184"/>
+<area shape="poly" id="edge38_Node000027_Node000007" title=" " alt="" coords="501,255,501,290,497,287,497,258"/>
+<area shape="rect" id="Node000029" href="$db/d00/a00164.html" title=" " alt="" coords="567,229,665,256"/>
+<area shape="poly" id="edge40_Node000028_Node000029" title=" " alt="" coords="610,180,615,216,610,213,607,184"/>
+<area shape="poly" id="edge41_Node000029_Node000007" title=" " alt="" coords="598,256,533,298,531,293,593,257"/>
+<area shape="rect" id="Node000031" href="$d6/d00/a00158.html" title=" " alt="" coords="688,229,805,256"/>
+<area shape="poly" id="edge43_Node000030_Node000031" title=" " alt="" coords="738,180,744,216,740,213,735,184"/>
+<area shape="poly" id="edge44_Node000031_Node000007" title=" " alt="" coords="706,256,544,306,543,300,701,257"/>
+</map>

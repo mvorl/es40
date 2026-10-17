@@ -1,0 +1,31 @@
+<map id="chipset/AliM1543C.h" name="chipset/AliM1543C.h">
+<area shape="rect" id="Node000001" title="Contains the definitions for the ISA part of the emulated Ali M1543C chipset." alt="" coords="1132,5,1274,32"/>
+<area shape="rect" id="Node000002" href="$d7/d00/a00002.html" title="Defines the entry point for the application." alt="" coords="5,80,108,107"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="1114,21,935,28,688,37,405,55,119,83,109,84,108,79,119,77,405,49,687,32,935,22,1120,21"/>
+<area shape="rect" id="Node000003" href="$d5/d00/a00140.html" title="Contains the code for the emulated DecChip 21264CB EV68 Alpha processor." alt="" coords="131,80,272,107"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="1114,24,754,45,520,61,285,83,273,84,273,79,284,77,520,56,753,40,1119,23"/>
+<area shape="rect" id="Node000004" href="$d6/d00/a00047.html" title="Contains the code for the emulated Ali M1543C chipset devices." alt="" coords="297,80,453,107"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="1119,25,827,49,465,83,454,84,453,79,464,77,827,44,1114,26"/>
+<area shape="rect" id="Node000005" href="$dc/d00/a00053.html" title="Contains the code for the emulated Ali M1543C IDE chipset part." alt="" coords="477,80,657,107"/>
+<area shape="poly" id="edge4_Node000001_Node000005" title=" " alt="" coords="1119,30,669,83,658,84,658,79,668,77,1114,30"/>
+<area shape="rect" id="Node000006" href="$d3/d00/a00059.html" title="Stub PMU/ACPI device at PCI 0:17:0 for the ALi M1543C bridge." alt="" coords="681,80,869,107"/>
+<area shape="poly" id="edge5_Node000001_Node000006" title=" " alt="" coords="1119,34,851,82,850,77,1114,35"/>
+<area shape="rect" id="Node000007" href="$d0/d00/a00071.html" title="Contains the code for the emulated DMA controller." alt="" coords="894,80,1016,107"/>
+<area shape="poly" id="edge6_Node000001_Node000007" title=" " alt="" coords="1148,36,999,82,998,77,1143,37"/>
+<area shape="rect" id="Node000008" href="$d1/d00/a00077.html" title="Contains the code for the configuration file interpreter." alt="" coords="1041,80,1197,107"/>
+<area shape="poly" id="edge7_Node000001_Node000008" title=" " alt="" coords="1179,42,1135,82,1133,77,1174,43"/>
+<area shape="rect" id="Node000009" href="$d0/d00/a00302.html" title="Contains the code for the emulated Cirrus CL GD&#45;5434 Video Card device." alt="" coords="1221,80,1356,107"/>
+<area shape="poly" id="edge8_Node000001_Node000009" title=" " alt="" coords="1230,40,1276,80,1271,79,1228,45"/>
+<area shape="rect" id="Node000010" href="$db/d00/a00350.html" title=" " alt="" coords="1380,80,1531,107"/>
+<area shape="poly" id="edge9_Node000001_Node000010" title=" " alt="" coords="1262,34,1414,80,1408,79,1261,39"/>
+<area shape="rect" id="Node000011" href="$d8/d00/a00410.html" title="Contains the code for the emulated Keyboard and mouse devices and controller." alt="" coords="1555,80,1670,107"/>
+<area shape="poly" id="edge10_Node000001_Node000011" title=" " alt="" coords="1290,33,1557,82,1552,82,1290,38"/>
+<area shape="rect" id="Node000012" href="$df/d00/a00416.html" title="Contains the code for the emulated Port 80 device." alt="" coords="1694,80,1792,107"/>
+<area shape="poly" id="edge11_Node000001_Node000012" title=" " alt="" coords="1290,26,1471,48,1682,77,1696,82,1691,82,1681,83,1470,53,1289,32"/>
+<area shape="rect" id="Node000013" href="$db/d00/a00422.html" title="Contains the code for the emulated Serial Port devices." alt="" coords="1816,80,1910,107"/>
+<area shape="poly" id="edge12_Node000001_Node000013" title=" " alt="" coords="1290,23,1523,43,1664,58,1805,77,1819,82,1813,82,1804,83,1663,64,1523,48,1290,29"/>
+<area shape="rect" id="Node000014" href="$d8/d00/a00557.html" title="Contains the code for the emulated Floppy Controller devices." alt="" coords="1934,80,2123,107"/>
+<area shape="poly" id="edge13_Node000001_Node000014" title=" " alt="" coords="1290,24,1571,46,1922,77,1936,81,1931,81,1922,83,1571,51,1290,29"/>
+<area shape="rect" id="Node000015" href="$dd/d00/a00611.html" title="Contains the code for the emulated Typhoon Chipset devices." alt="" coords="2147,80,2286,107"/>
+<area shape="poly" id="edge14_Node000001_Node000015" title=" " alt="" coords="1290,21,1658,39,1896,56,2135,77,2150,81,2144,81,2135,83,1895,61,1658,44,1290,26"/>
+</map>

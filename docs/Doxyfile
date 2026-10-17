@@ -1,0 +1,83 @@
+# Generate from the repository root: doxygen docs/Doxyfile
+# Based on extras/Doxyfile; documentation text and diagram coverage are preserved.
+# Requires Doxygen and Graphviz (dot) on PATH.
+
+PROJECT_NAME           = ES40
+PROJECT_NUMBER         = 0.17+
+OUTPUT_DIRECTORY       = docs
+ALWAYS_DETAILED_SEC    = YES
+STRIP_FROM_PATH        = src
+SHORT_NAMES            = YES
+JAVADOC_AUTOBRIEF      = YES
+QT_AUTOBRIEF           = YES
+MULTILINE_CPP_IS_BRIEF = YES
+SEPARATE_MEMBER_PAGES  = NO
+TAB_SIZE               = 8
+OPTIMIZE_OUTPUT_FOR_C  = YES
+TYPEDEF_HIDES_STRUCT   = YES
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+INTERNAL_DOCS          = YES
+CASE_SENSE_NAMES       = NO
+QUIET                  = YES
+WARN_NO_PARAMDOC       = YES
+WARN_LOGFILE           = docs/doxygen-warnings.log
+INPUT                  = src
+FILE_PATTERNS          = *.c \
+                         *.cc \
+                         *.cxx \
+                         *.cpp \
+                         *.c++ \
+                         *.d \
+                         *.java \
+                         *.ii \
+                         *.ixx \
+                         *.ipp \
+                         *.i++ \
+                         *.inl \
+                         *.h \
+                         *.hh \
+                         *.hxx \
+                         *.hpp \
+                         *.h++ \
+                         *.idl \
+                         *.odl \
+                         *.cs \
+                         *.php \
+                         *.php3 \
+                         *.inc \
+                         *.m \
+                         *.mm \
+                         *.dox \
+                         *.py \
+                         *.f90 \
+                         CHANGELOG
+RECURSIVE              = YES
+SOURCE_BROWSER         = YES
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+HTML_OUTPUT            = .
+GENERATE_LATEX         = NO
+LATEX_CMD_NAME         = latex
+PDF_HYPERLINKS         = NO
+USE_PDFLATEX           = NO
+MACRO_EXPANSION        = YES
+PREDEFINED             = HAVE_PCAP \
+                         HAVE_SDL \
+                         IDB \
+                         LS_MASTER
+HAVE_DOT               = YES
+DOT_NUM_THREADS        = 16
+DOT_BATCH_SIZE         = 8
+TEMPLATE_RELATIONS     = YES
+CALL_GRAPH             = YES
+CALLER_GRAPH           = YES
+DOT_PATH               =
+MAX_DOT_GRAPH_DEPTH    = 1000
+
+# Distribute generated content using Doxygen's own directory layout.
+CREATE_SUBDIRS         = YES
+CREATE_SUBDIRS_LEVEL   = 0
+GENERATE_TREEVIEW      = YES
+SEARCHENGINE           = YES
