@@ -2170,10 +2170,11 @@ int CAlphaCPU::jit_read(CAlphaCPU* cpu, u64 va, u64 descr, u64* out)
 		{
 			// Verify/legacy callers do not carry an instruction word and retain the old
 			// side-effect-free retry contract.
-			const int i = cpu->FindTBEntry(va, ACCESS_READ);
+			const auto access = cpu->m_profile.mmu_address.access(*cpu, ACCESS_READ);
+			const int i = cpu->FindTBEntry(va, ACCESS_READ, access.asn);
 			if (i < 0) return 1;
 			const auto& e = cpu->state.tb[TB_INDEX_DATA][i];
-			if (!e.access[0][cpu->state.cm] || e.fault[0]) return 1;
+			if (!e.access[0][access.mode] || e.fault[0]) return 1;
 			phys = e.phys | (va & e.keep_mask);
 		}
 		dpc.phys_base = phys & ~U64(0x1FFF);
@@ -2432,10 +2433,11 @@ int CAlphaCPU::jit_read_locked(CAlphaCPU* cpu, u64 va, u64 descr, u64* out)
 		{
 			// Differential replay retains the side-effect-free lookup used by the
 			// interpreter.
-			const int i = cpu->FindTBEntry(va, ACCESS_READ);
+			const auto access = cpu->m_profile.mmu_address.access(*cpu, ACCESS_READ);
+			const int i = cpu->FindTBEntry(va, ACCESS_READ, access.asn);
 			if (i < 0) return 1;
 			const auto& e = cpu->state.tb[TB_INDEX_DATA][i];
-			if (!e.access[0][cpu->state.cm] || e.fault[0]) return 1;
+			if (!e.access[0][access.mode] || e.fault[0]) return 1;
 			phys = e.phys | (va & e.keep_mask);
 		}
 		dpc.phys_base = phys & ~U64(0x1FFF);
@@ -2499,10 +2501,11 @@ int CAlphaCPU::jit_read_vpte(CAlphaCPU* cpu, u64 va, u64 descr, u64* out)
 	else
 	{
 		// The reference interpreter already completed this instruction before verify replay.
-		const int i = cpu->FindTBEntry(va, ACCESS_READ);
+		const auto access = cpu->m_profile.mmu_address.access(*cpu, flags);
+		const int i = cpu->FindTBEntry(va, flags, access.asn);
 		if (i < 0) return 1;
 		const auto& e = cpu->state.tb[TB_INDEX_DATA][i];
-		const int cm = vpte ? 0 : alt ? cpu->state.alt_cm : cpu->state.cm;
+		const int cm = access.mode;
 		if (!e.access[0][cm] || e.fault[0]) return 1;
 		if (wchk && (!e.access[1][cm] || e.fault[1])) return 1;
 		phys = e.phys | (va & e.keep_mask);
@@ -2550,10 +2553,11 @@ int CAlphaCPU::jit_read_wchk(CAlphaCPU* cpu, u64 va, int size_bits, u64* out)
 	const u64 amask = (u64)(size_bits / 8) - 1;
 	if (va & amask) return 1;                 // unaligned: let the interpreter handle it
 
-	const int i = cpu->FindTBEntry(va, ACCESS_READ);
+	const auto access = cpu->m_profile.mmu_address.access(*cpu, ACCESS_READ | WRCHK);
+	const int i = cpu->FindTBEntry(va, ACCESS_READ | WRCHK, access.asn);
 	if (i < 0) return 1;                       // TB miss
 	const auto& e = cpu->state.tb[TB_INDEX_DATA][i];
-	const int cm = cpu->state.cm;
+	const int cm = access.mode;
 	if (!e.access[0][cm]) return 1;            // no read access (ACV)
 	if (!e.access[1][cm]) return 1;            // no write access -- WrChk fails (ACV)
 	if (e.fault[0] || e.fault[1]) return 1;    // FOR/FOW: bail so the interpreter vectors the fault
@@ -2662,10 +2666,11 @@ int CAlphaCPU::jit_write(CAlphaCPU* cpu, u64 va, u64 descr, u64 value)
 		}
 		else
 		{
-			const int i = cpu->FindTBEntry(va, ACCESS_WRITE);
+			const auto access = cpu->m_profile.mmu_address.access(*cpu, ACCESS_WRITE);
+			const int i = cpu->FindTBEntry(va, ACCESS_WRITE, access.asn);
 			if (i < 0) return 1;
 			const auto& e = cpu->state.tb[TB_INDEX_DATA][i];
-			if (!e.access[1][cpu->state.cm] || e.fault[1]) return 1;
+			if (!e.access[1][access.mode] || e.fault[1]) return 1;
 			phys = e.phys | (va & e.keep_mask);
 		}
 		dpc.phys_base = phys & ~U64(0x1FFF);
@@ -2753,10 +2758,11 @@ u64 CAlphaCPU::jit_stc(CAlphaCPU* cpu, u64 va, u64 descr, u64 value)
 #if defined(JIT_REGPROF) && defined(_WIN32)
 		cpu->m_dpc_miss[dpc.virt_page == ~U64(0) ? 0 : dpc.virt_page != vp ? 1 : 2]++;
 #endif
-		const int i = cpu->FindTBEntry(va, ACCESS_WRITE);
+		const auto access = cpu->m_profile.mmu_address.access(*cpu, ACCESS_WRITE);
+		const int i = cpu->FindTBEntry(va, ACCESS_WRITE, access.asn);
 		if (i < 0) return U64(0x100);                                        // TB miss
 		const auto& e = cpu->state.tb[TB_INDEX_DATA][i];
-		if (!e.access[1][cpu->state.cm]) return U64(0x100);                  // protection (ACV)
+		if (!e.access[1][access.mode]) return U64(0x100);                     // protection (ACV)
 		if (e.fault[1]) return U64(0x100);                                   // fault-on-write (FOW)
 		phys = e.phys | (va & e.keep_mask);
 		dpc.phys_base = phys & ~U64(0x1FFF);
@@ -4147,15 +4153,17 @@ int CAlphaCPU::RestoreState(FILE* f)
   **/
 int CAlphaCPU::FindTBEntry(u64 virt, int flags)
 {
+	return FindTBEntry(virt, flags, m_profile.mmu_address.access(*this, flags).asn);
+}
+
+int CAlphaCPU::FindTBEntry(u64 virt, int flags, int asn)
+{
 
 	// Use ITB (tb[1]) if ACCESS_EXEC is set, otherwise the unified Dstream TB (tb[0]).
 	int t = (flags & ACCESS_EXEC) ? TB_INDEX_ITB : TB_INDEX_DATA;
-	int asn = state.asn;
-
 	int rw = (flags & ACCESS_WRITE) ? 1 : 0;
 
-#define TB_ASN_MATCH(entry) ((entry).asm_bit || \
-	((entry).asn == ((t == TB_INDEX_ITB) ? asn : state.asn0)))
+#define TB_ASN_MATCH(entry) ((entry).asm_bit || (entry).asn == asn)
 
 	// Page-indexed hint first, then the last match, then the linear scan (which refills the hint).
 	const u32 h = (u32)(virt >> 13) & 255;
@@ -4183,17 +4191,6 @@ int CAlphaCPU::FindTBEntry(u64 virt, int flags)
 
 #undef TB_ASN_MATCH
 	return -1;
-}
-
-static inline u64 alpha_sext_u64_43(u64 a)
-{
-	return (a & U64(0x0000040000000000)) ? (a | U64(0xfffff80000000000))
-		: (a & U64(0x000007ffffffffff));
-}
-
-static inline bool alpha_valid_va_form(u64 virt, bool va48)
-{
-	return (va48 ? sext_u64_48(virt) : alpha_sext_u64_43(virt)) == virt;
 }
 
 int CAlphaCPU::initiate_acv_fault(u64 virt, int flags, u32 ins)
@@ -4288,24 +4285,7 @@ int CAlphaCPU::virt2phys(u64 virt, u64* phys, int flags, bool* asm_bit, u32 ins)
 	int   i;
 	int   res;
 
-	int   spe = (flags & ACCESS_EXEC) ? state.i_ctl_spe : state.m_ctl_spe;
-	/*
-	 * Access-check current mode selection.
-	 *  - VPTE (HRM 6.4.1 Table 6-3): Virtual/VPTE accesses are LD_VPTE
-	 *    page-table fetches and use *kernel mode* for permission checks
-	 *    regardless of executing CM.
-	 *  - ALT (HRM 6.4.1 Table 6-3 row 1102, Table 6-4 row 1102): the
-	 *    /alt variants use DTB_ALT_MODE for permission checks.
-	 *  - Otherwise: current mode.
-	 * Order matters: VPTE wins over ALT (VPTE is never combined with ALT in
-	 * any valid HW_LD encoding, but the precedence is clear).
-	 */
-	int   cm = (flags & VPTE) ? 0 :
-		(flags & ALT) ? state.alt_cm :
-		state.cm;
 	bool  forreal = !(flags & FAKE);
-	bool  va48 = (flags & ACCESS_EXEC) ? (state.i_ctl_va_mode & 1)
-		: (state.va_ctl_va_mode & 1);
 
 #if defined IDB
 	if (bListing)
@@ -4322,7 +4302,10 @@ int CAlphaCPU::virt2phys(u64 virt, u64* phys, int flags, bool* asm_bit, u32 ins)
 			printf("TB %" PRIx64 ",%x: ", virt, flags);
 #endif
 
-	if (!alpha_valid_va_form(virt, va48))
+	const auto access = m_profile.mmu_address.access(*this, flags);
+	const int cm = access.mode;
+	const auto address = m_profile.mmu_address.map(*this, virt, flags, cm);
+	if (address.kind == AlphaMMUAddressKind::Invalid)
 	{
 #if defined(DEBUG_TB)
 		if (forreal)
@@ -4336,80 +4319,36 @@ int CAlphaCPU::virt2phys(u64 virt, u64* phys, int flags, bool* asm_bit, u32 ins)
 		return initiate_acv_fault(virt, flags, ins);
 	}
 
-	// try superpage first.
-	if (spe)
+	if (address.kind == AlphaMMUAddressKind::AccessViolation)
 	{
-		bool spe_hit = false;
-		u64 spe_phys = 0;
-
 #if defined(DEBUG_TB)
 		if (forreal)
 #if defined(IDB)
 			if (bTB_Debug)
 #endif
-				printf("try spe...");
+				printf("direct-acv\n");
 #endif
-
-		// HRM 5.3.9: SPE[2], when set, enables superpage mapping when VA[47:46] = 2.
-		// In this mode, VA[43:13] are mapped directly to PA[43:13] and VA[45:44] are
-		// ignored.
-		if (((virt & SPE_2_MASK) == SPE_2_MATCH) && (spe & 4))
-		{
-			spe_hit = true;
-			spe_phys = virt & SPE_2_MAP;
-		}
-
-		// SPE[1], when set, enables superpage mapping when VA[47:41] = 7E. In
-		// this mode, VA[40:13] are mapped directly to PA[40:13] and PA[43:41] are
-		// copies of PA[40] (sign extension).
-		else if (((virt & SPE_1_MASK) == SPE_1_MATCH) && (spe & 2))
-		{
-			spe_hit = true;
-			spe_phys = (virt & SPE_1_MAP) | ((virt & SPE_1_TEST) ? SPE_1_ADD : 0);
-		}
-
-		// SPE[0], when set, enables superpage mapping when VA[47:30] = 3FFFE.
-		// In this mode, VA[29:13] are mapped directly to PA[29:13] and PA[43:30] are
-		// cleared.
-		else if (((virt & SPE_0_MASK) == SPE_0_MATCH) && (spe & 1))
-		{
-			spe_hit = true;
-			spe_phys = virt & SPE_0_MAP;
-		}
-
-		if (spe_hit)
-		{
-			if (cm)
-			{
+		if (!forreal)
+			return -1;
+		return initiate_acv_fault(virt, flags, ins);
+	}
+	if (address.kind == AlphaMMUAddressKind::Direct)
+	{
+		*phys = address.phys;
+		if (asm_bit)
+			*asm_bit = true;
 #if defined(DEBUG_TB)
-				if (forreal)
+		if (forreal)
 #if defined(IDB)
-					if (bTB_Debug)
+			if (bTB_Debug)
 #endif
-						printf("SPE-ACV\n");
+				printf("direct\n");
 #endif
-				if (!forreal)
-					return -1;
-				return initiate_acv_fault(virt, flags, ins);
-			}
-
-			*phys = spe_phys;
-			// Superpage translations are ASN-independent; treat them as ASM.
-			if (asm_bit)
-				*asm_bit = true;
-#if defined(DEBUG_TB)
-			if (forreal)
-#if defined(IDB)
-				if (bTB_Debug)
-#endif
-					printf("SPE\n");
-#endif
-			return 0;
-		}
+		return 0;
 	}
 
 	// try to find it in the translation buffer
-	i = FindTBEntry(virt, flags);
+	i = FindTBEntry(virt, flags, access.asn);
 
 	if (i < 0)       // not found, either trap to PALcode, or try to load the TB entry and try again.
 	{

@@ -32,11 +32,17 @@
 class Ev68MMU
 {
 public:
+  static AlphaMMUAccess access(const CAlphaCPU& cpu, int access_flags);
+  static AlphaMMUAddress map_address(const CAlphaCPU& cpu, std::uint64_t virt,
+                                     int access_flags, int mode);
   static AlphaTBFill decode_fill(const CAlphaCPU& cpu, std::uint64_t virt,
                                  std::uint64_t pte_phys, std::uint64_t pte_flags,
                                  int access_flags);
 };
 
 inline constexpr AlphaTBFillPolicy kEv68TBFillPolicy{&Ev68MMU::decode_fill};
+inline constexpr AlphaMMUAddressPolicy kEv68MMUAddressPolicy{
+  &Ev68MMU::access, &Ev68MMU::map_address
+};
 
 #endif

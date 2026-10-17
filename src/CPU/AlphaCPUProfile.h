@@ -44,6 +44,7 @@ struct AlphaCPUProfile
   AlphaIPRReadPolicy ipr_read = kEv68IPRReadPolicy; // Immutable family IPR reads.
   AlphaIPRWritePolicy ipr_write = kEv68IPRWritePolicy; // Immutable family IPR writes.
   AlphaTBFillPolicy tb_fill = kEv68TBFillPolicy; // Immutable family PTE decoding.
+  AlphaMMUAddressPolicy mmu_address = kEv68MMUAddressPolicy; // Immutable address rules.
 };
 
 // EV68CB pass 4: BWX | FIX | CIX | MVI | precise traps | prefetch modify.

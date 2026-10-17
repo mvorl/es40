@@ -259,6 +259,7 @@ class CAlphaCPU : public CSystemComponent, public CRunnable
 {
   friend class AlphaCPUAlignmentTest;
   friend class Ev68IPR;
+  friend class Ev68MMU;
 public:
   void          flush_icache_asm();
   virtual int   SaveState(FILE* f);
@@ -350,6 +351,7 @@ private:
   bool            icache_line_matches(int i, u64 address) const;
   bool            icache_hit(int i, u64 address) const;
   int             FindTBEntry(u64 virt, int flags);
+  int             FindTBEntry(u64 virt, int flags, int asn);
   int             initiate_acv_fault(u64 virt, int flags, u32 instruction);
   void            add_tb(u64 virt, u64 pte_phys, u64 pte_flags, int flags, int asn);
   void            add_tb_i(u64 virt, u64 pte);
@@ -585,6 +587,8 @@ private:
   
   // Data page translation cache: direct-mapped by virtual page (kDpcEntries slots/dir) so a
   // multi-page access pattern doesn't thrash a single slot. The inline load checks one slot.
+  // Cached normal accesses use the current CM/ASN0 context; family control writes that
+  // affect address rules must invalidate it. Privileged VPTE/ALT accesses bypass it.
   static constexpr int kDpcBits    = 7;                  // 128 slots per mode bank (8KB pages -> 1 MB)
   // Page-indexed hint into state.tb[]: FindTBEntry and add_tb probe it before anything else.
   // Entries are validated on use, so a stale hint is harmless and nothing needs clearing.

@@ -896,17 +896,4 @@ inline u64 fsqrt64(u64 asig, s32 exp)
     ARITH_TRAP(TRAP_INT | flags, reg) \
   }
 
-#define SPE_0_MASK  U64(0x0000ffffc0000000) /* <47:30> */
-#define SPE_0_MATCH U64(0x0000ffff80000000) /* <47:31> */
-#define SPE_0_MAP   U64(0x000000003fffffff) /* <29:0>  */
-
-#define SPE_1_MASK  U64(0x0000fe0000000000) /* <47:41> */
-#define SPE_1_MATCH U64(0x0000fc0000000000) /* <47:42> */
-#define SPE_1_MAP   U64(0x000001ffffffffff) /* <40:0>  */
-#define SPE_1_TEST  U64(0x0000010000000000) /* <40>    */
-#define SPE_1_ADD   U64(0x00000e0000000000) /* <43:41> */
-
-#define SPE_2_MASK  U64(0x0000c00000000000) /* <47:46> */
-#define SPE_2_MATCH U64(0x0000800000000000) /* <47>    */
-#define SPE_2_MAP   U64(0x00000fffffffffff) /* <43:0>  */
 #endif

@@ -52,4 +52,34 @@ struct AlphaTBFillPolicy
                         int access_flags);
 };
 
+// Effective permissions and address space for a translation-buffer lookup.
+struct AlphaMMUAccess
+{
+  int mode;
+  int asn;
+};
+
+enum class AlphaMMUAddressKind
+{
+  TranslationBuffer,
+  Direct,
+  Invalid,
+  AccessViolation
+};
+
+struct AlphaMMUAddress
+{
+  AlphaMMUAddressKind kind;
+  std::uint64_t phys; // Used only for Direct; direct mappings are ASN-independent.
+};
+
+// Read-only family address rules. The shared core performs lookup and faults.
+// Changes to family address controls must invalidate the relevant host caches.
+struct AlphaMMUAddressPolicy
+{
+  AlphaMMUAccess (*access)(const CAlphaCPU& cpu, int access_flags);
+  AlphaMMUAddress (*map)(const CAlphaCPU& cpu, std::uint64_t virt,
+                         int access_flags, int mode);
+};
+
 #endif

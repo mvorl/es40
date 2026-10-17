@@ -24,9 +24,53 @@
  *
  */
 
-// EV68 translation-fill decoding extracted from AlphaCPU.cpp.
+// EV68 address and translation-fill rules extracted from AlphaCPU.cpp.
 #include "StdAfx.h"
+#include "AlphaCPU.h"
 #include "Ev68MMU.h"
+
+AlphaMMUAccess Ev68MMU::access(const CAlphaCPU& cpu, int flags)
+{
+  const auto& state = cpu.state;
+  // HRM 6.4.1: VPTE fetches check kernel permissions; /alt uses DTB_ALT_MODE.
+  // VPTE takes precedence over ALT. Neither changes the selected lookup ASN.
+  return {
+    (flags & VPTE) ? 0 : (flags & ALT) ? state.alt_cm : state.cm,
+    (flags & ACCESS_EXEC) ? state.asn : state.asn0
+  };
+}
+
+AlphaMMUAddress Ev68MMU::map_address(const CAlphaCPU& cpu, std::uint64_t virt,
+                                     int flags, int mode)
+{
+  const auto& state = cpu.state;
+  const bool exec = (flags & ACCESS_EXEC) != 0;
+  const bool va48 = (exec ? state.i_ctl_va_mode : state.va_ctl_va_mode) & 1;
+  const u64 canonical = va48 ? sext_u64_48(virt)
+    : (virt & U64(0x0000040000000000)) ? (virt | U64(0xfffff80000000000))
+    : (virt & U64(0x000007ffffffffff));
+  if (canonical != virt)
+    return {AlphaMMUAddressKind::Invalid, 0};
+
+  const int spe = exec ? state.i_ctl_spe : state.m_ctl_spe;
+  u64 phys;
+  // HRM 5.3.9: SPE[2] maps VA[43:0], ignoring VA[45:44].
+  if ((spe & 4) && (virt & U64(0x0000c00000000000)) == U64(0x0000800000000000))
+    phys = virt & U64(0x00000fffffffffff);
+  // SPE[1] maps VA[40:0], sign-extending bit 40 through PA[43:41].
+  else if ((spe & 2) && (virt & U64(0x0000fe0000000000)) == U64(0x0000fc0000000000))
+    phys = (virt & U64(0x000001ffffffffff))
+      | ((virt & U64(0x0000010000000000)) ? U64(0x00000e0000000000) : 0);
+  // SPE[0] maps VA[29:0], clearing PA[43:30].
+  else if ((spe & 1) && (virt & U64(0x0000ffffc0000000)) == U64(0x0000ffff80000000))
+    phys = virt & U64(0x000000003fffffff);
+  else
+    return {AlphaMMUAddressKind::TranslationBuffer, 0};
+
+  // Superpages are kernel-only even for accesses carrying NO_CHECK.
+  return mode ? AlphaMMUAddress{AlphaMMUAddressKind::AccessViolation, 0}
+              : AlphaMMUAddress{AlphaMMUAddressKind::Direct, phys};
+}
 
 AlphaTBFill Ev68MMU::decode_fill(const CAlphaCPU&, std::uint64_t virt,
                                 std::uint64_t pte_phys, std::uint64_t pte_flags,
