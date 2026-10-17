@@ -1644,16 +1644,24 @@ void CAlphaCPU::jit_run(int budget)
 						: (opc == 0x24) ? (u64)vax_stf(state.f[lra]) : vax_stg(state.f[lra]);   // STT/STS/STF/STG
 					else         sval = (lra == 31 ? (u64)0 : state.r[RREG(lra)]);
 				}
-				// Computed jump (JMP/JSR/RET): target = Rb & ~3, taken before execute() (the
-				// jump's target uses the old Rb, even if Ra==Rb gets the return address after).
+				// Capture the computed target before execute() can change the source register.
 				u64 jtgt = 0;
-				if (opc == 0x1a || opc == 0x1e)   // JMP/JSR/RET (Rb & ~3) or HW_RET/HWREI (Rb & ~2)
+				bool jtgt_valid = false;
+				if (opc == 0x1a || opc == 0x1e)
 				{
 					const int jrb = (ins >> 16) & 0x1F;
-					const u64 jmask = (opc == 0x1e) ? ~U64(2) : ~U64(3);
-					jtgt = (jrb == 31 ? (u64)0 : state.r[RREG(jrb)]) & jmask;
-					if (opc == 0x1a)
-						jtgt |= cur_tag & 3;   // DO_JMP: mode bits come from the current pc
+					const u64 source = jrb == 31 ? (u64)0 : state.r[RREG(jrb)];
+					if (opc == 0x1e)
+					{
+						const auto entry = alpha_pal_return_descriptor(m_profile.pal, ins);
+						jtgt = alpha_pal_return_target(entry, source);
+						jtgt_valid = entry.valid;
+					}
+					else
+					{
+						jtgt = (source & ~U64(3)) | (cur_tag & 3);
+						jtgt_valid = true;
+					}
 				}
 				execute();
 				--budget;
@@ -1677,7 +1685,7 @@ void CAlphaCPU::jit_run(int budget)
 					}
 					else if (k == cur_len - 1 && (opc == 0x1a || opc == 0x1e))
 					{
-						ok_branch = (state.pc == jtgt);   // computed jump (JMP/HW_RET) reached its register target
+						ok_branch = jtgt_valid && (state.pc == jtgt); // selected computed return/jump target
 					}
 					else if (k == cur_len - 1 && opc == 0x00)
 					{
@@ -3861,11 +3869,14 @@ _next_instruction:
 		OP(HW_MTPR, MTPR);
 
 	case 0x1e:          // HW_RET (PALRES)
+	{
 		if (!pal_hardware_instruction_valid(ins)) {
 			GO_PAL(AlphaPALException::OpcodeDecode);
 			ES40_EXECUTE_END();
 		}
+		const auto hw_return = alpha_pal_return_descriptor(m_profile.pal, ins);
 		OP(HW_RET, RET);
+	}
 
 	case 0x1f:          // HW_ST (PALRES)
 	{

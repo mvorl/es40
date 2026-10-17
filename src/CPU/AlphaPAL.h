@@ -64,6 +64,28 @@ struct AlphaPALCallEntry
   unsigned shadow_link_register;
 };
 
+// Decoded PAL return rules, outside saved CPU state. The target uses the live
+// source register; return forms with side effects stay interpreted.
+struct AlphaPALReturnDescriptor
+{
+  bool valid = false;
+  std::uint64_t target_mask = ~std::uint64_t(0);
+  std::uint64_t target_bits = 0;
+  bool clear_lock = false;
+  bool compilable = false;
+};
+
+constexpr std::uint64_t alpha_pal_return_target(
+    const AlphaPALReturnDescriptor& entry, std::uint64_t source)
+{
+  return (source & entry.target_mask) | entry.target_bits;
+}
+
+constexpr bool alpha_pal_return_compilable(const AlphaPALReturnDescriptor& entry)
+{
+  return entry.valid && entry.compilable && !entry.clear_lock;
+}
+
 // Family access rules for the PAL-reserved hardware instructions.
 enum class AlphaPALInstructionAccess
 {
@@ -106,6 +128,14 @@ struct AlphaPALPolicy
   // Pass the complete instruction so restrictions on individual forms apply.
   // An absent access rule denies all.
   AlphaPALInstructionAccess (*hardware_instruction_access)(std::uint32_t instruction) = nullptr;
+  AlphaPALReturnDescriptor (*hardware_return)(std::uint32_t instruction) = nullptr;
 };
+
+constexpr AlphaPALReturnDescriptor alpha_pal_return_descriptor(
+    const AlphaPALPolicy& policy, std::uint32_t instruction)
+{
+  return policy.hardware_return ? policy.hardware_return(instruction)
+                                : AlphaPALReturnDescriptor{};
+}
 
 #endif

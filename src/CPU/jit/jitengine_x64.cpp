@@ -113,7 +113,7 @@ enum SafeOp {
   OP_HW_MTPR_TERM,               // HW_MTPR: a family write changes compiled assumptions -> redispatch
   OP_HW_STL, OP_HW_STQ,          // HW_ST (0x1f): normalized physical longword/quadword stores
   OP_JMP,                        // JMP/JSR/RET (0x1a): Ra = PC+4; PC = Rb & ~3 (computed target)
-  OP_HW_RET,                     // HW_RET (0x1e), PALmode: PC = Rb & ~2 (computed jump, the PAL return)
+  OP_HW_RET,                     // HW_RET (0x1e), PALmode: family-selected pure return-target transform
   OP_CALL_PAL,                   // CALL_PAL (0x00): save R23/exc_addr; PC = pal_base | entry offset
   // Branch-format terminators (contiguous; see is_branch). Conditional on Ra, plus BR/BSR.
   OP_BEQ, OP_BNE, OP_BLT, OP_BLE, OP_BGT, OP_BGE, OP_BLBC, OP_BLBS, OP_BR, OP_BSR,
@@ -356,9 +356,10 @@ SafeOp classify(uint32_t ins, bool pal_block, const AlphaIPRReadPolicy& ipr_read
     case 0x1a: return OP_JMP;   // JMP/JSR/RET: computed jump (target = Rb & ~3). Now compiled --
                                 // chained in-frame via a block-cache lookup (jit_indirect), which
                                 // handles varying targets without the old single-slot thrash.
-    case 0x1e:                  // HW_RET (HWREI): a PAL return, also a simple computed jump (Rb & ~2).
+    case 0x1e:                  // HW_RET (HWREI): the family selects a compilable pure target transform.
       return pal_block && pal.hardware_instruction_access
           && alpha_pal_instruction_compilable(pal.hardware_instruction_access(ins))
+          && alpha_pal_return_compilable(alpha_pal_return_descriptor(pal, ins))
           ? OP_HW_RET : OP_NONE;
     case 0x28: return OP_LDL;   // memory-format loads (Ra = MEM[Rb+disp16])
     case 0x29: return OP_LDQ;
@@ -1978,12 +1979,36 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             continue;
         }
 
-        // HW_RET (HWREI, 0x1e): a PAL return -- a simple computed jump, target = Rb & ~2, no return-
-        // address write. Like OP_JMP, leaves R10 = target for the epilogue's in-frame chain.
+        // HW_RET (HWREI, 0x1e): transform Rb with the family mask/bits, without a link write.
+        // Like OP_JMP, leave R10 = target for the epilogue's in-frame chain.
         if (op == OP_HW_RET) {
-            if (rb == 31) a.xor_(x86::r10d, x86::r10d);
-            else          mov_from_reg(x86::r10, rb);
-            a.and_(x86::r10, imm(~(uint64_t)2));                       // target = Rb & ~2 (clear bit 1)
+            const auto descriptor = alpha_pal_return_descriptor(m_profile.pal, ins);
+            if (rb == 31 || descriptor.target_mask == 0
+                || descriptor.target_bits == ~uint64_t(0)) {
+                a.mov(x86::r10, imm(descriptor.target_bits));
+            } else {
+                mov_from_reg(x86::r10, rb);
+                // 64-bit AND/OR immediates sign-extend an encoded 32-bit value.
+                auto immediate_fits = [](uint64_t value) {
+                    return value <= 0x7fffffffu || value >= 0xffffffff80000000ull;
+                };
+                if (descriptor.target_mask != ~uint64_t(0)) {
+                    if (immediate_fits(descriptor.target_mask))
+                        a.and_(x86::r10, imm(descriptor.target_mask));
+                    else {
+                        a.mov(x86::rax, imm(descriptor.target_mask));
+                        a.and_(x86::r10, x86::rax);
+                    }
+                }
+                if (descriptor.target_bits != 0) {
+                    if (immediate_fits(descriptor.target_bits))
+                        a.or_(x86::r10, imm(descriptor.target_bits));
+                    else {
+                        a.mov(x86::rax, imm(descriptor.target_bits));
+                        a.or_(x86::r10, x86::rax);
+                    }
+                }
+            }
 #ifdef JIT_VERIFY
             a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);
 #else
@@ -3161,6 +3186,10 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
           a.bind(mode_ok);
         }
         a.mov(x86::rcx, x86::qword_ptr(x86::rax, off + (int) offsetof(LinkSlot, body)));
+        if ((words[plen - 1] >> 26) == 0x1e) {
+          // A family return transform can produce the empty slot's ~0 tag.
+          a.test(x86::rcx, x86::rcx); a.jz(next);
+        }
         a.jmp(x86::rcx);
         if (sl + 1 < kLinkSlots) a.bind(next);
       }
@@ -3184,10 +3213,16 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
       a.mov(x86::rcx, x86::qword_ptr(x86::rax, (int32_t) offsetof(JumpCacheEntry, gen))); a.shr(x86::rcx, imm(63));
       a.cmp(x86::cl, x86::byte_ptr(x86::rbp, m_off.sde)); a.jne(jc_miss);
       a.bind(jc_mode_ok);
+      if ((words[plen - 1] >> 26) == 0x1e) {
+        // Targeted invalidation clears body/tag but retains the matching generation.
+        a.mov(x86::rdx, x86::qword_ptr(x86::rax, (int32_t) offsetof(JumpCacheEntry, body)));
+        a.test(x86::rdx, x86::rdx); a.jz(jc_miss);
+      }
 #ifdef JIT_STATS
       a.mov(x86::rcx, imm((uint64_t) &m_jc_hits)); a.inc(x86::qword_ptr(x86::rcx));
 #endif
-      a.jmp(x86::qword_ptr(x86::rax, (int32_t) offsetof(JumpCacheEntry, body)));
+      if ((words[plen - 1] >> 26) == 0x1e) a.jmp(x86::rdx);
+      else a.jmp(x86::qword_ptr(x86::rax, (int32_t) offsetof(JumpCacheEntry, body)));
       a.bind(jc_miss); }
     // The resolver is a helper boundary and may clobber R10. A hot PIC hit above
     // chains without touching architectural state.pc.

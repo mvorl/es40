@@ -90,13 +90,14 @@
 
 #define DO_HW_MTPR write_ipr(function, state.r[REG_2], AlphaIPRWriteContext::Interpreter);
 
- /*
-  * HW_RET (HRM 6.4.3) is a simple jump-to-target on EV6/EV68. 
-  */
- #define DO_HW_RET   do {                                                               \
-    u64 target = state.r[REG_2] & ~U64(0x2);                                            \
-    set_pc(target);                                                                     \
-  } while(0)
+// Family return rules feed the shared executor after the hardware-access check.
+#define DO_HW_RET do {                                                         \
+  if (!hw_return.valid) { UNKNOWN1; }                                          \
+  const u64 target = alpha_pal_return_target(hw_return, state.r[REG_2]);       \
+  set_pc(target);                                                              \
+  if (hw_return.clear_lock)                                                    \
+    cSystem->cpu_clear_lock(state.iProcNum);                                   \
+} while (0)
 
 // Family decoding feeds one shared load executor. The caller handles faults
 // and unknown forms in the interpreter instruction-exit context.

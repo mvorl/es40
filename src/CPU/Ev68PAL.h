@@ -72,6 +72,14 @@ constexpr AlphaPALCallEntry call_pal_entry(std::uint32_t function,
   return {offset, current_pc, next_pc & ~std::uint64_t(2), 23, 55};
 }
 
+// EV68 HW_RET ignores hints/qualifiers, clears PC bit 1 and preserves the lock.
+constexpr AlphaPALReturnDescriptor hardware_return(std::uint32_t instruction)
+{
+  return (instruction >> 26) == 0x1e
+    ? AlphaPALReturnDescriptor{true, ~std::uint64_t(2), 0, false, true}
+    : AlphaPALReturnDescriptor{};
+}
+
 constexpr AlphaPALInstructionAccess hardware_instruction_access(std::uint32_t instruction)
 {
   switch (instruction >> 26)
@@ -90,7 +98,7 @@ constexpr AlphaPALInstructionAccess hardware_instruction_access(std::uint32_t in
 
 inline constexpr AlphaPALPolicy kEv68PALPolicy{
   &Ev68PAL::exception_entry, &Ev68PAL::call_pal_valid, &Ev68PAL::call_pal_entry,
-  &Ev68PAL::hardware_instruction_access
+  &Ev68PAL::hardware_instruction_access, &Ev68PAL::hardware_return
 };
 
 #endif

@@ -334,7 +334,8 @@ static constexpr uint64_t a64_jmp_target(uint64_t source_pc, uint64_t rb) noexce
 
 static constexpr uint64_t a64_hw_ret_target(uint64_t rb) noexcept
 {
-  return rb & ~uint64_t(2);
+  return alpha_pal_return_target(
+      alpha_pal_return_descriptor(kEv68PALPolicy, 0x1eu << 26), rb);
 }
 
 enum class A64ExitKind : uint8_t {
@@ -1453,11 +1454,12 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block,
     case 0x1a:   // JMP/JSR/RET: computed jump, Ra = link -- indirect terminator
       return {A64OpKind::kJmpIndirect, A64TerminatorKind::kIndirect,
               static_cast<uint8_t>(kA64GprRb), static_cast<uint8_t>(kA64GprRa)};
-    case 0x1e:   // HW_RET/HWREI (PALmode only): PC = Rb & ~2, no link.
+    case 0x1e:   // HW_RET/HWREI (PALmode only): family-selected pure target transform, no link.
       // HW format: excluded from the pin-selection mask (regprof_mask parity).
       if (!pal_block || !pal.hardware_instruction_access
           || !alpha_pal_instruction_compilable(pal.hardware_instruction_access(ins)))
         break;
+      if (!alpha_pal_return_compilable(alpha_pal_return_descriptor(pal, ins))) break;
       return {A64OpKind::kJmpIndirect, A64TerminatorKind::kIndirect, 0, 0};
     case 0x30: case 0x34:   // BR / BSR: Ra = link, unconditional direct terminator
       return {A64OpKind::kBranchInt, A64TerminatorKind::kDirect,
@@ -3548,8 +3550,30 @@ static A64OpEmitReceipt emit_a64_jmp_indirect(A64EmitContext& context,
   }
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
 
-  if (op.opcode == 0x1e) {   // HW_RET: the new mode bit comes from Rb
-    err = a.and_(RA::kNextPc, src, imm(~uint64_t(2)));
+  if (op.opcode == 0x1e) {   // HW_RET: the family selects the final target, including its mode bit.
+    const auto descriptor = alpha_pal_return_descriptor(context.profile.pal, op.ins);
+    if (!alpha_pal_return_compilable(descriptor)) return {Error::kInvalidArgument, op.kind};
+    if (src.id() == a64::xzr.id() || descriptor.target_mask == 0
+        || descriptor.target_bits == ~uint64_t(0)) {
+      err = emit_a64_mov_u64(a, RA::kNextPc, descriptor.target_bits);
+      return a64_completed_op_receipt(op, err);
+    }
+    if (descriptor.target_mask == ~uint64_t(0)) {
+      err = a.mov(RA::kNextPc, src);
+    } else if (arm::Utils::is_logical_imm(descriptor.target_mask, 64)) {
+      err = a.and_(RA::kNextPc, src, imm(descriptor.target_mask));
+    } else {
+      err = emit_a64_mov_u64(a, RA::kScratch1, descriptor.target_mask);
+      if (err == Error::kOk) err = a.and_(RA::kNextPc, src, RA::kScratch1);
+    }
+    if (err == Error::kOk && descriptor.target_bits != 0) {
+      if (arm::Utils::is_logical_imm(descriptor.target_bits, 64)) {
+        err = a.orr(RA::kNextPc, RA::kNextPc, imm(descriptor.target_bits));
+      } else {
+        err = emit_a64_mov_u64(a, RA::kScratch1, descriptor.target_bits);
+        if (err == Error::kOk) err = a.orr(RA::kNextPc, RA::kNextPc, RA::kScratch1);
+      }
+    }
     return a64_completed_op_receipt(op, err);
   }
 
@@ -5658,6 +5682,11 @@ static asmjit::Error emit_a64_link_slots_probe(asmjit::a64::Assembler& a,
     err = a.ldr(RA::kScratch4,
                 ptr(RA::kScratch1, base + offsetof(CJitEngine::LinkSlot, body)));
     if (err != Error::kOk) return err;
+    if (variant_policy == A64LinkVariantPolicy::kIfTargetPal) {
+      // A family return transform can produce the empty slot's ~0 tag.
+      err = a.cbz(RA::kScratch4, next);
+      if (err != Error::kOk) return err;
+    }
     err = a.br(RA::kScratch4);
     if (err != Error::kOk) return err;
     if (slot + 1 < CJitEngine::kLinkSlots) {
@@ -5754,7 +5783,8 @@ struct A64JumpCache {
 // Probed only once this site's PIC is full, so the resolver still fills the PIC first.
 static asmjit::Error emit_a64_jump_cache_probe(asmjit::a64::Assembler& a,
     const CJitEngine::JitOffsets& offsets, const A64JumpCache& jc,
-    const CJitEngine::LinkSlot* slots, const asmjit::Label& miss)
+    const CJitEngine::LinkSlot* slots, const asmjit::Label& miss,
+    bool hardware_return = false)
 {
   using RA = CJitEngine::RegAlloc;
   using namespace asmjit;
@@ -5815,6 +5845,13 @@ static asmjit::Error emit_a64_jump_cache_probe(asmjit::a64::Assembler& a,
   if (err != Error::kOk) return err;
   err = a.bind(mode_ok);
   if (err != Error::kOk) return err;
+  if (hardware_return) {
+    // Targeted invalidation clears body/tag but retains the matching generation.
+    err = a.ldr(RA::kScratch2, a64::ptr(RA::kScratch1, (int32_t) offsetof(E, body)));
+    if (err != Error::kOk) return err;
+    err = a.cbz(RA::kScratch2, miss);
+    if (err != Error::kOk) return err;
+  }
 #ifdef JIT_STATS
   if (jc.hits) {
     err = emit_a64_mov_u64(a, RA::kScratch3, reinterpret_cast<uintptr_t>(jc.hits));
@@ -5827,8 +5864,10 @@ static asmjit::Error emit_a64_jump_cache_probe(asmjit::a64::Assembler& a,
     if (err != Error::kOk) return err;
   }
 #endif
-  err = a.ldr(RA::kScratch2, a64::ptr(RA::kScratch1, (int32_t) offsetof(E, body)));
-  if (err != Error::kOk) return err;
+  if (!hardware_return) {
+    err = a.ldr(RA::kScratch2, a64::ptr(RA::kScratch1, (int32_t) offsetof(E, body)));
+    if (err != Error::kOk) return err;
+  }
   return a.br(RA::kScratch2);
 }
 
@@ -5874,7 +5913,8 @@ static asmjit::Error emit_a64_indirect_chain_tail(asmjit::a64::Assembler& a,
                                   contract.target_variant, resolver);
   if (err != Error::kOk) return err;
   if (jc.base && CJitEngine::kJumpCache) {
-    err = emit_a64_jump_cache_probe(a, offsets, jc, slots, resolver);
+    err = emit_a64_jump_cache_probe(a, offsets, jc, slots, resolver,
+                                    contract.kind == A64IndirectKind::kHwRet);
     if (err != Error::kOk) return err;
   }
 
