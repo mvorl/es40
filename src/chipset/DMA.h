@@ -144,6 +144,13 @@ public:
   SDMA_result   service_recv_unit(int channel, u16& data, bool eop = false);
   // End an accepted demand/block service without consuming another unit.
   SDMA_result   service_eop(int channel);
+  // Device queries use global channels 0-3 or 5-7; invalid channels throw.
+  // Raw programmed 8237 mode byte, including the local channel-select bits.
+  u8            get_mode(int channel);
+  // Readiness for service_send_unit/service_recv_unit, including explicit
+  // requests and arbitration. 
+  bool          can_service_send(int channel);
+  bool          can_service_recv(int channel);
   // Raw byte/word count register (number of DMA units minus one).
   int           get_count(int channel);
   // Current count plus one in bytes; independent of mask/enable state.
@@ -172,9 +179,11 @@ private:
   static size_t increment_chunk_size(u32 current, size_t length,
                   const SDMA_transfer_properties& properties);
   u8            get_requests(int ctrlr);
-  bool          cascade_enabled();
-  bool          service_requested(int channel);
-  int           select_service_channel(int ctrlr);
+  bool          cascade_enabled() const;
+  bool          service_requested(int channel) const;
+  int           select_service_channel(int ctrlr) const;
+  bool          service_selected(int channel) const;
+  bool          service_ready(int channel, u8 transfer_type) const;
   void          rotate_priority(int channel);
   void          release_service(int channel);
   void          finish_service(int channel, const SDMA_result& result);

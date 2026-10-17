@@ -646,7 +646,7 @@ u8 CDMA::get_requests(int ctrlr)
 	return requests & 0x0f;
 }
 
-bool CDMA::cascade_enabled()
+bool CDMA::cascade_enabled() const
 {
 	// These gate the grant, not the request input seen in controller 1's status.
 	return !(state.controller[1].command & 0x04) &&
@@ -657,7 +657,7 @@ bool CDMA::cascade_enabled()
 /**
  * Check explicit or retained requests without consuming a unit.
  **/
-bool CDMA::service_requested(int channel)
+bool CDMA::service_requested(int channel) const
 {
 	validate_device_channel(channel);
 	int ctrlr = channel < 4 ? 0 : 1;
@@ -678,7 +678,7 @@ bool CDMA::service_requested(int channel)
 /**
  * Select a global device channel without changing requests or held service.
  **/
-int CDMA::select_service_channel(int ctrlr)
+int CDMA::select_service_channel(int ctrlr) const
 {
 	if (state.controller[ctrlr].command & 0x04)
 		return -1;
@@ -721,6 +721,23 @@ int CDMA::select_service_channel(int ctrlr)
 				cascade_channel : ctrlr * 4 + local_channel;
 	}
 	return -1;
+}
+
+bool CDMA::service_selected(int channel) const
+{
+	return service_requested(channel) && select_service_channel(1) == channel;
+}
+
+bool CDMA::service_ready(int channel, u8 transfer_type) const
+{
+	if (!service_selected(channel) ||
+		!(isa_bridge.config_read(0, 0x04, 16) & 0x04))
+		return false;
+
+	// Direction does not affect arbitration against other pending channels.
+	// Verify doesn't move payload bytes.
+	u8 type = state.channel[channel].mode & 0x0c;
+	return type == 0x00 || type == transfer_type;
 }
 
 /**
@@ -817,6 +834,25 @@ void CDMA::do_dma()
 			}
 		}
 	}
+}
+
+u8 CDMA::get_mode(int channel)
+{
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
+	validate_device_channel(channel);
+	return state.channel[channel].mode;
+}
+
+bool CDMA::can_service_send(int channel)
+{
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
+	return service_ready(channel, 0x04); // Device to memory (8237 Write).
+}
+
+bool CDMA::can_service_recv(int channel)
+{
+	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
+	return service_ready(channel, 0x08); // Memory to device (8237 Read).
 }
 
 int CDMA::get_count(int channel)
@@ -1112,7 +1148,7 @@ CDMA::SDMA_result CDMA::service_send_unit(int channel, u16 data, bool eop)
 {
 	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	SDMA_result result = { 0, true, false, false };
-	if (service_requested(channel) && select_service_channel(1) == channel)
+	if (service_selected(channel))
 	{
 		result = send_unit(channel, data, eop);
 		finish_service(channel, result);
@@ -1124,7 +1160,7 @@ CDMA::SDMA_result CDMA::service_recv_unit(int channel, u16& data, bool eop)
 {
 	std::lock_guard<std::recursive_mutex> bus_lock(cSystem->get_device_bus_mutex());
 	SDMA_result result = { 0, true, false, false };
-	if (service_requested(channel) && select_service_channel(1) == channel)
+	if (service_selected(channel))
 	{
 		result = recv_unit(channel, data, eop);
 		finish_service(channel, result);
