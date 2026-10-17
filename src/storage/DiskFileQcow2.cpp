@@ -83,7 +83,7 @@ void CDiskFile::qcow2_open(const char* image_path)
 				FAILURE_2(IO, "%s: QCOW2: cannot resolve backing file: %s",
 					devid_string, error.message().c_str());
 			qcow2->backing_filename = base.string();
-			qcow2->backing.reset(fopen_large(qcow2->backing_filename.c_str(), "rb"));
+			qcow2->backing.reset(open_image(qcow2->backing_filename.c_str(), "rb"));
 			if (!qcow2->backing)
 				FAILURE_2(IO, "%s: QCOW2: cannot open backing file: %s",
 					devid_string, qcow2->backing_filename.c_str());

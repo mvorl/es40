@@ -128,7 +128,9 @@
 #include <sys/stat.h>
 #if defined(_WIN32)
 #include <io.h>
+#include <share.h>
 #else
+#include <sys/file.h>
 #include <unistd.h>
 #endif
 
@@ -616,14 +618,64 @@ bool CDiskFile::set_read_only(bool desired_read_only)
     // BIN/CUE media are read-only in this backend.
     if (is_bincue)
         return false;
-    // Backed QCOW2 images support reads only until copy-on-write is implemented.
-    if (!desired_read_only && qcow2 && qcow2->backing)
+    // Backed and version 2 QCOW2 images remain read-only.
+    if (!desired_read_only && qcow2 && (qcow2->backing || qcow2->version != 3))
         return false;
     if (!handle || filename.empty())
         return false;
 
     if (!flush_before_media_change())
         return false;
+
+    if (qcow2)
+    {
+        const std::string identity = image_identity(handle, filename);
+        const bool old_read_only = read_only;
+        const off_t_large old_size = byte_size;
+        std::unique_ptr<Qcow2State> old_qcow2 = std::move(qcow2);
+        close_image(handle, filename.c_str());
+        read_only = desired_read_only;
+
+        auto restore = [&]()
+        {
+            qcow2.reset();
+            close_image(handle, filename.c_str());
+            read_only = old_read_only;
+            byte_size = old_size;
+            qcow2 = std::move(old_qcow2);
+            handle = open_image(filename.c_str(), read_only ? "rb" : "rb+");
+            try
+            {
+                if (!handle || image_identity(handle, filename) != identity)
+                    FAILURE_1(IO, "%s: Cannot restore image after reopening", devid_string);
+            }
+            catch (...)
+            {
+                close_image(handle, filename.c_str());
+                qcow2->failed = true;
+                throw;
+            }
+        };
+
+        handle = open_image(filename.c_str(), read_only ? "rb" : "rb+");
+        if (!handle)
+        {
+            restore();
+            return false;
+        }
+        try
+        {
+            if (image_identity(handle, filename) != identity)
+                FAILURE_1(IO, "%s: Image changed while reopening", devid_string);
+            qcow2_open(filename.c_str());
+        }
+        catch (...)
+        {
+            restore();
+            throw;
+        }
+        return true;
+    }
 
     FILE* replacement = fopen_large(filename.c_str(),
                                    desired_read_only ? "rb" : "rb+");
@@ -649,6 +701,14 @@ bool CDiskFile::load_file_transactional(const char* _filename,
 {
     if (!_filename || !*_filename)
         return false;
+
+    if (qcow2 && handle && filename == _filename)
+    {
+        if (!flush_before_media_change())
+            return false;
+        snapshot_identity(); // Verify that the mounted paths still name these files.
+        return true;
+    }
 
     // Allocate the persistent path before touching the mounted image.
     // failure here is harmless.
@@ -702,15 +762,17 @@ bool CDiskFile::load_file_transactional(const char* _filename,
         long sectors;
         off_t_large byte_pos;
         int media_changed;
+        std::unique_ptr<Qcow2State> qcow2;
     } old = {
         handle, is_bincue, tracks, track_count, current_lba,
         logical_byte_pos, byte_size, cylinders, heads, sectors,
-        state.byte_pos, state.scsi.media_changed
+        state.byte_pos, state.scsi.media_changed, nullptr
     };
 
     if (!flush_before_media_change())
         return false;
 
+    old.qcow2 = std::move(qcow2);
     handle           = nullptr;
     is_bincue        = false;
     tracks           = nullptr;
@@ -722,6 +784,7 @@ bool CDiskFile::load_file_transactional(const char* _filename,
 
     auto discard_current = [this]()
     {
+        qcow2.reset();
         reset_bincue_state();
         close_image(handle, "replacement image");
     };
@@ -730,6 +793,7 @@ bool CDiskFile::load_file_transactional(const char* _filename,
     {
         discard_current();
         handle                   = old.handle;
+        qcow2                    = std::move(old.qcow2);
         is_bincue                = old.is_bincue;
         tracks                   = old.tracks;
         track_count              = old.track_count;
@@ -761,6 +825,7 @@ bool CDiskFile::load_file_transactional(const char* _filename,
     try
     {
         bool loaded = false;
+        bool protected_image = false;
 
         if (format == BinCue)
         {
@@ -811,9 +876,12 @@ bool CDiskFile::load_file_transactional(const char* _filename,
             else
                 handle = fopen_large(_filename, "rb+");
 
+            // A sharing or permission failure must never trigger creation.
+            if (!handle && errno != ENOENT)
+                FAILURE_2(IO, "Could not open disk image %s: %s", _filename, strerror(errno));
+
             if (!handle && format != BinCue)
             {
-                const int open_error = errno;
                 const char* create_name = myCfg->get_text_value("autocreate_format", "raw");
 
                 Format create_format = Raw;
@@ -830,9 +898,6 @@ bool CDiskFile::load_file_transactional(const char* _filename,
 
                 if (format == Qcow2)
                 {
-                    if (open_error != ENOENT)
-                        FAILURE_2(IO, "Could not open disk image %s: %s", _filename, strerror(open_error));
-
                     if (removable)
                         FAILURE(Configuration, "QCOW2 images require a fixed hard disk");
 
@@ -844,11 +909,12 @@ bool CDiskFile::load_file_transactional(const char* _filename,
                     if (size % 512 || size > static_cast<u64>((std::numeric_limits<off_t_large>::max)()))
                         FAILURE_1(IO, "%s: QCOW2 size must be sector-aligned and fit this host's file offsets", _filename);
 
-                    handle = fopen_large(_filename, "w+bx");
+                    handle = open_image(_filename, "w+bx");
 
                     if (!handle)
                         FAILURE_2(IO, "Could not create QCOW2 image %s: %s", _filename, strerror(errno));
 
+                    protected_image = true;
                     qcow2_create(size);
                 }
             }
@@ -945,6 +1011,13 @@ bool CDiskFile::load_file_transactional(const char* _filename,
             {
                 if (removable)
                     FAILURE(Configuration, "QCOW2 images require a fixed hard disk");
+                if (!protected_image)
+                {
+                    close_image(handle, _filename);
+                    handle = open_image(_filename, read_only ? "rb" : "rb+");
+                    if (!handle)
+                        FAILURE_2(IO, "Could not protect disk image %s: %s", _filename, strerror(errno));
+                }
                 qcow2_open(_filename);
             }
 
@@ -1215,9 +1288,10 @@ bool CDiskFile::seek_byte(off_t_large byte)
                   "%s: Seek beyond end of file!\n", devid_string);
     }
 
-    fseek_large(handle, byte, SEEK_SET);
+    if (fseek_large(handle, byte, SEEK_SET) != 0)
+        return false;
     state.byte_pos = ftell_large(handle);
-    return true;
+    return state.byte_pos == byte;
 }
 
 /**
@@ -1450,7 +1524,7 @@ void CDiskFile::prepare_snapshot()
 void CDiskFile::sync_image()
 {
     if (fflush(handle) != 0 || ferror(handle))
-        FAILURE_2(Runtime, "Could not flush image %s: %s",
+        FAILURE_2(IO, "Could not flush image %s: %s",
                   filename.c_str(), strerror(errno));
 #if defined(_WIN32)
     const int result = _commit(_fileno(handle));
@@ -1458,7 +1532,7 @@ void CDiskFile::sync_image()
     const int result = fsync(fileno(handle));
 #endif
     if (result != 0)
-        FAILURE_2(Runtime, "Could not synchronize image %s: %s",
+        FAILURE_2(IO, "Could not synchronize image %s: %s",
                   filename.c_str(), strerror(errno));
 }
 
@@ -1480,6 +1554,24 @@ bool CDiskFile::flush_before_media_change()
         printf("%s: Media remains mounted: %s\n", devid_string, error.what());
         return false;
     }
+}
+
+FILE* CDiskFile::open_image(const char* path, const char* mode) const
+{
+    const bool shared = mode[0] == 'r' && !strchr(mode, '+');
+#if defined(_WIN32)
+    return _fsopen(path, mode, shared ? _SH_DENYWR : _SH_DENYRW);
+#else
+    FILE* image = fopen_large(path, mode);
+    if (image && flock(fileno(image), (shared ? LOCK_SH : LOCK_EX) | LOCK_NB) != 0)
+    {
+        const int error = errno;
+        fclose(image);
+        errno = error;
+        return nullptr;
+    }
+    return image;
+#endif
 }
 
 bool CDiskFile::close_image(FILE*& image, const char* path) const noexcept
@@ -1511,6 +1603,12 @@ std::string CDiskFile::snapshot_identity() const
     {
         out << (qcow2 ? "qcow2:" : "raw:");
         append_identity_string(out, image_identity(handle, filename));
+        if (qcow2 && qcow2->backing)
+        {
+            out << "backing:";
+            append_identity_string(out,
+                image_identity(qcow2->backing.get(), qcow2->backing_filename));
+        }
         return out.str();
     }
 

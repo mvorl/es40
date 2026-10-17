@@ -684,6 +684,7 @@ void CDisk::scsi_xfer_done_me(int bus)
 #define SCSI_RESET                  - 8 /* Power-on or bus/device reset */
 #define SCSI_MEDIA_LOCKED           - 9 /* Medium removal prevented */
 #define SCSI_HARDWARE_ERROR        - 10 /* Backing-media operation failed */
+#define SCSI_WRITE_PROTECTED       - 11 /* Medium is read-only */
 
 void CDisk::do_scsi_error(int errcode, int info)
 {
@@ -781,6 +782,12 @@ void CDisk::do_scsi_error(int errcode, int info)
 	case SCSI_HARDWARE_ERROR:
 		state.scsi.sense.data[2] = 0x04;    // hardware error
 		state.scsi.sense.data[12] = 0x44;   // internal target failure
+		state.scsi.sense.data[13] = 0x00;
+		break;
+
+	case SCSI_WRITE_PROTECTED:
+		state.scsi.sense.data[2] = 0x07;    // data protect
+		state.scsi.sense.data[12] = 0x27;   // write protected
 		state.scsi.sense.data[13] = 0x00;
 		break;
 
@@ -2239,7 +2246,7 @@ int CDisk::do_scsi_command()
 
 			//  cmd[2..5] hold the logical block address.
 			//  cmd[7..8] holds the number of logical
-			ofs = (state.scsi.cmd.data[2] << 24) + (state.scsi.cmd.data[3] << 16) + (state.scsi.cmd.data[4] << 8) + state.scsi.cmd.data[5];
+			ofs = get_be32(state.scsi.cmd.data + 2);
 			retlen = (state.scsi.cmd.data[7] << 8) + state.scsi.cmd.data[8];
 		}
 		else if (state.scsi.cmd.data[0] == SCSICMD_READ_12)
@@ -2247,8 +2254,8 @@ int CDisk::do_scsi_command()
 
 			//  cmd[2..5] hold the logical block address.
 			//  cmd[6..9] holds the number of logical
-			ofs = (state.scsi.cmd.data[2] << 24) + (state.scsi.cmd.data[3] << 16) + (state.scsi.cmd.data[4] << 8) + state.scsi.cmd.data[5];
-			retlen = (state.scsi.cmd.data[6] << 24) + (state.scsi.cmd.data[7] << 16) + (state.scsi.cmd.data[8] << 8) + state.scsi.cmd.data[9];
+			ofs = get_be32(state.scsi.cmd.data + 2);
+			retlen = get_be32(state.scsi.cmd.data + 6);
 		}
 		else if (state.scsi.cmd.data[0] == SCSICMD_READ_CD)
 		{
@@ -2276,21 +2283,21 @@ int CDisk::do_scsi_command()
 
 			//  cmd[2..5] hold the logical block address.
 			//  cmd[6..8] holds the number of logical blocks to transfer.
-			ofs = (state.scsi.cmd.data[2] << 24) + (state.scsi.cmd.data[3] << 16) + (state.scsi.cmd.data[4] << 8) + state.scsi.cmd.data[5];
+			ofs = get_be32(state.scsi.cmd.data + 2);
 			retlen = (state.scsi.cmd.data[6] << 16) +
 				(state.scsi.cmd.data[7] << 8) +
 				state.scsi.cmd.data[8];
 		}
 
 		// Within bounds?
-		if ((ofs + retlen) > get_lba_size())
+		if ((u64(ofs) + retlen) > u64(get_lba_size()))
 		{
 			do_scsi_error(SCSI_LBA_RANGE);
 			break;
 		}
 
 		// Would exceed buffer?
-		if (retlen * get_block_size() > DATI_BUFSZ)
+		if (retlen > DATI_BUFSZ / get_block_size())
 		{
 			printf("%s: read too big (%d)\n", devid_string, retlen);
 			do_scsi_error(SCSI_TOO_BIG);
@@ -2298,9 +2305,23 @@ int CDisk::do_scsi_command()
 		}
 
 		//  Return data:
-		seek_block(ofs);
-		read_blocks(state.scsi.dati.data, retlen);
 		state.scsi.dati.read = 0;
+		state.scsi.dati.available = 0;
+		try
+		{
+			if (retlen && (!seek_block(ofs) ||
+				read_blocks(state.scsi.dati.data, retlen) != retlen))
+			{
+				do_scsi_error(SCSI_HARDWARE_ERROR);
+				break;
+			}
+		}
+		catch (const CIOException& error)
+		{
+			printf("%s: Read failed: %s\n", devid_string, error.message().c_str());
+			do_scsi_error(SCSI_HARDWARE_ERROR);
+			break;
+		}
 		state.scsi.dati.available = retlen * get_block_size();
 
 #if defined(DEBUG_SCSI)
@@ -2327,7 +2348,7 @@ int CDisk::do_scsi_command()
 		// long commands to 514 bytes (the first value OpenVMS tries).
 		//  cmd[2..5] hold the logical block address.
 		//  cmd[7..8] holds the number of bytes to transfer
-		ofs = (state.scsi.cmd.data[2] << 24) + (state.scsi.cmd.data[3] << 16) + (state.scsi.cmd.data[4] << 8) + state.scsi.cmd.data[5];
+		ofs = get_be32(state.scsi.cmd.data + 2);
 		retlen = (state.scsi.cmd.data[7] << 8) + state.scsi.cmd.data[8];
 
 		state.scsi.stat.available = 1;
@@ -2345,14 +2366,14 @@ int CDisk::do_scsi_command()
 		}
 
 		// Within bounds?
-		if ((ofs + 1) > get_lba_size())
+		if ((u64(ofs) + 1) > u64(get_lba_size()))
 		{
 			do_scsi_error(SCSI_LBA_RANGE);
 			break;
 		}
 
 		// Would exceed buffer?
-		if (retlen > DATI_BUFSZ)
+		if (retlen > DATI_BUFSZ || get_block_size() > DATI_BUFSZ)
 		{
 			printf("%s: read too big (%d)\n", devid_string, retlen);
 			do_scsi_error(SCSI_TOO_BIG);
@@ -2360,8 +2381,22 @@ int CDisk::do_scsi_command()
 		}
 
 		//  Return data:
-		seek_block(ofs);
-		read_blocks(state.scsi.dati.data, 1);
+		state.scsi.dati.read = 0;
+		state.scsi.dati.available = 0;
+		try
+		{
+			if (!seek_block(ofs) || read_blocks(state.scsi.dati.data, 1) != 1)
+			{
+				do_scsi_error(SCSI_HARDWARE_ERROR);
+				break;
+			}
+		}
+		catch (const CIOException& error)
+		{
+			printf("%s: Read failed: %s\n", devid_string, error.message().c_str());
+			do_scsi_error(SCSI_HARDWARE_ERROR);
+			break;
+		}
 		for (unsigned int x1 = get_block_size(); x1 < retlen; x1++)
 			state.scsi.dati.data[x1] = 0;             // set ECC bytes to 0.
 		state.scsi.dati.read = 0;
@@ -2378,6 +2413,11 @@ int CDisk::do_scsi_command()
 		if (cdrom() && !media_present())
 		{
 			do_scsi_error(SCSI_MEDIA_REMOVED);
+			break;
+		}
+		if (read_only)
+		{
+			do_scsi_error(SCSI_WRITE_PROTECTED);
 			break;
 		}
 		if (state.scsi.cmd.data[0] == SCSICMD_WRITE)
@@ -2400,7 +2440,7 @@ int CDisk::do_scsi_command()
 			//  cmd[2..5] hold the logical block address.
 			//  cmd[7..8] holds the number of logical blocks
 			//  to transfer.
-			ofs = (state.scsi.cmd.data[2] << 24) + (state.scsi.cmd.data[3] << 16) + (state.scsi.cmd.data[4] << 8) + state.scsi.cmd.data[5];
+			ofs = get_be32(state.scsi.cmd.data + 2);
 			retlen = (state.scsi.cmd.data[7] << 8) + state.scsi.cmd.data[8];
 		}
 		else
@@ -2409,22 +2449,21 @@ int CDisk::do_scsi_command()
 			//  cmd[2..5] hold the logical block address.
 			//  cmd[6..9] holds the number of logical blocks
 			//  to transfer.
-			ofs = (state.scsi.cmd.data[2] << 24) + (state.scsi.cmd.data[3] << 16) + (state.scsi.cmd.data[4] << 8) + state.scsi.cmd.data[5];
-			retlen = (state.scsi.cmd.data[6] << 24) + (state.scsi.cmd.data[7] << 16) + (state.scsi.cmd.data[8] << 8) + state.scsi.cmd.data[9];
+			ofs = get_be32(state.scsi.cmd.data + 2);
+			retlen = get_be32(state.scsi.cmd.data + 6);
 		}
 
 		// Within bounds?
-		if (((ofs + retlen)) > get_lba_size())
+		if ((u64(ofs) + retlen) > u64(get_lba_size()))
 		{
 			do_scsi_error(SCSI_LBA_RANGE);
 			break;
 		}
 
 		// Would exceed buffer?
-		if (retlen * get_block_size() > DATO_BUFSZ)
+		if (retlen > DATO_BUFSZ / get_block_size())
 		{
-			printf("%s: write too big (%d)\n", devid_string,
-				(int)(retlen * get_block_size()));
+			printf("%s: write too big (%u blocks)\n", devid_string, retlen);
 			do_scsi_error(SCSI_TOO_BIG);
 			break;
 		}
@@ -2435,8 +2474,21 @@ int CDisk::do_scsi_command()
 			return 2;
 
 		//  Write data
-		seek_block(ofs);
-		write_blocks(state.scsi.dato.data, retlen);
+		try
+		{
+			if (retlen && (!seek_block(ofs) ||
+				write_blocks(state.scsi.dato.data, retlen) != retlen))
+			{
+				do_scsi_error(SCSI_HARDWARE_ERROR);
+				break;
+			}
+		}
+		catch (const CIOException& error)
+		{
+			printf("%s: Write failed: %s\n", devid_string, error.message().c_str());
+			do_scsi_error(SCSI_HARDWARE_ERROR);
+			break;
+		}
 
 #if defined(DEBUG_SCSI)
 		printf("%s: WRITE  ofs=%d size=%d\n", devid_string, ofs, retlen);

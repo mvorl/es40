@@ -250,6 +250,7 @@ private:
   bool            open_bin_files();
   void            close_bin_handles();
   bool            flush_before_media_change();
+  FILE*           open_image(const char* path, const char* mode) const;
   bool            close_image(FILE*& image, const char* path) const noexcept;
 
   // I/O at physical file offsets; callers maintain the logical disk position.
