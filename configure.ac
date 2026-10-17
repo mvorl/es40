@@ -395,5 +395,5 @@ AC_SUBST([TUI_LIBS])
 AM_CONDITIONAL([BUILD_TUI], [test "x$have_tui" = "xyes"])
 
 # Generate the various makefiles.
-AC_CONFIG_FILES([Makefile doc/Makefile m4/Makefile src/Makefile])
+AC_CONFIG_FILES([Makefile docs/Makefile m4/Makefile src/Makefile])
 AC_OUTPUT

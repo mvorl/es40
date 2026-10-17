@@ -445,6 +445,8 @@ list(APPEND ES40_SOURCES
     src/CPU/AlphaMMU.h
     src/CPU/Ev68MMU.h
     src/CPU/Ev68MMU.cpp
+    src/CPU/AlphaHWLoad.h
+    src/CPU/Ev68HWLoad.h
     src/AlphaSim.cpp
     # src/graphics/Cirrus.cpp
     src/config/Configurator.cpp

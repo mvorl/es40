@@ -107,8 +107,8 @@ enum SafeOp {
   OP_LDF, OP_LDG, OP_STF, OP_STG, // VAX FP memory (0x20/0x21/0x24/0x25): f[Fa] <-> MEM, F/G format conversion (helper)
   OP_LDA, OP_LDAH,               // load-address: Ra = Rb + disp16 (<<16 for LDAH); pure ALU
   OP_HW_MFPR,                    // HW_MFPR (0x19), PALmode only: Ra = IPR[(ins>>8)&0xff] via helper
-  OP_HW_LDL, OP_HW_LDQ,          // HW_LD (0x1b) physical func 0/1, PALmode only: Ra = phys[Rb+disp12]
-  OP_HW_LD_VIRT,                 // HW_LD virtual funcs 4/5,8-15: current/VPTE/alternate mode, optional WrChk
+  OP_HW_LDL, OP_HW_LDQ,          // HW_LD (0x1b): normalized physical longword/quadword loads
+  OP_HW_LD_VIRT,                 // HW_LD: normalized virtual loads with family-selected access flags
   OP_HW_MTPR,                    // HW_MTPR (0x1d): family-approved helper writes, PALmode only
   OP_HW_MTPR_TERM,               // HW_MTPR: a family write changes compiled assumptions -> redispatch
   OP_HW_STL, OP_HW_STQ,          // HW_ST (0x1f) physical func 0/1, PALmode only: phys[Rb+disp12] = Ra
@@ -142,7 +142,8 @@ static bool host_has_bmi2() {
 // pal_block enables PALmode-only ops (HW_MFPR): outside PALmode they'd OPCDEC, so only
 // compile them when the block is PALmode (the dispatcher keys blocks by PC bit 0).
 SafeOp classify(uint32_t ins, bool pal_block, const AlphaIPRReadPolicy& ipr_read,
-    const AlphaIPRWritePolicy& ipr_write, const AlphaPALPolicy& pal)
+    const AlphaIPRWritePolicy& ipr_write, const AlphaPALPolicy& pal,
+    const AlphaHWLoadPolicy& hw_load)
 {
   uint32_t opcode = ins >> 26;
   uint32_t func = (ins >> 5) & 0x7F;
@@ -318,15 +319,17 @@ SafeOp classify(uint32_t ins, bool pal_block, const AlphaIPRReadPolicy& ipr_read
       if (((ins >> 21) & 0x1f) == 31 && descriptor.discard_safe) return OP_NOP;
       return OP_HW_MFPR;
     }
-    case 0x1b: {                // HW_LD, PALmode-only. Physical locked forms still interpret;
-      // all side-effect-free virtual forms use the generic translation helper.
+    case 0x1b: {                // HW_LD: the family declares the normalized access and eligibility.
       if (!pal_block || !pal.hardware_instruction_access
           || !alpha_pal_instruction_compilable(pal.hardware_instruction_access(ins)))
         return OP_NONE;
-      const uint32_t f = (ins >> 12) & 0xf;
-      if (f == 0) return OP_HW_LDL;
-      if (f == 1) return OP_HW_LDQ;
-      if (f == 4 || f == 5 || f >= 8) return OP_HW_LD_VIRT;
+      const auto descriptor = alpha_decode_hw_load(hw_load, ins);
+      if (!alpha_hw_load_compilable(descriptor)) return OP_NONE;
+      if (descriptor.address == AlphaHWLoadAddress::Physical) {
+        if (((ins >> 21) & 0x1f) == 31 && !descriptor.discard_safe) return OP_NONE;
+        return descriptor.size_bits == 32 ? OP_HW_LDL : OP_HW_LDQ;
+      }
+      if (descriptor.address == AlphaHWLoadAddress::Virtual) return OP_HW_LD_VIRT;
       return OP_NONE;
     }
     case 0x1d: {                // HW_MTPR (PALmode): the family declares compiled-safe writes.
@@ -741,7 +744,8 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
     int rc = ins & 0x1F;
     bool islit = ((ins >> 12) & 1) != 0;
     uint32_t lit = (ins >> 13) & 0xFF;
-    SafeOp op = classify(ins, pal_block, m_profile.ipr_read, m_profile.ipr_write, m_profile.pal);
+    SafeOp op = classify(ins, pal_block, m_profile.ipr_read, m_profile.ipr_write,
+        m_profile.pal, m_profile.hw_load);
 
     // A nearby ordinary memory op can reuse the previous op's translated page.
     const bool prev_dpc_live = regalloc.dpc_live;
@@ -1330,21 +1334,18 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             continue;
         }
 
-        // HW_LD (PALmode): physical func 0/1 reads DRAM inline; virtual funcs 4/5 and 8-15
-        // use jit_read_vpte with their VPTE/ALT/WrChk flags. disp is a 12-bit displacement.
+        // HW_LD: normalized physical loads read DRAM inline; virtual loads use the
+        // translation helper with the family-selected access flags and displacement.
         if (op == OP_HW_LDL || op == OP_HW_LDQ || op == OP_HW_LD_VIRT) {
-            if (ra == 31 && op != OP_HW_LD_VIRT) continue;            // virtual R31 forms are fault probes
-            const int disp = (int)((int32_t)(ins << 20) >> 20);    // sign-extend 12-bit displacement
-            const uint32_t hwf = (ins >> 12) & 0xf;
-            const int size_bits = (hwf & 1) ? 64 : 32;
-            uint32_t descr = (uint32_t)size_bits;
-            if (hwf == 4 || hwf == 5) descr |= 0x100;       // VPTE: kernel access mode
-            if (hwf >= 12) descr |= 0x200;                  // ALT: DTB alternate mode
-            if (hwf == 10 || hwf == 11 || hwf == 14 || hwf == 15) descr |= 0x400; // WrChk
-            emit_address(disp);                             // physical or virtual address -> RDX
+            const auto load = alpha_decode_hw_load(m_profile.hw_load, ins);
+            const bool virt = load.address == AlphaHWLoadAddress::Virtual;
+            if (ra == 31 && !virt && load.discard_safe) continue;   // virtual R31 forms are fault probes
+            const int size_bits = static_cast<int>(load.size_bits);
+            const uint32_t descr = virt ? alpha_hw_load_helper_descriptor(load) : load.size_bits;
+            emit_address(load.displacement);                // physical or virtual address -> RDX
 #ifndef JIT_VERIFY
             Label physical_done;
-            if (op != OP_HW_LD_VIRT) {
+            if (!virt) {
                 const Label physical_slow = a.new_label();
                 physical_done = a.new_label();
                 // DRAM is page-aligned. Test the original address so MMIO reaches
@@ -1360,18 +1361,18 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 a.bind(physical_slow);
             }
 #endif
-            if (op == OP_HW_LD_VIRT) {
+            if (virt) {
                 a.mov(x86::r10, imm(b->tag + 4 * (uint64_t)i));
                 a.mov(x86::qword_ptr(x86::rbp, m_off.state_current_pc), x86::r10);
             }
-            emit_call(op == OP_HW_LD_VIRT ? read_vpte_helper : hw_ld_helper,
+            emit_call(virt ? read_vpte_helper : hw_ld_helper,
                 { {JA_CPU, 0}, {JA_VA, 0},
-                  {op == OP_HW_LD_VIRT ? JA_I64 : JA_I32,
-                   op == OP_HW_LD_VIRT ? ((uint64_t)ins << 32) | descr : descr}, {JA_OUT, 0} });
+                  {virt ? JA_I64 : JA_I32,
+                   virt ? ((uint64_t)ins << 32) | descr : descr}, {JA_OUT, 0} });
             Label ok = a.new_label(), trapped = a.new_label();
             a.test(x86::eax, x86::eax);
             a.jz(ok);
-            if (op == OP_HW_LD_VIRT) {
+            if (virt) {
                 a.cmp(x86::eax, imm(2));
                 a.je(trapped);
             }
@@ -1379,7 +1380,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             a.mov(x86::eax, imm(i));
             a.add(x86::eax, x86::r13d);
             a.jmp(done);
-            if (op == OP_HW_LD_VIRT) {
+            if (virt) {
                 a.bind(trapped);                                      // fault delivered: keep PAL entry PC
                 a.mov(x86::eax, imm(i + 1));                          // count the HW_LD exactly once
                 a.add(x86::eax, x86::r13d);
@@ -1395,7 +1396,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 mov_to_reg(ra, x86::rax);
             }
 #ifndef JIT_VERIFY
-            if (op != OP_HW_LD_VIRT) a.bind(physical_done);
+            if (!virt) a.bind(physical_done);
 #endif
             continue;
         }
@@ -2504,7 +2505,8 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   while (plen < b->n_instr && plen < 64
          && (phys + (uint64_t) plen * 4) < page_end)
   {
-    SafeOp sop = classify(words[plen], pal_block, m_profile.ipr_read, m_profile.ipr_write, m_profile.pal);
+    SafeOp sop = classify(words[plen], pal_block, m_profile.ipr_read, m_profile.ipr_write,
+        m_profile.pal, m_profile.hw_load);
     if (sop == OP_NONE) {               // uncompilable op ends the straight-line prefix
 #ifdef JIT_STATS
       const uint32_t bop = words[plen] >> 26;

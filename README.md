@@ -15,7 +15,7 @@ https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist
 Latest 2017-2026 x64 redistributable is recommended.  
 At minimum the version matching your build toolchain is needed.
 
-For outdated documentation, please see the files in the doc subdirectory.
+For outdated documentation, please see the files in the docs subdirectory.
 
 ### Please use es40-cfg to generate a config the first time you use it to ensure you do not omit any required devices from the chipset.
 ### Reference src\es40.cfg for configuration values and explanations  

@@ -1593,12 +1593,10 @@ void CAlphaCPU::jit_run(int budget)
 				if (n_interp + k < 16) verify_words[n_interp + k] = ins;
 				const u32 opc = ins >> 26;
 				const int lra = (ins >> 21) & 0x1F;
-				// HW_LD physical (0x1b, func 0/1) is a load too: the compiled form replays through
-				// this same vlog, but its address is physical (untranslated) with a 12-bit disp.
-				// Virtual forms too, logged va is jit_read_vpte's replay key.
-				const u32 hwld_func = (ins >> 12) & 0xf;
-				const bool is_hwld = (opc == 0x1b) &&
-					(hwld_func <= 1 || hwld_func == 4 || hwld_func == 5 || hwld_func >= 8);
+				// Replay the family-selected compiled loads using their original address.
+				const auto hw_load = (opc == 0x1b)
+					? alpha_decode_hw_load(m_profile.hw_load, ins) : AlphaHWLoadDescriptor{};
+				const bool is_hwld = (opc == 0x1b) && alpha_hw_load_compilable(hw_load);
 				// RPCC/RC/RS (MISC 0x18) and family-marked IPRs read CPU state the verify can't
 				// re-derive; the compiled forms pull their value from this same load log (jit_misc /
 				// jit_hw_mfpr replay it), so log them like loads.
@@ -1620,7 +1618,7 @@ void CAlphaCPU::jit_run(int budget)
 				if (isld && !is_miscrd && !is_ipr_replay)   // misc/ISUM reads have no effective address -- only a logged value
 				{
 					const int lrb = (ins >> 16) & 0x1F;
-					const int ldisp = is_hwld ? (int)((int32_t)(ins << 20) >> 20)   // HW_LD: 12-bit
+					const int ldisp = is_hwld ? hw_load.displacement
 						: (int)(int16_t)(ins & 0xFFFF);        // LDx:   16-bit
 					eva = (lrb == 31 ? (u64)0 : state.r[RREG(lrb)]) + (u64)ldisp;
 					if (opc == 0x0b) eva &= ~U64(7);   // LDQ_U: address forced to 8-byte alignment
@@ -3807,12 +3805,14 @@ _next_instruction:
 		OP(JMP, JMP);
 
 	case 0x1b:          // PAL reserved - HW_LD (PALRES)
+	{
 		if (!pal_hardware_instruction_valid(ins)) {
 			GO_PAL(AlphaPALException::OpcodeDecode);
 			ES40_EXECUTE_END();
 		}
-		function = (ins >> 12) & 0xf;
-		if (function & 1)
+		const auto hw_load = alpha_decode_hw_load(m_profile.hw_load, ins);
+		function = (ins >> 12) & 0xf; // Debug formatting / unknown-form diagnostics only.
+		if (hw_load.size_bits == 64)
 		{
 			OP(HW_LDQ, HW_LD);
 		}
@@ -3820,6 +3820,7 @@ _next_instruction:
 		{
 			OP(HW_LDL, HW_LD);
 		}
+	}
 
 	case 0x1c:          // FPTI* instructions
 		function = (ins >> 5) & 0x7f;

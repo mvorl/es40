@@ -31,6 +31,7 @@
 #include "Ev68PAL.h"
 #include "Ev68IPR.h"
 #include "Ev68MMU.h"
+#include "Ev68HWLoad.h"
 
 // Immutable model identity, feature probes, and PAL entry rules chosen by configuration.
 struct AlphaCPUProfile
@@ -45,6 +46,7 @@ struct AlphaCPUProfile
   AlphaIPRWritePolicy ipr_write = kEv68IPRWritePolicy; // Immutable family IPR writes.
   AlphaTBFillPolicy tb_fill = kEv68TBFillPolicy; // Immutable family PTE decoding.
   AlphaMMUAddressPolicy mmu_address = kEv68MMUAddressPolicy; // Immutable address rules.
+  AlphaHWLoadPolicy hw_load = kEv68HWLoadPolicy; // Immutable hardware-load forms.
 };
 
 // EV68CB pass 4: BWX | FIX | CIX | MVI | precise traps | prefetch modify.

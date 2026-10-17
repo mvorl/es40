@@ -98,104 +98,32 @@
     set_pc(target);                                                                     \
   } while(0)
 
-#define DO_HW_LDL   switch(function)                                          \
-  {                                                                           \
-  case 0:       /* longword physical */                                       \
-    phys_address = state.r[REG_2] + DISP_12;                                  \
-    state.r[REG_1] = READ_PHYS_NT(32);                                        \
-    state.r[REG_1] = sext_u64_32(state.r[REG_1]);  /* HW_LDL canonical longword (vmspal hw_ldl) */ \
-    break;                                                                    \
-                                                                              \
-  case 2:       /* longword physical locked */                                \
-    phys_address = state.r[REG_2] + DISP_12;                                  \
-    state.r[REG_1] = READ_PHYS_NT(32);                                        \
-    state.r[REG_1] = sext_u64_32(state.r[REG_1]);  /* HW_LDL canonical longword (vmspal hw_ldl*/ \
-    cSystem->cpu_lock(state.iProcNum, phys_address, state.r[REG_1]);          \
-    break;                                                                    \
-                                                                              \
-  case 4:       /* longword virtual VPTE (HRM 6.4.1 TYPE 0102: LD_VPTE) --    \
-                 * page-table-entry fetch; access checked against KERNEL      \
-                 * mode regardless of executing CM. virt2phys forces cm=0     \
-                 * when the VPTE flag is set. */                              \
-    DATA_PHYS_NT(state.r[REG_2] + DISP_12, ACCESS_READ | VPTE);               \
-    state.r[REG_1] = READ_PHYS_NT(32);                                        \
-    state.r[REG_1] = sext_u64_32(state.r[REG_1]);  /* HW_LDL canonical longword (vmspal hw_ldl,) */ \
-    break;                                                                    \
-                                                                              \
-  case 8:       /* longword virtual (HRM 6.4.1 TYPE 1002) -- access checked   \
-                 * against current mode */                                    \
-    DATA_PHYS_NT(state.r[REG_2] + DISP_12, ACCESS_READ);                      \
-    state.r[REG_1] = READ_PHYS_NT(32);                                        \
-    state.r[REG_1] = sext_u64_32(state.r[REG_1]);  /* HW_LDL canonical longword (vmspal hw_ldl) */ \
-    break;                                                                    \
-                                                                              \
-  case 10:      /* longword virtual check (HRM 6.4.1 TYPE 1012: WrChk) */     \
-    DATA_PHYS_NT(state.r[REG_2] + DISP_12, ACCESS_READ | WRCHK);              \
-    state.r[REG_1] = READ_PHYS_NT(32);                                        \
-    state.r[REG_1] = sext_u64_32(state.r[REG_1]);  /* HW_LDL canonical longword (vmspal hw_ldl) */ \
-    break;                                                                    \
-                                                                           \
-  case 12:      /* longword virtual alt (HRM 6.4.1 TYPE 1102) -- access      \
-                 * checked using DTB_ALT_MODE, matching QEMU brokenpipe        \
-                 * AlphaMMUIdx_AltMode (was incorrectly bypassed via           \
-                 * NO_CHECK). */                                               \
-    DATA_PHYS_NT(state.r[REG_2] + DISP_12, ACCESS_READ | ALT);                \
-    state.r[REG_1] = READ_PHYS_NT(32);                                        \
-    state.r[REG_1] = sext_u64_32(state.r[REG_1]);  /* HW_LDL canonical longword (vmspal hw_ldl) */ \
-    break;                                                                    \
-                                                                           \
-  case 14:      /* longword virtual alt check (HRM TYPE 1112: WrChk/Alt) */   \
-    DATA_PHYS_NT(state.r[REG_2] + DISP_12, ACCESS_READ | ALT | WRCHK);        \
-    state.r[REG_1] = READ_PHYS_NT(32);                                        \
-    state.r[REG_1] = sext_u64_32(state.r[REG_1]);  /* HW_LDL canonical longword (vmspal hw_ldl) */ \
-    break;                                                                    \
-                                                                           \
-  default:                                                                    \
-    UNKNOWN2;                                                                 \
-  }
+// Family decoding feeds one shared load executor. The caller handles faults
+// and unknown forms in the interpreter instruction-exit context.
+#define DO_HW_LD do {                                                          \
+  if (!alpha_hw_load_valid(hw_load)) { UNKNOWN2; }                             \
+  const u64 hw_address = state.r[REG_2] + (u64)hw_load.displacement;           \
+  if (hw_load.address == AlphaHWLoadAddress::Virtual) {                        \
+    const int hw_flags = ACCESS_READ | (hw_load.vpte ? VPTE : 0)               \
+      | (hw_load.alternate ? ALT : 0) | (hw_load.write_check ? WRCHK : 0);     \
+    if (hw_flags == ACCESS_READ) {                                             \
+      DATA_PHYS_NT(hw_address, ACCESS_READ);                                   \
+    } else if (virt2phys(hw_address, &phys_address, hw_flags, nullptr, ins)) { \
+      ES40_EXECUTE_END();                                                      \
+    }                                                                          \
+  } else {                                                                     \
+    phys_address = hw_address;                                                 \
+  }                                                                            \
+  /* Translate before alignment; preserve raw PA for tracing and locking. */   \
+  state.r[REG_1] = READ_PHYS_NT(hw_load.size_bits);                            \
+  if (hw_load.size_bits == 32)                                                 \
+    state.r[REG_1] = sext_u64_32(state.r[REG_1]);                              \
+  if (hw_load.locked)                                                          \
+    cSystem->cpu_lock(state.iProcNum, phys_address, state.r[REG_1]);           \
+} while (0)
 
-#define DO_HW_LDQ   switch(function)                                          \
-  {                                                                           \
-  case 1:       /* quadword physical */                                       \
-    phys_address = state.r[REG_2] + DISP_12;                                  \
-    state.r[REG_1] = READ_PHYS_NT(64);                                        \
-    break;                                                                    \
-                                                                           \
-  case 3:       /* quadword physical locked */                                \
-    phys_address = state.r[REG_2] + DISP_12;                                  \
-    state.r[REG_1] = READ_PHYS_NT(64);                                        \
-    cSystem->cpu_lock(state.iProcNum, phys_address, state.r[REG_1]);          \
-    break;                                                                    \
-                                                                           \
-  case 5:       /* quadword virtual VPTE (HRM 6.4.1 TYPE 0102: LD_VPTE) --   \
-                 * see HW_LDL case 4 for full notes. */                        \
-    DATA_PHYS_NT(state.r[REG_2] + DISP_12, ACCESS_READ | VPTE);               \
-    state.r[REG_1] = READ_PHYS_NT(64);                                        \
-    break;                                                                    \
-                                                                           \
-  case 9:       /* quadword virtual (HRM 6.4.1 TYPE 1002) -- see case 8 */    \
-    DATA_PHYS_NT(state.r[REG_2] + DISP_12, ACCESS_READ);                      \
-    state.r[REG_1] = READ_PHYS_NT(64);                                        \
-    break;                                                                    \
-                                                                           \
-  case 11:      /* quadword virtual check (HRM 6.4.1 TYPE 1012: WrChk) */     \
-    DATA_PHYS_NT(state.r[REG_2] + DISP_12, ACCESS_READ | WRCHK);              \
-    state.r[REG_1] = READ_PHYS_NT(64);                                        \
-    break;                                                                    \
-                                                                           \
-  case 13:      /* quadword virtual alt (HRM 6.4.1 TYPE 1102) -- see case 12 */\
-    DATA_PHYS_NT(state.r[REG_2] + DISP_12, ACCESS_READ | ALT);                \
-    state.r[REG_1] = READ_PHYS_NT(64);                                        \
-    break;                                                                    \
-                                                                           \
-  case 15:      /* quadword virtual alt check (HRM TYPE 1112: WrChk/Alt) */   \
-    DATA_PHYS_NT(state.r[REG_2] + DISP_12, ACCESS_READ | ALT | WRCHK);        \
-    state.r[REG_1] = READ_PHYS_NT(64);                                        \
-    break;                                                                    \
-                                                                           \
-  default:                                                                    \
-    UNKNOWN2;                                                                 \
-  }
+#define DO_HW_LDL DO_HW_LD
+#define DO_HW_LDQ DO_HW_LD
 
 #define DO_HW_STL   switch(function)                                          \
   {                                                                           \
