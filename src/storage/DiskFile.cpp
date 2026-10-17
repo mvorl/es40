@@ -672,8 +672,9 @@ bool CDiskFile::set_read_only(bool desired_read_only)
         {
             if (image_identity(handle, filename) != identity)
                 FAILURE_1(IO, "%s: Image changed while reopening", devid_string);
-            qcow2_open(filename.c_str());
-            if (qcow2->backing_identity != old_qcow2->backing_identity)
+            qcow2_open(filename.c_str(), old_qcow2->backing ?
+                (old_qcow2->backing_is_qcow2 ? "qcow2" : "raw") : nullptr);
+            if (!qcow2_same_backing(qcow2.get(), old_qcow2.get()))
                 FAILURE_1(IO, "%s: Backing file changed while reopening", devid_string);
         }
         catch (...)
@@ -720,6 +721,9 @@ bool CDiskFile::load_file_transactional(const char* _filename,
     // Allocate the persistent path before touching the mounted image.
     // failure here is harmless.
     std::string new_filename(_filename);
+    const bool overlay = *myCfg->get_text_value("overlay_file", "") != 0;
+    if (overlay)
+        _filename = myCfg->get_text_value("file", "");
 
     enum Format { Auto, Raw, Iso, BinCue, Qcow2 };
 
@@ -734,9 +738,7 @@ bool CDiskFile::load_file_transactional(const char* _filename,
     else if (!strcmp(format_name, "qcow2")) requested_format = Qcow2;
     else FAILURE_1(Configuration, "Unknown image format: %s", format_name);
     
-    const bool overlay = *myCfg->get_text_value("overlay_file", "") != 0;
-    const char* base_file = overlay ? myCfg->get_text_value("file", "") : "";
-    const char* suffix = strrchr(overlay ? base_file : _filename, '.');
+    const char* suffix = strrchr(_filename, '.');
     const char* extension = suffix ? suffix : "";
     
     Format extension_format = Auto;
@@ -756,6 +758,8 @@ bool CDiskFile::load_file_transactional(const char* _filename,
     const bool removable = cdrom() || floppy_device;
     if (overlay && removable)
         FAILURE(Configuration, "overlay_file requires a fixed hard disk");
+    if (overlay && (format == Iso || format == BinCue))
+        FAILURE(Configuration, "overlay_file requires a raw or QCOW2 base image");
 
     // Keep the mounted image mounted until we've opened the replacement
     // this way, a failed selection returns cleanly without changing anything
@@ -835,25 +839,9 @@ bool CDiskFile::load_file_transactional(const char* _filename,
 
     try
     {
-        // Hold the base's shared lock from validation through mounting the child.
-        std::unique_ptr<FILE, int (*)(FILE*)> backing(nullptr, &fclose);
-        std::string backing_file(base_file);
-        u64 backing_size = 0;
         bool loaded = false;
         bool protected_image = false;
-
-        if (overlay)
-        {
-            backing.reset(qcow2_open_backing("", backing_file, 0));
-            backing_size = static_cast<u64>(ftell_large(backing.get()));
-            if (format == Auto)
-                format = qcow2_probe(backing.get()) ? Qcow2 : Raw;
-            else if (format == Qcow2 && extension_format == Qcow2 && !qcow2_probe(backing.get()))
-                format = Raw;
-            if (format != Raw)
-                FAILURE(Configuration, "overlay_file currently requires a raw base image");
-            format = Qcow2;
-        }
+        bool created_qcow2 = false;
 
         if (format == BinCue)
         {
@@ -899,7 +887,12 @@ bool CDiskFile::load_file_transactional(const char* _filename,
 
         if (!loaded)
         {
-            if (read_only)
+            if (overlay)
+            {
+                handle = open_image(_filename, "rb");
+                protected_image = handle != nullptr;
+            }
+            else if (read_only)
                 handle = fopen(_filename, "rb");
             else
                 handle = fopen_large(_filename, "rb+");
@@ -919,9 +912,7 @@ bool CDiskFile::load_file_transactional(const char* _filename,
                 else if (strcmp(create_name, "raw"))
                     FAILURE(Configuration, "autocreate_format must be raw or qcow2");
 
-                if (overlay && create_format != Qcow2)
-                    FAILURE(Configuration, "Creating an overlay requires autocreate_format = qcow2");
-                if (!overlay && requested_format != Auto && requested_format != create_format)
+                if (requested_format != Auto && requested_format != create_format)
                     FAILURE(Configuration, "Missing disk: format must match autocreate_format (default raw)");
 
                 format = create_format;
@@ -933,33 +924,20 @@ bool CDiskFile::load_file_transactional(const char* _filename,
 
                     const u64 size = allow_autocreate ? myCfg->get_num_value("autocreate_size", false, 0) : 0;
 
-                    if (!size || read_only)
+                    if (!size || (!overlay && read_only))
                         FAILURE_1(IO, "%s: QCOW2 file is missing; set autocreate_size for a writable disk to create it", _filename);
 
                     if (size % 512 || size > static_cast<u64>((std::numeric_limits<off_t_large>::max)()))
                         FAILURE_1(IO, "%s: QCOW2 size must be sector-aligned and fit this host's file offsets", _filename);
 
-                    if (overlay)
-                    {
-                        if (size != backing_size)
-                            FAILURE(Configuration, "autocreate_size must match the base file size");
-                        std::error_code error;
-                        const std::filesystem::path child = std::filesystem::absolute(_filename, error);
-                        if (error)
-                            FAILURE_1(IO, "Cannot resolve overlay_file: %s", error.message().c_str());
-                        const std::filesystem::path relative = std::filesystem::path(backing_file).lexically_relative(child.parent_path());
-                        if (!relative.empty())
-                            backing_file = relative.generic_string();
-                        if (backing_file.size() > 1023)
-                            FAILURE(Configuration, "QCOW2 backing filename must not exceed 1023 bytes");
-                    }
                     handle = open_image(_filename, "w+bx");
 
                     if (!handle)
                         FAILURE_2(IO, "Could not create QCOW2 image %s: %s", _filename, strerror(errno));
 
                     protected_image = true;
-                    qcow2_create(size, backing_file.c_str());
+                    qcow2_create(size, "");
+                    created_qcow2 = true;
                 }
             }
 
@@ -976,7 +954,7 @@ bool CDiskFile::load_file_transactional(const char* _filename,
                     return false;
                 }
 
-                handle = fopen_large(_filename, "wb");
+                handle = overlay ? open_image(_filename, "w+bx") : fopen_large(_filename, "wb");
                 if (!handle)
                 {
                     restore_old();
@@ -1021,16 +999,22 @@ bool CDiskFile::load_file_transactional(const char* _filename,
                 }
 
                 printf("100%%\n");
+                free(crt_buf);
+                const std::string created_identity = overlay ? file_identity(handle) : "";
                 int close_result = fclose(handle);
                 handle = nullptr;
-                free(crt_buf);
                 if (close_result != 0)
                 {
                     restore_old();
                     return false;
                 }
 
-                if (read_only)
+                if (overlay)
+                {
+                    handle = open_image(_filename, "rb");
+                    protected_image = handle != nullptr;
+                }
+                else if (read_only)
                     handle = fopen_large(_filename, "rb");
                 else
                     handle = fopen_large(_filename, "rb+");
@@ -1040,15 +1024,26 @@ bool CDiskFile::load_file_transactional(const char* _filename,
                     restore_old();
                     return false;
                 }
+                if (overlay && file_identity(handle) != created_identity)
+                    FAILURE_1(IO, "%s: Base file changed while reopening", _filename);
 
                 printf("%s: %d MB file %s created.\n",
                        devid_string, sz, _filename);
             }
 
+            if (overlay && created_qcow2)
+            {
+                const std::string identity = file_identity(handle);
+                close_image(handle, _filename);
+                handle = open_image(_filename, "rb");
+                if (!handle || file_identity(handle) != identity)
+                    FAILURE_1(IO, "%s: Cannot reopen created base read-only", _filename);
+            }
+
             if (format == Auto)
                 format = qcow2_probe(handle) ? Qcow2 : Raw;
             // An unrecognized header with a QCOW2 extension uses the raw fallback.
-            else if (!overlay && format == Qcow2 && extension_format == Qcow2 && !qcow2_probe(handle))
+            else if (format == Qcow2 && extension_format == Qcow2 && !qcow2_probe(handle))
                 format = Raw;
 
             if (format == Qcow2)
@@ -1058,13 +1053,18 @@ bool CDiskFile::load_file_transactional(const char* _filename,
                 if (!protected_image)
                 {
                     close_image(handle, _filename);
-                    handle = open_image(_filename, read_only ? "rb" : "rb+");
+                    handle = open_image(_filename, (overlay || read_only) ? "rb" : "rb+");
                     if (!handle)
                         FAILURE_2(IO, "Could not protect disk image %s: %s", _filename, strerror(errno));
                 }
-                qcow2_open(_filename);
-                if (backing && file_identity(backing.get()) != qcow2->backing_identity)
-                    FAILURE_1(IO, "%s: Base file changed while mounting the overlay", _filename);
+                if (overlay)
+                {
+                    qcow2 = std::make_unique<Qcow2State>();
+                    qcow2_open(handle, _filename, qcow2.get(), true);
+                    byte_size = static_cast<off_t_large>(qcow2->virtual_size);
+                }
+                else
+                    qcow2_open(_filename);
             }
 
             if (!qcow2)
@@ -1092,6 +1092,53 @@ bool CDiskFile::load_file_transactional(const char* _filename,
 
             sectors = 32;
             heads   = 8;
+        }
+
+        if (overlay)
+        {
+            // Keep the validated base and its chain locked until the overlay is mounted.
+            std::unique_ptr<FILE, int (*)(FILE*)> backing(handle, &fclose);
+            handle = nullptr;
+            std::unique_ptr<Qcow2State> base_qcow2 = std::move(qcow2);
+            const char* backing_format = base_qcow2 ? "qcow2" : "raw";
+            const u64 size = static_cast<u64>(byte_size);
+            if (!size || size % 512)
+                FAILURE(Configuration, "Overlay base size must be positive and sector-aligned");
+
+            std::error_code error;
+            const std::filesystem::path base = std::filesystem::absolute(_filename, error);
+            if (error)
+                FAILURE_1(IO, "Cannot resolve base file: %s", error.message().c_str());
+            _filename = new_filename.c_str();
+            handle = open_image(_filename, read_only ? "rb" : "rb+");
+            if (!handle && errno != ENOENT)
+                FAILURE_2(IO, "Could not open overlay %s: %s", _filename, strerror(errno));
+            if (!handle)
+            {
+                const std::filesystem::path child = std::filesystem::absolute(_filename, error);
+                if (error)
+                    FAILURE_1(IO, "Cannot resolve overlay_file: %s", error.message().c_str());
+                const std::filesystem::path relative = base.lexically_relative(child.parent_path());
+                const std::string backing_file = relative.empty() ? base.string() : relative.generic_string();
+                if (backing_file.size() > 1023)
+                    FAILURE(Configuration, "QCOW2 backing filename must not exceed 1023 bytes");
+                handle = open_image(_filename, "w+bx");
+                if (!handle)
+                    FAILURE_2(IO, "Could not create overlay %s: %s", _filename, strerror(errno));
+                qcow2_create(size, backing_file.c_str(), backing_format);
+                if (read_only)
+                {
+                    const std::string identity = file_identity(handle);
+                    close_image(handle, _filename);
+                    handle = open_image(_filename, "rb");
+                    if (!handle || file_identity(handle) != identity)
+                        FAILURE_1(IO, "%s: Cannot reopen created overlay read-only", _filename);
+                }
+            }
+            qcow2_open(_filename, backing_format);
+            if (file_identity(backing.get()) != qcow2->backing_identity ||
+                !qcow2_same_backing(base_qcow2.get(), qcow2->backing_qcow2.get()))
+                FAILURE_1(IO, "%s: Base changed while mounting the overlay", _filename);
         }
 
         if (byte_size < (off_t_large)state.block_size)
@@ -1421,7 +1468,7 @@ size_t CDiskFile::read_bytes(void* dest, size_t bytes)
 
     if (qcow2)
     {
-        qcow2_read(static_cast<u64>(state.byte_pos), dest, bytes);
+        qcow2_read(handle, qcow2.get(), static_cast<u64>(state.byte_pos), dest, bytes);
         state.byte_pos += static_cast<off_t_large>(bytes);
         return bytes;
     }
@@ -1649,11 +1696,12 @@ std::string CDiskFile::snapshot_identity() const
     {
         out << (qcow2 ? "qcow2:" : "raw:");
         append_identity_string(out, image_identity(handle, filename));
-        if (qcow2 && qcow2->backing)
+        for (const Qcow2State* base = qcow2.get(); base && base->backing;
+             base = base->backing_qcow2.get())
         {
             out << "backing:";
             append_identity_string(out,
-                image_identity(qcow2->backing.get(), qcow2->backing_filename));
+                image_identity(base->backing.get(), base->backing_filename));
         }
         return out.str();
     }

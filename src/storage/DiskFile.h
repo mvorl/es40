@@ -209,6 +209,7 @@ private:
 
   struct Qcow2State
   {
+    u64 virtual_size = 0;
     u64 cluster_size = 0;
     u64 l1_offset = 0;
     u64 refcount_table_offset = 0;
@@ -218,9 +219,11 @@ private:
     std::vector<u64> l1;
     std::vector<u64> refcount_table;
     std::unique_ptr<FILE, int (*)(FILE*)> backing{nullptr, &fclose};
+    std::unique_ptr<Qcow2State> backing_qcow2;
     std::string backing_filename;
     std::string backing_identity;
     u64 backing_size = 0;
+    bool backing_is_qcow2 = false;
     bool failed = false;
   };
   std::unique_ptr<Qcow2State> qcow2;
@@ -263,15 +266,26 @@ private:
 
   // QCOW2 metadata and cluster translation; the file remains owned here.
   bool            qcow2_probe(FILE* image);
-  void            qcow2_create(u64 size, const char* backing_file);
-  void            qcow2_open(const char* image_path);
+  void            qcow2_create(u64 size, const char* backing_file,
+                               const char* backing_format = "raw");
+  void            qcow2_open(const char* image_path,
+                             const char* expected_backing_format = nullptr);
+  void            qcow2_open(FILE* image, const char* image_path,
+                             Qcow2State* info, bool readonly,
+                             std::vector<std::string> ancestors = {});
+  static bool     qcow2_same_backing(const Qcow2State* left,
+                                     const Qcow2State* right);
   FILE*           qcow2_open_backing(const char* image_path,
-                                     std::string& backing_filename, u64 size);
-  void            qcow2_read(u64 offset, void* data, size_t count);
+                                     std::string& backing_filename);
+  void            qcow2_read(FILE* image, Qcow2State* info,
+                             u64 offset, void* data, size_t count);
   void            qcow2_write(u64 offset, const void* data, size_t count);
-  void            qcow2_parse_header(u64 physical_size);
-  void            qcow2_check_metadata(u64 physical_size);
-  u64             qcow2_read_l2_entry(u64 index, u64* table = nullptr);
+  void            qcow2_parse_header(FILE* image, Qcow2State* info,
+                                     u64 physical_size, bool readonly);
+  void            qcow2_check_metadata(FILE* image, Qcow2State* info,
+                                       u64 physical_size);
+  u64             qcow2_read_l2_entry(FILE* image, Qcow2State* info,
+                                      u64 index, u64* table = nullptr);
   void            qcow2_set_dirty(bool dirty);
   u64             qcow2_allocate_cluster(const u8* contents);
 
