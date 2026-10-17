@@ -444,3 +444,10 @@ build/*
 
 # Local diagnostics and manual test images
 /tmp/
+
+# Local state and build outputs for the root Visual Studio solution
+/Visual Studio/.vs/
+/Visual Studio/asmjit/
+/Visual Studio/packages/
+/Visual Studio/x64/
+/Visual Studio/x86/

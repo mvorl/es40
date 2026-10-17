@@ -142,14 +142,14 @@
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <PropertyGroup>
-    <OutDir>$(SolutionDir)$(Platform)\$(Configuration)\</OutDir>
+    <OutDir>$(ProjectDir)$(Platform)\$(Configuration)\</OutDir>
     <IntDir>$(Platform)\$(Configuration)\$(ProjectName)\</IntDir>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>WIN32;_LIB;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>..\config\tui_win32\include;..\..\third_party\PDCursesMod;..\..\third_party\PDCursesMod\wincon;..\..\third_party\netbsd-curses;..\..\third_party\netbsd-curses\libform;..\..\third_party\netbsd-curses\libmenu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\src\config\tui_win32\include;..\third_party\PDCursesMod;..\third_party\PDCursesMod\wincon;..\third_party\netbsd-curses;..\third_party\netbsd-curses\libform;..\third_party\netbsd-curses\libmenu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <ForcedIncludeFiles>bsd_compat.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
@@ -187,104 +187,104 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup Label="PDCursesMod core">
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\addch.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\addchstr.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\addstr.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\attr.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\beep.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\bkgd.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\border.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\clear.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\color.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\debug.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\delch.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\deleteln.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\getch.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\getstr.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\getyx.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\inch.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\inchstr.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\initscr.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\inopts.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\insch.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\insstr.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\instr.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\kernel.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\keyname.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\mouse.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\move.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\outopts.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\overlay.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\pad.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\panel.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\printw.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\refresh.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\scanw.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\scr_dump.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\scroll.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\slk.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\termattr.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\terminfo.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\touch.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\util.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\pdcurses\window.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\addch.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\addchstr.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\addstr.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\attr.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\beep.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\bkgd.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\border.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\clear.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\color.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\debug.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\delch.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\deleteln.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\getch.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\getstr.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\getyx.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\inch.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\inchstr.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\initscr.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\inopts.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\insch.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\insstr.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\instr.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\kernel.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\keyname.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\mouse.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\move.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\outopts.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\overlay.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\pad.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\panel.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\printw.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\refresh.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\scanw.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\scr_dump.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\scroll.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\slk.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\termattr.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\terminfo.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\touch.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\util.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\pdcurses\window.c" />
   </ItemGroup>
   <ItemGroup Label="PDCursesMod wincon port">
-    <ClCompile Include="..\..\third_party\PDCursesMod\wincon\pdcclip.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\wincon\pdcdisp.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\wincon\pdcgetsc.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\wincon\pdckbd.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\wincon\pdcscrn.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\wincon\pdcsetsc.c" />
-    <ClCompile Include="..\..\third_party\PDCursesMod\wincon\pdcutil.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\wincon\pdcclip.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\wincon\pdcdisp.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\wincon\pdcgetsc.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\wincon\pdckbd.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\wincon\pdcscrn.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\wincon\pdcsetsc.c" />
+    <ClCompile Include="..\third_party\PDCursesMod\wincon\pdcutil.c" />
   </ItemGroup>
   <ItemGroup Label="NetBSD libform (type_ipv6.c omitted: needs getaddrinfo, unused)">
-    <ClCompile Include="..\..\third_party\netbsd-curses\libform\driver.c" />
-    <ClCompile Include="..\..\third_party\netbsd-curses\libform\field.c" />
-    <ClCompile Include="..\..\third_party\netbsd-curses\libform\field_types.c" />
-    <ClCompile Include="..\..\third_party\netbsd-curses\libform\form.c" />
-    <ClCompile Include="..\..\third_party\netbsd-curses\libform\internals.c" />
-    <ClCompile Include="..\..\third_party\netbsd-curses\libform\post.c" />
-    <ClCompile Include="..\..\third_party\netbsd-curses\libform\type_alnum.c" />
-    <ClCompile Include="..\..\third_party\netbsd-curses\libform\type_alpha.c" />
-    <ClCompile Include="..\..\third_party\netbsd-curses\libform\type_enum.c" />
-    <ClCompile Include="..\..\third_party\netbsd-curses\libform\type_integer.c" />
-    <ClCompile Include="..\..\third_party\netbsd-curses\libform\type_ipv4.c" />
-    <ClCompile Include="..\..\third_party\netbsd-curses\libform\type_numeric.c" />
-    <ClCompile Include="..\..\third_party\netbsd-curses\libform\type_regex.c" />
+    <ClCompile Include="..\third_party\netbsd-curses\libform\driver.c" />
+    <ClCompile Include="..\third_party\netbsd-curses\libform\field.c" />
+    <ClCompile Include="..\third_party\netbsd-curses\libform\field_types.c" />
+    <ClCompile Include="..\third_party\netbsd-curses\libform\form.c" />
+    <ClCompile Include="..\third_party\netbsd-curses\libform\internals.c" />
+    <ClCompile Include="..\third_party\netbsd-curses\libform\post.c" />
+    <ClCompile Include="..\third_party\netbsd-curses\libform\type_alnum.c" />
+    <ClCompile Include="..\third_party\netbsd-curses\libform\type_alpha.c" />
+    <ClCompile Include="..\third_party\netbsd-curses\libform\type_enum.c" />
+    <ClCompile Include="..\third_party\netbsd-curses\libform\type_integer.c" />
+    <ClCompile Include="..\third_party\netbsd-curses\libform\type_ipv4.c" />
+    <ClCompile Include="..\third_party\netbsd-curses\libform\type_numeric.c" />
+    <ClCompile Include="..\third_party\netbsd-curses\libform\type_regex.c" />
   </ItemGroup>
   <ItemGroup Label="NetBSD libmenu (object names prefixed: internals/driver/post clash with libform)">
-    <ClCompile Include="..\..\third_party\netbsd-curses\libmenu\attributes.c">
+    <ClCompile Include="..\third_party\netbsd-curses\libmenu\attributes.c">
       <ObjectFileName>$(IntDir)menu_%(Filename).obj</ObjectFileName>
     </ClCompile>
-    <ClCompile Include="..\..\third_party\netbsd-curses\libmenu\driver.c">
+    <ClCompile Include="..\third_party\netbsd-curses\libmenu\driver.c">
       <ObjectFileName>$(IntDir)menu_%(Filename).obj</ObjectFileName>
     </ClCompile>
-    <ClCompile Include="..\..\third_party\netbsd-curses\libmenu\internals.c">
+    <ClCompile Include="..\third_party\netbsd-curses\libmenu\internals.c">
       <ObjectFileName>$(IntDir)menu_%(Filename).obj</ObjectFileName>
     </ClCompile>
-    <ClCompile Include="..\..\third_party\netbsd-curses\libmenu\item.c">
+    <ClCompile Include="..\third_party\netbsd-curses\libmenu\item.c">
       <ObjectFileName>$(IntDir)menu_%(Filename).obj</ObjectFileName>
     </ClCompile>
-    <ClCompile Include="..\..\third_party\netbsd-curses\libmenu\menu.c">
+    <ClCompile Include="..\third_party\netbsd-curses\libmenu\menu.c">
       <ObjectFileName>$(IntDir)menu_%(Filename).obj</ObjectFileName>
     </ClCompile>
-    <ClCompile Include="..\..\third_party\netbsd-curses\libmenu\post.c">
+    <ClCompile Include="..\third_party\netbsd-curses\libmenu\post.c">
       <ObjectFileName>$(IntDir)menu_%(Filename).obj</ObjectFileName>
     </ClCompile>
-    <ClCompile Include="..\..\third_party\netbsd-curses\libmenu\userptr.c">
+    <ClCompile Include="..\third_party\netbsd-curses\libmenu\userptr.c">
       <ObjectFileName>$(IntDir)menu_%(Filename).obj</ObjectFileName>
     </ClCompile>
   </ItemGroup>
   <ItemGroup Label="MSVC shims">
-    <ClCompile Include="..\config\tui_win32\bsd_compat.c" />
-    <ClCompile Include="..\config\tui_win32\regex_std.cpp" />
-    <ClInclude Include="..\config\tui_win32\include\bsd_compat.h" />
-    <ClInclude Include="..\config\tui_win32\include\err.h" />
-    <ClInclude Include="..\config\tui_win32\include\netbsd_sys\queue.h" />
-    <ClInclude Include="..\config\tui_win32\include\regex.h" />
-    <ClInclude Include="..\config\tui_win32\include\strings.h" />
-    <ClInclude Include="..\config\tui_win32\include\sys\param.h" />
+    <ClCompile Include="..\src\config\tui_win32\bsd_compat.c" />
+    <ClCompile Include="..\src\config\tui_win32\regex_std.cpp" />
+    <ClInclude Include="..\src\config\tui_win32\include\bsd_compat.h" />
+    <ClInclude Include="..\src\config\tui_win32\include\err.h" />
+    <ClInclude Include="..\src\config\tui_win32\include\netbsd_sys\queue.h" />
+    <ClInclude Include="..\src\config\tui_win32\include\regex.h" />
+    <ClInclude Include="..\src\config\tui_win32\include\strings.h" />
+    <ClInclude Include="..\src\config\tui_win32\include\sys\param.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

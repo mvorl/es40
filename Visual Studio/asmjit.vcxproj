@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <ProjectGuid>{A11C0DE0-0000-4A11-B0F1-A2C3D4E5F601}</ProjectGuid>
+    <RootNamespace>asmjit</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>NotSet</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>NotSet</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <PreprocessorDefinitions>ASMJIT_STATIC;ASMJIT_NO_FOREIGN;ASMJIT_NO_AARCH64;ASMJIT_NO_UJIT;_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\third_party\asmjit;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <WholeProgramOptimization>true</WholeProgramOptimization>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <PreprocessorDefinitions>ASMJIT_STATIC;ASMJIT_NO_FOREIGN;ASMJIT_NO_AARCH64;ASMJIT_NO_UJIT;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\third_party\asmjit;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <ConformanceMode>true</ConformanceMode>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\arch_traits.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\assembler.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\builder.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\code_holder.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\code_writer.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\compiler.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\const_pool.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\cpu_info.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\debug_utils.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\emit_helper.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\emitter.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\emitter_utils.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\environment.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\error.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\error_handler.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\formatter.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\func.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\func_args_context.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\inst.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\inst_db.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\jit_allocator.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\jit_runtime.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\logger.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\os_utils.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\pauth.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\ra_local.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\ra_pass.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\ra_stack.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\string.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\target.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\type.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\core\virt_mem.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\axl\arena.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\axl\arena_bit_set.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\axl\arena_hash.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\axl\arena_vector.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\x86\x86_assembler.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\x86\x86_builder.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\x86\x86_compiler.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\x86\x86_emit_helper.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\x86\x86_formatter.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\x86\x86_func.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\x86\x86_inst_api.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\x86\x86_inst_db.cpp" />
+    <ClCompile Include="..\third_party\asmjit\asmjit\x86\x86_ra_pass.cpp" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

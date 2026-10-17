@@ -567,7 +567,7 @@
       <IntrinsicFunctions>false</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;IDB;LS_MASTER;HAVE_PCAP;HAVE_SDL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -626,7 +626,7 @@
       <IntrinsicFunctions>false</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>false</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;IDB;HAVE_PCAP;HAVE_SDL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -686,7 +686,7 @@
       <IntrinsicFunctions>false</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>false</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;IDB;HAVE_PCAP;HAVE_SDL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -746,7 +746,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;HAVE_SDL;HAVE_PCAP;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -808,7 +808,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;HAVE_SDL;HAVE_PCAP;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -870,7 +870,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;..\..\third_party\asmjit;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;..\third_party\asmjit;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;HAVE_SDL;HAVE_PCAP;ES40_JIT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -932,7 +932,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;..\..\third_party\asmjit;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;..\third_party\asmjit;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;HAVE_SDL;HAVE_PCAP;ES40_JIT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -994,7 +994,7 @@
       <IntrinsicFunctions>false</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;IDB;LS_SLAVE;HAVE_PCAP;HAVE_SDL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -1053,7 +1053,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Neither</FavorSizeOrSpeed>
       <WholeProgramOptimization>false</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;HAVE_PCAP;HAVE_SDL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -1117,7 +1117,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Neither</FavorSizeOrSpeed>
       <WholeProgramOptimization>false</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;..\..\third_party\asmjit;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;..\third_party\asmjit;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;HAVE_PCAP;HAVE_SDL;ES40_JIT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -1181,7 +1181,7 @@
       <IntrinsicFunctions>false</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>C:\dev\SDL3\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\dev\SDL3\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;IDB;LS_MASTER;HAVE_SDL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -1240,7 +1240,7 @@
       <IntrinsicFunctions>false</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>C:\dev\SDL3\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\dev\SDL3\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;IDB;HAVE_SDL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -1299,7 +1299,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>C:\dev\SDL3\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\dev\SDL3\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;HAVE_SDL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -1359,7 +1359,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>C:\dev\SDL3\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\dev\SDL3\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;HAVE_SDL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -1419,7 +1419,7 @@
       <IntrinsicFunctions>false</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>C:\dev\SDL3\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\dev\SDL3\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;IDB;LS_SLAVE;HAVE_SDL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -1478,7 +1478,7 @@
       <IntrinsicFunctions>false</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;IDB;LS_MASTER;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -1537,7 +1537,7 @@
       <IntrinsicFunctions>false</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;IDB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -1596,7 +1596,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -1656,7 +1656,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -1716,7 +1716,7 @@
       <IntrinsicFunctions>false</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;IDB;LS_SLAVE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -1775,7 +1775,7 @@
       <IntrinsicFunctions>false</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;IDB;LS_MASTER;HAVE_PCAP;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -1834,7 +1834,7 @@
       <IntrinsicFunctions>false</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;IDB;HAVE_PCAP;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -1893,7 +1893,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;HAVE_PCAP;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -1953,7 +1953,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;HAVE_PCAP;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -2013,7 +2013,7 @@
       <IntrinsicFunctions>false</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;IDB;LS_SLAVE;HAVE_PCAP;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -2072,7 +2072,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;HAVE_SDL;HAVE_PCAP;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -2132,7 +2132,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <WholeProgramOptimization>true</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(SolutionDir)\..;$(SolutionDir)\..\emu;..\..\third_party\asmjit;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>c:\dev\npcap-sdk\include;C:\dev\SDL3\include;$(ProjectDir)\..\src;$(ProjectDir)\..\src\emu;..\third_party\asmjit;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;HAVE_SDL;HAVE_PCAP;ES40_JIT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>false</StringPooling>
       <MinimalRebuild>false</MinimalRebuild>
@@ -2184,247 +2184,247 @@
   </PropertyGroup>
   <Import Project="es40-slirp.props" />
   <ItemGroup>
-    <ClCompile Include="..\chipset\AliM1543C.cpp" />
-    <ClCompile Include="..\chipset\AliM1543C_ide.cpp" />
-    <ClCompile Include="..\chipset\AliM1543C_usb.cpp" />
-    <ClCompile Include="..\chipset\AliM1543C_pmu.cpp" />
-    <ClCompile Include="..\CPU\AlphaCPU.cpp" />
-    <ClCompile Include="..\CPU\Ev68IPR.cpp" />
-    <ClCompile Include="..\CPU\Ev68MMU.cpp" />
-    <ClCompile Include="..\CPU\jit\jitengine.cpp" />
-    <ClCompile Include="..\CPU\jit\jitengine_x64.cpp" />
-    <ClCompile Include="..\CPU\jit\jitengine_a64.cpp" />
-    <ClCompile Include="..\CPU\AlphaCPU_ieeefloat.cpp" />
-    <ClCompile Include="..\CPU\AlphaCPU_vaxfloat.cpp" />
-    <ClCompile Include="..\CPU\AlphaCPU_vmspal.cpp" />
-    <ClCompile Include="..\AlphaSim.cpp" />
-    <ClCompile Include="..\base\ThreadTLS.cpp" />
-    <ClCompile Include="..\graphics\Cirrus.cpp">
+    <ClCompile Include="..\src\chipset\AliM1543C.cpp" />
+    <ClCompile Include="..\src\chipset\AliM1543C_ide.cpp" />
+    <ClCompile Include="..\src\chipset\AliM1543C_usb.cpp" />
+    <ClCompile Include="..\src\chipset\AliM1543C_pmu.cpp" />
+    <ClCompile Include="..\src\CPU\AlphaCPU.cpp" />
+    <ClCompile Include="..\src\CPU\Ev68IPR.cpp" />
+    <ClCompile Include="..\src\CPU\Ev68MMU.cpp" />
+    <ClCompile Include="..\src\CPU\jit\jitengine.cpp" />
+    <ClCompile Include="..\src\CPU\jit\jitengine_x64.cpp" />
+    <ClCompile Include="..\src\CPU\jit\jitengine_a64.cpp" />
+    <ClCompile Include="..\src\CPU\AlphaCPU_ieeefloat.cpp" />
+    <ClCompile Include="..\src\CPU\AlphaCPU_vaxfloat.cpp" />
+    <ClCompile Include="..\src\CPU\AlphaCPU_vmspal.cpp" />
+    <ClCompile Include="..\src\AlphaSim.cpp" />
+    <ClCompile Include="..\src\base\ThreadTLS.cpp" />
+    <ClCompile Include="..\src\graphics\Cirrus.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release JIT|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release - SSE2|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release JIT - SSE2|x64'">true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="..\audio\ES1370.cpp" />
-    <ClCompile Include="..\audio\MPU401.cpp" />
-    <ClCompile Include="..\config\Configurator.cpp" />
-    <ClCompile Include="..\network\DEC21143.cpp" />
-    <ClCompile Include="..\network\NetworkBackend.cpp" />
-    <ClCompile Include="..\network\NetworkPcap.cpp" />
-    <ClCompile Include="..\network\NetworkSlirp.cpp" />
-    <ClCompile Include="..\network\NetworkTap.cpp">
+    <ClCompile Include="..\src\audio\ES1370.cpp" />
+    <ClCompile Include="..\src\audio\MPU401.cpp" />
+    <ClCompile Include="..\src\config\Configurator.cpp" />
+    <ClCompile Include="..\src\network\DEC21143.cpp" />
+    <ClCompile Include="..\src\network\NetworkBackend.cpp" />
+    <ClCompile Include="..\src\network\NetworkPcap.cpp" />
+    <ClCompile Include="..\src\network\NetworkSlirp.cpp" />
+    <ClCompile Include="..\src\network\NetworkTap.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="..\network\NetworkVmnet.cpp">
+    <ClCompile Include="..\src\network\NetworkVmnet.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="..\network\NetworkVmnetIPC.cpp">
+    <ClCompile Include="..\src\network\NetworkVmnetIPC.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="..\network\es40_vmnet_helper.cpp">
+    <ClCompile Include="..\src\network\es40_vmnet_helper.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="..\storage\Disk.cpp" />
-    <ClCompile Include="..\storage\DiskController.cpp" />
-    <ClCompile Include="..\storage\DiskDevice.cpp" />
-    <ClCompile Include="..\storage\DiskFile.cpp" />
-    <ClCompile Include="..\storage\DiskFileQcow2.cpp" />
-    <ClCompile Include="..\storage\DiskRam.cpp" />
-    <ClCompile Include="..\chipset\DMA.cpp" />
-    <ClCompile Include="..\system\DPR.cpp" />
-    <ClCompile Include="..\es40_debug.cpp" />
-    <ClCompile Include="..\network\Ethernet.cpp" />
-    <ClCompile Include="..\base\Exception.cpp" />
-    <ClCompile Include="..\system\Flash.cpp" />
-    <ClCompile Include="..\storage\FloppyController.cpp" />
-    <ClCompile Include="..\gui\gui.cpp" />
-    <ClCompile Include="..\gui\gui_win32.cpp" />
-    <ClCompile Include="..\system\i2c_spd.cpp" />
-    <ClCompile Include="..\graphics\ibm8514a.cpp" />
-    <ClCompile Include="..\io\Keyboard.cpp" />
-    <ClCompile Include="..\gui\keymap.cpp" />
-    <ClCompile Include="..\network\lockstep.cpp" />
-    <ClCompile Include="..\emu\PCIDevice.cpp" />
-    <ClCompile Include="..\io\Port80.cpp" />
-    <ClCompile Include="..\graphics\S3Trio64.cpp" />
-    <ClCompile Include="..\graphics\GloriaSynergy.cpp" />
-    <ClCompile Include="..\graphics\Permedia2.cpp" />
-    <ClCompile Include="..\graphics\Radeon7500.cpp" />
-    <ClCompile Include="..\graphics\RV200.cpp" />
-    <ClCompile Include="..\graphics\PowerStorm3xx.cpp" />
-    <ClCompile Include="..\graphics\REALimage2100.cpp" />
-    <ClCompile Include="..\gui\scancodes.cpp" />
-    <ClCompile Include="..\storage\SCSIBus.cpp" />
-    <ClCompile Include="..\storage\SCSIDevice.cpp" />
-    <ClCompile Include="..\gui\sdl.cpp" />
-    <ClCompile Include="..\gui\sdl_media.cpp" />
-    <ClCompile Include="..\io\Serial.cpp" />
-    <ClCompile Include="..\StdAfx.cpp" />
-    <ClCompile Include="..\storage\LSI53C1020.cpp" />
-    <ClCompile Include="..\storage\Sym53C810.cpp" />
-    <ClCompile Include="..\storage\Sym53C895.cpp" />
-    <ClCompile Include="..\system\System.cpp" />
-    <ClCompile Include="..\system\System_es40.cpp" />
-    <ClCompile Include="..\system\System_tsunami.cpp" />
-    <ClCompile Include="..\emu\SystemComponent.cpp" />
-    <ClCompile Include="..\CPU\TraceEngine.cpp" />
-    <ClCompile Include="..\graphics\VGA.cpp" />
+    <ClCompile Include="..\src\storage\Disk.cpp" />
+    <ClCompile Include="..\src\storage\DiskController.cpp" />
+    <ClCompile Include="..\src\storage\DiskDevice.cpp" />
+    <ClCompile Include="..\src\storage\DiskFile.cpp" />
+    <ClCompile Include="..\src\storage\DiskFileQcow2.cpp" />
+    <ClCompile Include="..\src\storage\DiskRam.cpp" />
+    <ClCompile Include="..\src\chipset\DMA.cpp" />
+    <ClCompile Include="..\src\system\DPR.cpp" />
+    <ClCompile Include="..\src\es40_debug.cpp" />
+    <ClCompile Include="..\src\network\Ethernet.cpp" />
+    <ClCompile Include="..\src\base\Exception.cpp" />
+    <ClCompile Include="..\src\system\Flash.cpp" />
+    <ClCompile Include="..\src\storage\FloppyController.cpp" />
+    <ClCompile Include="..\src\gui\gui.cpp" />
+    <ClCompile Include="..\src\gui\gui_win32.cpp" />
+    <ClCompile Include="..\src\system\i2c_spd.cpp" />
+    <ClCompile Include="..\src\graphics\ibm8514a.cpp" />
+    <ClCompile Include="..\src\io\Keyboard.cpp" />
+    <ClCompile Include="..\src\gui\keymap.cpp" />
+    <ClCompile Include="..\src\network\lockstep.cpp" />
+    <ClCompile Include="..\src\emu\PCIDevice.cpp" />
+    <ClCompile Include="..\src\io\Port80.cpp" />
+    <ClCompile Include="..\src\graphics\S3Trio64.cpp" />
+    <ClCompile Include="..\src\graphics\GloriaSynergy.cpp" />
+    <ClCompile Include="..\src\graphics\Permedia2.cpp" />
+    <ClCompile Include="..\src\graphics\Radeon7500.cpp" />
+    <ClCompile Include="..\src\graphics\RV200.cpp" />
+    <ClCompile Include="..\src\graphics\PowerStorm3xx.cpp" />
+    <ClCompile Include="..\src\graphics\REALimage2100.cpp" />
+    <ClCompile Include="..\src\gui\scancodes.cpp" />
+    <ClCompile Include="..\src\storage\SCSIBus.cpp" />
+    <ClCompile Include="..\src\storage\SCSIDevice.cpp" />
+    <ClCompile Include="..\src\gui\sdl.cpp" />
+    <ClCompile Include="..\src\gui\sdl_media.cpp" />
+    <ClCompile Include="..\src\io\Serial.cpp" />
+    <ClCompile Include="..\src\StdAfx.cpp" />
+    <ClCompile Include="..\src\storage\LSI53C1020.cpp" />
+    <ClCompile Include="..\src\storage\Sym53C810.cpp" />
+    <ClCompile Include="..\src\storage\Sym53C895.cpp" />
+    <ClCompile Include="..\src\system\System.cpp" />
+    <ClCompile Include="..\src\system\System_es40.cpp" />
+    <ClCompile Include="..\src\system\System_tsunami.cpp" />
+    <ClCompile Include="..\src\emu\SystemComponent.cpp" />
+    <ClCompile Include="..\src\CPU\TraceEngine.cpp" />
+    <ClCompile Include="..\src\graphics\VGA.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\emu\address_map.h" />
-    <ClInclude Include="..\chipset\AliM1543C.h" />
-    <ClInclude Include="..\chipset\AliM1543C_ide.h" />
-    <ClInclude Include="..\chipset\AliM1543C_usb.h" />
-    <ClInclude Include="..\chipset\AliM1543C_pmu.h" />
-    <ClInclude Include="..\CPU\AlphaCPU.h" />
-    <ClInclude Include="..\CPU\idle_detect.h" />
-    <ClInclude Include="..\CPU\AlphaCPUProfile.h" />
-    <ClInclude Include="..\CPU\AlphaPAL.h" />
-    <ClInclude Include="..\CPU\Ev68PAL.h" />
-    <ClInclude Include="..\CPU\AlphaIPR.h" />
-    <ClInclude Include="..\CPU\Ev68IPR.h" />
-    <ClInclude Include="..\CPU\AlphaMMU.h" />
-    <ClInclude Include="..\CPU\Ev68MMU.h" />
-    <ClInclude Include="..\CPU\AlphaHWLoad.h" />
-    <ClInclude Include="..\CPU\Ev68HWLoad.h" />
-    <ClInclude Include="..\CPU\AlphaHWStore.h" />
-    <ClInclude Include="..\CPU\Ev68HWStore.h" />
-    <ClInclude Include="..\emu\attotime.h" />
-    <ClInclude Include="..\banner.h" />
-    <ClInclude Include="..\base\Exception.h" />
-    <ClInclude Include="..\base\Mutex.h" />
-    <ClInclude Include="..\base\Runnable.h" />
-    <ClInclude Include="..\base\RWLock.h" />
-    <ClInclude Include="..\base\Semaphore.h" />
-    <ClInclude Include="..\base\HostWakeEvent.h" />
-    <ClInclude Include="..\base\Thread.h" />
-    <ClInclude Include="..\graphics\Cirrus.h" />
-    <ClInclude Include="..\config_debug.h" />
-    <ClInclude Include="..\config_vms.h" />
-    <ClInclude Include="..\config_win32.h" />
-    <ClInclude Include="..\config\Configurator.h" />
-    <ClInclude Include="..\emu\coretmpl.h" />
-    <ClInclude Include="..\CPU\cpu_arith.h" />
-    <ClInclude Include="..\CPU\cpu_bwx.h" />
-    <ClInclude Include="..\CPU\cpu_control.h" />
-    <ClInclude Include="..\CPU\cpu_debug.h" />
-    <ClInclude Include="..\CPU\cpu_defs.h" />
-    <ClInclude Include="..\CPU\cpu_fp_branch.h" />
-    <ClInclude Include="..\CPU\cpu_fp_memory.h" />
-    <ClInclude Include="..\CPU\cpu_fp_operate.h" />
-    <ClInclude Include="..\CPU\cpu_logical.h" />
-    <ClInclude Include="..\CPU\cpu_memory.h" />
-    <ClInclude Include="..\CPU\cpu_misc.h" />
-    <ClInclude Include="..\CPU\cpu_mvi.h" />
-    <ClInclude Include="..\CPU\cpu_pal.h" />
-    <ClInclude Include="..\CPU\cpu_vax.h" />
-    <ClInclude Include="..\datatypes.h" />
-    <ClInclude Include="..\network\DEC21143.h" />
-    <ClInclude Include="..\network\DEC21143_mii.h" />
-    <ClInclude Include="..\network\DEC21143_tulipreg.h" />
-    <ClInclude Include="..\CPU\diag_rpcc.h" />
-    <ClInclude Include="..\storage\Disk.h" />
-    <ClInclude Include="..\storage\DiskController.h" />
-    <ClInclude Include="..\storage\DiskDevice.h" />
-    <ClInclude Include="..\storage\DiskFile.h" />
-    <ClInclude Include="..\storage\DiskFileBinCue.h" />
-    <ClInclude Include="..\storage\DiskRam.h" />
-    <ClInclude Include="..\chipset\DMA.h" />
-    <ClInclude Include="..\system\DPR.h" />
-    <ClInclude Include="..\emu\emu.h" />
-    <ClInclude Include="..\audio\ES1370.h" />
-    <ClInclude Include="..\es40_debug.h" />
-    <ClInclude Include="..\es40_endian.h" />
-    <ClInclude Include="..\network\Ethernet.h" />
-    <ClInclude Include="..\network\NetworkBackend.h" />
-    <ClInclude Include="..\network\NetworkPcap.h" />
-    <ClInclude Include="..\network\NetworkSlirp.h" />
-    <ClInclude Include="..\network\NetworkTap.h" />
-    <ClInclude Include="..\network\NetworkVmnet.h" />
-    <ClInclude Include="..\network\NetworkVmnetIPC.h" />
-    <ClInclude Include="..\network\NetworkVmnetProto.h" />
-    <ClInclude Include="..\system\Flash.h" />
-    <ClInclude Include="..\storage\FloppyController.h" />
-    <ClInclude Include="..\gui\gui.h" />
-    <ClInclude Include="..\system\i2c_spd.h" />
-    <ClInclude Include="..\graphics\ibm8514a.h" />
-    <ClInclude Include="..\CPU\jit\jitengine.h" />
-    <ClInclude Include="..\CPU\jit\jitengine_internal.h" />
-    <ClInclude Include="..\io\Keyboard.h" />
-    <ClInclude Include="..\gui\keymap.h" />
-    <ClInclude Include="..\network\lockstep.h" />
-    <ClInclude Include="..\logmacro.h" />
-    <ClInclude Include="..\emu\mame_shims.h" />
-    <ClInclude Include="..\audio\MPU401.h" />
-    <ClInclude Include="..\emu\PCIDevice.h" />
-    <ClInclude Include="..\gui\plugin.h" />
-    <ClInclude Include="..\io\Port80.h" />
-    <ClInclude Include="..\graphics\S3Trio64.h" />
-    <ClInclude Include="..\graphics\GloriaSynergy.h" />
-    <ClInclude Include="..\graphics\Permedia2.h" />
-    <ClInclude Include="..\graphics\Radeon7500.h" />
-    <ClInclude Include="..\graphics\RV200.h" />
-    <ClInclude Include="..\graphics\PowerStorm3xx.h" />
-    <ClInclude Include="..\graphics\REALimage2100.h" />
-    <ClInclude Include="..\gui\scancodes.h" />
-    <ClInclude Include="..\storage\SCSIBus.h" />
-    <ClInclude Include="..\storage\SCSIDevice.h" />
-    <ClInclude Include="..\gui\sdl_fonts.h" />
-    <ClInclude Include="..\gui\sdlkeys.h" />
-    <ClInclude Include="..\gui\sdl_media.h" />
-    <ClInclude Include="..\io\Serial.h" />
-    <ClInclude Include="..\io\SerialListenAddress.h" />
-    <ClInclude Include="..\StdAfx.h" />
-    <ClInclude Include="..\storage\LSI53C1020.h" />
-    <ClInclude Include="..\storage\Sym53C810.h" />
-    <ClInclude Include="..\storage\Sym53C895.h" />
-    <ClInclude Include="..\system\System.h" />
-    <ClInclude Include="..\SnapshotFile.h" />
-    <ClInclude Include="..\emu\SystemComponent.h" />
-    <ClInclude Include="..\network\telnet.h" />
-    <ClInclude Include="..\CPU\TraceEngine.h" />
-    <ClInclude Include="..\gui\vga.h" />
-    <ClInclude Include="..\graphics\VGA.h" />
-    <ClInclude Include="..\emu\xtal.h" />
+    <ClInclude Include="..\src\emu\address_map.h" />
+    <ClInclude Include="..\src\chipset\AliM1543C.h" />
+    <ClInclude Include="..\src\chipset\AliM1543C_ide.h" />
+    <ClInclude Include="..\src\chipset\AliM1543C_usb.h" />
+    <ClInclude Include="..\src\chipset\AliM1543C_pmu.h" />
+    <ClInclude Include="..\src\CPU\AlphaCPU.h" />
+    <ClInclude Include="..\src\CPU\idle_detect.h" />
+    <ClInclude Include="..\src\CPU\AlphaCPUProfile.h" />
+    <ClInclude Include="..\src\CPU\AlphaPAL.h" />
+    <ClInclude Include="..\src\CPU\Ev68PAL.h" />
+    <ClInclude Include="..\src\CPU\AlphaIPR.h" />
+    <ClInclude Include="..\src\CPU\Ev68IPR.h" />
+    <ClInclude Include="..\src\CPU\AlphaMMU.h" />
+    <ClInclude Include="..\src\CPU\Ev68MMU.h" />
+    <ClInclude Include="..\src\CPU\AlphaHWLoad.h" />
+    <ClInclude Include="..\src\CPU\Ev68HWLoad.h" />
+    <ClInclude Include="..\src\CPU\AlphaHWStore.h" />
+    <ClInclude Include="..\src\CPU\Ev68HWStore.h" />
+    <ClInclude Include="..\src\emu\attotime.h" />
+    <ClInclude Include="..\src\banner.h" />
+    <ClInclude Include="..\src\base\Exception.h" />
+    <ClInclude Include="..\src\base\Mutex.h" />
+    <ClInclude Include="..\src\base\Runnable.h" />
+    <ClInclude Include="..\src\base\RWLock.h" />
+    <ClInclude Include="..\src\base\Semaphore.h" />
+    <ClInclude Include="..\src\base\HostWakeEvent.h" />
+    <ClInclude Include="..\src\base\Thread.h" />
+    <ClInclude Include="..\src\graphics\Cirrus.h" />
+    <ClInclude Include="..\src\config_debug.h" />
+    <ClInclude Include="..\src\config_vms.h" />
+    <ClInclude Include="..\src\config_win32.h" />
+    <ClInclude Include="..\src\config\Configurator.h" />
+    <ClInclude Include="..\src\emu\coretmpl.h" />
+    <ClInclude Include="..\src\CPU\cpu_arith.h" />
+    <ClInclude Include="..\src\CPU\cpu_bwx.h" />
+    <ClInclude Include="..\src\CPU\cpu_control.h" />
+    <ClInclude Include="..\src\CPU\cpu_debug.h" />
+    <ClInclude Include="..\src\CPU\cpu_defs.h" />
+    <ClInclude Include="..\src\CPU\cpu_fp_branch.h" />
+    <ClInclude Include="..\src\CPU\cpu_fp_memory.h" />
+    <ClInclude Include="..\src\CPU\cpu_fp_operate.h" />
+    <ClInclude Include="..\src\CPU\cpu_logical.h" />
+    <ClInclude Include="..\src\CPU\cpu_memory.h" />
+    <ClInclude Include="..\src\CPU\cpu_misc.h" />
+    <ClInclude Include="..\src\CPU\cpu_mvi.h" />
+    <ClInclude Include="..\src\CPU\cpu_pal.h" />
+    <ClInclude Include="..\src\CPU\cpu_vax.h" />
+    <ClInclude Include="..\src\datatypes.h" />
+    <ClInclude Include="..\src\network\DEC21143.h" />
+    <ClInclude Include="..\src\network\DEC21143_mii.h" />
+    <ClInclude Include="..\src\network\DEC21143_tulipreg.h" />
+    <ClInclude Include="..\src\CPU\diag_rpcc.h" />
+    <ClInclude Include="..\src\storage\Disk.h" />
+    <ClInclude Include="..\src\storage\DiskController.h" />
+    <ClInclude Include="..\src\storage\DiskDevice.h" />
+    <ClInclude Include="..\src\storage\DiskFile.h" />
+    <ClInclude Include="..\src\storage\DiskFileBinCue.h" />
+    <ClInclude Include="..\src\storage\DiskRam.h" />
+    <ClInclude Include="..\src\chipset\DMA.h" />
+    <ClInclude Include="..\src\system\DPR.h" />
+    <ClInclude Include="..\src\emu\emu.h" />
+    <ClInclude Include="..\src\audio\ES1370.h" />
+    <ClInclude Include="..\src\es40_debug.h" />
+    <ClInclude Include="..\src\es40_endian.h" />
+    <ClInclude Include="..\src\network\Ethernet.h" />
+    <ClInclude Include="..\src\network\NetworkBackend.h" />
+    <ClInclude Include="..\src\network\NetworkPcap.h" />
+    <ClInclude Include="..\src\network\NetworkSlirp.h" />
+    <ClInclude Include="..\src\network\NetworkTap.h" />
+    <ClInclude Include="..\src\network\NetworkVmnet.h" />
+    <ClInclude Include="..\src\network\NetworkVmnetIPC.h" />
+    <ClInclude Include="..\src\network\NetworkVmnetProto.h" />
+    <ClInclude Include="..\src\system\Flash.h" />
+    <ClInclude Include="..\src\storage\FloppyController.h" />
+    <ClInclude Include="..\src\gui\gui.h" />
+    <ClInclude Include="..\src\system\i2c_spd.h" />
+    <ClInclude Include="..\src\graphics\ibm8514a.h" />
+    <ClInclude Include="..\src\CPU\jit\jitengine.h" />
+    <ClInclude Include="..\src\CPU\jit\jitengine_internal.h" />
+    <ClInclude Include="..\src\io\Keyboard.h" />
+    <ClInclude Include="..\src\gui\keymap.h" />
+    <ClInclude Include="..\src\network\lockstep.h" />
+    <ClInclude Include="..\src\logmacro.h" />
+    <ClInclude Include="..\src\emu\mame_shims.h" />
+    <ClInclude Include="..\src\audio\MPU401.h" />
+    <ClInclude Include="..\src\emu\PCIDevice.h" />
+    <ClInclude Include="..\src\gui\plugin.h" />
+    <ClInclude Include="..\src\io\Port80.h" />
+    <ClInclude Include="..\src\graphics\S3Trio64.h" />
+    <ClInclude Include="..\src\graphics\GloriaSynergy.h" />
+    <ClInclude Include="..\src\graphics\Permedia2.h" />
+    <ClInclude Include="..\src\graphics\Radeon7500.h" />
+    <ClInclude Include="..\src\graphics\RV200.h" />
+    <ClInclude Include="..\src\graphics\PowerStorm3xx.h" />
+    <ClInclude Include="..\src\graphics\REALimage2100.h" />
+    <ClInclude Include="..\src\gui\scancodes.h" />
+    <ClInclude Include="..\src\storage\SCSIBus.h" />
+    <ClInclude Include="..\src\storage\SCSIDevice.h" />
+    <ClInclude Include="..\src\gui\sdl_fonts.h" />
+    <ClInclude Include="..\src\gui\sdlkeys.h" />
+    <ClInclude Include="..\src\gui\sdl_media.h" />
+    <ClInclude Include="..\src\io\Serial.h" />
+    <ClInclude Include="..\src\io\SerialListenAddress.h" />
+    <ClInclude Include="..\src\StdAfx.h" />
+    <ClInclude Include="..\src\storage\LSI53C1020.h" />
+    <ClInclude Include="..\src\storage\Sym53C810.h" />
+    <ClInclude Include="..\src\storage\Sym53C895.h" />
+    <ClInclude Include="..\src\system\System.h" />
+    <ClInclude Include="..\src\SnapshotFile.h" />
+    <ClInclude Include="..\src\emu\SystemComponent.h" />
+    <ClInclude Include="..\src\network\telnet.h" />
+    <ClInclude Include="..\src\CPU\TraceEngine.h" />
+    <ClInclude Include="..\src\gui\vga.h" />
+    <ClInclude Include="..\src\graphics\VGA.h" />
+    <ClInclude Include="..\src\emu\xtal.h" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\..\.github\workflows\build.yml" />
-    <None Include="..\..\.github\workflows\release.yml" />
-    <None Include="..\..\autogen.sh" />
-    <None Include="..\..\build.bat" />
-    <None Include="..\..\ChangeLog" />
-    <None Include="..\..\configure.ac" />
-    <None Include="..\..\CONTRIBUTING.md" />
-    <None Include="..\..\m4\ax_cxx_compile_stdcxx.m4" />
-    <None Include="..\..\m4\libpcap.m4" />
-    <None Include="..\..\m4\x11.m4" />
-    <None Include="..\..\Makefile.am" />
-    <None Include="..\..\README.md" />
-    <None Include="..\config.h.cmake" />
-    <None Include="..\es40.cfg" />
+    <None Include="..\.github\workflows\build.yml" />
+    <None Include="..\.github\workflows\release.yml" />
+    <None Include="..\autogen.sh" />
+    <None Include="..\build.bat" />
+    <None Include="..\ChangeLog" />
+    <None Include="..\configure.ac" />
+    <None Include="..\CONTRIBUTING.md" />
+    <None Include="..\m4\ax_cxx_compile_stdcxx.m4" />
+    <None Include="..\m4\libpcap.m4" />
+    <None Include="..\m4\x11.m4" />
     <None Include="..\Makefile.am" />
+    <None Include="..\README.md" />
+    <None Include="..\src\config.h.cmake" />
+    <None Include="..\src\es40.cfg" />
+    <None Include="..\src\Makefile.am" />
     <!-- Cargo inputs are visible for editing; Rust is built separately. -->
-    <None Include="..\network\slirp-rs\.gitignore" />
-    <None Include="..\network\slirp-rs\Cargo.lock" />
-    <None Include="..\network\slirp-rs\Cargo.toml" />
-    <None Include="..\network\slirp-rs\src\dns.rs" />
-    <None Include="..\network\slirp-rs\src\icmp.rs" />
-    <None Include="..\network\slirp-rs\src\lib.rs" />
+    <None Include="..\src\network\slirp-rs\.gitignore" />
+    <None Include="..\src\network\slirp-rs\Cargo.lock" />
+    <None Include="..\src\network\slirp-rs\Cargo.toml" />
+    <None Include="..\src\network\slirp-rs\src\dns.rs" />
+    <None Include="..\src\network\slirp-rs\src\icmp.rs" />
+    <None Include="..\src\network\slirp-rs\src\lib.rs" />
     <None Include="es40-slirp.props" />
   </ItemGroup>
   <ItemGroup>
-    <Text Include="..\..\CMakeLists.txt" />
-    <Text Include="..\..\old_vga_docs.txt" />
+    <Text Include="..\CMakeLists.txt" />
+    <Text Include="..\old_vga_docs.txt" />
   </ItemGroup>
   <ItemGroup>
     <!-- The GPL/LGPL texts and third-party notices (BSD/MIT licenses) must ship with the binaries. -->
-    <CopyFileToFolders Include="..\..\COPYING">
+    <CopyFileToFolders Include="..\COPYING">
       <DestinationFolders>$(OutDir)</DestinationFolders>
     </CopyFileToFolders>
-    <CopyFileToFolders Include="..\..\COPYING.LGPL">
+    <CopyFileToFolders Include="..\COPYING.LGPL">
       <DestinationFolders>$(OutDir)</DestinationFolders>
     </CopyFileToFolders>
-    <CopyFileToFolders Include="..\es40-NOTICES.txt">
+    <CopyFileToFolders Include="..\src\es40-NOTICES.txt">
       <DestinationFolders>$(OutDir)</DestinationFolders>
     </CopyFileToFolders>
   </ItemGroup>
@@ -2435,7 +2435,7 @@
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Target Name="SetES40GitCommit" BeforeTargets="ClCompile">
-    <Exec Command="git -C &quot;$(ProjectDir)..\..&quot; rev-parse HEAD" Condition="'$(ES40GitCommit)' == ''" ConsoleToMSBuild="true" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardErrorImportance="Low" StandardOutputImportance="Low">
+    <Exec Command="git -C &quot;$(ProjectDir)..&quot; rev-parse HEAD" Condition="'$(ES40GitCommit)' == ''" ConsoleToMSBuild="true" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardErrorImportance="Low" StandardOutputImportance="Low">
       <Output TaskParameter="ConsoleOutput" ItemName="_ES40GitOutput" />
       <Output TaskParameter="ExitCode" PropertyName="_ES40GitExitCode" />
     </Exec>

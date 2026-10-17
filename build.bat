@@ -110,7 +110,7 @@ echo ============================================================
 echo  Done.
 echo    es40.exe      : %BUILD_DIR%\es40.exe
 echo    es40-cfg.exe  : %BUILD_DIR%\es40-cfg.exe
-if "%ES40_BUILD_TUI%"=="1" echo    es40-cfg-tui  : %ROOT%\src\Visual Studio\x64\%ES40_VS_CONFIG%\es40-cfg-tui.exe
+if "%ES40_BUILD_TUI%"=="1" echo    es40-cfg-tui  : %ROOT%\Visual Studio\x64\%ES40_VS_CONFIG%\es40-cfg-tui.exe
 echo ============================================================
 endlocal
 exit /b 0
@@ -168,8 +168,8 @@ if not defined MSBUILD (
     echo [warn] MSBuild.exe not found - skipping the config tools.
     exit /b 0
 )
-"%MSBUILD%" "%ROOT%\src\Visual Studio\es40-cfg-tui.vcxproj" /m /p:Configuration="%ES40_VS_CONFIG%" /p:Platform=x64 /v:m /nologo
+"%MSBUILD%" "%ROOT%\Visual Studio\es40-cfg-tui.vcxproj" /m /p:Configuration="%ES40_VS_CONFIG%" /p:Platform=x64 /v:m /nologo
 if errorlevel 1 exit /b 1
-"%MSBUILD%" "%ROOT%\src\Visual Studio\es40-cfg.vcxproj" /m /p:Configuration="%ES40_VS_CONFIG%" /p:Platform=x64 /v:m /nologo
+"%MSBUILD%" "%ROOT%\Visual Studio\es40-cfg.vcxproj" /m /p:Configuration="%ES40_VS_CONFIG%" /p:Platform=x64 /v:m /nologo
 if errorlevel 1 exit /b 1
 exit /b 0

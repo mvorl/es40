@@ -468,7 +468,7 @@ jobs:
 
           # vmnet is a macOS-only backend; its feature macro must not appear
           # in the Visual Studio projects (the source files are listed but excluded).
-          $projects = Get-ChildItem -Path "src/Visual Studio" -Recurse -Include *.vcxproj, *.vcxproj.filters, *.props
+          $projects = Get-ChildItem -Path "Visual Studio" -Recurse -Include *.vcxproj, *.vcxproj.filters, *.props
           $hits = $projects | Select-String -Pattern 'HAVE_VMNET'
           if ($hits) {
             $hits | ForEach-Object { Write-Host $_.ToString() }
@@ -489,7 +489,7 @@ jobs:
           # needing an SDK the runner skipped provisioning.
           $configuration = "${{ matrix.configuration }}"
           $enableSlirp = if ($configuration -match '(^| )NN( |$)') { "false" } else { "true" }
-          msbuild "src/Visual Studio/es40.sln" /m /p:Configuration="$configuration" /p:Platform="x64" /p:WindowsTargetPlatformVersion="10.0" /p:ES40GitCommit="$env:GITHUB_SHA" /p:Es40EnableSlirp="$enableSlirp"
+          msbuild "Visual Studio/es40.sln" /m /p:Configuration="$configuration" /p:Platform="x64" /p:WindowsTargetPlatformVersion="10.0" /p:ES40GitCommit="$env:GITHUB_SHA" /p:Es40EnableSlirp="$enableSlirp"
 
       - name: Include SDL3 runtime with built binaries
         if: ${{ !contains(matrix.configuration, 'NS') }}
@@ -505,7 +505,7 @@ jobs:
           }
           if (-not $sdlDll) { throw "Could not locate SDL3.dll for x64 runtime packaging." }
 
-          $configDir = Join-Path $PWD "src/Visual Studio/x64/${{ matrix.configuration }}"
+          $configDir = Join-Path $PWD "Visual Studio/x64/${{ matrix.configuration }}"
           if (-not (Test-Path $configDir)) { throw "Build output directory not found: $configDir" }
 
           $exeFiles = Get-ChildItem -Path $configDir -Filter "*.exe" -File
@@ -520,7 +520,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          $configDir = Join-Path $PWD "src/Visual Studio/x64/${{ matrix.configuration }}"
+          $configDir = Join-Path $PWD "Visual Studio/x64/${{ matrix.configuration }}"
           $artifactDir = Join-Path $env:RUNNER_TEMP "windows-${{ matrix.configuration }}"
 
           Remove-Item -Recurse -Force $artifactDir -ErrorAction SilentlyContinue

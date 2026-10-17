@@ -83,13 +83,13 @@ The installer and SDK for npcap can be found here: https://npcap.com/#download
 ## es40:
 
 After your pathing is fixed in the vcxproj files or you used the default
-c:\dev\ locations and structure, you should be able to open the es40.sln file
+c:\dev\ locations and structure, open `Visual Studio\es40.sln` from the repository root.
 
 Run Build solution for individual configurations, or batch build to build
 all configurations.
 
 SDL3.dll will be required to be placed with the compiled es40 application, for
-debug x64 build it would be placed in this location: src\VS2022\x64\Debug
+debug x64 build it would be placed in this location: Visual Studio\x64\Debug
 or wherever you copy es40.exe to.
 
 SDL3.dll will be found in C:\dev\SDL3\VisualC\x64\Debug for example
@@ -99,7 +99,7 @@ Make sure to set the debug working directory in project settings as
 `$(OutDir)` for this configuration, the command being `$(TargetPath)` as is set
 by default is fine, however.
 
-Resulting binaries will be in x64\Debug, x64\Release, x64\Release IDB, etc,
+Resulting binaries will be under `Visual Studio\x64\Debug`, `Visual Studio\x64\Release`, etc,
 with the binary names being similar to es40 Release NS NN.exe.
 
 ## Rust SLIRP networking:  
@@ -110,7 +110,7 @@ enable it for the solution and its configuration tools:
   
 ```bat
 cargo build --release --locked --manifest-path src/network/slirp-rs/Cargo.toml
-msbuild "src/Visual Studio/es40.sln" /m /p:Configuration=Release /p:Platform=x64 /p:Es40EnableSlirp=true
+msbuild "Visual Studio/es40.sln" /m /p:Configuration=Release /p:Platform=x64 /p:Es40EnableSlirp=true
 ```
   
 The default library path is `src/network/slirp-rs/target/release/es40_slirp.lib`.  

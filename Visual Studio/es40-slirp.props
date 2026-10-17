@@ -5,7 +5,7 @@
        optionally /p:Es40SlirpLibrary=path\to\es40_slirp.lib. NN stays networkless. -->
   <PropertyGroup>
     <Es40EnableSlirp Condition="'$(Es40EnableSlirp)'==''">false</Es40EnableSlirp>
-    <Es40SlirpLibrary Condition="'$(Es40SlirpLibrary)'==''">$(MSBuildThisFileDirectory)..\network\slirp-rs\target\release\es40_slirp.lib</Es40SlirpLibrary>
+    <Es40SlirpLibrary Condition="'$(Es40SlirpLibrary)'==''">$(MSBuildThisFileDirectory)..\src\network\slirp-rs\target\release\es40_slirp.lib</Es40SlirpLibrary>
     <Es40HasSlirp>false</Es40HasSlirp>
     <Es40HasSlirp Condition="'$(Es40EnableSlirp)'=='true' And !$(Configuration.Contains(' NN'))">true</Es40HasSlirp>
   </PropertyGroup>

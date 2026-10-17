@@ -24,36 +24,36 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\config\es40-cfg.cpp">
+    <ClCompile Include="..\src\config\es40-cfg.cpp">
       <Filter>Source Files\config</Filter>
     </ClCompile>
-    <ClCompile Include="..\base\Exception.cpp">
+    <ClCompile Include="..\src\base\Exception.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\config\FreeTextQuestion.h">
+    <ClInclude Include="..\src\config\FreeTextQuestion.h">
       <Filter>Header Files\config</Filter>
     </ClInclude>
-    <ClInclude Include="..\config\MultipleChoiceQuestion.h">
+    <ClInclude Include="..\src\config\MultipleChoiceQuestion.h">
       <Filter>Header Files\config</Filter>
     </ClInclude>
-    <ClInclude Include="..\config\NumberQuestion.h">
+    <ClInclude Include="..\src\config\NumberQuestion.h">
       <Filter>Header Files\config</Filter>
     </ClInclude>
-    <ClInclude Include="..\config\Question.h">
+    <ClInclude Include="..\src\config\Question.h">
       <Filter>Header Files\config</Filter>
     </ClInclude>
-    <ClInclude Include="..\io\SerialListenAddress.h">
+    <ClInclude Include="..\src\io\SerialListenAddress.h">
       <Filter>Header Files\io</Filter>
     </ClInclude>
-    <ClInclude Include="..\config\ShrinkingChoiceQuestion.h">
+    <ClInclude Include="..\src\config\ShrinkingChoiceQuestion.h">
       <Filter>Header Files\config</Filter>
     </ClInclude>
-    <ClInclude Include="..\datatypes.h">
+    <ClInclude Include="..\src\datatypes.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\banner.h">
+    <ClInclude Include="..\src\banner.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
