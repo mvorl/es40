@@ -38,7 +38,7 @@
   **/
 
   /* Version number of package */
-#define VERSION "0.91.1"
+#define VERSION "0.92"
 
 /* Rust is unavailable on OpenVMS; command-line defines cannot enable SLIRP. */
 #undef HAVE_SLIRP
