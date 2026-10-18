@@ -100,6 +100,7 @@
 #include "emu/SystemComponent.h"
 #include "network/telnet.h"
 #include <atomic>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -145,6 +146,14 @@ private:
   // Borrowed routing owner; not part of the saved device state.
   const CAliM1543C* isa_bridge = nullptr;
 
+  // Protect guest registers, RX FIFO and IRQ publication together. Recursive
+  // because register/FIFO operations call eval_interrupts(). Lock order:
+  // device bus -> UART -> PIC -> chipset interrupt state -> CPU wake.
+  // Initialization and snapshots run with all device/CPU threads stopped;
+  // staging, telnet parsing and serial_cycles belong to the UART worker.
+  // Keep the mutex outside SSrl_state to preserve the snapshot format.
+  std::recursive_mutex m_register_mutex;
+
   void          serial_menu();
   void          drain_staging();
   void          close_connection();
@@ -152,7 +161,7 @@ private:
 
   CThread* myThread = nullptr;
   std::atomic<bool> StopThread{false};
-  bool  breakHit = false;
+  std::atomic<bool> breakHit{false};
 
   unsigned char  iac_carry[8];          // Partial telnet sequence carried across recv() calls
   int            iac_carry_len;         // Number of valid bytes in iac_carry

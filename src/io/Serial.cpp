@@ -569,6 +569,8 @@ u64 CSerial::ReadMem(int index, u64 address, int dsize)
 	if (disabled)
 		return 0xffu;  // missing-UART signature
 
+	std::lock_guard<std::recursive_mutex> lock(m_register_mutex);
+
 	switch (address)
 	{
 	case 0: // data buffer
@@ -650,6 +652,8 @@ void CSerial::WriteMem(int index, u64 address, int dsize, u64 data)
 	if (disabled)
 		return;  // ignore guest writes to a disabled port
 
+	std::unique_lock<std::recursive_mutex> lock(m_register_mutex);
+
 	switch (address)
 	{
 	case 0:
@@ -676,8 +680,11 @@ void CSerial::WriteMem(int index, u64 address, int dsize, u64 data)
 			}
 			else
 			{
-				// Transmit Hold Register
+				// Socket output can block. Let host RX progress while the device
+				// bus still serializes guest accesses, then complete TX below.
+				lock.unlock();
 				write((const char*)&d, 1);
+				lock.lock();
 			}
 			TRC_DEV4("Write character %02x (%c) on serial port %d\n", d, printable(d),
 				state.iNumber);
@@ -759,18 +766,23 @@ void CSerial::eval_interrupts()
 	if (disabled)
 		return;
 
+	std::lock_guard<std::recursive_mutex> lock(m_register_mutex);
+
 	// RX-available is a level (follows the receive FIFO); THR-empty is edge-
 	// latched in thre_pending (set on THR write / THRE enable, cleared on IIR
 	// read) because es40's instant TX would make a plain THRE level storm.
-	state.bIIR = 0x01;        // no interrupt
+	u8 iir = 0x01;           // no interrupt
 	if ((state.bIER & 0x01) && (state.rcvR != state.rcvW))
-		state.bIIR = 0x04;    // received data available
+		iir = 0x04;          // received data available
 	else if ((state.bIER & 0x02) && state.thre_pending)
-		state.bIIR = 0x02;    // transmitter holding register empty
+		iir = 0x02;          // transmitter holding register empty
+	state.bIIR = iir;
 
 	// Drive IRQ4 (serial0) / IRQ3 (serial1) as a level following the cause;
 	// pic_set_line() makes one edge per rising transition, retracting on fall.
-	theAli->pic_set_line(0, 4 - state.iNumber, state.bIIR > 0x01);
+	// Keep the UART lock until publication so a newer cause cannot be
+	// followed by a stale IRQ level from another thread.
+	theAli->pic_set_line(0, 4 - state.iNumber, (iir & 0x01) == 0);
 }
 
 void CSerial::write(const char* s, int dsize)
@@ -792,6 +804,7 @@ void CSerial::write_cstr(const char* s)
 
 int CSerial::receive(const char* data, int dsize)
 {
+	std::lock_guard<std::recursive_mutex> lock(m_register_mutex);
 	int consumed = 0;
 
 	while (dsize)
@@ -822,6 +835,8 @@ void CSerial::drain_staging()
 {
 	if (stageLen == 0)
 		return;
+
+	std::lock_guard<std::recursive_mutex> lock(m_register_mutex);
 
 	// Only deliver when the guest has consumed the previous character.
 	// This self-clocks to the emulated CPU speed, just like a real
