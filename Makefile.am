@@ -39,4 +39,4 @@ EXTRA_DIST = reconf configure
 # The GPL and LGPL texts must accompany installed binaries.
 doc_DATA = COPYING
 dist_doc_DATA = COPYING.LGPL
-SUBDIRS = m4 src docs
+SUBDIRS = m4 src

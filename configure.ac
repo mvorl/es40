@@ -41,7 +41,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.71])
-AC_INIT([es40],[0.92],[https://github.com/ES40-Emu/es40/issues/new],[],[https://github.com/ES40-Emu/es40/issues])
+AC_INIT([es40],[0.92.1],[https://github.com/ES40-Emu/es40/issues/new],[],[https://github.com/ES40-Emu/es40/issues])
 AC_CONFIG_SRCDIR([src/system/Flash.cpp])
 AC_CONFIG_MACRO_DIRS([m4])
 AC_CONFIG_HEADERS([src/config.h])
@@ -395,5 +395,5 @@ AC_SUBST([TUI_LIBS])
 AM_CONDITIONAL([BUILD_TUI], [test "x$have_tui" = "xyes"])
 
 # Generate the various makefiles.
-AC_CONFIG_FILES([Makefile docs/Makefile m4/Makefile src/Makefile])
+AC_CONFIG_FILES([Makefile m4/Makefile src/Makefile])
 AC_OUTPUT

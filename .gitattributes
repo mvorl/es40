@@ -1,0 +1,3 @@
+# Keep generated documentation and hardware manuals out of source archives.
+/docs export-ignore
+/HRM export-ignore
