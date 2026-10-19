@@ -24,6 +24,7 @@ jobs:
           COMPLETED_RUN_ID: ${{ github.event.workflow_run.id || 0 }}
           COMPLETED_WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id || 0 }}
           COMPLETED_RUN_NUMBER: ${{ github.event.workflow_run.run_number || 0 }}
+          COMPLETED_CONCLUSION: ${{ github.event.workflow_run.conclusion || '' }}
         run: |
           set -euo pipefail
 
@@ -40,10 +41,13 @@ jobs:
             --argjson cleanup_id "$GITHUB_RUN_ID" \
             --argjson completed_id "$COMPLETED_RUN_ID" \
             --argjson completed_workflow_id "$COMPLETED_WORKFLOW_ID" \
-            --argjson completed_number "$COMPLETED_RUN_NUMBER" '
+            --argjson completed_number "$COMPLETED_RUN_NUMBER" \
+            --arg completed_conclusion "$COMPLETED_CONCLUSION" '
               [.[].workflow_runs[]] | unique_by(.id) as $listed
-              | ([$listed[] | select(.workflow_id == $build_workflow_id and .status == "completed")]
+              | ([$listed[] | select(.workflow_id == $build_workflow_id
+                  and .status == "completed" and .conclusion != "cancelled")]
                  + (if $completed_workflow_id == $build_workflow_id and $completed_id > 0
+                       and $completed_conclusion != "cancelled"
                        and (any($listed[]; .id == $completed_id) | not)
                     then [{id: $completed_id, run_number: $completed_number}]
                     else [] end)

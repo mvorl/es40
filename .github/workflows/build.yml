@@ -6,6 +6,10 @@ on:
       - '**'
   pull_request:
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   linux-build:
     name: Linux build (${{ matrix.configuration }}, ${{ matrix.arch }})
