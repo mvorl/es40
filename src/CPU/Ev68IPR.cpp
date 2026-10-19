@@ -29,8 +29,9 @@
 #include "AlphaCPU.h"
 #include "Ev68IPR.h"
 
-std::uint64_t Ev68IPR::read(CAlphaCPU& cpu, std::uint32_t function)
+std::uint64_t Ev68IPR::read(CAlphaCPU& cpu, std::uint32_t instruction)
 {
+  const auto function = selector(instruction);
   const auto& state = cpu.state;
   if ((function & 0xc0) == 0x40) // PCTX
     return ((u64)state.asn << 39) | ((u64)state.astrr << 9) | ((u64)state.aster << 5)
@@ -82,12 +83,13 @@ std::uint64_t Ev68IPR::read(CAlphaCPU& cpu, std::uint32_t function)
   }
 }
 
-void Ev68IPR::write(CAlphaCPU& cpu, std::uint32_t function, std::uint64_t value,
+void Ev68IPR::write(CAlphaCPU& cpu, std::uint32_t instruction, std::uint64_t value,
                    AlphaIPRWriteContext context)
 {
+  const auto function = selector(instruction);
   // Keep writes that may change dispatch context out of a compiled frame.
   if (context == AlphaIPRWriteContext::Compiled
-      && describe_write(function) == AlphaIPRWriteKind::Interpreter)
+      && describe_write(instruction) == AlphaIPRWriteKind::Interpreter)
     return;
 
   auto& state = cpu.state;

@@ -106,7 +106,7 @@ enum SafeOp {
   OP_LDT, OP_LDS, OP_STT, OP_STS, // FP memory (0x23/0x22/0x27/0x26): f[Fa] <-> MEM, LDT/STT raw, LDS/STS ieee conv
   OP_LDF, OP_LDG, OP_STF, OP_STG, // VAX FP memory (0x20/0x21/0x24/0x25): f[Fa] <-> MEM, F/G format conversion (helper)
   OP_LDA, OP_LDAH,               // load-address: Ra = Rb + disp16 (<<16 for LDAH); pure ALU
-  OP_HW_MFPR,                    // HW_MFPR (0x19), PALmode only: Ra = IPR[(ins>>8)&0xff] via helper
+  OP_HW_MFPR,                    // HW_MFPR (0x19), PALmode only: family-selected IPR read into Ra
   OP_HW_LDL, OP_HW_LDQ,          // HW_LD (0x1b): normalized physical longword/quadword loads
   OP_HW_LD_VIRT,                 // HW_LD: normalized virtual loads with family-selected access flags
   OP_HW_MTPR,                    // HW_MTPR (0x1d): family-approved helper writes, PALmode only
@@ -313,8 +313,7 @@ SafeOp classify(uint32_t ins, bool pal_block, const AlphaIPRReadPolicy& ipr_read
       if (!pal_block || !pal.hardware_instruction_access
           || !alpha_pal_instruction_compilable(pal.hardware_instruction_access(ins)))
         return OP_NONE;
-      const uint32_t fn = (ins >> 8) & 0xff;
-      const auto descriptor = ipr_read.describe(fn);
+      const auto descriptor = ipr_read.describe(ins);
       if (descriptor.kind == AlphaIPRReadKind::Unsupported) return OP_NONE;
       if (((ins >> 21) & 0x1f) == 31 && descriptor.discard_safe) return OP_NOP;
       return OP_HW_MFPR;
@@ -336,8 +335,7 @@ SafeOp classify(uint32_t ins, bool pal_block, const AlphaIPRReadPolicy& ipr_read
       if (!pal_block || !pal.hardware_instruction_access
           || !alpha_pal_instruction_compilable(pal.hardware_instruction_access(ins)))
         return OP_NONE;
-      const uint32_t mfn = (ins >> 8) & 0xff;
-      switch (ipr_write.describe(mfn)) {
+      switch (ipr_write.describe(ins)) {
         case AlphaIPRWriteKind::Helper: return OP_HW_MTPR;
         case AlphaIPRWriteKind::HelperTerminator: return OP_HW_MTPR_TERM;
         case AlphaIPRWriteKind::Noop: return OP_NOP;
@@ -1430,16 +1428,14 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
 
         // HW_MTPR: the family has approved this write for a compiled helper call.
         if (op == OP_HW_MTPR) {
-            const uint32_t function = (ins >> 8) & 0xff;
-            emit_call(hw_mtpr_helper, { {JA_CPU, 0}, {JA_I32, (uint64_t)function}, {JA_GPZ, (uint64_t)rb} });  // jit_hw_mtpr(cpu, function, value)
+            emit_call(hw_mtpr_helper, { {JA_CPU, 0}, {JA_I32, (uint64_t)ins}, {JA_GPZ, (uint64_t)rb} });  // jit_hw_mtpr(cpu, instruction, value)
             continue;
         }
 
         // The family marks writes that change compiled assumptions as terminators.
         // Run the helper, publish the next PC and redispatch under the new state.
         if (op == OP_HW_MTPR_TERM) {
-            const uint32_t function = (ins >> 8) & 0xff;
-            emit_call(hw_mtpr_helper, { {JA_CPU, 0}, {JA_I32, (uint64_t)function}, {JA_GPZ, (uint64_t)rb} });
+            emit_call(hw_mtpr_helper, { {JA_CPU, 0}, {JA_I32, (uint64_t)ins}, {JA_GPZ, (uint64_t)rb} });
             set_pc(b->tag + 4 * (uint64_t)(i + 1));                // next PC -> R10 + state.pc (PALmode bit preserved)
             continue;
         }
@@ -1509,12 +1505,12 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             continue;
         }
 
-        // HW_MFPR (0x19, PALmode): read the IPR named by (ins>>8)&0xff into Ra.
+        // HW_MFPR (0x19, PALmode): the family selects the IPR from the full instruction.
         // Plain fault-reporting fields read inline; derived/asynchronous registers
         // and verification retain the helper. Destination routing honors PALshadow.
         if (op == OP_HW_MFPR) {
 #ifndef JIT_VERIFY
-            const auto descriptor = m_profile.ipr_read.describe((ins >> 8) & 0xff);
+            const auto descriptor = m_profile.ipr_read.describe(ins);
             uint32_t field_offset = 0;
             bool direct_field = ra != 31 && descriptor.discard_safe;
             switch (descriptor.kind) {
@@ -2535,8 +2531,8 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
       m_term_op[bop]++;                 // tally what cut this block (the coverage gap to chase)
       if (bop == 0x00)                  // CALL_PAL: also tally the function code (low 8 bits)
         m_pal_func[words[plen] & 0xFF]++;
-      else if (bop == 0x1d)             // HW_MTPR: tally the IPR index -- which writes break blocks
-        m_mtpr_func[(words[plen] >> 8) & 0xFF]++;
+      else if (bop == 0x1d)             // HW_MTPR: diagnostic raw instruction[15:8], not a family selector.
+        m_mtpr_encoding_hi[(words[plen] >> 8) & 0xFF]++;
       else if (bop == 0x1b)             // HW_LD: tally the form (phys/virt/lock/vpte/chk, ins[15:12])
         m_hwld_func[(words[plen] >> 12) & 0xF]++;
       else if (bop == 0x18)             // MISC: tally the Ra==31 form (ins[15:12]: 0xc RPCC / 0xe RC / 0xf RS)

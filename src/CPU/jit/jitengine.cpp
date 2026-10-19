@@ -164,7 +164,7 @@ CJitEngine::CJitEngine(const AlphaCPUProfile& profile, int cpu_id)
   memset(m_rt_break_op, 0, sizeof(m_rt_break_op));
   memset(m_term_op, 0, sizeof(m_term_op));
   memset(m_pal_func, 0, sizeof(m_pal_func));
-  memset(m_mtpr_func, 0, sizeof(m_mtpr_func));
+  memset(m_mtpr_encoding_hi, 0, sizeof(m_mtpr_encoding_hi));
   memset(m_hwld_func, 0, sizeof(m_hwld_func));
   memset(m_misc_func, 0, sizeof(m_misc_func));
   m_first_breaker_logged = false;
@@ -835,10 +835,10 @@ uint64_t CJitEngine::note_exec(uint32_t native_instr, uint32_t interp_instr, uin
     }
     printf("%s\n", buf);
   }
-  if (m_term_op[0x1d]) {   // HW_MTPR cut blocks -- which IPR writes dominate (the side-effecting set)
-    len = snprintf(buf, sizeof(buf), "[JIT][STATS][CPU%d]   HW_MTPR by IPR:", m_cpu_id);
+  if (m_term_op[0x1d]) {   // HW_MTPR cut blocks, grouped by raw encoding rather than a family selector.
+    len = snprintf(buf, sizeof(buf), "[JIT][STATS][CPU%d]   HW_MTPR by instruction[15:8]:", m_cpu_id);
     uint64_t mh[256];
-    memcpy(mh, m_mtpr_func, sizeof(mh));
+    memcpy(mh, m_mtpr_encoding_hi, sizeof(mh));
     for (int rank = 0; rank < 8 && len < (int) sizeof(buf) - 32; ++rank) {
       int best = -1; uint64_t bestv = 0;
       for (int f = 0; f < 256; ++f) if (mh[f] > bestv) { bestv = mh[f]; best = f; }

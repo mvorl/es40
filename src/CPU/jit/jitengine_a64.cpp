@@ -1237,8 +1237,7 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block,
       if (!pal_block || !pal.hardware_instruction_access
           || !alpha_pal_instruction_compilable(pal.hardware_instruction_access(ins)))
         break;
-      const uint32_t mfn = (ins >> 8) & 0xffu;
-      switch (ipr_write.describe(mfn)) {
+      switch (ipr_write.describe(ins)) {
         case AlphaIPRWriteKind::Helper:
         case AlphaIPRWriteKind::Noop:
           return {A64OpKind::kHwMtpr, A64TerminatorKind::kNone, 0, 0};
@@ -1446,8 +1445,7 @@ static constexpr A64OpClass classify_a64_op(uint32_t ins, bool pal_block,
       if (!pal_block || !pal.hardware_instruction_access
           || !alpha_pal_instruction_compilable(pal.hardware_instruction_access(ins)))
         break;
-      const uint32_t fn = (ins >> 8) & 0xffu;
-      if (ipr_read.describe(fn).kind != AlphaIPRReadKind::Unsupported)
+      if (ipr_read.describe(ins).kind != AlphaIPRReadKind::Unsupported)
         return {A64OpKind::kHwMfpr, A64TerminatorKind::kNone, 0, 0};
       break;
     }
@@ -4398,20 +4396,19 @@ static A64OpEmitReceipt emit_a64_call_pal(A64EmitContext& context,
   return a64_completed_op_receipt(op, err);
 }
 
-// HW_MTPR: jit_hw_mtpr(cpu, mfn, Rb) 
+// HW_MTPR: jit_hw_mtpr(cpu, instruction, Rb)
 static A64OpEmitReceipt emit_a64_hw_mtpr(A64EmitContext& context,
                                          const A64DecodedOp& op)
 {
   using namespace asmjit;
-  const uint32_t mfn = (op.ins >> 8) & 0xffu;
-  if (context.profile.ipr_write.describe(mfn) == AlphaIPRWriteKind::Noop)
+  if (context.profile.ipr_write.describe(op.ins) == AlphaIPRWriteKind::Noop)
     return a64_completed_op_receipt(op);   // no-op IPRs
 
   const Error err = emit_a64_helper_call(context.assembler, context.offsets,
       context.helpers, context.regs, context.pal_shadow,
       context.helpers.hw_mtpr_helper,
       {{A64CallArgKind::kCpu, 0},
-       {A64CallArgKind::kImm32, mfn},
+       {A64CallArgKind::kImm32, op.ins},
        {A64CallArgKind::kGuestOrZero, op.rb}});
   return a64_completed_op_receipt(op, err);
 }
@@ -5311,7 +5308,7 @@ static A64OpEmitReceipt emit_a64_hw_mfpr(A64EmitContext& context,
       a64_guest_gpr_write_route(context.regs, op.ra, context.pal_shadow);
   if (wa.kind == A64GprRouteKind::kInvalid || wa.kind == A64GprRouteKind::kZero)
     return {Error::kInvalidArgument, op.kind};
-  const auto descriptor = context.profile.ipr_read.describe((op.ins >> 8) & 0xffu);
+  const auto descriptor = context.profile.ipr_read.describe(op.ins);
   if (wa.kind == A64GprRouteKind::kDiscard && descriptor.discard_safe)
     return a64_completed_op_receipt(op);
 
@@ -5455,8 +5452,7 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
     case A64OpKind::kLoadAddress:
       emits_nothing = op.ra == 31; break;
     case A64OpKind::kHwMtpr: {
-      const uint32_t mfn = (op.ins >> 8) & 0xffu;
-      emits_nothing = context.profile.ipr_write.describe(mfn) == AlphaIPRWriteKind::Noop;
+      emits_nothing = context.profile.ipr_write.describe(op.ins) == AlphaIPRWriteKind::Noop;
       break;
     }
     default: break;
@@ -6383,8 +6379,8 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     m_term_op[bop]++;                 // tally what cut this block (the coverage gap to chase)
     if (bop == 0x00)                  // CALL_PAL: also tally the function code (low 8 bits)
       m_pal_func[plan.breaker_word & 0xFF]++;
-    else if (bop == 0x1d)             // HW_MTPR: tally the IPR index -- which writes break blocks
-      m_mtpr_func[(plan.breaker_word >> 8) & 0xFF]++;
+    else if (bop == 0x1d)             // HW_MTPR: diagnostic raw instruction[15:8], not a family selector.
+      m_mtpr_encoding_hi[(plan.breaker_word >> 8) & 0xFF]++;
     else if (bop == 0x1b)             // HW_LD: tally the form (phys/virt/lock/vpte/chk, ins[15:12])
       m_hwld_func[(plan.breaker_word >> 12) & 0xF]++;
     else if (bop == 0x18)             // MISC: tally the Ra==31 form (ins[15:12]: 0xc RPCC / 0xe RC / 0xf RS)

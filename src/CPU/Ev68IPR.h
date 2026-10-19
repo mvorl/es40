@@ -32,12 +32,18 @@
 class Ev68IPR
 {
 public:
-  static std::uint64_t read(CAlphaCPU& cpu, std::uint32_t function);
-  static void write(CAlphaCPU& cpu, std::uint32_t function, std::uint64_t value,
+  static constexpr std::uint32_t selector(std::uint32_t instruction)
+  {
+    return (instruction >> 8) & 0xff;
+  }
+
+  static std::uint64_t read(CAlphaCPU& cpu, std::uint32_t instruction);
+  static void write(CAlphaCPU& cpu, std::uint32_t instruction, std::uint64_t value,
                     AlphaIPRWriteContext context);
 
-  static constexpr AlphaIPRReadDescriptor describe(std::uint32_t function)
+  static constexpr AlphaIPRReadDescriptor describe(std::uint32_t instruction)
   {
+    const auto function = selector(instruction);
     if ((function & 0xc0) == 0x40)
       return {AlphaIPRReadKind::Helper, false, true}; // PCTX group.
 
@@ -59,8 +65,9 @@ public:
     }
   }
 
-  static constexpr AlphaIPRWriteKind describe_write(std::uint32_t function)
+  static constexpr AlphaIPRWriteKind describe_write(std::uint32_t instruction)
   {
+    const auto function = selector(instruction);
     // ASN changes require interpreter dispatch; the other PCTX fields can compile.
     if ((function & 0xc0) == 0x40)
       return (function & 1) ? AlphaIPRWriteKind::Interpreter : AlphaIPRWriteKind::Helper;

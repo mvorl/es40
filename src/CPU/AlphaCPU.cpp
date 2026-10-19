@@ -575,14 +575,14 @@ CAlphaCPU::TickHold CAlphaCPU::tick_hold(u64 period_ns)
 	}
 }
 
-u64 CAlphaCPU::read_ipr(u32 function)
+u64 CAlphaCPU::read_ipr(u32 instruction)
 {
-	return m_profile.ipr_read.read(*this, function);
+	return m_profile.ipr_read.read(*this, instruction);
 }
 
-void CAlphaCPU::write_ipr(u32 function, u64 value, AlphaIPRWriteContext context)
+void CAlphaCPU::write_ipr(u32 instruction, u64 value, AlphaIPRWriteContext context)
 {
-	m_profile.ipr_write.write(*this, function, value, context);
+	m_profile.ipr_write.write(*this, instruction, value, context);
 }
 
 bool CAlphaCPU::pal_hardware_instruction_valid(u32 instruction) const
@@ -1605,7 +1605,7 @@ void CAlphaCPU::jit_run(int budget)
 				// forms compile too); RPCC (0xC000) only when it has a GPR dest (Ra!=31).
 				const bool is_miscrd = (opc == 0x18) && (miscfn == 0xE000 || miscfn == 0xF000 || (miscfn == 0xC000 && lra != 31));
 				const auto ipr_read = (opc == 0x19)
-					? m_profile.ipr_read.describe((ins >> 8) & 0xff) : AlphaIPRReadDescriptor{};
+					? m_profile.ipr_read.describe(ins) : AlphaIPRReadDescriptor{};
 				const bool is_ipr_replay = (opc == 0x19) && ipr_read.replay
 					&& (lra != 31 || !ipr_read.discard_safe);
 				const bool is_fpld = (opc == 0x22 || opc == 0x23 || opc == 0x20 || opc == 0x21);   // LDS/LDT/LDF/LDG: dest is f[lra]
@@ -2796,24 +2796,23 @@ void CAlphaCPU::jit_opcdec(CAlphaCPU* cpu, u64 cpc)
 	cpu->enter_pal_exception(cpu->pal_exception_entry(AlphaPALException::OpcodeDecode, cpc));
 }
 
-/* HW_MFPR (PALmode): return the IPR selected by (ins>>8)&0xff. */
+/* HW_MFPR (PALmode): the family decodes the complete instruction. */
 u64 CAlphaCPU::jit_hw_mfpr(CAlphaCPU* cpu, u32 ins, u64 cur)
 {
-	const u32 function = (ins >> 8) & 0xff;
 	// Replay reads of asynchronous state from the interpreter reference pass.
-	if (cpu->m_jit_vreplay && cpu->m_profile.ipr_read.describe(function).replay)
+	if (cpu->m_jit_vreplay && cpu->m_profile.ipr_read.describe(ins).replay)
 	{
 		u32 i;
 		return cpu->jit_verify_load_slot(i) ? cpu->m_jit_vlog[i] : 0;
 	}
 	(void)cur;
-	return cpu->read_ipr(function);
+	return cpu->read_ipr(ins);
 }
 
 // The family policy owns the write; its descriptor controls compiled eligibility.
-void CAlphaCPU::jit_hw_mtpr(CAlphaCPU* cpu, u32 function, u64 value)
+void CAlphaCPU::jit_hw_mtpr(CAlphaCPU* cpu, u32 instruction, u64 value)
 {
-	cpu->write_ipr(function, value, AlphaIPRWriteContext::Compiled);
+	cpu->write_ipr(instruction, value, AlphaIPRWriteContext::Compiled);
 }
 
 // JIT indirect-jump chaining helper (static). For a compiled JMP/HW_RET, look up the block at the
@@ -3808,7 +3807,9 @@ _next_instruction:
 			GO_PAL(AlphaPALException::OpcodeDecode);
 			ES40_EXECUTE_END();
 		}
-		function = (ins >> 8) & 0xff;
+#if defined(IDB)
+		function = (ins >> 8) & 0xff; // Legacy EV68 disassembly only.
+#endif
 		OP(HW_MFPR, MFPR);
 
 	case 0x1a:          // JSR* instructions
@@ -3865,7 +3866,9 @@ _next_instruction:
 			GO_PAL(AlphaPALException::OpcodeDecode);
 			ES40_EXECUTE_END();
 		}
-		function = (ins >> 8) & 0xff;
+#if defined(IDB)
+		function = (ins >> 8) & 0xff; // Legacy EV68 disassembly only.
+#endif
 		OP(HW_MTPR, MTPR);
 
 	case 0x1e:          // HW_RET (PALRES)

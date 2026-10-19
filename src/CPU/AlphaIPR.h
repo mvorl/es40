@@ -50,11 +50,12 @@ struct AlphaIPRReadDescriptor
   bool discard_safe; // A read whose destination is R31 can be omitted.
 };
 
-// Family read behavior, copied with the immutable CPU profile.
+// Family read behavior, copied with the immutable CPU profile. Every callback
+// receives the complete instruction; the family owns selector/bank decoding.
 struct AlphaIPRReadPolicy
 {
-  std::uint64_t (*read)(CAlphaCPU& cpu, std::uint32_t function);
-  AlphaIPRReadDescriptor (*describe)(std::uint32_t function);
+  std::uint64_t (*read)(CAlphaCPU& cpu, std::uint32_t instruction);
+  AlphaIPRReadDescriptor (*describe)(std::uint32_t instruction);
 };
 
 // The family determines which writes the JIT can perform in a compiled frame.
@@ -73,11 +74,13 @@ enum class AlphaIPRWriteContext
   Compiled
 };
 
+// Write callbacks likewise receive the complete instruction, including any
+// family-specific register-bank and qualifier bits.
 struct AlphaIPRWritePolicy
 {
-  void (*write)(CAlphaCPU& cpu, std::uint32_t function, std::uint64_t value,
+  void (*write)(CAlphaCPU& cpu, std::uint32_t instruction, std::uint64_t value,
                 AlphaIPRWriteContext context);
-  AlphaIPRWriteKind (*describe)(std::uint32_t function);
+  AlphaIPRWriteKind (*describe)(std::uint32_t instruction);
 };
 
 #endif

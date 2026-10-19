@@ -86,9 +86,9 @@
   *      File created. Contains code previously found in AlphaCPU.h
   **/
 
-#define DO_HW_MFPR state.r[REG_1] = read_ipr(function);
+#define DO_HW_MFPR state.r[REG_1] = read_ipr(ins);
 
-#define DO_HW_MTPR write_ipr(function, state.r[REG_2], AlphaIPRWriteContext::Interpreter);
+#define DO_HW_MTPR write_ipr(ins, state.r[REG_2], AlphaIPRWriteContext::Interpreter);
 
 // Family return rules feed the shared executor after the hardware-access check.
 #define DO_HW_RET do {                                                         \
