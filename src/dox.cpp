@@ -38,7 +38,7 @@
  *
  * \section intro Introduction
  * Welcome to the documentation for the ES40 Emulator Project. For the
- * main project page, goto http://es40.org.
+ * main project page, goto https://github.com/ES40-Emu/es40.
  *
  * On these pages here, you can find the documented source code, the change
  * log, and more.
