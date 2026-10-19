@@ -59,9 +59,11 @@ struct AlphaPALCallEntry
 {
   std::uint64_t offset;    // CALL_PAL entry offset, with PALmode bit 0.
   std::uint64_t saved_pc;  // Value for EXC_ADDR.
+  // Link value and slots are used only when write_link is true.
   std::uint64_t return_pc;
   unsigned link_register;
   unsigned shadow_link_register;
+  bool write_link = true;
 };
 
 enum class AlphaPALReturnSource

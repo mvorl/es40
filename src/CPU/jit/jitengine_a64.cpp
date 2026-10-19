@@ -222,7 +222,7 @@ enum class A64OpKind : uint8_t {
   kStoreCond,     // STL_C/STQ_C via jit_stc: Ra = success; 0x100 = translation bail
   kInta,          // INTA (0x10) add/sub/scaled/compares/CMPBGE (/V forms interpret)
   kMisc,          // MISC (0x18): MB dmb ish, WMB dmb ishst, TRAPB/EXCB/hints nothing, RPCC/RC/RS helper
-  kCallPal,       // CALL_PAL (0x00): OPCDEC gate, exc_addr, R23/R55 link, vector terminator
+  kCallPal,       // CALL_PAL (0x00): OPCDEC gate, exc_addr, optional link, vector terminator
   kHwMtpr,        // HW_MTPR (0x1d): family helper / no-op writes; policy selects redispatch
   kHwLd,          // HW_LD (0x1b): physical DRAM inline, virtual via jit_read_vpte
   kHwSt,          // HW_ST (0x1f): physical DRAM inline, MMIO/verify via jit_write_phys
@@ -4362,11 +4362,11 @@ static A64OpEmitReceipt emit_a64_call_pal(A64EmitContext& context,
     err = emit_a64_store_cpu_u64(a, RA::kScratch0, context.offsets.exc_addr);
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
 
-  // The family selects the link slots; LIVE SDE chooses the runtime destination.
-  err = emit_a64_load_cpu_u8(a, RA::kScratch3.w(), context.offsets.sde, false);
-  if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kScratch5, entry.return_pc);
-  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
-  {
+  if (entry.write_link) {
+    // The family selects the link slots; LIVE SDE chooses the runtime destination.
+    err = emit_a64_load_cpu_u8(a, RA::kScratch3.w(), context.offsets.sde, false);
+    if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kScratch5, entry.return_pc);
+    if (err != Error::kOk) return a64_completed_op_receipt(op, err);
     const Label shadow = a.new_label(), linked = a.new_label();
     err = a.cbnz(RA::kScratch3.w(), shadow);
     const A64GprRoute link =

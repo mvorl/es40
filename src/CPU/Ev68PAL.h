@@ -60,8 +60,8 @@ constexpr bool call_pal_valid(std::uint32_t function, std::uint32_t mode)
   return function <= 0x3f ? mode == 0 : function >= 0x80 && function <= 0xbf;
 }
 
-// EV68 records the CALL_PAL instruction address and stors next PC to
-// R23, but could be  R55 when the the PAL shadow bank is enable.
+// EV68 records the CALL_PAL instruction address and writes next PC to R23,
+// or R55 when the PAL shadow bank is enabled.
 constexpr AlphaPALCallEntry call_pal_entry(std::uint32_t function,
                                            std::uint64_t current_pc,
                                            std::uint64_t next_pc)
@@ -69,7 +69,7 @@ constexpr AlphaPALCallEntry call_pal_entry(std::uint32_t function,
   const std::uint64_t offset = std::uint64_t(0x2000)
     | (std::uint64_t(function & 0x80) << 5)
     | (std::uint64_t(function & 0x3f) << 6) | 1;
-  return {offset, current_pc, next_pc & ~std::uint64_t(2), 23, 55};
+  return {offset, current_pc, next_pc & ~std::uint64_t(2), 23, 55, true};
 }
 
 // EV68 HW_RET reads Rb, ignores hints/qualifiers, clears bit 1 and preserves the lock.

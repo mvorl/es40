@@ -616,7 +616,8 @@ void CAlphaCPU::enter_native_call_pal(u32 function)
 {
 	const auto entry = m_profile.pal.call_pal_entry(function, state.current_pc, state.pc);
 	state.exc_addr = entry.saved_pc;
-	state.r[state.sde ? entry.shadow_link_register : entry.link_register] = entry.return_pc;
+	if (entry.write_link)
+		state.r[state.sde ? entry.shadow_link_register : entry.link_register] = entry.return_pc;
 	set_pc(state.pal_base | entry.offset);
 }
 

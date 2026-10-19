@@ -114,7 +114,7 @@ enum SafeOp {
   OP_HW_STL, OP_HW_STQ,          // HW_ST (0x1f): normalized physical longword/quadword stores
   OP_JMP,                        // JMP/JSR/RET (0x1a): Ra = PC+4; PC = Rb & ~3 (computed target)
   OP_HW_RET,                     // HW_RET (0x1e), PALmode: family-selected pure return-target transform
-  OP_CALL_PAL,                   // CALL_PAL (0x00): save R23/exc_addr; PC = pal_base | entry offset
+  OP_CALL_PAL,                   // CALL_PAL (0x00): save exc_addr/optional link; PC = pal_base | entry offset
   // Branch-format terminators (contiguous; see is_branch). Conditional on Ra, plus BR/BSR.
   OP_BEQ, OP_BNE, OP_BLT, OP_BLE, OP_BGT, OP_BGE, OP_BLBC, OP_BLBS, OP_BR, OP_BSR,
   OP_FBEQ, OP_FBNE, OP_FBLT, OP_FBLE, OP_FBGT, OP_FBGE   // FP branches (0x31-0x37): branch on f[Fa] vs 0.0
@@ -2014,7 +2014,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             continue;
         }
 
-        // CALL_PAL (0x00): the family policy selects the vector, saved PC and link slots.
+        // CALL_PAL (0x00): the family policy selects the vector, saved PC and optional link.
         if (op == OP_CALL_PAL) {
             const uint32_t func = ins & 0x1FFFFFFF;
             const uint64_t cpc = b->tag + 4 * (uint64_t)i;                          // CALL_PAL address
@@ -2038,29 +2038,31 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             a.bind(do_vector);
             a.mov(x86::rax, imm(entry.saved_pc));
             a.mov(x86::qword_ptr(x86::rbp, m_off.exc_addr), x86::rax);
-            a.movzx(x86::eax, x86::byte_ptr(x86::rbp, m_off.sde));      // SDE (0/1)
-            a.mov(x86::rcx, imm(entry.return_pc));
-            if (const int link_pin = pin_id(entry.link_register); link_pin >= 0) {
-                if (entry.link_register == entry.shadow_link_register)
-                    a.mov(x86::gpq((uint32_t)link_pin), x86::rcx);
-                else {
-                    a.test(x86::eax, x86::eax);
-                    a.cmovz(x86::gpq((uint32_t)link_pin), x86::rcx);
+            if (entry.write_link) {
+                a.movzx(x86::eax, x86::byte_ptr(x86::rbp, m_off.sde));      // SDE (0/1)
+                a.mov(x86::rcx, imm(entry.return_pc));
+                if (const int link_pin = pin_id(entry.link_register); link_pin >= 0) {
+                    if (entry.link_register == entry.shadow_link_register)
+                        a.mov(x86::gpq((uint32_t)link_pin), x86::rcx);
+                    else {
+                        a.test(x86::eax, x86::eax);
+                        a.cmovz(x86::gpq((uint32_t)link_pin), x86::rcx);
+                    }
                 }
-            }
-            if (entry.shadow_link_register < 32
-                && entry.shadow_link_register != entry.link_register) {
-                if (const int shadow_pin = pin_id(entry.shadow_link_register); shadow_pin >= 0) {
-                    a.test(x86::eax, x86::eax);
-                    a.cmovnz(x86::gpq((uint32_t)shadow_pin), x86::rcx);
+                if (entry.shadow_link_register < 32
+                    && entry.shadow_link_register != entry.link_register) {
+                    if (const int shadow_pin = pin_id(entry.shadow_link_register); shadow_pin >= 0) {
+                        a.test(x86::eax, x86::eax);
+                        a.cmovnz(x86::gpq((uint32_t)shadow_pin), x86::rcx);
+                    }
                 }
+                const int link_stride = static_cast<int>(entry.shadow_link_register)
+                                      - static_cast<int>(entry.link_register);
+                if (link_stride == 32) a.shl(x86::eax, imm(5));
+                else a.imul(x86::eax, x86::eax, imm(link_stride));
+                a.add(x86::eax, imm(entry.link_register));
+                a.mov(x86::qword_ptr(x86::rbx, x86::rax, 3), x86::rcx);     // r[idx] = return address
             }
-            const int link_stride = static_cast<int>(entry.shadow_link_register)
-                                  - static_cast<int>(entry.link_register);
-            if (link_stride == 32) a.shl(x86::eax, imm(5));
-            else a.imul(x86::eax, x86::eax, imm(link_stride));
-            a.add(x86::eax, imm(entry.link_register));
-            a.mov(x86::qword_ptr(x86::rbx, x86::rax, 3), x86::rcx);     // r[idx] = return address
             a.mov(x86::r10, x86::qword_ptr(x86::rbp, m_off.pal_base));
             a.or_(x86::r10, imm(entry.offset));                         // r10 = pal_base | entry offset
             a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::r10);  // state.pc = PAL entry
