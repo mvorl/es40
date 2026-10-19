@@ -92,8 +92,9 @@
 
 // Family return rules feed the shared executor after the hardware-access check.
 #define DO_HW_RET do {                                                         \
-  if (!hw_return.valid) { UNKNOWN1; }                                          \
-  const u64 target = alpha_pal_return_target(hw_return, state.r[REG_2]);       \
+  if (!alpha_pal_return_valid(hw_return)) { UNKNOWN1; }                        \
+  const u64 target = alpha_pal_return_target(                                 \
+    hw_return, state.r[REG_2], state.exc_addr);                                \
   set_pc(target);                                                              \
   if (hw_return.clear_lock)                                                    \
     cSystem->cpu_clear_lock(state.iProcNum);                                   \

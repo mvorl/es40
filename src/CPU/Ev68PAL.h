@@ -72,11 +72,12 @@ constexpr AlphaPALCallEntry call_pal_entry(std::uint32_t function,
   return {offset, current_pc, next_pc & ~std::uint64_t(2), 23, 55};
 }
 
-// EV68 HW_RET ignores hints/qualifiers, clears PC bit 1 and preserves the lock.
+// EV68 HW_RET reads Rb, ignores hints/qualifiers, clears bit 1 and preserves the lock.
 constexpr AlphaPALReturnDescriptor hardware_return(std::uint32_t instruction)
 {
   return (instruction >> 26) == 0x1e
-    ? AlphaPALReturnDescriptor{true, ~std::uint64_t(2), 0, false, true}
+    ? AlphaPALReturnDescriptor{true, ~std::uint64_t(2), 0, false, true,
+                               AlphaPALReturnSource::RegisterB}
     : AlphaPALReturnDescriptor{};
 }
 

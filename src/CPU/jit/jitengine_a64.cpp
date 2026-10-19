@@ -335,7 +335,7 @@ static constexpr uint64_t a64_jmp_target(uint64_t source_pc, uint64_t rb) noexce
 static constexpr uint64_t a64_hw_ret_target(uint64_t rb) noexcept
 {
   return alpha_pal_return_target(
-      alpha_pal_return_descriptor(kEv68PALPolicy, 0x1eu << 26), rb);
+      alpha_pal_return_descriptor(kEv68PALPolicy, 0x1eu << 26), rb, 0);
 }
 
 enum class A64ExitKind : uint8_t {

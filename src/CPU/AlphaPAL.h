@@ -64,8 +64,14 @@ struct AlphaPALCallEntry
   unsigned shadow_link_register;
 };
 
-// Decoded PAL return rules, outside saved CPU state. The target uses the live
-// source register; return forms with side effects stay interpreted.
+enum class AlphaPALReturnSource
+{
+  RegisterB,
+  ExceptionAddress
+};
+
+// Decoded PAL return rules, outside saved CPU state. Read the selected source
+// at execution time; EXC_ADDR returns and forms with side effects stay interpreted.
 struct AlphaPALReturnDescriptor
 {
   bool valid = false;
@@ -73,17 +79,28 @@ struct AlphaPALReturnDescriptor
   std::uint64_t target_bits = 0;
   bool clear_lock = false;
   bool compilable = false;
+  AlphaPALReturnSource source = AlphaPALReturnSource::RegisterB;
 };
 
-constexpr std::uint64_t alpha_pal_return_target(
-    const AlphaPALReturnDescriptor& entry, std::uint64_t source)
+constexpr bool alpha_pal_return_valid(const AlphaPALReturnDescriptor& entry)
 {
+  return entry.valid && (entry.source == AlphaPALReturnSource::RegisterB
+    || entry.source == AlphaPALReturnSource::ExceptionAddress);
+}
+
+constexpr std::uint64_t alpha_pal_return_target(
+    const AlphaPALReturnDescriptor& entry, std::uint64_t register_b,
+    std::uint64_t exception_address)
+{
+  const std::uint64_t source = entry.source == AlphaPALReturnSource::ExceptionAddress
+    ? exception_address : register_b;
   return (source & entry.target_mask) | entry.target_bits;
 }
 
 constexpr bool alpha_pal_return_compilable(const AlphaPALReturnDescriptor& entry)
 {
-  return entry.valid && entry.compilable && !entry.clear_lock;
+  return alpha_pal_return_valid(entry) && entry.compilable && !entry.clear_lock
+    && entry.source == AlphaPALReturnSource::RegisterB;
 }
 
 // Family access rules for the PAL-reserved hardware instructions.

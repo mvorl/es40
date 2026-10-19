@@ -1644,7 +1644,7 @@ void CAlphaCPU::jit_run(int budget)
 						: (opc == 0x24) ? (u64)vax_stf(state.f[lra]) : vax_stg(state.f[lra]);   // STT/STS/STF/STG
 					else         sval = (lra == 31 ? (u64)0 : state.r[RREG(lra)]);
 				}
-				// Capture the computed target before execute() can change the source register.
+				// Capture the computed target before execute() can change its source state.
 				u64 jtgt = 0;
 				bool jtgt_valid = false;
 				if (opc == 0x1a || opc == 0x1e)
@@ -1654,8 +1654,8 @@ void CAlphaCPU::jit_run(int budget)
 					if (opc == 0x1e)
 					{
 						const auto entry = alpha_pal_return_descriptor(m_profile.pal, ins);
-						jtgt = alpha_pal_return_target(entry, source);
-						jtgt_valid = entry.valid;
+						jtgt = alpha_pal_return_target(entry, source, state.exc_addr);
+						jtgt_valid = alpha_pal_return_valid(entry);
 					}
 					else
 					{

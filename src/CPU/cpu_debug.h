@@ -467,11 +467,17 @@ void          handle_debug_string(char* s);
 #define PRE_RET(mnemonic)                                        \
   if(bDisassemble)                                               \
   {                                                              \
-    DEBUG_XX  sprintf(dbg_strptr, #mnemonic " r%d", REG_2 & 31); \
+    DEBUG_XX;                                                   \
+    if(hw_return.source == AlphaPALReturnSource::ExceptionAddress) \
+      sprintf(dbg_strptr, #mnemonic " EXC_ADDR");                \
+    else                                                        \
+      sprintf(dbg_strptr, #mnemonic " r%d", REG_2 & 31);         \
     dbg_strptr += strlen(dbg_strptr);                            \
     if(!bListing)                                                \
     {                                                            \
-      sprintf(dbg_strptr, ": (%" PRIx64 ")", state.r[REG_2]);        \
+      sprintf(dbg_strptr, ": (%" PRIx64 ")",                     \
+        hw_return.source == AlphaPALReturnSource::ExceptionAddress \
+          ? state.exc_addr : state.r[REG_2]);                    \
       dbg_strptr += strlen(dbg_strptr);                          \
     }                                                            \
   }
