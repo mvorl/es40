@@ -50,6 +50,9 @@ endif
 if BUILD_TUI
 bin_PROGRAMS += es40_cfg_tui
 endif
+if BUILD_CFG_SDL
+bin_PROGRAMS += es40_cfg_sdl
+endif
 
 # Third-party license notices required with the es40 binaries.
 dist_doc_DATA = es40-NOTICES.txt
@@ -76,7 +79,8 @@ endif
 AM_CPPFLAGS = -I$(top_srcdir)/src/emu
 
 # CPU headers are distributed with the emulator sources.
-noinst_HEADERS = CPU/AlphaCPU.h \
+noinst_HEADERS = config/ConfigEditor.h \
+       CPU/AlphaCPU.h \
        base/HostWakeEvent.h \
        CPU/AlphaCPUProfile.h \
        CPU/AlphaReset.h \
@@ -315,5 +319,14 @@ es40_cfg_SOURCES = config/es40-cfg.cpp \
 es40_cfg_tui_CPPFLAGS = $(AM_CPPFLAGS) $(TUI_CFLAGS) -DCONFIGURATION_ONLY
 es40_cfg_tui_LDADD = $(TUI_LIBS) $(PCAP_LIBS)
 es40_cfg_tui_SOURCES = config/es40-cfg-tui.cpp \
+    config/ConfigEditor.cpp \
+    config/Configurator.cpp \
+    base/Exception.cpp
+
+# SDL frontend: same option/workflow source, independent of curses.
+es40_cfg_sdl_CPPFLAGS = $(AM_CPPFLAGS) $(SDL_CFLAGS) -DCONFIGURATION_ONLY
+es40_cfg_sdl_LDADD = $(SDL_LIBS) $(PCAP_LIBS)
+es40_cfg_sdl_SOURCES = config/es40-cfg-sdl.cpp \
+    config/ConfigEditor.cpp \
     config/Configurator.cpp \
     base/Exception.cpp

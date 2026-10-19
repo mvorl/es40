@@ -41,7 +41,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.71])
-AC_INIT([es40],[0.92.2],[https://github.com/ES40-Emu/es40/issues/new],[],[https://github.com/ES40-Emu/es40/issues])
+AC_INIT([es40],[0.93],[https://github.com/ES40-Emu/es40/issues/new],[],[https://github.com/ES40-Emu/es40/issues])
 AC_CONFIG_SRCDIR([src/system/Flash.cpp])
 AC_CONFIG_MACRO_DIRS([m4])
 AC_CONFIG_HEADERS([src/config.h])
@@ -393,6 +393,12 @@ AS_IF([test "x$enable_tui" != "xno"], [
 AC_SUBST([TUI_CFLAGS])
 AC_SUBST([TUI_LIBS])
 AM_CONDITIONAL([BUILD_TUI], [test "x$have_tui" = "xyes"])
+
+# The SDL editor is available whenever the emulator has SDL, independently of curses.
+AC_ARG_ENABLE([cfg-sdl],
+  [AS_HELP_STRING([--disable-cfg-sdl], [skip the SDL configuration editor])],
+  [], [enable_cfg_sdl=yes])
+AM_CONDITIONAL([BUILD_CFG_SDL], [test "x$enable_sdl" != "xno" -a "x$enable_cfg_sdl" != "xno"])
 
 # Generate the various makefiles.
 AC_CONFIG_FILES([Makefile m4/Makefile src/Makefile])

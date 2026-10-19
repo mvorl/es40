@@ -83,10 +83,10 @@ if "%ES40_BUILD_TUI%"=="1" (
 
 REM ---- 1) CMake: es40 (graphics + slirp) and es40-cfg --------------------
 echo.
-echo [1/2] CMake: configure and build es40, es40-cfg
+echo [1/2] CMake: configure and build es40, es40-cfg, es40_cfg_sdl
 cmake -S "%ROOT%" -B "%BUILD_DIR%" -G Ninja -DCMAKE_BUILD_TYPE=Release -DSDL3_DIR="%SDL3_DIR%" -DES40_ENABLE_CFG_TUI=OFF
 if errorlevel 1 goto :fail
-cmake --build "%BUILD_DIR%" --target es40 es40-cfg -j
+cmake --build "%BUILD_DIR%" --target es40 es40-cfg es40_cfg_sdl -j
 if errorlevel 1 goto :fail
 
 for %%i in ("%SDL3_DIR%\..\lib\x64\SDL3.dll") do set "SDL3_DLL=%%~fi"

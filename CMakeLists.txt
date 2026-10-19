@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(ES40 VERSION 0.92.2 LANGUAGES C CXX)
+project(ES40 VERSION 0.93 LANGUAGES C CXX)
 
 # Single-config generators default to an empty build type. Fix that up. 
 get_property(ES40_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
@@ -17,6 +17,7 @@ option(ES40_DISABLE_LSS_LSM "Disable LSS/LSM (lockstep) builds." OFF)
 option(ES40_DISABLE_IDB "Disable IDB (built-in debugger) builds." OFF)
 option(ES40_DISABLE_ASMJIT "Disable ASMJIT" ON)
 option(ES40_ENABLE_CFG_TUI "Enable build of es40_cfg_tui" ON)
+option(ES40_ENABLE_CFG_SDL "Enable build of es40_cfg_sdl (requires SDL)" ON)
 
 # CPU baseline: AVX2 (default, Haswell+) for performance, or SSE2 for older-host compatibility.
 # Applied on x86 only (no-op on ARM / Apple Silicon). The JIT emits its own x86 and is unaffected;
@@ -300,101 +301,49 @@ target_compile_definitions(es40-cfg PUBLIC ${ES40_CFG_DEFINITIONS})
 
 set_property(TARGET es40-cfg PROPERTY CXX_STANDARD 17)
 
-########################### ES40_CFG_TUI ###########################
+######################## Configuration editors ########################
+
+# The option/workflow library has no curses or SDL dependency. Both editors
+# inherit exactly the same feature defines and configuration implementation.
+if (ES40_ENABLE_CFG_TUI OR (ES40_ENABLE_CFG_SDL AND NOT ES40_DISABLE_SDL))
+    add_library(es40_config_editor STATIC
+        src/config/ConfigEditor.cpp src/config/Configurator.cpp src/base/Exception.cpp)
+    target_include_directories(es40_config_editor PUBLIC src/)
+    target_compile_features(es40_config_editor PUBLIC cxx_std_17)
+    target_compile_definitions(es40_config_editor PUBLIC CONFIGURATION_ONLY ${ES40_CFG_DEFINITIONS})
+    target_link_libraries(es40_config_editor PUBLIC ${ES40_CFG_LIBRARIES})
+    if (NOT ES40_DISABLE_ASMJIT)
+        target_compile_definitions(es40_config_editor PUBLIC ES40_JIT)
+    endif()
+    if (ES40_HAVE_VMNET)
+        target_compile_definitions(es40_config_editor PUBLIC HAVE_VMNET)
+    endif()
+    if (MSVC)
+        target_compile_definitions(es40_config_editor PUBLIC _HAS_STD_BYTE=0 _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_DEPRECATE)
+    endif()
+    if (WIN32 AND ES40_HAVE_PCAP)
+        find_path(ES40_CFG_PCAP_INCLUDE pcap/pcap.h HINTS "${NPCAP_DIR}/include" "C:/dev/npcap-sdk/include" REQUIRED)
+        find_library(ES40_CFG_PCAP_LIBRARY wpcap HINTS "${NPCAP_DIR}/lib/x64" "C:/dev/npcap-sdk/lib/x64" REQUIRED)
+        target_include_directories(es40_config_editor PRIVATE "${ES40_CFG_PCAP_INCLUDE}")
+        target_link_libraries(es40_config_editor PUBLIC "${ES40_CFG_PCAP_LIBRARY}")
+    endif()
+endif()
 
 if (ES40_ENABLE_CFG_TUI)
-	set(ES40_CFG_TUI_SOURCES)
-	set(ES40_CFG_TUI_DEFINITIONS)
-	set(ES40_CFG_TUI_LIBRARIES)
-	
-	list(APPEND ES40_CFG_TUI_SOURCES
-	    src/config/es40-cfg-tui.cpp
-		src/config/Configurator.cpp
-	    src/base/Exception.cpp
-	    )
-
-	list(APPEND ES40_CFG_TUI_DEFINITIONS
-		CONFIGURATION_ONLY
-	    )
-
-	if (NOT ES40_DISABLE_ASMJIT)
-		list(APPEND ES40_CFG_TUI_DEFINITIONS ES40_JIT)
-	endif()
-
-	if (NOT ES40_DISABLE_NETWORKING)
-		if (ES40_HAVE_PCAP)
-			list(APPEND ES40_CFG_TUI_DEFINITIONS HAVE_PCAP)
-			if (WIN32)
-				#list(APPEND ES40_CFG_TUI_LIBRARIES NPCap::NPCap)
-			else()
-				list(APPEND ES40_CFG_TUI_LIBRARIES PCap::PCap)
-			endif()
-		endif()
-		if (ES40_HAVE_TAP)
-			list(APPEND ES40_CFG_TUI_DEFINITIONS HAVE_TAP_NET)
-		endif()
-		if (ES40_HAVE_SLIRP)
-			list(APPEND ES40_CFG_TUI_DEFINITIONS HAVE_SLIRP)
-		endif()
-		if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-			list(APPEND ES40_CFG_TUI_DEFINITIONS HAVE_VMNET)
-	        list(APPEND ES40_CFG_TUI_LIBRARIES $<LINK_LIBRARY:FRAMEWORK,vmnet>)
-		endif()
-	endif()
-
-	if (NOT ES40_DISABLE_SDL)
-		list(APPEND ES40_CFG_TUI_DEFINITIONS HAVE_SDL)
-	endif()
-
-	if (WIN32)
-	    list(APPEND ES40_CFG_TUI_LIBRARIES winmm ws2_32)
-	endif()
-
-	# Curses config
-	# see https://cmake.org/cmake/help/v3.24/module/FindCurses.html
-	# modeled after https://runebook.dev/en/docs/cmake/module/findcurses
     set(CURSES_NEED_NCURSES ON)
-	find_package(Curses REQUIRED)
+    find_package(Curses REQUIRED)
+    find_library(CURSES_MENU_LIBRARY NAMES menu REQUIRED)
+    find_library(CURSES_FORM_LIBRARY NAMES form REQUIRED)
+    find_library(CURSES_PANEL_LIBRARY NAMES panel REQUIRED)
+    add_executable(es40_cfg_tui src/config/es40-cfg-tui.cpp)
+    target_include_directories(es40_cfg_tui PRIVATE ${CURSES_INCLUDE_DIRS})
+    target_link_libraries(es40_cfg_tui PRIVATE es40_config_editor ${CURSES_LIBRARIES}
+        ${CURSES_MENU_LIBRARY} ${CURSES_FORM_LIBRARY} ${CURSES_PANEL_LIBRARY})
+endif()
 
-	# Manually find the required sub-libraries
-	find_library(CURSES_MENU_LIBRARY NAMES menu)
-	find_library(CURSES_FORM_LIBRARY NAMES form)
-	find_library(CURSES_PANEL_LIBRARY NAMES panel)
-	
-	# Collect all Curses-related libraries
-	set(ALL_CURSES_LIBS 
-	    ${CURSES_LIBRARIES} 
-	    ${CURSES_MENU_LIBRARY} 
-	    ${CURSES_FORM_LIBRARY}
-	    ${CURSES_PANEL_LIBRARY}
-	)
-
-	# Ensure the sub-libraries were found
-	if(NOT CURSES_MENU_LIBRARY OR NOT CURSES_FORM_LIBRARY OR NOT CURSES_PANEL_LIBRARY)
-	    message(FATAL_ERROR "Missing Curses sub-libraries (menu/form/panel).")
-	endif()
-
-	# Manually create the Curses::Curses INTERFACE imported target
-	if(CURSES_FOUND AND NOT TARGET Curses::Curses)
-	    # The INTERFACE library holds the properties needed for other targets to link against
-	    add_library(Curses::Curses INTERFACE IMPORTED)
-	    
-	    # Set the properties
-	    set_target_properties(Curses::Curses PROPERTIES
-	        INTERFACE_LINK_LIBRARIES "${ALL_CURSES_LIBS}"
-	        INTERFACE_INCLUDE_DIRECTORIES "${CURSES_INCLUDE_DIRS}"
-	    )
-	endif()
-	
-	list(APPEND ES40_CFG_TUI_LIBRARIES Curses::Curses)
-
-	add_executable(es40_cfg_tui ${ES40_CFG_TUI_SOURCES})
-	
-	target_include_directories(es40_cfg_tui PUBLIC src/)
-	target_compile_definitions(es40_cfg_tui PUBLIC ${ES40_CFG_TUI_DEFINITIONS})
-	target_link_libraries(es40_cfg_tui PUBLIC ${ES40_CFG_TUI_LIBRARIES})
-	
-	set_property(TARGET es40_cfg_tui PROPERTY CXX_STANDARD 17)
+if (ES40_ENABLE_CFG_SDL AND NOT ES40_DISABLE_SDL)
+    add_executable(es40_cfg_sdl src/config/es40-cfg-sdl.cpp)
+    target_link_libraries(es40_cfg_sdl PRIVATE es40_config_editor SDL3::SDL3)
 endif()
 
 ############################### ES40 ###############################

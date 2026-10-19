@@ -246,7 +246,11 @@ jobs:
 
           make clean
 
-          make -C src es40 es40_cfg es40_cfg_tui -j"$(nproc)"
+          targets=(es40 es40_cfg es40_cfg_tui)
+          if [[ ! "${{ matrix.configuration }}" =~ (^|[[:space:]])NS($|[[:space:]]) ]]; then
+            targets+=(es40_cfg_sdl)
+          fi
+          make -C src "${targets[@]}" -j"$(nproc)"
 
       - name: Collect Linux artifacts
         shell: bash
@@ -257,7 +261,7 @@ jobs:
           rm -rf "$artifact_dir"
           mkdir -p "$artifact_dir"
 
-          for binary in es40 es40_cfg es40_cfg_tui; do
+          for binary in es40 es40_cfg es40_cfg_tui es40_cfg_sdl; do
             if [[ -f "src/$binary" ]]; then
               cp "src/$binary" "$artifact_dir/"
             fi
@@ -745,7 +749,11 @@ jobs:
 
           make clean
 
-          make -C src es40 es40_cfg es40_cfg_tui -j"$(sysctl -n hw.ncpu)"
+          targets=(es40 es40_cfg es40_cfg_tui)
+          if [[ ! "${{ matrix.configuration }}" =~ (^|[[:space:]])NS($|[[:space:]]) ]]; then
+            targets+=(es40_cfg_sdl)
+          fi
+          make -C src "${targets[@]}" -j"$(sysctl -n hw.ncpu)"
 
       - name: Collect macOS artifacts
         shell: bash
@@ -756,7 +764,7 @@ jobs:
           rm -rf "$artifact_dir"
           mkdir -p "$artifact_dir"
 
-          for binary in es40 es40_cfg es40_cfg_tui es40_vmnet_helper; do
+          for binary in es40 es40_cfg es40_cfg_tui es40_cfg_sdl es40_vmnet_helper; do
             if [[ -f "src/$binary" ]]; then
               cp "src/$binary" "$artifact_dir/"
             fi
@@ -908,7 +916,7 @@ jobs:
 
           make clean
 
-          make -C src es40 es40_cfg es40_cfg_tui -j"$(sysctl -n hw.ncpu)"
+          make -C src es40 es40_cfg es40_cfg_tui es40_cfg_sdl -j"$(sysctl -n hw.ncpu)"
 
       - name: Collect macOS x86-64 JIT artifacts
         shell: bash
@@ -919,7 +927,7 @@ jobs:
           rm -rf "$artifact_dir"
           mkdir -p "$artifact_dir"
 
-          for binary in es40 es40_cfg es40_cfg_tui es40_vmnet_helper; do
+          for binary in es40 es40_cfg es40_cfg_tui es40_cfg_sdl es40_vmnet_helper; do
             if [[ -f "src/$binary" ]]; then
               cp "src/$binary" "$artifact_dir/"
             fi
