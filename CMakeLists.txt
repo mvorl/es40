@@ -307,7 +307,7 @@ set_property(TARGET es40-cfg PROPERTY CXX_STANDARD 17)
 # inherit exactly the same feature defines and configuration implementation.
 if (ES40_ENABLE_CFG_TUI OR (ES40_ENABLE_CFG_SDL AND NOT ES40_DISABLE_SDL))
     add_library(es40_config_editor STATIC
-        src/config/ConfigEditor.cpp src/config/Configurator.cpp src/base/Exception.cpp)
+        src/config/ConfigEditor.cpp src/config/ConfigDocument.cpp src/config/Configurator.cpp src/base/Exception.cpp)
     target_include_directories(es40_config_editor PUBLIC src/)
     target_compile_features(es40_config_editor PUBLIC cxx_std_17)
     target_compile_definitions(es40_config_editor PUBLIC CONFIGURATION_ONLY ${ES40_CFG_DEFINITIONS})

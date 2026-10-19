@@ -225,11 +225,13 @@
   <ItemGroup>
     <ClCompile Include="..\src\config\es40-cfg-tui.cpp" />
     <ClCompile Include="..\src\config\ConfigEditor.cpp" />
+    <ClCompile Include="..\src\config\ConfigDocument.cpp" />
     <ClCompile Include="..\src\config\Configurator.cpp" />
     <ClCompile Include="..\src\base\Exception.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\config\ConfigEditor.h" />
+    <ClInclude Include="..\src\config\ConfigDocument.h" />
     <ClInclude Include="..\src\config\Configurator.h" />
     <ClInclude Include="..\src\io\SerialListenAddress.h" />
     <ClInclude Include="..\src\StdAfx.h" />

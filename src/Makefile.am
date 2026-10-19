@@ -79,7 +79,7 @@ endif
 AM_CPPFLAGS = -I$(top_srcdir)/src/emu
 
 # CPU headers are distributed with the emulator sources.
-noinst_HEADERS = config/ConfigEditor.h \
+noinst_HEADERS = config/ConfigEditor.h config/ConfigDocument.h \
        CPU/AlphaCPU.h \
        base/HostWakeEvent.h \
        CPU/AlphaCPUProfile.h \
@@ -320,6 +320,7 @@ es40_cfg_tui_CPPFLAGS = $(AM_CPPFLAGS) $(TUI_CFLAGS) -DCONFIGURATION_ONLY
 es40_cfg_tui_LDADD = $(TUI_LIBS) $(PCAP_LIBS)
 es40_cfg_tui_SOURCES = config/es40-cfg-tui.cpp \
     config/ConfigEditor.cpp \
+    config/ConfigDocument.cpp \
     config/Configurator.cpp \
     base/Exception.cpp
 
@@ -328,5 +329,6 @@ es40_cfg_sdl_CPPFLAGS = $(AM_CPPFLAGS) $(SDL_CFLAGS) -DCONFIGURATION_ONLY
 es40_cfg_sdl_LDADD = $(SDL_LIBS) $(PCAP_LIBS)
 es40_cfg_sdl_SOURCES = config/es40-cfg-sdl.cpp \
     config/ConfigEditor.cpp \
+    config/ConfigDocument.cpp \
     config/Configurator.cpp \
     base/Exception.cpp

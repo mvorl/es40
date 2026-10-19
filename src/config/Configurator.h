@@ -174,6 +174,12 @@ public:
 #ifdef CONFIGURATION_ONLY
   CConfigurator(class CConfigurator* parent, char* name, char* value);
   void set_myName(char *name) { myName = strdup(name); };
+  void set_myValue(const char *value) { myValue = strdup(value); }
+  int editor_child_count() const { return iNumChildren; }
+  CConfigurator *editor_child(int i) const { return pChildren[i]; }
+  int editor_value_count() const { return iNumValues; }
+  const char *editor_value_name(int i) const { return pValues[i].name; }
+  const char *editor_value(int i) const { return pValues[i].value; }
   void set_value(char* name, char* value);
   void remove_value(char *name);
   void set_child(class CConfigurator *child);

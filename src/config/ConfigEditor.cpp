@@ -28,6 +28,13 @@
 // Shared configuration editor: option definitions, validation and workflows.
 #include "StdAfx.h"
 #include "ConfigEditor.h"
+#include "ConfigDocument.h"
+#include <optional>
+#include <set>
+#include <fcntl.h>
+#ifdef _WIN32
+#include <io.h>
+#endif
 #include "Configurator.h"
 #include "io/SerialListenAddress.h"
 #include <cmath>
@@ -71,6 +78,22 @@ const int MAX_PCI_SLOT[MAX_PCI_BUS] = {4, 6};
 #define MYKEY_EXIT_STR "F2"
 #define MYKEY_QUIT_STR "F3"
 static EditorUI *editor_ui;
+static std::unique_ptr<ConfigDocument> configuration_document;
+static std::optional<ConfigFileSnapshot> input_snapshot, output_snapshot;
+static std::vector<bool> changed_fields;
+static std::set<CConfigurator *> existing_form_nodes;
+
+static void remember_form_nodes(CConfigurator *node)
+{
+    existing_form_nodes.insert(node);
+    for (int i = 0; i < node->editor_child_count(); ++i) remember_form_nodes(node->editor_child(i));
+}
+static void set_form_value(CConfigurator *node, int field, const char *name,
+                           const char *value, bool force = false)
+{
+    if (force || !existing_form_nodes.count(node) || changed_fields.at(field))
+        node->set_value(strdup(name), strdup(value));
+}
 CConfigurator *theConfig = nullptr, *sys0 = nullptr;
 
 void show_text(const char *title, const char *text)
@@ -130,8 +153,10 @@ bool validate_editor_field(EditorField& field)
 FormValues_t show_form(const char *title, FormEntry_t entry[], FormValues_t preset,
                        int count, FormCheckFuncPtr check)
 {
+    existing_form_nodes.clear(); remember_form_nodes(theConfig);
     vector<EditorField> fields;
     for (int i = 0; i < count; ++i) fields.push_back(prepare_editor_field(entry[i], preset ? preset[i] : nullptr));
+    const auto initial = fields;
     while (editor_ui->form(title, entry, fields))
     {
         bool valid = true;
@@ -146,7 +171,20 @@ FormValues_t show_form(const char *title, FormEntry_t entry[], FormValues_t pres
         for (int i = 0; i < count; ++i) values[i] = strdup(fields[i].value.c_str());
         try
         {
-            if (!check || check(entry, count, values)) return values;
+            if (!check || check(entry, count, values))
+            {
+                changed_fields.assign(count, false);
+                for (int i = 0; i < count; ++i)
+                {
+                    bool same = initial[i].value == values[i];
+                    if (initial[i].type == EditorField::Type::Integer || initial[i].type == EditorField::Type::Number)
+                        same = strtod(initial[i].value.c_str(), nullptr) == strtod(values[i], nullptr);
+                    if (initial[i].type == EditorField::Type::Choice)
+                        same = !strcasecmp(initial[i].value.c_str(), values[i]);
+                    changed_fields[i] = !same;
+                }
+                return values;
+            }
         }
         catch (...) { for (int i = 0; i < count; ++i) free(values[i]); free(values); throw; }
         for (int i = 0; i < count; ++i) free(values[i]);
@@ -248,110 +286,46 @@ string memory_bits2size(int mem_bits)
  */
 void read_configuration(const char *filename)
 {
-    // From src/AlphaSim.cpp
-    FILE *f;
-
-    // Open chosen file (print the path on failure)
-    f = fopen(filename, "rb");
-    if (!f)
-        FAILURE_2(Configuration, "failed to open configuration file: %s (%s)",
-                  filename, strerror(errno));
-
-    // Determine size (Windows: 64-bit length; POSIX: fseek/ftell)
-    size_t ll1 = 0;
-#if defined(_WIN32)
-    if (_fseeki64(f, 0, SEEK_END) != 0)
-    {
-        fclose(f);
-        FAILURE_1(Configuration, "failed to seek end of configuration file: %s", filename);
-    }
-    __int64 pos64 = _ftelli64(f);
-    if (pos64 < 0)
-    {
-        fclose(f);
-        FAILURE_1(Configuration, "failed to tell size of configuration file: %s", filename);
-    }
-    ll1 = (size_t)pos64;
-    if (_fseeki64(f, 0, SEEK_SET) != 0)
-    {
-        fclose(f);
-        FAILURE_1(Configuration, "failed to rewind configuration file: %s", filename);
-    }
-#else
-    if (fseek(f, 0, SEEK_END) != 0)
-    {
-        fclose(f);
-        FAILURE_1(Configuration, "failed to seek end of configuration file: %s", filename);
-    }
-    long pos = ftell(f);
-    if (pos < 0)
-    {
-        fclose(f);
-        FAILURE_1(Configuration, "failed to tell size of configuration file: %s", filename);
-    }
-    ll1 = (size_t)pos;
-    if (fseek(f, 0, SEEK_SET) != 0)
-    {
-        fclose(f);
-        FAILURE_1(Configuration, "failed to rewind configuration file: %s", filename);
-    }
-#endif
-
-    // Allocate buffer (+1 for NUL), read, and NUL-terminate for safety
-    char *ch1 = (char *)calloc(ll1 + 1, 1);
-    if (!ch1)
-    {
-        fclose(f);
-        FAILURE_1(Configuration, "out of memory reading configuration file: %s", filename);
-    }
-
-    size_t read_bytes = fread(ch1, 1, ll1, f);
-    if (read_bytes != ll1)
-    {
-        fclose(f);
-        free(ch1);
-        FAILURE_1(Configuration, "failed to read entire configuration file: %s", filename);
-    }
-    ch1[ll1] = '\0';
-
-    theConfig = new CConfigurator(nullptr, NULL, NULL, ch1, ll1);
-    fclose(f);
-    free(ch1);
+    input_snapshot = read_config_file(filename);
+    configuration_document.reset(new ConfigDocument(input_snapshot->text));
+    theConfig = configuration_document->configuration();
 }
 
 /**
- * Write theConfig to a file. If filename is '-', write to stdout.
+ * Patch the original document, retaining comments and unedited source bytes.
+ * Existing files are backed up and replaced atomically by the shared save layer.
  */
 void write_configuration(const char *filename)
 {
-    FILE *f;
-
+    const auto text = configuration_document->render(theConfig);
     if (!strcmp(filename, "-"))
     {
-        f = stdout;
+#ifdef _WIN32
+        const int mode = _setmode(_fileno(stdout), _O_BINARY);
+#endif
+        bool failed = fwrite(text.data(), 1, text.size(), stdout) != text.size();
+        failed = fflush(stdout) != 0 || failed;
+#ifdef _WIN32
+        _setmode(_fileno(stdout), mode);
+#endif
+        if (failed) FAILURE(Configuration, "failed to write configuration to stdout");
+        return;
     }
-    else
-    {
-        f = fopen(filename, "wb");
-        if (!f)
-            FAILURE_2(Configuration, "failed to open configuration file: %s (%s)",
-                      filename, strerror(errno));
-    }
+    auto destination = output_snapshot ? *output_snapshot : read_config_file(filename, true);
+    // Saving back to the loaded file must also detect changes made while editing.
+    if (input_snapshot && input_snapshot->path == destination.path)
+        destination = *input_snapshot;
+    save_config_file(destination, text);
+}
 
-    // theConfig->write_configuration(f);
-    /* The above doesn't work - The emulator does not recognize the gui section if it appears after the sys0 section */
-    CConfigurator *c = theConfig->find_child("gui");
-    if (c != nullptr)
-        c->write_configuration(f);
-    sys0->write_configuration(f);
-
-    bool failed = ferror(f) != 0;
-    if (f == stdout)
-        failed = fflush(f) != 0 || failed;
-    else
-        failed = fclose(f) != 0 || failed;
-    if (failed)
-        FAILURE_1(Configuration, "failed to write configuration file: %s", filename);
+// Keep extra attributes and nested blocks when editing an existing device.
+static CConfigurator *edit_node(CConfigurator *parent, CConfigurator *node,
+                                const std::string& name, const char *type)
+{
+    if (!node) return new CConfigurator(parent, (char *)name.c_str(), (char *)type);
+    node->set_myName((char *)name.c_str());
+    node->set_myValue(type);
+    return node;
 }
 
 void show_help(const char *title)
@@ -761,9 +735,12 @@ void add_disks(const char *title, const char *disk_name, CConfigurator *parent)
 
         // Preserve a manually configured overlay without exposing it in the form.
         const std::string overlay_file = c ? c->get_text_value("overlay_file", "") : "";
-        if (c != nullptr)
-            parent->remove_child(c->get_myName());
-        c = new CConfigurator(parent, (char *)disk_name, disk_type);
+        const bool type_changed = c && strcmp(c->get_myValue(), disk_type);
+        c = edit_node(parent, c, disk_name, disk_type);
+        if (type_changed)
+            for (const char *key : {"file", "device", "size", "autocreate_size", "format", "autocreate_format"})
+                c->remove_value((char *)key);
+        if (strcmp(disk_type, "file") || is_cdrom || is_floppy) c->remove_value((char *)"overlay_file");
         if (!overlay_file.empty() && !strcmp(disk_type, "file") && !is_cdrom && !is_floppy)
             c->set_value(strdup("overlay_file"), strdup(overlay_file.c_str()));
 
@@ -772,9 +749,9 @@ void add_disks(const char *title, const char *disk_name, CConfigurator *parent)
             if (!strcmp(entry[i].label, "Harddisk or CD-ROM"))
             {
                 if (!strcmp(values[i], "cd-rom"))
-                    c->set_value(strdup(entry[i].name), strdup(STR_YES));
+                    set_form_value(c, i, entry[i].name, STR_YES, type_changed);
                 else
-                    c->set_value(strdup(entry[i].name), strdup(STR_NO));
+                    set_form_value(c, i, entry[i].name, STR_NO, type_changed);
                 continue;
             }
 
@@ -784,22 +761,26 @@ void add_disks(const char *title, const char *disk_name, CConfigurator *parent)
                      !strcmp(entry[i].name, "autocreate_format")) &&
                     strcmp(disk_type, "file"))
                     continue;
-                c->set_value(strdup(entry[i].name), strdup(values[i]));
+                set_form_value(c, i, entry[i].name, values[i], type_changed ||
+                    (!strcmp(entry[i].name, "read_only") && changed_fields[fentry_index(entry, num_entries, "Harddisk or CD-ROM")]));
                 continue;
             }
 
             if (!strcmp(entry[i].label, "File / Device name") &&
                 (!strcmp(disk_type, "file") || !strcmp(disk_type, "device")))
-                c->set_value(strdup(disk_type), strdup(values[i]));
+                set_form_value(c, i, disk_type, values[i], type_changed);
 
             if (!strcmp(entry[i].label, "Autocreate size"))
             {
-                int last = strlen(values[i]) - 1;
-                values[i][last] = toupper(values[i][last]);
+                const size_t length = strlen(values[i]);
+                if (length) values[i][length - 1] = (char)toupper((unsigned char)values[i][length - 1]);
                 if (is_ramdisk)
-                    c->set_value(strdup("size"), strdup(values[i]));
-                if (!strcmp(disk_type, "file") && strcmp(values[i], ""))
-                    c->set_value(strdup("autocreate_size"), strdup(values[i]));
+                    set_form_value(c, i, "size", values[i], type_changed);
+                if (!strcmp(disk_type, "file"))
+                {
+                    if (strcmp(values[i], "")) set_form_value(c, i, "autocreate_size", values[i], type_changed);
+                    else if (changed_fields[i]) c->remove_value((char *)"autocreate_size");
+                }
             }
         }
 
@@ -943,7 +924,7 @@ void edit_gui_sdl_keyboard(const char *title)
     if (values != NULL)
     {
         for (int i = 0; i < num_entries; ++i)
-            c->set_value(strdup(entry[i].name), strdup(values[i]));
+            set_form_value(c, i, entry[i].name, values[i]);
 
         // Clean up
         for (int i = 0; i < num_entries; ++i)
@@ -1016,7 +997,7 @@ void edit_gui_sdl_mouse(const char *title)
     if (values != NULL)
     {
         for (int i = 0; i < num_entries; ++i)
-            c->set_value(strdup(entry[i].name), strdup(values[i]));
+            set_form_value(c, i, entry[i].name, values[i]);
 
         // Clean up
         for (int i = 0; i < num_entries; ++i)
@@ -1082,7 +1063,7 @@ void edit_gui_sdl_video(const char *title)
     if (values != NULL)
     {
         for (int i = 0; i < num_entries; ++i)
-            c->set_value(strdup(entry[i].name), strdup(values[i]));
+            set_form_value(c, i, entry[i].name, values[i]);
 
         // Clean up
         for (int i = 0; i < num_entries; ++i)
@@ -1171,7 +1152,7 @@ void edit_gui_x11(const char *title)
     if (values != NULL)
     {
         for (int i = 0; i < num_entries; ++i)
-            c->set_value(strdup(entry[i].name), strdup(values[i]));
+            set_form_value(c, i, entry[i].name, values[i]);
 
         // Clean up
         for (int i = 0; i < num_entries; ++i)
@@ -1345,11 +1326,11 @@ void edit_tsunami(const char *title)
     if (values != NULL)
     {
         idx = fentry_index(entry, num_entries, "memory size");
-        sys0->set_value(strdup("memory.bits"), strdup(i2s(memory_size2bits(values[idx])).c_str()));
+        set_form_value(sys0, idx, "memory.bits", i2s(memory_size2bits(values[idx])).c_str());
 
         for (int i = 0; i < num_entries; ++i)
             if (entry[i].name != NULL && (strcmp(entry[i].name, "time") || strcmp(values[i], "")))
-                sys0->set_value(strdup(entry[i].name), strdup(values[i]));
+                set_form_value(sys0, i, entry[i].name, values[i]);
 
         // Clean up
         for (int i = 0; i < num_entries; ++i)
@@ -1469,6 +1450,9 @@ void edit_ev68cb(const char *title)
             }
     }
 
+    CConfigurator *original_cpus[MAX_CPUS];
+    for (int i = 0; i < MAX_CPUS; ++i)
+        original_cpus[i] = sys0->find_child(("cpu" + i2s(i)).c_str());
     FormValues_t values = show_form(title, entry.data(), preset, num_entries, NULL);
 
     if (values != NULL)
@@ -1480,10 +1464,7 @@ void edit_ev68cb(const char *title)
             if (!strcmp(values[idx], STR_YES))
             {
                 const string cpu = "cpu" + i2s(j++);
-                c = sys0->find_child(cpu.c_str());
-                if (c != nullptr)
-                    sys0->remove_child(c->get_myName());
-                c = new CConfigurator(sys0, (char *)cpu.c_str(), (char *)"ev68cb");
+                c = edit_node(sys0, original_cpus[i], cpu, "ev68cb");
                 for (int k = i * entries_per_cpu; k < (i + 1) * entries_per_cpu; ++k)
                     if (entry[k].name != NULL)
                     {
@@ -1491,16 +1472,15 @@ void edit_ev68cb(const char *title)
                         {
                             // Add the trailing "M"
                             snprintf(speed, sizeof(speed), "%sM", values[k]);
-                            c->set_value(strdup(entry[k].name), strdup(speed));
+                            set_form_value(c, k, entry[k].name, speed);
                         }
                         else
-                            c->set_value(strdup(entry[k].name), strdup(values[k]));
+                            set_form_value(c, k, entry[k].name, values[k]);
                     }
             }
             else
             {
-                const string cpu = "cpu" + i2s(i);
-                c = sys0->find_child(cpu.c_str());
+                c = original_cpus[i];
                 if (c != nullptr)
                     sys0->remove_child(c->get_myName());
             }
@@ -1577,25 +1557,23 @@ void edit_ali(const char *title)
      * whether the missing of their entries is intentional or not yet configured.
      */
     idx = fentry_index(entry, num_entries, "M7101 PMU enabled?");
-    preset[idx] = (char *)entry[idx].preset;
+    preset[idx] = (char *)(c ? (sys0->find_child(PCI_SLOT_PMU) ? STR_YES : STR_NO) : entry[idx].preset);
     idx = fentry_index(entry, num_entries, "USB controller enabled?");
-    preset[idx] = (char *)entry[idx].preset;
+    preset[idx] = (char *)(c ? (sys0->find_child(PCI_SLOT_USB) ? STR_YES : STR_NO) : entry[idx].preset);
 
     FormValues_t values = show_form(title, entry, preset, num_entries, NULL);
 
     if (values != NULL)
     {
         c = sys0->find_child(PCI_SLOT_ALI);
-        if (c != nullptr)
-            sys0->remove_child(c->get_myName());
-        c = new CConfigurator(sys0, (char *)PCI_SLOT_ALI, (char *)"ali");
+        c = edit_node(sys0, c, PCI_SLOT_ALI, "ali");
 
         idx = fentry_index(entry, num_entries, "Console Output");
-        c->set_value(strdup(entry[idx].name), strdup(!strcmp(values[idx], "graphics") ? STR_YES : STR_NO));
+        set_form_value(c, idx, entry[idx].name, !strcmp(values[idx], "graphics") ? STR_YES : STR_NO);
 
         idx = fentry_index(entry, num_entries, "LPT Output");
-        if (strcmp(values[idx], ""))
-            c->set_value(strdup(entry[idx].name), strdup(values[idx]));
+        if (strcmp(values[idx], "")) set_form_value(c, idx, entry[idx].name, values[idx]);
+        else if (changed_fields[idx]) c->remove_value((char *)entry[idx].name);
 
         idx = fentry_index(entry, num_entries, "M7101 PMU enabled?");
         if (!strcmp(values[idx], STR_YES))
@@ -1707,18 +1685,12 @@ void edit_pci_vga_s3(const char *title)
 
     if (values != NULL)
     {
-        if (c != nullptr)
-            sys0->remove_child(c->get_myName());
-
         idx = fentry_index(entry, num_entries, "PCI slot");
-        c = get_pcislot(values[idx]);
-        if (c != nullptr)
-            sys0->remove_child(c->get_myName());
-        c = new CConfigurator(sys0, (char *)(string("pci") + values[idx]).c_str(), (char *)"s3");
+        c = edit_node(sys0, c, string("pci") + values[idx], "s3");
 
         for (int i = 0; i < num_entries; ++i)
             if (i != idx && entry[i].name != NULL)
-                c->set_value(strdup(entry[i].name), strdup(values[i]));
+                set_form_value(c, i, entry[i].name, values[i]);
 
         // Clean up
         for (int i = 0; i < num_entries; ++i)
@@ -1800,7 +1772,7 @@ void edit_pci_vga_gloria(const char *title)
 
         for (int i = 0; i < num_entries; ++i)
             if (entry[i].name)
-                c->set_value(strdup(entry[i].name), strdup(values[i]));
+                set_form_value(c, i, entry[i].name, values[i]);
 
         for (int i = 0; i < num_entries; ++i)
             free(values[i]);
@@ -1872,7 +1844,7 @@ void edit_pci_vga_radeon(const char *title)
 
         for (int i = 0; i < num_entries; ++i)
             if (entry[i].name)
-                c->set_value(strdup(entry[i].name), strdup(values[i]));
+                set_form_value(c, i, entry[i].name, values[i]);
 
         for (int i = 0; i < num_entries; ++i)
             free(values[i]);
@@ -1955,7 +1927,7 @@ void edit_pci_vga_powerstorm(const char *title)
 
         for (int i = 0; i < num_entries; ++i)
             if (entry[i].name)
-                c->set_value(strdup(entry[i].name), strdup(values[i]));
+                set_form_value(c, i, entry[i].name, values[i]);
 
         for (int i = 0; i < num_entries; ++i)
             free(values[i]);
@@ -2201,17 +2173,12 @@ void edit_pci_dec21143(const char *title)
 
     if (values != NULL)
     {
-        if (c != nullptr)
-            sys0->remove_child(c->get_myName());
-
         idx = fentry_index(entry, num_entries, "PCI slot");
-        c = get_pcislot(values[idx]);
-        if (c == nullptr)
-            c = new CConfigurator(sys0, (char *)(string("pci") + values[idx]).c_str(), (char *)"dec21143");
+        c = edit_node(sys0, c, string("pci") + values[idx], "dec21143");
 
         for (int i = 0; i < num_entries; ++i)
             if (entry[i].name != NULL)
-                c->set_value(strdup(entry[i].name), strdup(values[i]));
+                set_form_value(c, i, entry[i].name, values[i]);
 
         // Clean up
         for (int i = 0; i < num_entries; ++i)
@@ -2455,17 +2422,17 @@ void edit_pci_lsi53c1020_settings(const char *title)
         if (!strcmp(values[idx], STR_YES))
         {
             idx = fentry_index(entry, num_entries, "flash file");
-            c->set_value(strdup(entry[idx].name), strdup(values[idx]));
+            set_form_value(c, idx, entry[idx].name, values[idx], true);
         }
 
         idx = fentry_index(entry, num_entries, "initial LSI BIOS and IOC firmware images?");
         if (!strcmp(values[idx], STR_YES))
         {
             idx = fentry_index(entry, num_entries, "rom file");
-            c->set_value(strdup(entry[idx].name), strdup(values[idx]));
+            set_form_value(c, idx, entry[idx].name, values[idx], true);
 
             idx = fentry_index(entry, num_entries, "firmware file");
-            c->set_value(strdup(entry[idx].name), strdup(values[idx]));
+            set_form_value(c, idx, entry[idx].name, values[idx], true);
         }
 
         // Clean up
@@ -2566,14 +2533,8 @@ void edit_pci_es1370(const char *title)
 
     if (values != NULL)
     {   
-        if (c != nullptr)
-            sys0->remove_child(c->get_myName());
-
         idx = fentry_index(entry, num_entries, "PCI slot");
-        c = get_pcislot(values[idx]);
-        if (c != nullptr)
-            sys0->remove_child(c->get_myName());
-        c = new CConfigurator(sys0, (char *)(string("pci") + values[idx]).c_str(), (char *)"es1370");
+        c = edit_node(sys0, c, string("pci") + values[idx], "es1370");
 
         // Clean up
         for (int i = 0; i < num_entries; ++i)
@@ -2735,7 +2696,7 @@ void edit_serial(const char *title)
 
     preset = (FormValues_t)calloc(num_entries, sizeof(char *));
 
-    const string dquotes = "\"\"";
+    const string dquotes = "\"";
     for (int i = 0; i < 2; ++i)
     {
         string serial_name = "serial" + i2s(i);
@@ -2771,9 +2732,8 @@ void edit_serial(const char *title)
             string::size_type p1, p2, p3; // p1=start of program, p2=end of program, p3=after end of program
             if (!action_str.empty() && action_str[0] == '"')
             {
-                // Loaded values have single quotes; edits in this session use
-                // doubled quotes for write_configuration().
-                const string quote = action_str.compare(0, 2, dquotes) == 0 ? dquotes : "\"";
+                // Model values are decoded; the source writer escapes them once.
+                const string quote = dquotes;
                 p1 = quote.length();
                 p2 = action_str.find(quote, p1);
                 if (p2 == string::npos)
@@ -2815,33 +2775,28 @@ void edit_serial(const char *title)
             string serial_name = "serial" + i2s(i);
             string serial_prefix = serial_name + ".";
             c = sys0->find_child(serial_name.c_str());
-            if (c != nullptr)
-                sys0->remove_child(c->get_myName());
-            c = new CConfigurator(sys0, (char *)serial_name.c_str(), (char *)"serial");
+            bool edited = false;
+            for (int k = i * num_attr; k < (i + 1) * num_attr; ++k) edited = edited || changed_fields[k];
+            if (!c && !edited) continue;
+            c = edit_node(sys0, c, serial_name, "serial");
 
             idx = fentry_index(entry, num_entries, (serial_prefix + "disabled").c_str());
-            if (!strcmp(values[idx], STR_YES))
-            {
-                c->set_value(strdup(entry[idx].name), strdup(values[idx]));
-                continue;
-            }
+            set_form_value(c, idx, entry[idx].name, values[idx]);
+            if (!strcmp(values[idx], STR_YES)) continue;
 
             idx = fentry_index(entry, num_entries, (serial_prefix + "null_attach").c_str());
-            if (!strcmp(values[idx], STR_YES))
-            {
-                c->set_value(strdup(entry[idx].name), strdup(values[idx]));
-                continue;
-            }
+            set_form_value(c, idx, entry[idx].name, values[idx]);
+            if (!strcmp(values[idx], STR_YES)) continue;
 
             idx = fentry_index(entry, num_entries, (serial_prefix + "port").c_str());
-            c->set_value(strdup(entry[idx].name), strdup(values[idx]));
+            set_form_value(c, idx, entry[idx].name, values[idx]);
 
             idx = fentry_index(entry, num_entries, (serial_prefix + "listen_address").c_str());
-            if (values[idx][0])
-                c->set_value(strdup(entry[idx].name), strdup(values[idx]));
+            if (values[idx][0]) set_form_value(c, idx, entry[idx].name, values[idx]);
+            else if (changed_fields[idx]) c->remove_value((char *)entry[idx].name);
 
             idx = fentry_index(entry, num_entries, (serial_prefix + "raw_mode").c_str());
-            c->set_value(strdup(entry[idx].name), strdup(values[idx]));
+            set_form_value(c, idx, entry[idx].name, values[idx]);
 
             idx = fentry_index(entry, num_entries, (serial_prefix + "program").c_str());
             if (strcmp(values[idx], ""))
@@ -2849,8 +2804,9 @@ void edit_serial(const char *title)
                 int idx2 = fentry_index(entry, num_entries, (serial_prefix + "arguments").c_str());
                 // TODO: Check program path to determine whether dquotes are necessary
                 string action = dquotes + values[idx] + dquotes + " " + values[idx2];
-                c->set_value(strdup("action"), strdup(action.c_str()));
+                set_form_value(c, idx, "action", action.c_str(), changed_fields[idx2]);
             }
+            else if (changed_fields[idx]) c->remove_value((char *)"action");
         }
 
         // Clean up
@@ -2937,7 +2893,7 @@ void edit_ide_settings(const char *title)
     if (values != NULL)
     {
         idx = fentry_index(entry, num_entries, "dma?");
-        c->set_value(strdup(entry[idx].name), strdup(values[idx]));
+        set_form_value(c, idx, entry[idx].name, values[idx]);
 
         // Clean up
         for (int i = 0; i < num_entries; ++i)
@@ -3031,12 +2987,10 @@ void edit_mpu401(const char *title)
 
     if (values != NULL)
     {
-        if (c != nullptr)
-            sys0->remove_child(c->get_myName());
-        c = new CConfigurator(sys0, (char *)"mpu0", (char *)"mpu401");
+        c = edit_node(sys0, c, "mpu0", "mpu401");
 
         idx = fentry_index(entry, num_entries, "midi_out");
-        c->set_value(strdup(entry[idx].name), strdup(values[idx]));
+        set_form_value(c, idx, entry[idx].name, values[idx]);
 
         // Clean up
         for (int i = 0; i < num_entries; ++i)
@@ -3147,16 +3101,15 @@ OverwriteChoice confirm_overwrite(const char *filename)
     if (!strcmp(filename, "-"))
         return OVERWRITE_YES;
 
-    FILE *f = fopen(filename, "rb");
-    if (f == NULL)
-        return OVERWRITE_YES;
-    fclose(f);
+    output_snapshot = read_config_file(filename, true);
+    if (!output_snapshot->exists) return OVERWRITE_YES;
 
     string title = string(filename) + " exists. Overwrite?";
     MenuEntry_t entry[] = {
         {"No", "Return to the main menu without writing the file.", NULL},
         {"Yes", "Replace the existing file with this configuration.\n"
-                "Comments and sections other than gui and sys0 are not kept.",
+                "Comments and untouched settings are kept.\n"
+                "The previous file is backed up as <filename>.bak.",
          NULL},
         {"Quit without saving", "Leave the program without writing the file.", NULL}};
 
@@ -3174,6 +3127,7 @@ OverwriteChoice confirm_overwrite(const char *filename)
 int run_config_editor(int argc, char **argv, EditorUI& ui)
 {
     editor_ui = &ui;
+    configuration_document.reset(); input_snapshot.reset(); output_snapshot.reset();
     const char *out_filename = NULL;
     const char *in_filename = NULL;
 
@@ -3183,7 +3137,7 @@ int run_config_editor(int argc, char **argv, EditorUI& ui)
         {
             printf("Usage: %s [input-filename] [output-filename]\n"
                    "Without input-filename, es40.cfg in the current directory is read if present.\n"
-                   "output-filename defaults to es40.cfg.\n",
+                   "output-filename defaults to the input file, or es40.cfg for a new configuration.\n",
                    argv[0]);
             return 0;
         }
@@ -3208,11 +3162,18 @@ int run_config_editor(int argc, char **argv, EditorUI& ui)
             printf("Failure reading %s: %s\n", in_filename, e.displayText().c_str());
             return 1;
         }
+        catch (const std::exception& e)
+        {
+            fprintf(stderr, "Failure reading %s: %s\n", in_filename, e.what());
+            return 1;
+        }
     }
     else
     {
         char minimal_config[] = "sys0 = tsunami { cpu0 = ev68cb {} }";
         theConfig = new CConfigurator(nullptr, NULL, NULL, minimal_config, strlen(minimal_config));
+        configuration_document.reset(new ConfigDocument(""));
+        configuration_document->bind(theConfig);
     }
     sys0 = theConfig->find_child("sys0");
     if (sys0 == nullptr)
@@ -3233,7 +3194,7 @@ int run_config_editor(int argc, char **argv, EditorUI& ui)
         out_filename = argv[2];
     }
     else
-        out_filename = "es40.cfg";
+        out_filename = in_filename ? in_filename : "es40.cfg";
 
     bool initialized = false;
     int result = 0;
