@@ -1,0 +1,61 @@
+name: Clean up Pages runs
+
+on:
+  workflow_run:
+    workflows: [pages-build-deployment]
+    types: [completed]
+
+permissions:
+  actions: write
+
+concurrency:
+  group: cleanup-pages-${{ github.event.workflow_run.workflow_id }}
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Delete older completed Pages runs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Keep the newest completed Pages run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PAGES_WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
+          COMPLETED_RUN_ID: ${{ github.event.workflow_run.id }}
+          COMPLETED_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+        run: |
+          set -euo pipefail
+
+          # Read every page before deleting anything, so pagination cannot skip runs.
+          runs_json="$(gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/$PAGES_WORKFLOW_ID/runs?per_page=100")"
+
+          # Include the triggering run in case the list API has not caught up yet.
+          # Keep the newest completed run even if events finish out of order.
+          old_run_ids="$(printf '%s' "$runs_json" | jq -r \
+            --argjson workflow_id "$PAGES_WORKFLOW_ID" \
+            --argjson completed_id "$COMPLETED_RUN_ID" \
+            --argjson completed_number "$COMPLETED_RUN_NUMBER" '
+              [.[].workflow_runs[]
+                | select(.workflow_id == $workflow_id and .status == "completed")
+                | {id, run_number}]
+              + [{id: $completed_id, run_number: $completed_number}]
+              | unique_by(.id)
+              | sort_by(.run_number)
+              | reverse
+              | .[1:][].id
+            ')"
+
+          deleted=0
+          skipped=0
+          while IFS= read -r run_id; do
+            [ -n "$run_id" ] || continue
+            if gh run delete "$run_id" --repo "$GITHUB_REPOSITORY"; then
+              deleted=$((deleted+1))
+            else
+              skipped=$((skipped+1))
+              echo "::warning::Could not delete Pages run $run_id; skipping"
+            fi
+          done <<< "$old_run_ids"
+
+          echo "Deleted $deleted older Pages run(s); skipped $skipped."
