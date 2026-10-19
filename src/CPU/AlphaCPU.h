@@ -261,6 +261,7 @@ class CAlphaCPU : public CSystemComponent, public CRunnable
   friend class Ev68IPR;
   friend class Ev68MMU;
   friend class Ev68Reset;
+  friend class Ev68InstructionFetch;
 public:
   void          flush_icache_asm();
   virtual int   SaveState(FILE* f);
@@ -348,7 +349,7 @@ private:
   std::atomic<bool> StopThread{false};
   void service_interval_timer(std::chrono::steady_clock::time_point now);
 
-  int             get_icache(u64 address, u32* data);
+  int             fetch_instruction(u32* instruction);
   bool            icache_line_matches(int i, u64 address) const;
   bool            icache_hit(int i, u64 address) const;
   int             FindTBEntry(u64 virt, int flags);
@@ -938,26 +939,7 @@ inline void CAlphaCPU::set_PAL_BASE(u64 pb)
 #endif
 }
 
-/**
- * Get an instruction from the instruction cache.
- * If necessary, fill a new cache block from memory.
- *
- * get_icache checks all cache entries, to see if there is a
- * cache entry that matches the current address space number,
- * and that contains the address we're looking for. If it
- * exists, the instruction is fetched from this cache,
- * otherwise, the physical address for the instruction is
- * calculated, and the cache block is filled.
- *
- * The last cache entry that was a hit is remembered, so that
- * cache entry is checked first on the next instruction. (very
- * likely to be the same cache block)
- *
- * It would be easiest to do without the instruction cache
- * altogether, but unfortunately SRM uses self-modifying
- * code, that relies on the correct instruction stream to
- * remain in the cache.
- **/
+// Legacy EV68 cache probes used by the current JIT instruction-source path.
 inline bool CAlphaCPU::icache_line_matches(int i, u64 address) const
 {
   const auto& line = state.icache[i];
@@ -971,125 +953,10 @@ inline bool CAlphaCPU::icache_hit(int i, u64 address) const
     && ((address & 1) || (icache_valid_modes[i] & (1u << state.cm)));
 }
 
-inline int CAlphaCPU::get_icache(u64 address, u32* data)
+inline int CAlphaCPU::fetch_instruction(u32* instruction)
 {
-  // Direct-map the icache: 2 KiB lines (ICACHE_LINE_SIZE * 4 == 2048 bytes).
-  // Use VA[...:11] as the set index. The PAL bit (VA<0>) remains part of the tag.
-  const u64 kLineShift = 11;
-  const u64 v_aligned = address & ~U64(0x3);
-  const int i = (int)((v_aligned >> kLineShift) & (ICACHE_ENTRIES - 1));
-  u64   v_a;
-  u64   p_a;
-  int   result;
-  bool  asm_bit;
-
-  if (icache_enabled)
-  {
-    bool hit = icache_line_matches(i, address);
-    if (hit && !(address & 1) && !(icache_valid_modes[i] & (1u << state.cm))) {
-      // A cached instruction is still subject to the current mode's access
-      // checks, including for ASM lines. Keep its bytes until IMB when the
-      // translation is unchanged; SRM can depend on the cached instruction.
-      result = virt2phys(address, &p_a, ACCESS_EXEC, &asm_bit, 0);
-      if (result) return result;
-      hit = p_a == state.icache[i].p_address + (address & ICACHE_BYTE_MASK);
-      if (hit) {
-        if (asm_bit != state.icache[i].asm_bit) {
-          // A newly checked process-specific mapping must not grant access
-          // to other ASNs through an older global cache line (or vice versa).
-          icache_valid_modes[i] = 0;
-          state.icache[i].asn = state.asn;
-          state.icache[i].asm_bit = asm_bit;
-        }
-        icache_valid_modes[i] |= (u8)(1u << state.cm);
-      }
-    }
-
-    // ---- Fast hit probe
-    if (hit) {
-
-      *data = endian_32(state.icache[i].data[(address >> 2) & ICACHE_INDEX_MASK]);
-
-      // keep debug/pc_phys coherent even when icache is enabled
-      state.pc_phys = state.icache[i].p_address + (address & ICACHE_BYTE_MASK);
-
-#ifdef IDB
-      current_pc_physical = state.pc_phys;
-#endif
-      state.last_found_icache = i;
-      return 0;
-    }
-
-    // ---- Miss: translate + fill
-    v_a = address & ICACHE_MATCH_MASK;
-    if (address & 1) {
-      // PALmode: VA<0> is PAL marker; physical is VA with bit0 cleared
-      p_a = v_a & ~U64(0x1);
-      asm_bit = true;
-    }
-    else {
-      result = virt2phys(v_a, &p_a, ACCESS_EXEC, &asm_bit, 0);
-      if (result) return result;
-    }
-
-    // Attempt to get a pointer into DRAM. If this is PIO (e.g., TIG flash),
-      // PtrToMem returns null and we must *not* try to memcpy from it.
-    char* mem = cSystem->PtrToMem(p_a);
-    if (mem && cSystem->PtrToMem(p_a + ((ICACHE_LINE_SIZE * 4) - 1))) {
-      // DRAM-backed: fill the direct-mapped icache line.
-      memcpy(state.icache[i].data, mem, ICACHE_LINE_SIZE * 4);
-      state.icache[i].valid = true;
-      state.icache[i].asn = state.asn;
-      state.icache[i].asm_bit = asm_bit;
-      state.icache[i].address = address & ICACHE_MATCH_MASK;
-      state.icache[i].p_address = p_a;
-      icache_valid_modes[i] = (u8)(1u << state.cm);
-
-      *data = endian_32(state.icache[i].data[(address >> 2) & ICACHE_INDEX_MASK]);
-
-      // same pc_phys update on fill
-      state.pc_phys = p_a + (address & ICACHE_BYTE_MASK);
-#ifdef IDB
-      current_pc_physical = state.pc_phys;
-#endif
-      state.last_found_icache = i;
-      return 0;
-    }
-    else {
-      // PIO/TIG-backed: cannot fill icache lines.
-        // Read exactly the requested instruction as 4 byte reads via the system bus.
-      const u64 p_instr = p_a + (address & ICACHE_BYTE_MASK);
-      u32 ins = 0;
-      ins |= (u8)cSystem->ReadMem(p_instr + 0, 8, this);
-      ins |= ((u8)cSystem->ReadMem(p_instr + 1, 8, this)) << 8;
-      ins |= ((u8)cSystem->ReadMem(p_instr + 2, 8, this)) << 16;
-      ins |= ((u8)cSystem->ReadMem(p_instr + 3, 8, this)) << 24;
-      *data = ins; // already in target little-endian form
-
-      state.pc_phys = p_instr;
-#ifdef IDB
-      current_pc_physical = state.pc_phys;
-#endif
-      return 0;
-    }
-  }
-
-  // ---- Icache disabled (unchanged)
-  if (address & 1) {
-    state.pc_phys = address & ~U64(0x3);
-    state.rem_ins_in_page = 1;
-  }
-  else {
-    if (!state.rem_ins_in_page || ins_page_cm != state.cm) {
-      result = virt2phys(address, &state.pc_phys, ACCESS_EXEC, &asm_bit, 0);
-      if (result) return result;
-      state.rem_ins_in_page = 2048 - ((((u32)address) >> 2) & 2047);
-      ins_page_cm = state.cm;
-    }
-  }
-
-  *data = (u32)cSystem->ReadMem(state.pc_phys, 32, this);
-  return 0;
+  return m_profile.instruction_fetch.fetch
+    ? m_profile.instruction_fetch.fetch(*this, instruction) : 1;
 }
 
 

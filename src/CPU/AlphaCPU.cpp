@@ -686,7 +686,8 @@ void CAlphaCPU::init()
 	state.iProcNum = cSystem->RegisterCPU(this);
 
 #ifdef ES40_JIT
-	if (m_profile.jit_supported)
+	if (m_profile.jit_supported
+		&& Ev68InstructionFetch::supports_legacy_jit(m_profile.instruction_fetch))
 	{
 		if (!m_jit) m_jit = new CJitEngine(m_profile, (int)state.iProcNum);
 		m_jit->set_exit_slot(&m_jit_exit);
@@ -1225,8 +1226,8 @@ void CAlphaCPU::jit_run(int budget)
 		}
 	}
 
-	// A profile without JIT support uses the same clock/timer dispatch envelope,
-	// but must not discover blocks or fetch instruction bytes through the JIT.
+	// A profile or fetch contract without JIT support uses the same clock/timer
+	// dispatch envelope, without discovering blocks through the legacy source path.
 	if (!m_jit)
 	{
 		while (budget > 0)
@@ -1246,9 +1247,8 @@ void CAlphaCPU::jit_run(int budget)
 		const u32 start_asn = (u32)state.asn;
 		const bool start_pal_shadow = (start_virt & 1) && state.sde;
 
-		// PAL reset-vector entry
-		if (start_virt == (state.pal_base | 1))
-			flush_icache();
+		if (m_profile.instruction_fetch.prepare_dispatch)
+			m_profile.instruction_fetch.prepare_dispatch(*this);
 
 		// Host-side idle detection (JIT only, off by default). A qualifying
 		// sample follows at least 3/4 of the initial dispatch budget's work;
@@ -3286,99 +3286,9 @@ _next_instruction:
 		PROFILE_DO(state.pc);
 #endif
 
-#ifndef ES40_JIT
-		// ---- Fast sequential icache path ----
-				// If PC matches expected sequential address and we have words remaining
-				// in the current icache line, read directly without any lookup.
-		if (state.pc == seq_next_pc && seq_remaining > 0 && seq_cm == state.cm)
-		{
-			ins = endian_32(seq_line_ptr[seq_offset]);
-#if defined(DEBUG_ARC)
-			if (state.current_pc < 0x10000) {
-				printf("PC=%016" PRIx64 " ins=%08x\n", state.current_pc, ins);
-			}
-#endif
-			seq_offset++;
-			seq_remaining--;
-			seq_next_pc += 4;
-			//state.pc_phys += 4;
-#if defined(IDB)
-			current_pc_physical = state.pc_phys;
-#endif
-		}
-		else
-		{
-			// PAL reset-vector entry: drop stale icache lines (in-place image rewrite)
-			if (state.pc == (state.pal_base | 1))
-				flush_icache();
+		if (fetch_instruction(&ins))
+			ES40_EXECUTE_END();
 
-			// Full icache lookup
-			if (get_icache(state.pc, &ins))
-				goto _next_instruction;
-
-			// Set up sequential tracking from the cache hit
-			if (!(state.pc & 1) && icache_hit(state.last_found_icache, state.pc))
-			{
-				int _siq_line = state.last_found_icache;
-				seq_line_ptr = state.icache[_siq_line].data;
-				int _siq_word = (int)((state.pc >> 2) & ICACHE_INDEX_MASK);
-				seq_offset = _siq_word + 1;
-				seq_remaining = ICACHE_LINE_SIZE - seq_offset;
-				seq_next_pc = (state.pc & ~U64(0x3)) + 4;
-				seq_cm = state.cm;
-			}
-			else
-			{
-				seq_remaining = 0;
-			}
-
-#if defined(IDB)
-			current_pc_physical = state.pc_phys;
-#endif
-		}
-#else
-		// Fast sequential icache path -- the same fast path the batched interpreter uses above.
-		// The JIT lane calls execute() once per instruction, so this cursor persists across calls
-		// within an interpreted run. A compiled block can't remap (it runs no PAL/TB ops), and any
-		// flush or IMB resets the cursor through break_seq_icache(), so stale lines can't be read.
-		// A TB-miss returns to the dispatcher (which re-dispatches at the fault handler).
-		if (state.pc == seq_next_pc && seq_remaining > 0 && seq_cm == state.cm)
-		{
-			ins = endian_32(seq_line_ptr[seq_offset]);
-			seq_offset++;
-			seq_remaining--;
-			seq_next_pc += 4;
-		}
-		else
-		{
-			// PAL reset-vector entry: drop stale icache lines (in-place image rewrite)
-			if (state.pc == (state.pal_base | 1))
-				flush_icache();
-
-			if (get_icache(state.pc, &ins))
-				return;
-
-			if (!(state.pc & 1) && icache_hit(state.last_found_icache, state.pc))
-			{
-				int _siq_line = state.last_found_icache;
-				seq_line_ptr = state.icache[_siq_line].data;
-				int _siq_word = (int)((state.pc >> 2) & ICACHE_INDEX_MASK);
-				seq_offset = _siq_word + 1;
-				seq_remaining = ICACHE_LINE_SIZE - seq_offset;
-				seq_next_pc = (state.pc & ~U64(0x3)) + 4;
-				seq_cm = state.cm;
-			}
-			else
-			{
-				seq_remaining = 0;
-			}
-		}
-
-#if defined(IDB)
-		current_pc_physical = state.pc_phys;
-#endif
-
-#endif
 	}           // if (DO_ACTION)
 	else
 	{

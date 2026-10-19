@@ -1,0 +1,218 @@
+﻿/* ES40 Emulator.
+ * Copyright (C) 2007-2008 by the ES40 Emulator Project
+ * Copyright (C) 2023-2026 by gdwnldsKSC
+ * Copyright (C) 2026 by Scott Klein
+ *
+ * WWW    : https://github.com/ES40-Emu/es40
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ *
+ * Although this is not required, the author would appreciate being notified of,
+ * and receiving any modifications you may make to the source code that might serve
+ * the general public.
+ *
+ */
+
+// EV68 instruction fetch and sequential-cache handling extracted from the shared core.
+#include "StdAfx.h"
+#include "AlphaCPU.h"
+#include "Ev68InstructionFetch.h"
+
+void Ev68InstructionFetch::prepare_dispatch(CAlphaCPU& cpu)
+{
+  // Preserve the ES40 firmware entry behavior after an in-place image rewrite.
+  if (cpu.state.pc == (cpu.state.pal_base | 1))
+    cpu.flush_icache();
+}
+
+int Ev68InstructionFetch::fetch(CAlphaCPU& cpu, u32* instruction)
+{
+  if (cpu.state.pc == cpu.seq_next_pc && cpu.seq_remaining > 0 && cpu.seq_cm == cpu.state.cm)
+  {
+    *instruction = endian_32(cpu.seq_line_ptr[cpu.seq_offset]);
+#if defined(DEBUG_ARC) && !defined(ES40_JIT)
+    if (cpu.state.current_pc < 0x10000)
+      printf("PC=%016" PRIx64 " ins=%08x\n", cpu.state.current_pc, *instruction);
+#endif
+    cpu.seq_offset++;
+    cpu.seq_remaining--;
+    cpu.seq_next_pc += 4;
+  }
+  else
+  {
+    prepare_dispatch(cpu);
+    const int result = read_cache(cpu, cpu.state.pc, instruction);
+    if (result)
+      return result;
+
+    if (!(cpu.state.pc & 1) && cpu.icache_hit(cpu.state.last_found_icache, cpu.state.pc))
+    {
+      const int line = cpu.state.last_found_icache;
+      cpu.seq_line_ptr = cpu.state.icache[line].data;
+      cpu.seq_offset = (int)((cpu.state.pc >> 2) & ICACHE_INDEX_MASK) + 1;
+      cpu.seq_remaining = ICACHE_LINE_SIZE - cpu.seq_offset;
+      cpu.seq_next_pc = (cpu.state.pc & ~U64(0x3)) + 4;
+      cpu.seq_cm = cpu.state.cm;
+    }
+    else
+      cpu.seq_remaining = 0;
+  }
+
+#if defined(IDB)
+  cpu.current_pc_physical = cpu.state.pc_phys;
+#endif
+  return 0;
+}
+
+/**
+ * Get an instruction from the instruction cache.
+ * If necessary, fill a new cache block from memory.
+ *
+ * read_cache checks all cache entries, to see if there is a
+ * cache entry that matches the current address space number,
+ * and that contains the address we're looking for. If it
+ * exists, the instruction is fetched from this cache,
+ * otherwise, the physical address for the instruction is
+ * calculated, and the cache block is filled.
+ *
+ * The last cache entry that was a hit is remembered, so that
+ * cache entry is checked first on the next instruction. (very
+ * likely to be the same cache block)
+ *
+ * It would be easiest to do without the instruction cache
+ * altogether, but unfortunately SRM uses self-modifying
+ * code, that relies on the correct instruction stream to
+ * remain in the cache.
+ **/
+int Ev68InstructionFetch::read_cache(CAlphaCPU& cpu, u64 address, u32* data)
+{
+  // Direct-map the icache: 2 KiB lines (ICACHE_LINE_SIZE * 4 == 2048 bytes).
+  // Use VA[...:11] as the set index. The PAL bit (VA<0>) remains part of the tag.
+  const u64 kLineShift = 11;
+  const u64 v_aligned = address & ~U64(0x3);
+  const int i = (int)((v_aligned >> kLineShift) & (ICACHE_ENTRIES - 1));
+  u64   v_a;
+  u64   p_a;
+  int   result;
+  bool  asm_bit;
+
+  if (cpu.icache_enabled)
+  {
+    bool hit = cpu.icache_line_matches(i, address);
+    if (hit && !(address & 1) && !(cpu.icache_valid_modes[i] & (1u << cpu.state.cm))) {
+      // A cached instruction is still subject to the current mode's access
+      // checks, including for ASM lines. Keep its bytes until IMB when the
+      // translation is unchanged; SRM can depend on the cached instruction.
+      result = cpu.virt2phys(address, &p_a, ACCESS_EXEC, &asm_bit, 0);
+      if (result) return result;
+      hit = p_a == cpu.state.icache[i].p_address + (address & ICACHE_BYTE_MASK);
+      if (hit) {
+        if (asm_bit != cpu.state.icache[i].asm_bit) {
+          // A newly checked process-specific mapping must not grant access
+          // to other ASNs through an older global cache line (or vice versa).
+          cpu.icache_valid_modes[i] = 0;
+          cpu.state.icache[i].asn = cpu.state.asn;
+          cpu.state.icache[i].asm_bit = asm_bit;
+        }
+        cpu.icache_valid_modes[i] |= (u8)(1u << cpu.state.cm);
+      }
+    }
+
+    // ---- Fast hit probe
+    if (hit) {
+
+      *data = endian_32(cpu.state.icache[i].data[(address >> 2) & ICACHE_INDEX_MASK]);
+
+      // keep debug/pc_phys coherent even when icache is enabled
+      cpu.state.pc_phys = cpu.state.icache[i].p_address + (address & ICACHE_BYTE_MASK);
+
+#ifdef IDB
+      cpu.current_pc_physical = cpu.state.pc_phys;
+#endif
+      cpu.state.last_found_icache = i;
+      return 0;
+    }
+
+    // ---- Miss: translate + fill
+    v_a = address & ICACHE_MATCH_MASK;
+    if (address & 1) {
+      // PALmode: VA<0> is PAL marker; physical is VA with bit0 cleared
+      p_a = v_a & ~U64(0x1);
+      asm_bit = true;
+    }
+    else {
+      result = cpu.virt2phys(v_a, &p_a, ACCESS_EXEC, &asm_bit, 0);
+      if (result) return result;
+    }
+
+    // Attempt to get a pointer into DRAM. If this is PIO (e.g., TIG flash),
+      // PtrToMem returns null and we must *not* try to memcpy from it.
+    char* mem = cpu.cSystem->PtrToMem(p_a);
+    if (mem && cpu.cSystem->PtrToMem(p_a + ((ICACHE_LINE_SIZE * 4) - 1))) {
+      // DRAM-backed: fill the direct-mapped icache line.
+      memcpy(cpu.state.icache[i].data, mem, ICACHE_LINE_SIZE * 4);
+      cpu.state.icache[i].valid = true;
+      cpu.state.icache[i].asn = cpu.state.asn;
+      cpu.state.icache[i].asm_bit = asm_bit;
+      cpu.state.icache[i].address = address & ICACHE_MATCH_MASK;
+      cpu.state.icache[i].p_address = p_a;
+      cpu.icache_valid_modes[i] = (u8)(1u << cpu.state.cm);
+
+      *data = endian_32(cpu.state.icache[i].data[(address >> 2) & ICACHE_INDEX_MASK]);
+
+      // same pc_phys update on fill
+      cpu.state.pc_phys = p_a + (address & ICACHE_BYTE_MASK);
+#ifdef IDB
+      cpu.current_pc_physical = cpu.state.pc_phys;
+#endif
+      cpu.state.last_found_icache = i;
+      return 0;
+    }
+    else {
+      // PIO/TIG-backed: cannot fill icache lines.
+        // Read exactly the requested instruction as 4 byte reads via the system bus.
+      const u64 p_instr = p_a + (address & ICACHE_BYTE_MASK);
+      u32 ins = 0;
+      ins |= (u8)cpu.cSystem->ReadMem(p_instr + 0, 8, &cpu);
+      ins |= ((u8)cpu.cSystem->ReadMem(p_instr + 1, 8, &cpu)) << 8;
+      ins |= ((u8)cpu.cSystem->ReadMem(p_instr + 2, 8, &cpu)) << 16;
+      ins |= ((u8)cpu.cSystem->ReadMem(p_instr + 3, 8, &cpu)) << 24;
+      *data = ins; // already in target little-endian form
+
+      cpu.state.pc_phys = p_instr;
+#ifdef IDB
+      cpu.current_pc_physical = cpu.state.pc_phys;
+#endif
+      return 0;
+    }
+  }
+
+  // ---- Icache disabled (unchanged)
+  if (address & 1) {
+    cpu.state.pc_phys = address & ~U64(0x3);
+    cpu.state.rem_ins_in_page = 1;
+  }
+  else {
+    if (!cpu.state.rem_ins_in_page || cpu.ins_page_cm != cpu.state.cm) {
+      result = cpu.virt2phys(address, &cpu.state.pc_phys, ACCESS_EXEC, &asm_bit, 0);
+      if (result) return result;
+      cpu.state.rem_ins_in_page = 2048 - ((((u32)address) >> 2) & 2047);
+      cpu.ins_page_cm = cpu.state.cm;
+    }
+  }
+
+  *data = (u32)cpu.cSystem->ReadMem(cpu.state.pc_phys, 32, &cpu);
+  return 0;
+}

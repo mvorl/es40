@@ -81,6 +81,8 @@ noinst_HEADERS = CPU/AlphaCPU.h \
        CPU/AlphaCPUProfile.h \
        CPU/AlphaReset.h \
        CPU/Ev68Reset.h \
+       CPU/AlphaInstructionFetch.h \
+       CPU/Ev68InstructionFetch.h \
        CPU/idle_detect.h \
        CPU/AlphaPAL.h \
        CPU/Ev68PAL.h \
@@ -202,6 +204,7 @@ es40_SOURCES = chipset/AliM1543C.cpp \
        CPU/Ev68IPR.cpp \
        CPU/Ev68MMU.cpp \
        CPU/Ev68Reset.cpp \
+       CPU/Ev68InstructionFetch.cpp \
        CPU/AlphaCPU_ieeefloat.cpp \
        CPU/AlphaCPU_vaxfloat.cpp \
        CPU/AlphaCPU_vmspal.cpp \
