@@ -56,6 +56,14 @@ jobs:
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
 
+      - name: Checkout release sources and pinned submodules
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.run.outputs.head_sha }}
+          path: release-source
+          submodules: recursive
+          persist-credentials: false
+
       - name: Download artifacts from the build run
         env:
           GH_TOKEN: ${{ github.token }}
@@ -80,6 +88,33 @@ jobs:
           done
           ls -l assets
 
+      - name: Package source with submodules
+        id: source
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          source_name="es40-${TAG#v}-source"
+          source_name="${source_name//\//_}"
+          staging_dir="$(mktemp -d "$RUNNER_TEMP/es40-source.XXXXXX")"
+          export SOURCE_ROOT="$staging_dir/$source_name"
+          mkdir -p "$SOURCE_ROOT" assets
+
+          # git archive honors export-ignore (including docs and HRM) and omits
+          # untracked files and Git metadata. Add each pinned submodule separately.
+          git -C release-source archive --format=tar HEAD | tar -xf - -C "$SOURCE_ROOT"
+          git -C release-source submodule foreach --recursive '
+            set -eu
+            mkdir -p "$SOURCE_ROOT/$displaypath"
+            git archive --format=tar --output="$SOURCE_ROOT/../submodule.tar" "$sha1"
+            tar -xf "$SOURCE_ROOT/../submodule.tar" -C "$SOURCE_ROOT/$displaypath"
+          '
+
+          tar -czf "$GITHUB_WORKSPACE/assets/$source_name.tar.gz" -C "$staging_dir" "$source_name"
+          (cd "$staging_dir" && zip -qry "$GITHUB_WORKSPACE/assets/$source_name.zip" "$source_name")
+          echo "name=$source_name" >> "$GITHUB_OUTPUT"
+
       - name: Compose release notes
         env:
           GH_TOKEN: ${{ github.token }}
@@ -87,6 +122,7 @@ jobs:
           HEAD_SHA: ${{ steps.run.outputs.head_sha }}
           NOTES_BEFORE: ${{ inputs.notes_before }}
           NOTES_AFTER: ${{ inputs.notes_after }}
+          SOURCE_NAME: ${{ steps.source.outputs.name }}
         run: |
           set -euo pipefail
 
@@ -96,6 +132,7 @@ jobs:
 
           {
             if [ -n "$NOTES_BEFORE" ]; then printf '%s\n\n' "$NOTES_BEFORE"; fi
+            printf 'Complete source, including third-party submodules: `%s.zip` or `%s.tar.gz` in the release assets. The automatic "Source code" downloads omit submodules.\n\n' "$SOURCE_NAME" "$SOURCE_NAME"
             cat generated.md
             if [ -n "$NOTES_AFTER" ]; then printf '\n\n%s\n' "$NOTES_AFTER"; fi
           } > notes.md

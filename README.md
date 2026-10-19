@@ -4,6 +4,11 @@ es40 is free software; see the License section below.
 
 For building and installation instructions please see below.
 
+For release sources, download `es40-<version>-source.zip` or
+`es40-<version>-source.tar.gz` from the release assets. These packages include the
+pinned third-party submodules; GitHub's automatic "Source code" downloads omit
+them. When cloning instead, use `git clone --recurse-submodules`.
+
 Windows 11 with VS2026 and X64 builds only is the main development environment.
 
 Npcap provides bridged networking; the Rust SLIRP backend provides userspace NAT.
