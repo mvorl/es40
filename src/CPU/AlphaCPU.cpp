@@ -385,7 +385,7 @@ void CAlphaCPU::run()
 		}
 		printf("*** CPU%d *** STARTING ***\n", get_cpuid());
 #if defined(JIT_REGPROF) && defined(_WIN32)
-		if (get_cpuid() == 0 && getenv("ES40_JIT_SAMPLER")) jit_sampler_start();
+		if (m_jit && get_cpuid() == 0 && getenv("ES40_JIT_SAMPLER")) jit_sampler_start();
 #endif
 
 #if defined(_M_X64) || defined(__x86_64__)
@@ -686,9 +686,10 @@ void CAlphaCPU::init()
 	state.iProcNum = cSystem->RegisterCPU(this);
 
 #ifdef ES40_JIT
-	if (!m_jit) m_jit = new CJitEngine(m_profile, (int)state.iProcNum);
-	m_jit->set_exit_slot(&m_jit_exit);
+	if (m_profile.jit_supported)
 	{
+		if (!m_jit) m_jit = new CJitEngine(m_profile, (int)state.iProcNum);
+		m_jit->set_exit_slot(&m_jit_exit);
 		// Tell the JIT the byte offsets (from `this`) of the fields its inline load
 		// fast path reads, so compiled code can address them via [cpu + offset].
 		CJitEngine::JitOffsets o;
@@ -1047,8 +1048,8 @@ void CAlphaCPU::jit_note_mode_change()
 }
 
 #ifdef ES40_JIT
-// wrapper: LoadROM's SRM self-decompression drives CPU 0 from the main()
-// just before the CPU threads exist.
+// LoadROM drives CPU 0 before its thread exists, using the profile's selected
+// execution path even in a JIT build.
 void CAlphaCPU::jit_step(int budget)
 {
 	jit_run(budget);
@@ -1184,8 +1185,11 @@ void CAlphaCPU::jit_flush_blocks_asm()
 
 void CAlphaCPU::jit_run(int budget)
 {
+	if (budget <= 0)
+		return;
+
 	// Relative to the caller's budget, so no magic number here.
-	if (idle_rule != RULE_NONE && idle_spin_min_instr == 0)
+	if (m_jit && idle_rule != RULE_NONE && idle_spin_min_instr == 0)
 		idle_spin_min_instr = (u64) budget * 3 / 4;
 
 	if (m_jit) m_jit->reclaim_if_pending();   // deferred code reclaim, here at a safe point (no compiled frame live)
@@ -1232,6 +1236,21 @@ void CAlphaCPU::jit_run(int budget)
 				break;
 			}
 		}
+	}
+
+	// A profile without JIT support uses the same clock/timer dispatch envelope,
+	// but must not discover blocks or fetch instruction bytes through the JIT.
+	if (!m_jit)
+	{
+		while (budget > 0)
+		{
+			// LoadROM also steps after reset, before start_threads clears StopThread.
+			if ((myThread && StopThread) || (cSystem && cSystem->IsSystemResetRequested()))
+				break;
+			execute(); // One instruction attempt per call in an ES40_JIT build.
+			--budget; // Fetch faults still consume an attempt.
+		}
+		return;
 	}
 
 	while (budget > 0)

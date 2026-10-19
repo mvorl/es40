@@ -34,7 +34,7 @@
 #include "Ev68HWLoad.h"
 #include "Ev68HWStore.h"
 
-// Immutable model identity, feature probes, and PAL entry rules chosen by configuration.
+// Immutable model identity, execution capabilities, and family rules chosen by configuration.
 struct AlphaCPUProfile
 {
   std::uint64_t amask;       // Implemented extensions; AMASK returns input & ~amask.
@@ -49,9 +49,14 @@ struct AlphaCPUProfile
   AlphaMMUAddressPolicy mmu_address = kEv68MMUAddressPolicy; // Immutable address rules.
   AlphaHWLoadPolicy hw_load = kEv68HWLoadPolicy; // Immutable hardware-load forms.
   AlphaHWStorePolicy hw_store = kEv68HWStorePolicy; // Immutable hardware-store forms.
+  bool jit_supported = false; // Opt in only when the JIT supports the family's fetch and execution rules.
 };
 
 // EV68CB pass 4: BWX | FIX | CIX | MVI | precise traps | prefetch modify.
-inline constexpr AlphaCPUProfile kEv68CBProfile{0x1307, 2, 0x21, 12, 6};
+inline constexpr AlphaCPUProfile kEv68CBProfile = [] {
+  AlphaCPUProfile profile{0x1307, 2, 0x21, 12, 6};
+  profile.jit_supported = true;
+  return profile;
+}();
 
 #endif

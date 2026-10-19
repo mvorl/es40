@@ -296,7 +296,7 @@ public:
   void          restore_icache();
 
 #ifdef ES40_JIT
-  void          jit_step(int budget);   // one jit_run dispatch batch, for main-thread callers (LoadROM)
+  void          jit_step(int budget);   // Profile-selected execution batch for main-thread callers (LoadROM).
 #endif
 
   bool          get_waiting() { return state.wait_for_start; };
