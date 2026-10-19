@@ -260,6 +260,7 @@ class CAlphaCPU : public CSystemComponent, public CRunnable
   friend class AlphaCPUAlignmentTest;
   friend class Ev68IPR;
   friend class Ev68MMU;
+  friend class Ev68Reset;
 public:
   void          flush_icache_asm();
   virtual int   SaveState(FILE* f);

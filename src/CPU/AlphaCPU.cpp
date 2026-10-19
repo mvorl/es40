@@ -755,13 +755,8 @@ void CAlphaCPU::init()
 	tbia(ACCESS_READ);
 	tbia(ACCESS_EXEC);
 
-	//  state.fpcr = U64(0x8ff0000000000000);
-	state.fpen = true;
-	state.i_ctl_other = U64(0x502086);
-	state.smc = 1;
-
-	// SROM imitation...
-	add_tb(0, 0, U64(0xff61), ACCESS_READ, state.asn0);
+	if (m_profile.reset.initialize)
+		m_profile.reset.initialize(*this);
 
 #if defined(IDB)
 	bListing = false;
@@ -783,8 +778,6 @@ void CAlphaCPU::init()
 #else
 	cc_per_instruction = 70;
 #endif
-
-	state.r[22] = state.r[22 + 32] = state.iProcNum;
 
 	dram_ptr = cSystem->PtrToMem(0);
 	dram_size = U64(1) << cSystem->get_memory_bits();
@@ -855,12 +848,8 @@ void CAlphaCPU::ResetForSystemReset()
 	tbia(ACCESS_READ);
 	tbia(ACCESS_EXEC);
 
-	state.fpen = true;
-	state.i_ctl_other = U64(0x502086);
-	state.smc = 1;
-
-	// SROM imitation...
-	add_tb(0, 0, U64(0xff61), ACCESS_READ, state.asn0);
+	if (m_profile.reset.initialize)
+		m_profile.reset.initialize(*this);
 
 	myThread = 0;
 
@@ -879,8 +868,6 @@ void CAlphaCPU::ResetForSystemReset()
 #else
 	cc_per_instruction = 70;
 #endif
-
-	state.r[22] = state.r[22 + 32] = state.iProcNum;
 
 	dram_ptr = cSystem->PtrToMem(0);
 	dram_size = U64(1) << cSystem->get_memory_bits();

@@ -33,6 +33,7 @@
 #include "Ev68MMU.h"
 #include "Ev68HWLoad.h"
 #include "Ev68HWStore.h"
+#include "Ev68Reset.h"
 
 // Immutable model identity, execution capabilities, and family rules chosen by configuration.
 struct AlphaCPUProfile
@@ -50,6 +51,7 @@ struct AlphaCPUProfile
   AlphaHWLoadPolicy hw_load = kEv68HWLoadPolicy; // Immutable hardware-load forms.
   AlphaHWStorePolicy hw_store = kEv68HWStorePolicy; // Immutable hardware-store forms.
   bool jit_supported = true; // Disable only while the JIT lacks support for this family's fetch or execution rules.
+  AlphaResetPolicy reset = kEv68ResetPolicy; // Family state for init and system reset.
 };
 
 // EV68CB pass 4: BWX | FIX | CIX | MVI | precise traps | prefetch modify.

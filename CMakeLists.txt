@@ -442,6 +442,9 @@ list(APPEND ES40_SOURCES
     src/CPU/AlphaCPU_vmspal.cpp
     src/CPU/AlphaCPU.cpp
     src/CPU/Ev68IPR.cpp
+    src/CPU/AlphaReset.h
+    src/CPU/Ev68Reset.h
+    src/CPU/Ev68Reset.cpp
     src/CPU/AlphaMMU.h
     src/CPU/Ev68MMU.h
     src/CPU/Ev68MMU.cpp

@@ -79,6 +79,8 @@ AM_CPPFLAGS = -I$(top_srcdir)/src/emu
 noinst_HEADERS = CPU/AlphaCPU.h \
        base/HostWakeEvent.h \
        CPU/AlphaCPUProfile.h \
+       CPU/AlphaReset.h \
+       CPU/Ev68Reset.h \
        CPU/idle_detect.h \
        CPU/AlphaPAL.h \
        CPU/Ev68PAL.h \
@@ -199,6 +201,7 @@ es40_SOURCES = chipset/AliM1543C.cpp \
        CPU/AlphaCPU.cpp \
        CPU/Ev68IPR.cpp \
        CPU/Ev68MMU.cpp \
+       CPU/Ev68Reset.cpp \
        CPU/AlphaCPU_ieeefloat.cpp \
        CPU/AlphaCPU_vaxfloat.cpp \
        CPU/AlphaCPU_vmspal.cpp \
