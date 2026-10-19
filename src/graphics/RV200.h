@@ -65,7 +65,8 @@ public:
     BUS_CNTL = 0x0030, GEN_INT_CNTL = 0x0040, GEN_INT_STATUS = 0x0044,
     CRTC_GEN_CNTL = 0x0050, CRTC_EXT_CNTL = 0x0054, DAC_CNTL = 0x0058,
     CRTC_STATUS = 0x005c, GPIO_VGA_DDC = 0x0060, GPIO_DVI_DDC = 0x0064,
-    GPIO_MONID = 0x0068, GPIO_CRT2_DDC = 0x006c, PALETTE_INDEX = 0x00b0,
+    GPIO_MONID = 0x0068, GPIO_CRT2_DDC = 0x006c, DAC_CNTL2 = 0x007c,
+    PALETTE_INDEX = 0x00b0,
     PALETTE_DATA = 0x00b4, CONFIG_CNTL = 0x00e0, RBBM_CNTL = 0x00ec,
     RBBM_SOFT_RESET = 0x00f0, CONFIG_MEMSIZE = 0x00f8,
     CONFIG_APER_0_BASE = 0x0100, CONFIG_APER_1_BASE = 0x0104,
@@ -78,10 +79,16 @@ public:
     CRTC_CRNT_FRAME = 0x0214, CRTC_OFFSET = 0x0224, CRTC_OFFSET_CNTL = 0x0228,
     CRTC_PITCH = 0x022c, DISPLAY_BASE_ADDR = 0x023c, CUR_OFFSET = 0x0260,
     CUR_HORZ_VERT_POSN = 0x0264, CUR_HORZ_VERT_OFF = 0x0268, CUR_CLR0 = 0x026c,
-    CUR_CLR1 = 0x0270, CRTC2_GEN_CNTL = 0x03f8, CP_RB_BASE = 0x0700,
+    CUR_CLR1 = 0x0270, FP_GEN_CNTL = 0x0284, FP2_GEN_CNTL = 0x0288,
+    CRTC2_H_TOTAL_DISP = 0x0300, CRTC2_H_SYNC_STRT_WID = 0x0304,
+    CRTC2_V_TOTAL_DISP = 0x0308, CRTC2_V_SYNC_STRT_WID = 0x030c,
+    CRTC2_VLINE_CRNT_VLINE = 0x0310, CRTC2_CRNT_FRAME = 0x0314,
+    CRTC2_OFFSET = 0x0324, CRTC2_OFFSET_CNTL = 0x0328, CRTC2_PITCH = 0x032c,
+    CRTC2_GEN_CNTL = 0x03f8, CRTC2_STATUS = 0x03fc, CP_RB_BASE = 0x0700,
     CP_RB_CNTL = 0x0704, CP_RB_RPTR = 0x0710, CP_RB_WPTR = 0x0714,
     CP_IB_BASE = 0x0738, CP_IB_BUFSZ = 0x073c, CP_CSQ_CNTL = 0x0740,
-    SURFACE_CNTL = 0x0b00, RBBM_STATUS = 0x0e40, DST_OFFSET = 0x1404,
+    TV_DAC_CNTL = 0x088c, SURFACE_CNTL = 0x0b00, RBBM_STATUS = 0x0e40,
+    DST_OFFSET = 0x1404,
     DST_PITCH = 0x1408, DST_X = 0x141c, DST_Y = 0x1420, SRC_X = 0x1414,
     SRC_Y = 0x1418, SRC_PITCH_OFFSET = 0x1428, DST_PITCH_OFFSET = 0x142c,
     SRC_Y_X = 0x1434, DST_Y_X = 0x1438, DST_HEIGHT_WIDTH = 0x143c,
@@ -119,10 +126,17 @@ public:
                             GMC_WR_MSK_DISABLE = 1u << 30,
                             ROP_PATCOPY = 0xf0u << 16,
                             ROP_SRCCOPY = 0xccu << 16, WAIT_2D = 1u << 16,
-                            WAIT_DMA = 1u << 9;
+                            WAIT_DMA = 1u << 9,
+                            DAC2_DAC_CLK_SEL = 1u,
+                            DAC2_PALETTE_ACC_CTL = 1u << 5,
+                            DAC2_CMP_OUTPUT_MASK = 15u << 8,
+                            FP_DETECT_SENSE = 1u << 8,
+                            CRTC2_DISPLAY_DIS = 1u << 23,
+                            CRTC2_VBLANK_INT = 1u << 9;
 
   // Indices behind CLOCK_CNTL_INDEX/CLOCK_CNTL_DATA.
-  static constexpr uint32_t PPLL_REF_DIV = 0x03, PLL_TEST_CNTL = 0x13;
+  static constexpr uint32_t PPLL_REF_DIV = 0x03, PLL_TEST_CNTL = 0x13,
+                            P2PLL_REF_DIV = 0x2b;
 
   // The framebuffer BAR holds two host apertures of this size.
   static constexpr uint32_t RegisterSpaceSize = 0x4000,
@@ -171,17 +185,48 @@ public:
                                                           : 0;
   }
 
-  uint32_t palette_color(unsigned index) const
+  uint32_t palette_color(unsigned index, unsigned controller = 0) const
   {
-    return m_palette[index & 255];
+    return (controller ? m_palette2 : m_palette)[index & 255];
   }
 
-  void set_palette_color(unsigned index, uint32_t value)
+  void set_palette_color(unsigned index, uint32_t value, unsigned controller = 0)
   {
-    m_palette[index & 255] = value & 0x00ffffff;
+    (controller ? m_palette2 : m_palette)[index & 255] = value & 0x00ffffff;
   }
 
-  uint32_t scanline() const { return m_scanline; }
+  unsigned palette_bank() const
+  {
+    return (r(DAC_CNTL2) & DAC2_PALETTE_ACC_CTL) ? 1 : 0;
+  }
+
+  uint32_t scanline(unsigned controller = 0) const
+  {
+    return controller ? m_scanline2 : m_scanline;
+  }
+
+  // RV200's primary analog connector can be driven by either CRTC. This
+  // selection does not attach a monitor to the secondary connector.
+  unsigned display_controller() const
+  {
+    return (r(DAC_CNTL2) & DAC2_DAC_CLK_SEL) ? 1 : 0;
+  }
+
+  bool native_display() const
+  {
+    return display_controller() || (r(CRTC_GEN_CNTL) & CRTC_EXT_DISP_EN);
+  }
+
+  uint32_t vertical_total(unsigned controller = 0) const
+  {
+    return (r(controller ? CRTC2_V_TOTAL_DISP : CRTC_V_TOTAL_DISP) & 0x7ff) + 1;
+  }
+
+  uint32_t vertical_display(unsigned controller = 0) const
+  {
+    return ((r(controller ? CRTC2_V_TOTAL_DISP : CRTC_V_TOTAL_DISP) >> 16) &
+            0x7ff) + 1;
+  }
 
   // Board-owned byte ports. MMIO aliases and MM_INDEX/MM_DATA use the same
   // VGA frontend; without it those registers fault.
@@ -237,11 +282,12 @@ private:
   std::array<uint32_t, RegisterSpaceSize / 4> m_regs{};
   std::array<uint32_t, 64> m_pll{};
   std::array<uint32_t, 256> m_palette{};
+  std::array<uint32_t, 256> m_palette2{};
   std::array<bool, RegisterSpaceSize / 4> m_warned{};
   bool m_aperture_warned = false;
   std::string m_fault;
   Counters m_counters{};
-  uint32_t m_scanline = 0, m_frame = 0;
+  uint32_t m_scanline = 0, m_frame = 0, m_scanline2 = 0, m_frame2 = 0;
   VGAReader m_vga_read;
   VGAWriter m_vga_write;
   PaletteIndexCallback m_palette_index;

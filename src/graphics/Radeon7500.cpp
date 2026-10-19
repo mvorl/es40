@@ -721,8 +721,8 @@ CRV200::Frame CRadeon7500::render_frame()
 		cSystem->get_device_bus_mutex());
 	if (m_pause.load())
 		return {};
-	// CRTC_EXT_DISP_EN selects the native CRTC over the VGA frontend.
-	if (m_rv200.peek(CRV200::CRTC_GEN_CNTL) & CRV200::CRTC_EXT_DISP_EN)
+	// The primary DAC may select CRTC2 even while CRTC1 is in VGA mode.
+	if (m_rv200.native_display())
 		return m_rv200.scanout();
 	if (!m_vga_enable || !vga.crtc.sync_en ||
 		(vga.sequencer.data[0] & 3) != 3 || (vga.sequencer.data[1] & 0x20) ||
@@ -1380,7 +1380,7 @@ void CRadeon7500::check_state()
 	{
 		std::lock_guard<std::recursive_mutex> guard(
 			cSystem->get_device_bus_mutex());
-		const u32 lines = (m_rv200.peek(CRV200::CRTC_V_TOTAL_DISP) & 0xfff) + 1;
+		const u32 lines = m_rv200.vertical_total(m_rv200.display_controller());
 		m_rv200.advance_scanlines(lines);
 		if (m_trace)
 		{
@@ -1653,8 +1653,7 @@ u8 CRadeon7500::input_status()
 	vga.attribute.state = 0;
 	// Deterministic compatibility timing: 32 status reads per synthetic
 	// scanline. Decode probes and host frame delivery do not clock it.
-	const bool native =
-		(m_rv200.peek(CRV200::CRTC_GEN_CNTL) & CRV200::CRTC_EXT_DISP_EN) != 0;
+	const bool native = m_rv200.native_display();
 	if (++m_vga_status_phase == 32)
 	{
 		m_vga_status_phase = 0;
@@ -1666,9 +1665,9 @@ u8 CRadeon7500::input_status()
 	if (native)
 	{
 		// Approximate retrace with the native vertical blank.
-		const u32 visible =
-			((m_rv200.peek(CRV200::CRTC_V_TOTAL_DISP) >> 16) & 0xfff) + 1;
-		const bool blank = m_rv200.scanline() >= visible;
+		const unsigned controller = m_rv200.display_controller();
+		const bool blank = m_rv200.scanline(controller) >=
+			m_rv200.vertical_display(controller);
 		return u8((blank ? 9 : 0) | (m_vga_status_phase >= 24 ? 1 : 0));
 	}
 	const u32 total = u32(vga.crtc.vert_total) + 2;
@@ -1721,7 +1720,8 @@ u8 CRadeon7500::io_read_b(u32 port)
 	{
 		// PALETTE_INDEX holds the write index in bits 7:0, read index in 23:16.
 		const u32 index = (m_rv200.peek(CRV200::PALETTE_INDEX) >> 16) & 255;
-		u8 value = u8(m_rv200.palette_color(index) >> (16 - 8 * vga.dac.state));
+		u8 value = u8(m_rv200.palette_color(index, m_rv200.palette_bank()) >>
+			(16 - 8 * vga.dac.state));
 		if (!(m_rv200.peek(CRV200::DAC_CNTL) & CRV200::DAC_8BIT_EN))
 			value >>= 2;
 		if (++vga.dac.state == 3)
@@ -1816,7 +1816,8 @@ void CRadeon7500::io_write_b(u32 port, u8 data)
 			m_rv200.set_palette_color(
 				index,
 				(u32(vga.dac.loading[0]) << 16) |
-					(u32(vga.dac.loading[1]) << 8) | vga.dac.loading[2]);
+					(u32(vga.dac.loading[1]) << 8) | vga.dac.loading[2],
+				m_rv200.palette_bank());
 			m_rv200.WriteMem(
 				CRV200::PALETTE_INDEX,
 				32,

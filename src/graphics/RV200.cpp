@@ -248,7 +248,7 @@ uint32_t CRV200::read32(uint32_t a)
 	if (a == PALETTE_DATA)
 	{
 		const uint32_t idx = (r(PALETTE_INDEX) >> 16) & 255;
-		const uint32_t val = m_palette[idx];
+		const uint32_t val = palette_color(idx, palette_bank());
 		r(PALETTE_INDEX) =
 			(r(PALETTE_INDEX) & ~0xff0000u) | (((idx + 1) & 255) << 16);
 		return val;
@@ -274,18 +274,27 @@ uint32_t CRV200::read32(uint32_t a)
 	// DRAM timing.
 	if (a == MC_STATUS)
 		return 7u;
-	if (a == CRTC_STATUS)
+	if (a == DAC_CNTL2)
+		return r(a) & ~DAC2_CMP_OUTPUT_MASK;
+	if (a == TV_DAC_CNTL)
+		return r(a) & ~((1u << 5) | (7u << 29));
+	if (a == FP_GEN_CNTL || a == FP2_GEN_CNTL)
+		return r(a) & ~FP_DETECT_SENSE;
+	if (a == CRTC_STATUS || a == CRTC2_STATUS)
 	{
 		// VBLANK_SAVE latches at vertical blank start until written with 1.
+		const unsigned controller = a == CRTC2_STATUS;
+		const bool enabled =
+			r(controller ? CRTC2_GEN_CNTL : CRTC_GEN_CNTL) & CRTC_EN;
 		const bool vblank =
-			m_scanline >= (((r(CRTC_V_TOTAL_DISP) >> 16) & 0xfff) + 1);
+			enabled && scanline(controller) >= vertical_display(controller);
 		return (vblank ? CRTC_VBLANK_CUR : 0u) |
-			(r(CRTC_STATUS) & CRTC_VBLANK_SAVE);
+			(r(a) & CRTC_VBLANK_SAVE);
 	}
-	if (a == CRTC_VLINE_CRNT_VLINE)
-		return (m_scanline & 0x1fff) << 16;
-	if (a == CRTC_CRNT_FRAME)
-		return m_frame;
+	if (a == CRTC_VLINE_CRNT_VLINE || a == CRTC2_VLINE_CRNT_VLINE)
+		return (scanline(a == CRTC2_VLINE_CRNT_VLINE) & 0x7ff) << 16;
+	if (a == CRTC_CRNT_FRAME || a == CRTC2_CRNT_FRAME)
+		return a == CRTC2_CRNT_FRAME ? m_frame2 : m_frame;
 	if (a == DSTCACHE_CTLSTAT)
 		return busy() ? 0x80000000u : 0;
 	// The CP never consumes commands in this model.
@@ -328,7 +337,7 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 			pll = (pll & ~lanes) | (val & lanes);
 		return;
 	}
-	if (a == CRTC_STATUS)
+	if (a == CRTC_STATUS || a == CRTC2_STATUS)
 	{
 		r(a) &= ~(val & lanes & CRTC_VBLANK_SAVE);
 		return;
@@ -337,6 +346,16 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 	{
 		// The board's VGA frontend consumes DAC_8BIT_EN; other fields are stored.
 		r(a) = v;
+		return;
+	}
+	if (a == DAC_CNTL2 || a == TV_DAC_CNTL ||
+		a == FP_GEN_CNTL || a == FP2_GEN_CNTL)
+	{
+		// Only the primary analog connector has a monitor. Sense outputs are
+		// read-only; enabling a controller or comparator cannot attach one.
+		const uint32_t sense = a == DAC_CNTL2 ? DAC2_CMP_OUTPUT_MASK :
+			a == TV_DAC_CNTL ? ((1u << 5) | (7u << 29)) : FP_DETECT_SENSE;
+		r(a) = v & ~sense;
 		return;
 	}
 	if (a == PALETTE_INDEX)
@@ -349,13 +368,13 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 	if (a == PALETTE_DATA)
 	{
 		const uint32_t idx = r(PALETTE_INDEX) & 255;
-		m_palette[idx] = v & 0xffffff;
+		set_palette_color(idx, v, palette_bank());
 		r(PALETTE_INDEX) = (r(PALETTE_INDEX) & ~255u) | ((idx + 1) & 255);
 		return;
 	}
 	if (a == GEN_INT_STATUS)
 	{
-		r(a) &= ~(val & lanes & 1u);
+		r(a) &= ~(val & lanes & (1u | CRTC2_VBLANK_INT));
 		update_irq();
 		return;
 	}
@@ -378,7 +397,8 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 	if (a == RBBM_STATUS || a == MC_STATUS || a == CONFIG_MEMSIZE ||
 		a == CONFIG_APER_SIZE || a == CONFIG_APER_0_BASE ||
 		a == CONFIG_APER_1_BASE || a == CONFIG_REG_1_BASE ||
-		a == CONFIG_REG_APER_SIZE || a == CRTC_CRNT_FRAME || a == CP_RB_RPTR)
+		a == CONFIG_REG_APER_SIZE || a == CRTC_CRNT_FRAME ||
+		a == CRTC2_CRNT_FRAME || a == CP_RB_RPTR)
 		return;
 	if (a == CP_RB_WPTR || a == CP_IB_BUFSZ || a == CP_CSQ_CNTL)
 	{
@@ -413,8 +433,6 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 	if (a == CRTC2_GEN_CNTL)
 	{
 		r(a) = v;
-		if (v & CRTC_EN)
-			fail("second CRTC unsupported");
 		return;
 	}
 	if (a == WAIT_UNTIL)
@@ -434,6 +452,9 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 		a == BUS_CNTL || a == HOST_PATH_CNTL || a == CRTC_H_TOTAL_DISP ||
 		a == CRTC_V_TOTAL_DISP || a == CRTC_GEN_CNTL || a == CRTC_EXT_CNTL ||
 		a == CRTC_OFFSET || a == CRTC_OFFSET_CNTL || a == CRTC_PITCH ||
+		a == CRTC2_H_TOTAL_DISP || a == CRTC2_H_SYNC_STRT_WID ||
+		a == CRTC2_V_TOTAL_DISP || a == CRTC2_V_SYNC_STRT_WID ||
+		a == CRTC2_OFFSET || a == CRTC2_OFFSET_CNTL || a == CRTC2_PITCH ||
 		(a >= CUR_OFFSET && a <= CUR_CLR1) || a == DP_WRITE_MSK ||
 		a == DP_CNTL || a == DEFAULT_PITCH_OFFSET ||
 		a == DEFAULT_SC_BOTTOM_RIGHT || a == SC_TOP_LEFT ||
@@ -1041,23 +1062,29 @@ void CRV200::advance_scanlines(uint32_t lines)
 	}
 	// An atomic PLL update completes on the next model step.
 	m_pll[PPLL_REF_DIV] &= ~(1u << 15);
-	if (!(r(CRTC_GEN_CNTL) & CRTC_EN))
-		return;
-	const uint32_t total = (r(CRTC_V_TOTAL_DISP) & 0xfff) + 1,
-				   display = ((r(CRTC_V_TOTAL_DISP) >> 16) & 0xfff) + 1;
-	if (display >= total)
-		return;
-	for (uint32_t n = 0; n < lines; n++)
+	m_pll[P2PLL_REF_DIV] &= ~(1u << 15);
+	for (unsigned controller = 0; controller < 2; ++controller)
 	{
-		if (++m_scanline >= total)
+		if (!(r(controller ? CRTC2_GEN_CNTL : CRTC_GEN_CNTL) & CRTC_EN))
+			continue;
+		const uint32_t total = vertical_total(controller),
+					   display = vertical_display(controller);
+		if (display >= total)
+			continue;
+		uint32_t& line = controller ? m_scanline2 : m_scanline;
+		uint32_t& frame = controller ? m_frame2 : m_frame;
+		for (uint32_t n = 0; n < lines; n++)
 		{
-			m_scanline = 0;
-			m_frame++;
-		}
-		if (m_scanline == display)
-		{
-			r(GEN_INT_STATUS) |= 1;
-			r(CRTC_STATUS) |= CRTC_VBLANK_SAVE;
+			if (++line >= total)
+			{
+				line = 0;
+				frame++;
+			}
+			if (line == display)
+			{
+				r(GEN_INT_STATUS) |= controller ? CRTC2_VBLANK_INT : 1u;
+				r(controller ? CRTC2_STATUS : CRTC_STATUS) |= CRTC_VBLANK_SAVE;
+			}
 		}
 	}
 	update_irq();
@@ -1070,20 +1097,29 @@ CRV200::Frame CRV200::scanout(std::string* error) const
 			*error = why;
 		return Frame{};
 	};
-	const uint32_t gen = r(CRTC_GEN_CNTL);
-	if (!(gen & CRTC_EN) || (r(CRTC_EXT_CNTL) & DISPLAY_DIS))
+	const unsigned controller = display_controller();
+	const uint32_t gen = r(controller ? CRTC2_GEN_CNTL : CRTC_GEN_CNTL);
+	const bool blank = controller
+		? (gen & (CRTC2_DISPLAY_DIS | (1u << 26) | (3u << 28) | 0x70u))
+		: (r(CRTC_EXT_CNTL) & DISPLAY_DIS);
+	if (!(gen & CRTC_EN) || blank)
 		return reject("CRTC disabled/blanked");
 	if (gen & 3u)
 		return reject("interlaced/doublescan scanout unsupported");
-	if (r(CRTC_OFFSET_CNTL))
+	if (controller && (gen & (CRTC_CUR_EN | (1u << 15))))
+		return reject("CRTC2 cursor/icon scanout unsupported");
+	if (r(controller ? CRTC2_OFFSET_CNTL : CRTC_OFFSET_CNTL))
 		return reject(
 			"nonzero CRTC_OFFSET_CNTL requires an unimplemented display "
 			"layout");
 	const uint32_t fmt = (gen >> 8) & 15, bpp = bytes_per_pixel(fmt);
-	const uint32_t w = (((r(CRTC_H_TOTAL_DISP) >> 16) & 0x1ff) + 1) * 8,
-				   h = ((r(CRTC_V_TOTAL_DISP) >> 16) & 0xfff) + 1;
-	const uint32_t pitch = (r(CRTC_PITCH) & 0x7ff) * 8 * bpp,
-				   base = r(CRTC_OFFSET) & ~7u;
+	const uint32_t htotal =
+		r(controller ? CRTC2_H_TOTAL_DISP : CRTC_H_TOTAL_DISP);
+	const uint32_t w = (((htotal >> 16) & 0x1ff) + 1) * 8,
+				   h = vertical_display(controller);
+	const uint32_t pitch =
+		(r(controller ? CRTC2_PITCH : CRTC_PITCH) & 0x7ff) * 8 * bpp,
+				   base = r(controller ? CRTC2_OFFSET : CRTC_OFFSET) & ~7u;
 	if (!bpp || w > 4096 || h > 4096 || uint64_t(w) * bpp > pitch)
 		return reject("unsupported/invalid display format or pitch");
 	size_t first = 0, last = 0;
@@ -1104,7 +1140,7 @@ CRV200::Frame CRV200::scanout(std::string* error) const
 					 rr = 0, gg = 0, bb = 0;
 			if (fmt == 2)
 			{
-				v = m_palette[v & 255];
+				v = palette_color(v, controller);
 				rr = (v >> 16) & 255;
 				gg = (v >> 8) & 255;
 				bb = v & 255;
@@ -1125,11 +1161,18 @@ CRV200::Frame CRV200::scanout(std::string* error) const
 				gg = (v >> 8) & 255;
 				bb = v & 255;
 			}
-			// True-color LUT/gamma is bypassed by this diagnostic presenter.
+			if (fmt != 2)
+			{
+				rr = (palette_color(rr, controller) >> 16) & 255;
+				gg = (palette_color(gg, controller) >> 8) & 255;
+				bb = palette_color(bb, controller) & 255;
+			}
 			f.argb[size_t(y) * w + x] =
 				0xff000000u | (rr << 16) | (gg << 8) | bb;
 		}
-	composite_cursor(f);
+	// No CRTC2 cursor registers have been exercised yet.
+	if (!controller)
+		composite_cursor(f);
 	return f;
 }
 
@@ -1217,11 +1260,11 @@ void CRV200::reset(bool clear_vram)
 	m_fault.clear();
 	m_pending = Pending{};
 	m_counters = {};
-	m_scanline = m_frame = 0;
+	m_scanline = m_frame = m_scanline2 = m_frame2 = 0;
 	if (clear_vram)
 		std::fill(m_vram.begin(), m_vram.end(), uint8_t(0));
 	for (uint32_t i = 0; i < 256; i++)
-		m_palette[i] = (i << 16) | (i << 8) | i;
+		m_palette[i] = m_palette2[i] = (i << 16) | (i << 8) | i;
 	r(CONFIG_MEMSIZE) = m_options.vram_bytes;
 	r(CONFIG_APER_SIZE) = ApertureSize;
 	r(CONFIG_REG_APER_SIZE) = RegisterSpaceSize;
@@ -1269,7 +1312,7 @@ bool CRV200::busy() const
 
 bool CRV200::irq_asserted() const
 {
-	return (r(GEN_INT_CNTL) & r(GEN_INT_STATUS) & 1u) != 0;
+	return (r(GEN_INT_CNTL) & r(GEN_INT_STATUS) & (1u | CRTC2_VBLANK_INT)) != 0;
 }
 
 void CRV200::update_irq()
@@ -1338,6 +1381,10 @@ void CRV200::SaveState(std::ostream& out) const
 		put32(b, v);
 	for (const uint32_t v : m_palette)
 		put32(b, v);
+	for (const uint32_t v : m_palette2)
+		put32(b, v);
+	put32(b, m_scanline2);
+	put32(b, m_frame2);
 	put32(b, m_scanline);
 	put32(b, m_frame);
 	const auto& p = m_pending;
@@ -1378,7 +1425,7 @@ void CRV200::SaveState(std::ostream& out) const
 		put32(b, uint32_t(v >> 32));
 	}
 	b.insert(b.end(), m_vram.begin(), m_vram.end());
-	out.write("RV2SNP01", 8);
+	out.write("RV2SNP02", 8);
 	stream32(out, uint32_t(b.size()));
 	stream32(out, crc32(b));
 	out.write(
@@ -1389,9 +1436,10 @@ void CRV200::SaveState(std::ostream& out) const
 
 void CRV200::RestoreState(std::istream& in)
 {
-	char magic[8];
+	char magic[8]{};
 	in.read(magic, 8);
-	if (!in || std::memcmp(magic, "RV2SNP01", 8))
+	const bool version2 = !std::memcmp(magic, "RV2SNP02", 8);
+	if (!in || (!version2 && std::memcmp(magic, "RV2SNP01", 8)))
 		throw std::runtime_error("RV200 snapshot format mismatch");
 	const uint32_t len = stream32(in), crc = stream32(in);
 	if (len < m_options.vram_bytes || len > m_options.vram_bytes + 65536u)
@@ -1411,6 +1459,13 @@ void CRV200::RestoreState(std::istream& in)
 		v = get32(b, i);
 	for (auto& v : tmp.m_palette)
 		v = get32(b, i);
+	if (version2)
+	{
+		for (auto& v : tmp.m_palette2)
+			v = get32(b, i);
+		tmp.m_scanline2 = get32(b, i);
+		tmp.m_frame2 = get32(b, i);
+	}
 	tmp.m_scanline = get32(b, i);
 	tmp.m_frame = get32(b, i);
 	auto& p = tmp.m_pending;
@@ -1440,7 +1495,8 @@ void CRV200::RestoreState(std::istream& in)
 	p.compare_color = get32(b, i);
 	p.compare_mask = get32(b, i);
 	const bool mono = p.source_format < 2;
-	if (active > 1 || tmp.m_scanline > 4096 || p.width > 8192 ||
+	if (active > 1 || tmp.m_scanline > 4096 || tmp.m_scanline2 > 2047 ||
+		p.width > 8192 ||
 		p.height > 8192 ||
 		(p.active &&
 		 (!p.width || !p.height ||
@@ -1475,9 +1531,12 @@ void CRV200::RestoreState(std::istream& in)
 	m_regs = tmp.m_regs;
 	m_pll = tmp.m_pll;
 	m_palette = tmp.m_palette;
+	m_palette2 = tmp.m_palette2;
 	m_pending = tmp.m_pending;
 	m_scanline = tmp.m_scanline;
 	m_frame = tmp.m_frame;
+	m_scanline2 = tmp.m_scanline2;
+	m_frame2 = tmp.m_frame2;
 	m_fault = tmp.m_fault;
 	m_counters = tmp.m_counters;
 	m_vram.swap(tmp.m_vram);
