@@ -1,6 +1,6 @@
 var searchData=
 [
-  ['address_5fmap_2eh_0',['address_map.h',['../df/d00/a00263.html',1,'']]],
+  ['address_5fmap_2eh_0',['address_map.h',['../d5/d00/a00269.html',1,'']]],
   ['alim1543c_2ecpp_1',['AliM1543C.cpp',['../d6/d00/a00047.html',1,'']]],
   ['alim1543c_2eh_2',['AliM1543C.h',['../d5/d00/a00050.html',1,'']]],
   ['alim1543c_5fide_2ecpp_3',['AliM1543C_ide.cpp',['../dc/d00/a00053.html',1,'']]],
@@ -16,9 +16,10 @@ var searchData=
   ['alphacpu_5fvmspal_2ecpp_13',['AlphaCPU_vmspal.cpp',['../d3/d00/a00155.html',1,'']]],
   ['alphacpuprofile_2eh_14',['AlphaCPUProfile.h',['../d9/d00/a00146.html',1,'']]],
   ['alphahwload_2eh_15',['AlphaHWLoad.h',['../d6/d00/a00158.html',1,'']]],
-  ['alphaipr_2eh_16',['AlphaIPR.h',['../d6/d00/a00161.html',1,'']]],
-  ['alphammu_2eh_17',['AlphaMMU.h',['../db/d00/a00164.html',1,'']]],
-  ['alphapal_2eh_18',['AlphaPAL.h',['../dc/d00/a00167.html',1,'']]],
-  ['alphasim_2ecpp_19',['AlphaSim.cpp',['../d7/d00/a00002.html',1,'']]],
-  ['attotime_2eh_20',['attotime.h',['../d5/d00/a00266.html',1,'']]]
+  ['alphahwstore_2eh_16',['AlphaHWStore.h',['../d6/d00/a00161.html',1,'']]],
+  ['alphaipr_2eh_17',['AlphaIPR.h',['../db/d00/a00164.html',1,'']]],
+  ['alphammu_2eh_18',['AlphaMMU.h',['../dc/d00/a00167.html',1,'']]],
+  ['alphapal_2eh_19',['AlphaPAL.h',['../d5/d00/a00170.html',1,'']]],
+  ['alphasim_2ecpp_20',['AlphaSim.cpp',['../d7/d00/a00002.html',1,'']]],
+  ['attotime_2eh_21',['attotime.h',['../d9/d00/a00272.html',1,'']]]
 ];

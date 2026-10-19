@@ -1,6 +1,6 @@
 var a00227 =
 [
-    [ "Ev68MMU", "d0/d00/a01010.html", "d0/d00/a01010" ],
-    [ "kEv68MMUAddressPolicy", "d9/d00/a00227.html#af72d7608012fab6bf3716a3d9092570a", null ],
-    [ "kEv68TBFillPolicy", "d9/d00/a00227.html#a46c3fb375cb12b1b0d03cf0995bb21ca", null ]
+    [ "Ev68IPR", "d7/d00/a01013.html", "d7/d00/a01013" ],
+    [ "kEv68IPRReadPolicy", "d9/d00/a00227.html#ac72e7b81fb425e5ebbce074acda1caf7", null ],
+    [ "kEv68IPRWritePolicy", "d9/d00/a00227.html#ac5a652b053679c56a4f876bb9f861408", null ]
 ];

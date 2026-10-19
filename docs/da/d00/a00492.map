@@ -1,10 +1,10 @@
-<map id="network/NetworkVmnetIPC.cpp" name="network/NetworkVmnetIPC.cpp">
-<area shape="rect" id="Node000001" title=" " alt="" coords="570,5,776,32"/>
-<area shape="rect" id="Node000002" href="$d5/d00/a00518.html" title="Standard includes." alt="" coords="631,80,716,107"/>
+<map id="network/NetworkVmnet.cpp" name="network/NetworkVmnet.cpp">
+<area shape="rect" id="Node000001" title=" " alt="" coords="582,5,765,32"/>
+<area shape="rect" id="Node000002" href="$d9/d00/a00524.html" title="Standard includes." alt="" coords="631,80,716,107"/>
 <area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="675,30,676,66,671,63,672,35"/>
 <area shape="rect" id="Node000003" href="$d7/d00/a00131.html" title=" " alt="" coords="220,155,329,181"/>
 <area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="629,104,345,157,344,151,633,101"/>
-<area shape="rect" id="Node000004" href="$d9/d00/a00257.html" title="Contains the datatype definitions for use with Microsoft Visual C++ and Linux." alt="" coords="354,155,443,181"/>
+<area shape="rect" id="Node000004" href="$df/d00/a00263.html" title="Contains the datatype definitions for use with Microsoft Visual C++ and Linux." alt="" coords="354,155,443,181"/>
 <area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="629,107,459,154,458,148,634,105"/>
 <area shape="rect" id="Node000005" title=" " alt="" coords="468,155,535,181"/>
 <area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="646,106,546,151,544,146,641,108"/>
@@ -20,9 +20,9 @@
 <area shape="poly" id="edge31_Node000002_Node000025" title=" " alt="" coords="667,106,636,146,616,166,592,184,540,210,486,227,485,222,538,205,589,179,612,162,633,142,662,109"/>
 <area shape="rect" id="Node000027" href="$d4/d00/a00035.html" title=" " alt="" coords="711,155,825,181"/>
 <area shape="poly" id="edge37_Node000002_Node000027" title=" " alt="" coords="690,105,742,145,737,145,689,110"/>
-<area shape="rect" id="Node000029" href="$db/d00/a00296.html" title="Contains macro&#39;s and prototypes for debugging." alt="" coords="1130,155,1232,181"/>
+<area shape="rect" id="Node000029" href="$d0/d00/a00302.html" title="Contains macro&#39;s and prototypes for debugging." alt="" coords="1130,155,1232,181"/>
 <area shape="poly" id="edge45_Node000002_Node000029" title=" " alt="" coords="716,97,1112,152,1117,155,1112,155,1112,157,716,103"/>
-<area shape="rect" id="Node000031" href="$df/d00/a00299.html" title="Contains byte&#45;order conversion helpers." alt="" coords="1257,155,1362,181"/>
+<area shape="rect" id="Node000031" href="$d3/d00/a00305.html" title="Contains byte&#45;order conversion helpers." alt="" coords="1257,155,1362,181"/>
 <area shape="poly" id="edge47_Node000002_Node000031" title=" " alt="" coords="716,95,937,116,1244,154,1239,155,936,121,716,101"/>
 <area shape="rect" id="Node000007" title=" " alt="" coords="5,304,83,331"/>
 <area shape="poly" id="edge6_Node000006_Node000007" title=" " alt="" coords="179,259,87,300,85,295,176,254"/>

@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.18.0"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ES40: storage/Sym53C810.h File Reference</title>
+<title>ES40: storage/SCSIDevice.h File Reference</title>
 <link href="../../tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="../../dynsections.js"></script>
 <script type="text/javascript" src="../../codefolding.js"></script>
@@ -26,7 +26,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">ES40<span id="projectnumber">&#160;0.17+</span>
+   <div id="projectname">ES40<span id="projectnumber">&#160;0.92.2</span>
    </div>
   </td>
  </tr>
@@ -109,47 +109,86 @@ document.addEventListener('DOMContentLoaded',() => { initNavTree('d7/d00/a00584.
 </div>
 
 <div class="header">
-  <div class="headertitle"><div class="title">Sym53C810.h File Reference</div></div>
+  <div class="headertitle"><div class="title">SCSIDevice.h File Reference</div></div>
 </div><!--header-->
 <div class="contents">
 
-<p>Contains the definitions for the emulated Symbios SCSI controller.  
+<p>Contains definitions for the SCSI device base class.  
 <a href="#details">More...</a></p>
-<div class="textblock"><code>#include &quot;<a class="el" href="../../d2/d00/a00281_source.html">emu/PCIDevice.h</a>&quot;</code><br />
-<code>#include &quot;<a class="el" href="../../da/d00/a00530_source.html">DiskController.h</a>&quot;</code><br />
-<code>#include &quot;<a class="el" href="../../dd/d00/a00578_source.html">SCSIDevice.h</a>&quot;</code><br />
-</div><div class="textblock"><div class="dynheader">
-Include dependency graph for Sym53C810.h:</div>
-<div class="dyncontent">
-<div class="center"><img src="../../dc/d00/a00585.png" border="0" usemap="#astorage_2_sym53_c810_8h" loading="lazy" alt=""/></div>
-<map name="astorage_2_sym53_c810_8h" id="astorage_2_sym53_c810_8h">
-<area shape="rect" title="Contains the definitions for the emulated Symbios SCSI controller." alt="" coords="209,5,360,32"/>
-<area shape="rect" href="../../d2/d00/a00281.html" title="Contains the definitions for the PCI Device base class." alt="" coords="78,80,203,107"/>
-<area shape="poly" title=" " alt="" coords="258,34,181,75,178,70,261,31"/>
-<area shape="rect" href="../../da/d00/a00530.html" title="Contains definitions for the disk controller base class." alt="" coords="227,80,342,107"/>
-<area shape="poly" title=" " alt="" coords="286,30,287,65,282,63,283,35"/>
-<area shape="rect" href="../../dd/d00/a00578.html" title="Contains definitions for the SCSI device base class." alt="" coords="366,80,472,107"/>
-<area shape="poly" title=" " alt="" coords="308,30,385,72,379,73,308,35"/>
-<area shape="rect" href="../../d6/d00/a00287.html" title="Contains definitions for the base class for devices that connect to the chipset." alt="" coords="68,155,213,181"/>
-<area shape="poly" title=" " alt="" coords="141,105,143,140,138,138,140,110"/>
-<area shape="rect" href="../../da/d00/a00080.html" title="Contains the definitions for the configuration file interpreter." alt="" coords="5,229,148,256"/>
-<area shape="poly" title=" " alt="" coords="128,184,100,219,96,216,131,180"/>
-<area shape="rect" title=" " alt="" coords="172,229,240,256"/>
-<area shape="poly" title=" " alt="" coords="153,179,187,218,182,218,151,184"/>
-<area shape="rect" title=" " alt="" coords="50,304,103,331"/>
-<area shape="poly" title=" " alt="" coords="78,255,79,289,74,288,75,259"/>
-</map>
-</div>
-</div><div class="textblock"><div class="dynheader">
+<div class="textblock"><div class="dynheader">
 This graph shows which files directly or indirectly include this file:</div>
 <div class="dyncontent">
-<div class="center"><img src="../../d6/d00/a00586.png" border="0" usemap="#astorage_2_sym53_c810_8hdep" loading="lazy" alt=""/></div>
-<map name="astorage_2_sym53_c810_8hdep" id="astorage_2_sym53_c810_8hdep">
-<area shape="rect" title="Contains the definitions for the emulated Symbios SCSI controller." alt="" coords="100,5,251,32"/>
-<area shape="rect" href="../../d1/d00/a00077.html" title="Contains the code for the configuration file interpreter." alt="" coords="5,80,162,107"/>
-<area shape="poly" title=" " alt="" coords="150,41,101,82,98,77,145,42"/>
-<area shape="rect" href="../../d8/d00/a00581.html" title="Contains the code for the emulated Symbios SCSI controller." alt="" coords="186,80,352,107"/>
-<area shape="poly" title=" " alt="" coords="205,39,255,80,250,80,203,44"/>
+<div class="center"><img src="../../d6/d00/a00586.png" border="0" usemap="#astorage_2_s_c_s_i_device_8hdep" loading="lazy" alt=""/></div>
+<map name="astorage_2_s_c_s_i_device_8hdep" id="astorage_2_s_c_s_i_device_8hdep">
+<area shape="rect" title="Contains definitions for the SCSI device base class." alt="" coords="1325,5,1477,32"/>
+<area shape="rect" href="../../d9/d00/a00056.html" title="Contains the definitions for the emulated Ali M1543C IDE chipset part." alt="" coords="254,155,420,181"/>
+<area shape="poly" title=" " alt="" coords="1310,35,422,158,421,152,1310,30"/>
+<area shape="rect" href="../../da/d00/a00530.html" title="Contains definitions for the disk base class." alt="" coords="1031,155,1137,181"/>
+<area shape="poly" title=" " alt="" coords="1363,38,1112,157,1110,152,1358,40"/>
+<area shape="rect" href="../../d6/d00/a00572.html" title="Contains the definitions for the emulated LSI Logic 53C1020 controller." alt="" coords="1162,155,1313,181"/>
+<area shape="poly" title=" " alt="" coords="1373,40,1324,82,1250,157,1247,152,1321,78,1369,43"/>
+<area shape="rect" href="../../dd/d00/a00578.html" title="Contains definitions for the SCSI bus class." alt="" coords="1334,80,1468,107"/>
+<area shape="poly" title=" " alt="" coords="1403,46,1403,81,1399,78,1400,50"/>
+<area shape="rect" href="../../d8/d00/a00581.html" title="Contains definitions for the SCSI device base class." alt="" coords="1662,155,1828,181"/>
+<area shape="poly" title=" " alt="" coords="1445,36,1719,154,1713,154,1444,41"/>
+<area shape="rect" href="../../d7/d00/a00590.html" title="Contains the definitions for the emulated Symbios SCSI controller." alt="" coords="1852,155,2004,181"/>
+<area shape="poly" title=" " alt="" coords="1461,34,1885,154,1880,154,1461,39"/>
+<area shape="rect" href="../../dc/d00/a00596.html" title="Contains the definitions for the emulated Symbios SCSI controller." alt="" coords="2028,155,2180,181"/>
+<area shape="poly" title=" " alt="" coords="1477,33,2046,154,2041,154,1476,38"/>
+<area shape="rect" href="../../d3/d00/a00155.html" title="Contains routines that replace parts of the VMS PALcode for the emulated DecChip 21264CB EV68 Alpha p..." alt="" coords="33,229,223,256"/>
+<area shape="poly" title=" " alt="" coords="284,188,166,231,164,226,289,185"/>
+<area shape="rect" href="../../dc/d00/a00053.html" title="Contains the code for the emulated Ali M1543C IDE chipset part." alt="" coords="247,229,427,256"/>
+<area shape="poly" title=" " alt="" coords="339,195,340,230,335,228,336,199"/>
+<area shape="rect" href="../../d1/d00/a00077.html" title="Contains the code for the configuration file interpreter." alt="" coords="1159,304,1315,331"/>
+<area shape="poly" title=" " alt="" coords="236,170,146,176,61,189,31,200,12,214,9,222,9,231,23,254,41,261,80,268,207,279,578,292,1148,301,1162,305,1156,305,1148,307,577,298,207,284,79,273,40,266,20,258,4,233,3,221,8,211,28,195,60,184,145,170,240,167"/>
+<area shape="poly" title=" " alt="" coords="1013,174,680,197,235,232,224,233,223,228,234,227,679,192,1018,173"/>
+<area shape="poly" title=" " alt="" coords="1015,178,447,232,428,234,427,229,446,227,1016,173"/>
+<area shape="rect" href="../../d9/d00/a00527.html" title="Contains code for the disk base class." alt="" coords="308,304,428,331"/>
+<area shape="poly" title=" " alt="" coords="1012,172,890,181,738,192,594,209,535,220,492,232,458,248,428,268,381,306,379,302,425,264,456,243,490,227,534,214,593,204,737,187,889,176,1018,172"/>
+<area shape="rect" href="../../db/d00/a00533.html" title="Contains definitions for the disk controller base class." alt="" coords="502,229,679,256"/>
+<area shape="poly" title=" " alt="" coords="1012,180,678,231,677,226,1018,179"/>
+<area shape="rect" href="../../d0/d00/a00542.html" title="Contains definitions to use a raw device as a disk image." alt="" coords="854,229,1002,256"/>
+<area shape="poly" title=" " alt="" coords="1046,187,956,231,955,226,1041,189"/>
+<area shape="rect" href="../../dd/d00/a00548.html" title="Contains definitions to use a file as a disk image." alt="" coords="703,229,830,256"/>
+<area shape="poly" title=" " alt="" coords="1018,185,823,231,822,226,1013,185"/>
+<area shape="rect" href="../../d9/d00/a00560.html" title="Contains definitions to use a RAM disk." alt="" coords="1026,229,1160,256"/>
+<area shape="poly" title=" " alt="" coords="1089,195,1094,231,1090,227,1086,199"/>
+<area shape="rect" href="../../dc/d00/a00563.html" title="Contains the code for the emulated Floppy Controller devices." alt="" coords="1184,229,1373,256"/>
+<area shape="poly" title=" " alt="" coords="1132,184,1247,229,1242,228,1132,190"/>
+<area shape="rect" href="../../d4/d00/a00569.html" title="Contains the code for the emulated LSI Logic 53C1020 controller." alt="" coords="1397,229,1563,256"/>
+<area shape="poly" title=" " alt="" coords="1153,179,1413,229,1408,229,1152,185"/>
+<area shape="rect" href="../../de/d00/a00587.html" title="Contains the code for the emulated Symbios SCSI controller." alt="" coords="1637,229,1803,256"/>
+<area shape="poly" title=" " alt="" coords="1153,179,1422,212,1640,235,1634,235,1422,217,1153,184"/>
+<area shape="rect" href="../../d2/d00/a00593.html" title="Contains the code for the emulated Symbios SCSI controller." alt="" coords="1827,229,1992,256"/>
+<area shape="poly" title=" " alt="" coords="1153,179,1339,198,1485,206,1630,212,1815,227,1829,231,1824,230,1814,232,1630,218,1485,211,1339,203,1153,184"/>
+<area shape="poly" title=" " alt="" coords="997,257,1186,304,1180,303,997,263"/>
+<area shape="rect" href="../../d3/d00/a00539.html" title="Contains code to use a raw device as a disk image." alt="" coords="974,304,1135,331"/>
+<area shape="poly" title=" " alt="" coords="964,261,1035,304,1030,303,962,266"/>
+<area shape="poly" title=" " alt="" coords="846,254,1161,304,1156,304,846,259"/>
+<area shape="poly" title=" " alt="" coords="690,258,429,308,428,302,685,258"/>
+<area shape="rect" href="../../d1/d00/a00407.html" title=" " alt="" coords="453,304,579,331"/>
+<area shape="poly" title=" " alt="" coords="711,260,560,306,559,301,706,261"/>
+<area shape="rect" href="../../d8/d00/a00545.html" title="Contains code to use a file as a disk image." alt="" coords="603,304,744,331"/>
+<area shape="poly" title=" " alt="" coords="741,265,690,306,688,301,736,267"/>
+<area shape="rect" href="../../dc/d00/a00554.html" title=" " alt="" coords="767,304,950,331"/>
+<area shape="poly" title=" " alt="" coords="795,263,845,304,840,303,794,268"/>
+<area shape="poly" title=" " alt="" coords="1133,261,1215,304,1209,303,1131,266"/>
+<area shape="rect" href="../../d8/d00/a00557.html" title="Contains code to use a RAM disk." alt="" coords="1339,304,1487,331"/>
+<area shape="poly" title=" " alt="" coords="1164,257,1360,304,1355,303,1164,263"/>
+<area shape="poly" title=" " alt="" coords="1328,177,1481,199,1543,213,1564,220,1577,228,1583,243,1576,258,1545,268,1479,281,1316,307,1316,302,1478,276,1544,263,1573,254,1578,243,1573,231,1562,225,1542,218,1480,204,1328,182"/>
+<area shape="poly" title=" " alt="" coords="1294,183,1440,229,1435,229,1293,189"/>
+<area shape="poly" title=" " alt="" coords="1318,103,421,164,420,158,1319,98"/>
+<area shape="poly" title=" " alt="" coords="1334,110,1138,157,1137,152,1328,111"/>
+<area shape="poly" title=" " alt="" coords="1389,119,1380,151,1380,166,1385,180,1396,195,1411,208,1445,229,1440,228,1408,212,1392,199,1380,183,1375,167,1375,150,1385,122"/>
+<area shape="poly" title=" " alt="" coords="1406,120,1416,152,1424,167,1435,179,1468,197,1519,211,1639,233,1634,233,1518,216,1466,202,1432,183,1420,170,1411,154,1403,124"/>
+<area shape="poly" title=" " alt="" coords="1417,117,1444,151,1460,166,1478,179,1609,199,1829,231,1824,231,1608,204,1476,184,1457,171,1440,155,1415,122"/>
+<area shape="rect" href="../../d9/d00/a00575.html" title="Contains definitions for the SCSI bus class." alt="" coords="1490,155,1638,181"/>
+<area shape="poly" title=" " alt="" coords="1444,111,1538,154,1533,154,1443,116"/>
+<area shape="poly" title=" " alt="" coords="1477,108,1688,154,1682,154,1476,113"/>
+<area shape="poly" title=" " alt="" coords="1966,187,1988,202,2005,220,2013,238,2012,248,2006,258,1990,268,1964,276,1887,288,1787,296,1674,300,1457,304,1327,307,1316,308,1315,303,1326,301,1457,298,1674,295,1787,291,1887,283,1963,271,1988,263,2002,254,2007,247,2008,239,2001,223,1985,206,1965,192"/>
+<area shape="poly" title=" " alt="" coords="1880,186,1757,231,1756,226,1875,187"/>
+<area shape="poly" title=" " alt="" coords="2092,193,2065,230,2048,246,2028,258,1963,280,1880,293,1785,300,1682,302,1482,302,1396,303,1327,307,1316,308,1315,303,1326,301,1395,298,1482,297,1682,297,1784,295,1880,288,1962,275,2025,254,2044,241,2061,226,2087,196"/>
+<area shape="poly" title=" " alt="" coords="2058,187,1944,231,1943,226,2053,188"/>
 </map>
 </div>
 </div>
@@ -157,27 +196,16 @@ This graph shows which files directly or indirectly include this file:</div>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 id="header-nested-classes" class="groupheader"><a id="nested-classes" name="nested-classes"></a>
 Data Structures</h2></td></tr>
-<tr class="memitem:CSym53C810" id="r_CSym53C810"><td class="memItemLeft">class &#160;</td><td class="memItemRight"><a class="el" href="../../d5/d00/a01738.html">CSym53C810</a></td></tr>
-<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Symbios Sym53C810 SCSI disk controller.  <a href="../../d5/d00/a01738.html#details">More...</a><br /></td></tr>
-<tr class="memitem:CSym53C810_3A_3ASSym_5Fstate" id="r_CSym53C810_3A_3ASSym_5Fstate"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../d1/d00/a01742.html">CSym53C810::SSym_state</a></td></tr>
-<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">The state structure contains all elements that need to be saved to the statefile.  <a href="../../d1/d00/a01742.html#details">More...</a><br /></td></tr>
-<tr class="memitem:CSym53C810_3A_3ASSym_5Fstate_3A_3AUSym_5Fregs" id="r_CSym53C810_3A_3ASSym_5Fstate_3A_3AUSym_5Fregs"><td class="memItemLeft">union &#160;</td><td class="memItemRight"><a class="el" href="../../d5/d00/a01746.html">CSym53C810::SSym_state::USym_regs</a></td></tr>
-<tr class="memitem:CSym53C810_3A_3ASSym_5Fstate_3A_3ASSym_5Falu" id="r_CSym53C810_3A_3ASSym_5Fstate_3A_3ASSym_5Falu"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../dc/d00/a01750.html">CSym53C810::SSym_state::SSym_alu</a></td></tr>
+<tr class="memitem:CSCSIDevice" id="r_CSCSIDevice"><td class="memItemLeft">class &#160;</td><td class="memItemRight"><a class="el" href="../../df/d00/a01737.html">CSCSIDevice</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Base class for emulated SCSI devices.  <a href="../../df/d00/a01737.html#details">More...</a><br /></td></tr>
 </table>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>Contains the definitions for the emulated Symbios SCSI controller. </p>
+<div class="textblock"><p>Contains definitions for the SCSI device base class. </p>
 <p>$Id$</p>
-<p>X-1.9 Camiel Vanderhoeven 31-MAY-2008 Changes to include parts of Poco.</p>
-<p>X-1.8 Camiel Vanderhoeven 29-APR-2008 <a class="el" href="../../df/d00/a01646.html" title="Abstract base class for disk controllers (uses CDisk&#39;s).">CDiskController</a> is no longer a <a class="el" href="../../da/d00/a01106.html" title="Abstract base class for devices on the PCI-bus.">CPCIDevice</a>. devices that are both should multiple inherit both.</p>
-<p>X-1.7 Camiel Vanderhoeven 25-MAR-2008 Separate functions for different instructions, comments.</p>
-<p>X-1.6 Camiel Vanderhoeven 14-MAR-2008 Formatting.</p>
-<p>X-1.5 Camiel Vanderhoeven 13-MAR-2008 Create init(), start_threads() and stop_threads() functions.</p>
-<p>X-1.4 Camiel Vanderhoeven 11-MAR-2008 Named, debuggable mutexes.</p>
-<p>X-1.3 Camiel Vanderhoeven 05-MAR-2008 Multi-threading version.</p>
-<p>X-1.2 Camiel Vanderhoeven 17-FEB-2008 Comments.</p>
-<p>X-1.1 Camiel Vanderhoeven 16-FEB-2008 Created as a spinoff from 53C895 controller, as we couldn't get that chip to work properly with the OpenVMS driver. </p>
+<p>X-1.2 Brian Wheeler 27-FEB-2008 Avoid compiler warnings.</p>
+<p>X-1.1 Camiel Vanderhoeven 12-JAN-2008 Initial version in CVS. </p>
 
-<p class="definition">Definition in file <a class="el" href="../../d7/d00/a00584_source.html">Sym53C810.h</a>.</p>
+<p class="definition">Definition in file <a class="el" href="../../d7/d00/a00584_source.html">SCSIDevice.h</a>.</p>
 </div></div><!-- contents -->
 </div><!-- doc-content -->
 <div id="page-nav" class="page-nav-panel">
@@ -191,7 +219,7 @@ Data Structures</h2></td></tr>
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
-    <li class="navelem"><a href="../../dir_70f20ecf11358dff00a0daf546d3147e.html">storage</a></li><li class="navelem"><a href="../../d7/d00/a00584.html">Sym53C810.h</a></li>
+    <li class="navelem"><a href="../../dir_70f20ecf11358dff00a0daf546d3147e.html">storage</a></li><li class="navelem"><a href="../../d7/d00/a00584.html">SCSIDevice.h</a></li>
     <li class="footer">Generated by <a href="https://www.doxygen.org/index.html"><img class="footer" src="../../doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.18.0 </li>
   </ul>
 </div>

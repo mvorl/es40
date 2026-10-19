@@ -1,6 +1,8 @@
 var a00389 =
 [
-    [ "scancode", "d3/d00/a01450.html", "d3/d00/a01450" ],
-    [ "scancodes", "dc/d00/a00389.html#af45274cdf70d1c81c6d6a3e222c93d81", null ],
-    [ "translation8042", "dc/d00/a00389.html#a7f0e8c4fb68c1d8c66eba95692662e8f", null ]
+    [ "DECLARE_PLUGIN_INIT_FINI_FOR_MODULE", "dc/d00/a00389.html#af4d16a6a0d89862ac4e4f2f151d6cec1", null ],
+    [ "PLUG_load_plugin", "dc/d00/a00389.html#a3229ec1bb7d262485f5dad3652cc4a22", null ],
+    [ "PLUG_unload_plugin", "dc/d00/a00389.html#a191307fb8f917c2744a1db9612bba6dd", null ],
+    [ "libsdl_LTX_plugin_fini", "dc/d00/a00389.html#a49debd4cf7efa7b8293b70f8366f2b6c", null ],
+    [ "libsdl_LTX_plugin_init", "dc/d00/a00389.html#a8256e45104a21ca374ffdafd6d5e1ecc", null ]
 ];

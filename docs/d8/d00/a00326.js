@@ -1,8 +1,20 @@
 var a00326 =
 [
-    [ "CPowerStormDisplayLock", "dd/d00/a01226.html", "dd/d00/a01226" ],
-    [ "powerstorm_read_u32", "d8/d00/a00326.html#ab10e242e2a16e2fedbf938edbb488a81", null ],
-    [ "powerstorm_setting", "d8/d00/a00326.html#a1b7f3442c604512f1a394975cb85128e", null ],
-    [ "powerstorm_vga_window_offset", "d8/d00/a00326.html#ad4f454f93828d009d1e259468507e925", null ],
-    [ "powerstorm_write_u32", "d8/d00/a00326.html#abf7516a618c32209915a0b806a16e130", null ]
+    [ "R", "d8/d00/a00326.html#aa9732a31f97de6fe2211561a3847e7fc", null ],
+    [ "fixed_integer", "d8/d00/a00326.html#a4ccf653e66cad67cfd63b75e421d5665", null ],
+    [ "get32", "d8/d00/a00326.html#aa61b133450b7d0ed4a617c12d868fa90", null ],
+    [ "get64", "d8/d00/a00326.html#af5f173750d09164b5a74a3284d56813f", null ],
+    [ "getbool", "d8/d00/a00326.html#af2924410fa11dba14e75e6c4ef0f18f0", null ],
+    [ "host_tag", "d8/d00/a00326.html#ac79055c7fac45906e3f34e4ac5d60944", null ],
+    [ "put32", "d8/d00/a00326.html#a7a321446d48b99c110183b1740a9fd91", null ],
+    [ "put64", "d8/d00/a00326.html#a3be482507e43587a31de2891aacaa1b7", null ],
+    [ "require", "d8/d00/a00326.html#a20ed6a4a33f4470e0889e97889e34f0e", null ],
+    [ "signed32", "d8/d00/a00326.html#ad456e610ef36121394b6c38424538dfe", null ],
+    [ "signed64", "d8/d00/a00326.html#a870d72c69ed817604bb107e572409fc3", null ],
+    [ "swap32", "d8/d00/a00326.html#a2f32611fcb5d9160c4bd4b6f2f1c2fa9", null ],
+    [ "sx", "d8/d00/a00326.html#af9b6fae98cfd5e9df4a1147e9fc816f1", null ],
+    [ "valid_width", "d8/d00/a00326.html#af7e5766d72e74ee41dbec906425dc60b", null ],
+    [ "vertex_bits", "d8/d00/a00326.html#a9c5be4ade326ee108e60b5d875235876", null ],
+    [ "vertex_float", "d8/d00/a00326.html#a8c37bec3c3064485f6ec0b5f5df1766d", null ],
+    [ "width_mask", "d8/d00/a00326.html#a655eab783240720a34d14cf1025dcb45", null ]
 ];

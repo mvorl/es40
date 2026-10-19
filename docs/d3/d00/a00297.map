@@ -1,5 +1,7 @@
-<map id="es40_debug.h" name="es40_debug.h">
-<area shape="rect" id="Node000001" title="Contains macro&#39;s and prototypes for debugging." alt="" coords="5,5,108,32"/>
-<area shape="rect" id="Node000002" title=" " alt="" coords="22,80,91,107"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="58,30,59,65,54,64,55,35"/>
+<map id="emu/xtal.h" name="emu/xtal.h">
+<area shape="rect" id="Node000001" title=" " alt="" coords="36,5,118,32"/>
+<area shape="rect" id="Node000002" title=" " alt="" coords="5,80,66,107"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="72,31,52,68,48,65,67,34"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="90,80,147,107"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="85,30,106,67,101,67,83,35"/>
 </map>

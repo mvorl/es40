@@ -1,22 +1,18 @@
-<map id="storage/LSI53C1020.h" name="storage/LSI53C1020.h">
-<area shape="rect" id="Node000001" title="Contains the definitions for the emulated LSI Logic 53C1020 controller." alt="" coords="362,5,514,32"/>
-<area shape="rect" id="Node000002" href="$d2/d00/a00281.html" title="Contains the definitions for the PCI Device base class." alt="" coords="110,80,235,107"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="390,34,234,78,232,73,394,31"/>
-<area shape="rect" id="Node000005" title=" " alt="" coords="150,304,203,331"/>
-<area shape="poly" id="edge9_Node000001_Node000005" title=" " alt="" coords="380,34,341,53,321,66,304,82,288,104,280,124,276,166,273,209,267,232,253,258,234,279,212,297,210,293,231,276,249,254,262,231,268,208,271,165,275,123,284,101,300,78,318,62,338,48,384,31"/>
-<area shape="rect" id="Node000007" href="$da/d00/a00530.html" title="Contains definitions for the disk controller base class." alt="" coords="314,80,429,107"/>
-<area shape="poly" id="edge6_Node000001_Node000007" title=" " alt="" coords="428,31,395,71,391,67,424,34"/>
-<area shape="rect" id="Node000008" href="$dd/d00/a00578.html" title="Contains definitions for the SCSI device base class." alt="" coords="453,80,558,107"/>
-<area shape="poly" id="edge7_Node000001_Node000008" title=" " alt="" coords="450,30,486,69,481,68,449,35"/>
-<area shape="rect" id="Node000009" title=" " alt="" coords="583,80,636,107"/>
-<area shape="poly" id="edge8_Node000001_Node000009" title=" " alt="" coords="468,30,572,75,567,75,468,35"/>
-<area shape="rect" id="Node000010" title=" " alt="" coords="661,80,718,107"/>
-<area shape="poly" id="edge10_Node000001_Node000010" title=" " alt="" coords="482,30,649,79,644,80,482,35"/>
-<area shape="rect" id="Node000003" href="$d6/d00/a00287.html" title="Contains definitions for the base class for devices that connect to the chipset." alt="" coords="95,155,239,181"/>
-<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="173,105,172,140,167,138,170,110"/>
-<area shape="rect" id="Node000004" href="$da/d00/a00080.html" title="Contains the definitions for the configuration file interpreter." alt="" coords="5,229,148,256"/>
-<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="150,184,105,222,102,218,153,180"/>
-<area shape="rect" id="Node000006" title=" " alt="" coords="172,229,240,256"/>
-<area shape="poly" id="edge5_Node000003_Node000006" title=" " alt="" coords="175,179,195,216,189,215,173,184"/>
-<area shape="poly" id="edge4_Node000004_Node000005" title=" " alt="" coords="95,254,149,294,144,295,93,259"/>
+<map id="storage/FloppyController.h" name="storage/FloppyController.h">
+<area shape="rect" id="Node000001" title="Contains the definitions for the emulated Floppy Controller devices." alt="" coords="116,5,290,32"/>
+<area shape="rect" id="Node000002" href="$d4/d00/a00536.html" title="Contains definitions for the disk controller base class." alt="" coords="5,80,121,107"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="177,35,103,74,99,70,180,30"/>
+<area shape="rect" id="Node000003" href="$d6/d00/a00293.html" title="Contains definitions for the base class for devices that connect to the chipset." alt="" coords="116,155,290,181"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="199,30,186,80,186,111,194,141,189,140,181,112,180,80,196,35"/>
+<area shape="rect" id="Node000007" href="$db/d00/a00074.html" title="Contains the definitions for the emulated DMA controller." alt="" coords="196,80,304,107"/>
+<area shape="poly" id="edge6_Node000001_Node000007" title=" " alt="" coords="211,30,236,67,231,67,211,35"/>
+<area shape="rect" id="Node000008" title=" " alt="" coords="328,80,385,107"/>
+<area shape="poly" id="edge8_Node000001_Node000008" title=" " alt="" coords="230,30,318,72,313,74,230,35"/>
+<area shape="rect" id="Node000004" href="$da/d00/a00080.html" title="Contains the definitions for the configuration file interpreter." alt="" coords="68,229,210,256"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="194,180,162,219,158,216,190,184"/>
+<area shape="rect" id="Node000006" title=" " alt="" coords="235,229,302,256"/>
+<area shape="poly" id="edge5_Node000003_Node000006" title=" " alt="" coords="215,179,250,218,244,218,214,184"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="112,304,166,331"/>
+<area shape="poly" id="edge4_Node000004_Node000005" title=" " alt="" coords="141,255,141,290,137,287,137,258"/>
+<area shape="poly" id="edge7_Node000007_Node000003" title=" " alt="" coords="243,105,221,143,217,140,240,109"/>
 </map>

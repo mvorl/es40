@@ -1,7 +1,7 @@
 var a00083 =
 [
-    [ "MenuEntry_t", "d3/d00/a00882.html", "d3/d00/a00882" ],
-    [ "FormEntry_t", "d2/d00/a00886.html", "d2/d00/a00886" ],
+    [ "MenuEntry_t", "d1/d00/a00877.html", "d1/d00/a00877" ],
+    [ "FormEntry_t", "df/d00/a00881.html", "df/d00/a00881" ],
     [ "ARRAY_SIZE", "d2/d00/a00083.html#a25f003de16c08a4888b69f619d70f427", null ],
     [ "HI_MEM_BITS", "d2/d00/a00083.html#abf09b379ce87b9329996f8172cc0e574", null ],
     [ "HOTKEY_HELP", "d2/d00/a00083.html#ab3413f5da6e2547ca4f1bb37ee7e9fe8", null ],

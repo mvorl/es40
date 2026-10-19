@@ -1,6 +1,6 @@
 var a00086 =
 [
-    [ "SDLHotkeyPrompt", "d7/d00/a00890.html", "d7/d00/a00890" ],
+    [ "SDLHotkeyPrompt", "db/d00/a00885.html", "db/d00/a00885" ],
     [ "add_disks", "da/d00/a00086.html#adb7fd98aad769c408f50ad78587767b5", null ],
     [ "ask_hotkey_override", "da/d00/a00086.html#acc1e21802b2f41c3ff3d1316a0a897b5", null ],
     [ "main", "da/d00/a00086.html#a0ddf1224851353fc92bfbff6f499fa97", null ],

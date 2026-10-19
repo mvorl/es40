@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.18.0"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ES40: network/NetworkTap.h File Reference</title>
+<title>ES40: network/NetworkSlirp.h File Reference</title>
 <link href="../../tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="../../dynsections.js"></script>
 <script type="text/javascript" src="../../codefolding.js"></script>
@@ -26,7 +26,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">ES40<span id="projectnumber">&#160;0.17+</span>
+   <div id="projectname">ES40<span id="projectnumber">&#160;0.92.2</span>
    </div>
   </td>
  </tr>
@@ -109,26 +109,26 @@ document.addEventListener('DOMContentLoaded',() => { initNavTree('db/d00/a00482.
 </div>
 
 <div class="header">
-  <div class="headertitle"><div class="title">NetworkTap.h File Reference</div></div>
+  <div class="headertitle"><div class="title">NetworkSlirp.h File Reference</div></div>
 </div><!--header-->
 <div class="contents">
 
-<p>TAP device network backend.  
+<p>Userspace (slirp) network backend.  
 <a href="#details">More...</a></p>
-<div class="textblock"><code>#include &quot;<a class="el" href="../../d2/d00/a00464_source.html">NetworkBackend.h</a>&quot;</code><br />
+<div class="textblock"><code>#include &quot;<a class="el" href="../../d0/d00/a00470_source.html">NetworkBackend.h</a>&quot;</code><br />
 </div><div class="textblock"><div class="dynheader">
-Include dependency graph for NetworkTap.h:</div>
+Include dependency graph for NetworkSlirp.h:</div>
 <div class="dyncontent">
-<div class="center"><img src="../../dc/d00/a00483.png" border="0" usemap="#anetwork_2_network_tap_8h" loading="lazy" alt=""/></div>
-<map name="anetwork_2_network_tap_8h" id="anetwork_2_network_tap_8h">
-<area shape="rect" title="TAP device network backend." alt="" coords="597,5,750,32"/>
-<area shape="rect" href="../../d2/d00/a00464.html" title="Abstract interface separating the emulated DEC 21143 NIC from the host networking method used to get ..." alt="" coords="607,80,740,107"/>
+<div class="center"><img src="../../dc/d00/a00483.png" border="0" usemap="#anetwork_2_network_slirp_8h" loading="lazy" alt=""/></div>
+<map name="anetwork_2_network_slirp_8h" id="anetwork_2_network_slirp_8h">
+<area shape="rect" title="Userspace (slirp) network backend." alt="" coords="595,5,752,32"/>
+<area shape="rect" href="../../d0/d00/a00470.html" title="Abstract interface separating the emulated DEC 21143 NIC from the host networking method used to get ..." alt="" coords="607,80,740,107"/>
 <area shape="poly" title=" " alt="" coords="675,30,676,66,671,63,672,35"/>
-<area shape="rect" href="../../d5/d00/a00518.html" title="Standard includes." alt="" coords="631,155,716,181"/>
+<area shape="rect" href="../../d9/d00/a00524.html" title="Standard includes." alt="" coords="631,155,716,181"/>
 <area shape="poly" title=" " alt="" coords="675,105,676,140,671,138,672,109"/>
 <area shape="rect" href="../../d7/d00/a00131.html" title=" " alt="" coords="220,229,329,256"/>
 <area shape="poly" title=" " alt="" coords="629,179,345,231,344,226,633,175"/>
-<area shape="rect" href="../../d9/d00/a00257.html" title="Contains the datatype definitions for use with Microsoft Visual C++ and Linux." alt="" coords="354,229,443,256"/>
+<area shape="rect" href="../../df/d00/a00263.html" title="Contains the datatype definitions for use with Microsoft Visual C++ and Linux." alt="" coords="354,229,443,256"/>
 <area shape="poly" title=" " alt="" coords="629,181,459,228,458,223,634,180"/>
 <area shape="rect" title=" " alt="" coords="468,229,535,256"/>
 <area shape="poly" title=" " alt="" coords="646,181,546,225,544,220,641,183"/>
@@ -144,9 +144,9 @@ Include dependency graph for NetworkTap.h:</div>
 <area shape="poly" title=" " alt="" coords="667,180,636,220,616,241,592,258,540,284,486,302,485,297,538,279,589,254,612,237,633,217,662,183"/>
 <area shape="rect" href="../../d4/d00/a00035.html" title=" " alt="" coords="711,229,825,256"/>
 <area shape="poly" title=" " alt="" coords="690,179,742,220,737,219,689,184"/>
-<area shape="rect" href="../../db/d00/a00296.html" title="Contains macro&#39;s and prototypes for debugging." alt="" coords="1130,229,1232,256"/>
+<area shape="rect" href="../../d0/d00/a00302.html" title="Contains macro&#39;s and prototypes for debugging." alt="" coords="1130,229,1232,256"/>
 <area shape="poly" title=" " alt="" coords="716,172,1112,227,1117,230,1112,230,1112,232,716,177"/>
-<area shape="rect" href="../../df/d00/a00299.html" title="Contains byte&#45;order conversion helpers." alt="" coords="1257,229,1362,256"/>
+<area shape="rect" href="../../d3/d00/a00305.html" title="Contains byte&#45;order conversion helpers." alt="" coords="1257,229,1362,256"/>
 <area shape="poly" title=" " alt="" coords="716,170,937,190,1244,229,1239,229,936,195,716,175"/>
 <area shape="rect" title=" " alt="" coords="5,379,83,405"/>
 <area shape="poly" title=" " alt="" coords="179,334,87,374,85,369,176,329"/>
@@ -208,13 +208,11 @@ Include dependency graph for NetworkTap.h:</div>
 </div>
 <p><a href="../../db/d00/a00482_source.html">Go to the source code of this file.</a></p>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>TAP device network backend. </p>
-<p>Host support:</p><ul>
-<li>Linux: Opens the shared clone device /dev/net/tun and binds it to a named tap interface via the TUNSETIFF ioctl.</li>
-<li>*BSD: A TAP device is a character device node (usually /dev/tapN). </li>
-</ul>
+<div class="textblock"><p>Userspace (slirp) network backend. </p>
+<p>This backend needs no host privileges and no pre-created interface: the emulated NIC is placed on a private virtual LAN whose gateway is a user-space NAT implemented in Rust (see src/network/slirp-rs). The guest gets its address over DHCP from the backend, and its TCP/UDP/ICMP traffic is translated to ordinary host sockets on the process's behalf.</p>
+<p>The heavy lifting lives in a Rust static library linked into es40; this class is only the thin C++ side of the C ABI exposed by that library. </p>
 
-<p class="definition">Definition in file <a class="el" href="../../db/d00/a00482_source.html">NetworkTap.h</a>.</p>
+<p class="definition">Definition in file <a class="el" href="../../db/d00/a00482_source.html">NetworkSlirp.h</a>.</p>
 </div></div><!-- contents -->
 </div><!-- doc-content -->
 <div id="page-nav" class="page-nav-panel">
@@ -228,7 +226,7 @@ Include dependency graph for NetworkTap.h:</div>
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
-    <li class="navelem"><a href="../../dir_c901c14b65aa229498a52b725b3d4a2c.html">network</a></li><li class="navelem"><a href="../../db/d00/a00482.html">NetworkTap.h</a></li>
+    <li class="navelem"><a href="../../dir_c901c14b65aa229498a52b725b3d4a2c.html">network</a></li><li class="navelem"><a href="../../db/d00/a00482.html">NetworkSlirp.h</a></li>
     <li class="footer">Generated by <a href="https://www.doxygen.org/index.html"><img class="footer" src="../../doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.18.0 </li>
   </ul>
 </div>

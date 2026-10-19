@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.18.0"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ES40: CPU/cpu_bwx.h File Reference</title>
+<title>ES40: CPU/cpu_arith.h File Reference</title>
 <link href="../../tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="../../dynsections.js"></script>
 <script type="text/javascript" src="../../codefolding.js"></script>
@@ -26,7 +26,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">ES40<span id="projectnumber">&#160;0.17+</span>
+   <div id="projectname">ES40<span id="projectnumber">&#160;0.92.2</span>
    </div>
   </td>
  </tr>
@@ -109,18 +109,18 @@ document.addEventListener('DOMContentLoaded',() => { initNavTree('d7/d00/a00173.
 </div>
 
 <div class="header">
-  <div class="headertitle"><div class="title">cpu_bwx.h File Reference</div></div>
+  <div class="headertitle"><div class="title">cpu_arith.h File Reference</div></div>
 </div><!--header-->
 <div class="contents">
 
-<p>Contains code macros for the processor BWX (byte and word extension) instructions.  
+<p>Contains code macros for the processor integer arithmetic instructions.  
 <a href="#details">More...</a></p>
 <div class="textblock"><div class="dynheader">
 This graph shows which files directly or indirectly include this file:</div>
 <div class="dyncontent">
-<div class="center"><img src="../../de/d00/a00175.png" border="0" usemap="#a_c_p_u_2cpu__bwx_8hdep" loading="lazy" alt=""/></div>
-<map name="a_c_p_u_2cpu__bwx_8hdep" id="a_c_p_u_2cpu__bwx_8hdep">
-<area shape="rect" title="Contains code macros for the processor BWX (byte and word extension) instructions." alt="" coords="17,5,135,32"/>
+<div class="center"><img src="../../de/d00/a00175.png" border="0" usemap="#a_c_p_u_2cpu__arith_8hdep" loading="lazy" alt=""/></div>
+<map name="a_c_p_u_2cpu__arith_8hdep" id="a_c_p_u_2cpu__arith_8hdep">
+<area shape="rect" title="Contains code macros for the processor integer arithmetic instructions." alt="" coords="17,5,135,32"/>
 <area shape="rect" href="../../d5/d00/a00140.html" title="Contains the code for the emulated DecChip 21264CB EV68 Alpha processor." alt="" coords="5,80,147,107"/>
 <area shape="poly" title=" " alt="" coords="78,46,79,80,73,79,74,50"/>
 </map>
@@ -130,558 +130,658 @@ This graph shows which files directly or indirectly include this file:</div>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 id="header-define-members" class="groupheader"><a id="define-members" name="define-members"></a>
 Macros</h2></td></tr>
-<tr class="memitem:a372036f3cc8e2a102c691c814c13193c" id="r_a372036f3cc8e2a102c691c814c13193c"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a372036f3cc8e2a102c691c814c13193c">DO_CMPBGE</a></td></tr>
-<tr class="memitem:ab82b9647c32461fcbc75ca10ffd36983" id="r_ab82b9647c32461fcbc75ca10ffd36983"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ab82b9647c32461fcbc75ca10ffd36983">DO_EXTBL</a></td></tr>
-<tr class="memitem:a1095041dc292439083adb9ac75f78afc" id="r_a1095041dc292439083adb9ac75f78afc"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a1095041dc292439083adb9ac75f78afc">DO_EXTWL</a></td></tr>
-<tr class="memitem:a40637e96e246de62996f87b090d44b2e" id="r_a40637e96e246de62996f87b090d44b2e"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a40637e96e246de62996f87b090d44b2e">DO_EXTLL</a></td></tr>
-<tr class="memitem:a8da6416c0140888536a6d51760d4ebb8" id="r_a8da6416c0140888536a6d51760d4ebb8"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a8da6416c0140888536a6d51760d4ebb8">DO_EXTQL</a>&#160;&#160;&#160;state.r[<a class="el" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = (state.r[<a class="el" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &gt;&gt; ((<a class="el" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8));</td></tr>
-<tr class="memitem:a1477843632d0fbae38b74f29c19af66f" id="r_a1477843632d0fbae38b74f29c19af66f"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a1477843632d0fbae38b74f29c19af66f">DO_EXTWH</a></td></tr>
-<tr class="memitem:ac92d07b8eb4f683568f7d0d10545adea" id="r_ac92d07b8eb4f683568f7d0d10545adea"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ac92d07b8eb4f683568f7d0d10545adea">DO_EXTLH</a></td></tr>
-<tr class="memitem:a2a20febd2910865ff6c4f056ebc9929a" id="r_a2a20febd2910865ff6c4f056ebc9929a"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a2a20febd2910865ff6c4f056ebc9929a">DO_EXTQH</a></td></tr>
-<tr class="memitem:a83f6074bcb75e3de991c28c43220e95c" id="r_a83f6074bcb75e3de991c28c43220e95c"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a83f6074bcb75e3de991c28c43220e95c">DO_INSBL</a></td></tr>
-<tr class="memitem:adb6144f6a39acc2135860ec558c03a20" id="r_adb6144f6a39acc2135860ec558c03a20"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#adb6144f6a39acc2135860ec558c03a20">DO_INSWL</a></td></tr>
-<tr class="memitem:adb7377634aaabb854b67869e6d7b0ba5" id="r_adb7377634aaabb854b67869e6d7b0ba5"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#adb7377634aaabb854b67869e6d7b0ba5">DO_INSLL</a></td></tr>
-<tr class="memitem:a115f5127a932ba4a7e7a5cb58209a13d" id="r_a115f5127a932ba4a7e7a5cb58209a13d"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a115f5127a932ba4a7e7a5cb58209a13d">DO_INSQL</a>&#160;&#160;&#160;state.r[<a class="el" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = (state.r[<a class="el" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>]) &lt;&lt; ((<a class="el" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8);</td></tr>
-<tr class="memitem:a712824244f379491b105a4edc9814e5e" id="r_a712824244f379491b105a4edc9814e5e"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a712824244f379491b105a4edc9814e5e">DO_INSWH</a></td></tr>
-<tr class="memitem:a61d14ed5f9ab647874e39e4375161277" id="r_a61d14ed5f9ab647874e39e4375161277"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a61d14ed5f9ab647874e39e4375161277">DO_INSLH</a></td></tr>
-<tr class="memitem:ac4aaee832a97952e925e5558498b5166" id="r_ac4aaee832a97952e925e5558498b5166"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ac4aaee832a97952e925e5558498b5166">DO_INSQH</a></td></tr>
-<tr class="memitem:afa836623b2db0a5d6ce8cd2d4fcefea3" id="r_afa836623b2db0a5d6ce8cd2d4fcefea3"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#afa836623b2db0a5d6ce8cd2d4fcefea3">DO_MSKBL</a></td></tr>
-<tr class="memitem:af2d9677b3538325ce0287d47da5c43ad" id="r_af2d9677b3538325ce0287d47da5c43ad"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#af2d9677b3538325ce0287d47da5c43ad">DO_MSKWL</a></td></tr>
-<tr class="memitem:aeb72fdb5c6c0ada118733f8bb360bc84" id="r_aeb72fdb5c6c0ada118733f8bb360bc84"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#aeb72fdb5c6c0ada118733f8bb360bc84">DO_MSKLL</a></td></tr>
-<tr class="memitem:a91274c06a2544984be9b45ab75f2dd85" id="r_a91274c06a2544984be9b45ab75f2dd85"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a91274c06a2544984be9b45ab75f2dd85">DO_MSKQL</a></td></tr>
-<tr class="memitem:ab94e927be6f5e842c3b06cac81531967" id="r_ab94e927be6f5e842c3b06cac81531967"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ab94e927be6f5e842c3b06cac81531967">DO_MSKWH</a></td></tr>
-<tr class="memitem:af163a99132459cf319467fd97da7ee91" id="r_af163a99132459cf319467fd97da7ee91"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#af163a99132459cf319467fd97da7ee91">DO_MSKLH</a></td></tr>
-<tr class="memitem:a9a613b45436d25fd3a487d2cfb70a6ab" id="r_a9a613b45436d25fd3a487d2cfb70a6ab"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a9a613b45436d25fd3a487d2cfb70a6ab">DO_MSKQH</a></td></tr>
-<tr class="memitem:a1f4e71922d944d0c2165bd8cd2897940" id="r_a1f4e71922d944d0c2165bd8cd2897940"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a1f4e71922d944d0c2165bd8cd2897940">DO_SEXTB</a>&#160;&#160;&#160;state.r[<a class="el" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = <a class="el" href="../../d9/d00/a00257.html#a0baef53e104078b162417e01d74d6c37">sext_u64_8</a>(<a class="el" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a>);</td></tr>
-<tr class="memitem:ac8f0ffc9582a26dfbc88adc4410795b2" id="r_ac8f0ffc9582a26dfbc88adc4410795b2"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ac8f0ffc9582a26dfbc88adc4410795b2">DO_SEXTW</a>&#160;&#160;&#160;state.r[<a class="el" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = <a class="el" href="../../d9/d00/a00257.html#ac6ed27bf1a13ebeacc9881d5c2b40d35">sext_u64_16</a>(<a class="el" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a>);</td></tr>
-<tr class="memitem:ae5a22f70b5fda12dc2a165f08020fb97" id="r_ae5a22f70b5fda12dc2a165f08020fb97"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ae5a22f70b5fda12dc2a165f08020fb97">DO_ZAP</a></td></tr>
-<tr class="memitem:a35d662444896120d13eb3a05ad9651e9" id="r_a35d662444896120d13eb3a05ad9651e9"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a35d662444896120d13eb3a05ad9651e9">DO_ZAPNOT</a></td></tr>
+<tr class="memitem:a533a87340b6cd04af8b4fd925e6ed7da" id="r_a533a87340b6cd04af8b4fd925e6ed7da"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a533a87340b6cd04af8b4fd925e6ed7da">ARITH_TRAP_PRINTF</a>(...)</td></tr>
+<tr class="memitem:a4b5ed6c107cf246762a6dd6b5a7da4fe" id="r_a4b5ed6c107cf246762a6dd6b5a7da4fe"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a4b5ed6c107cf246762a6dd6b5a7da4fe">DO_CMPEQ</a>&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = (<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> == <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>) ? 1 : 0;</td></tr>
+<tr class="memitem:a6dc30fdf7e18a4cf3ac24820d1ebef83" id="r_a6dc30fdf7e18a4cf3ac24820d1ebef83"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a6dc30fdf7e18a4cf3ac24820d1ebef83">DO_CMPLT</a>&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = ((<a class="el" href="../../df/d00/a00263.html#aaab2ef2ca1576408739fdb8e9f52ae0f">s64</a>) <a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> &lt; (<a class="el" href="../../df/d00/a00263.html#aaab2ef2ca1576408739fdb8e9f52ae0f">s64</a>) <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>) ? 1 : 0;</td></tr>
+<tr class="memitem:adb837fd5600f65cd86f1e234e62b8531" id="r_adb837fd5600f65cd86f1e234e62b8531"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#adb837fd5600f65cd86f1e234e62b8531">DO_CMPLE</a>&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = ((<a class="el" href="../../df/d00/a00263.html#aaab2ef2ca1576408739fdb8e9f52ae0f">s64</a>) <a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> &lt;= (<a class="el" href="../../df/d00/a00263.html#aaab2ef2ca1576408739fdb8e9f52ae0f">s64</a>) <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>) ? 1 : 0;</td></tr>
+<tr class="memitem:a311252089a9e7b4376ecb060997cf3b4" id="r_a311252089a9e7b4376ecb060997cf3b4"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a311252089a9e7b4376ecb060997cf3b4">DO_ADDQ</a>&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> + <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td></tr>
+<tr class="memitem:a2a2cb728bd9116e36d37a717bf80d6f8" id="r_a2a2cb728bd9116e36d37a717bf80d6f8"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a2a2cb728bd9116e36d37a717bf80d6f8">DO_S4ADDQ</a>&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = (<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 4) + <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td></tr>
+<tr class="memitem:a11623e12c0c8c7eb9537f5db0940cba6" id="r_a11623e12c0c8c7eb9537f5db0940cba6"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a11623e12c0c8c7eb9537f5db0940cba6">DO_S8ADDQ</a>&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = (<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 8) + <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td></tr>
+<tr class="memitem:aa29cb45c4454f1d6660bbb5d161c2cab" id="r_aa29cb45c4454f1d6660bbb5d161c2cab"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#aa29cb45c4454f1d6660bbb5d161c2cab">DO_ADDQ_V</a></td></tr>
+<tr class="memitem:ad6ec3e557cf64e619f12c75ce3b2078a" id="r_ad6ec3e557cf64e619f12c75ce3b2078a"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ad6ec3e557cf64e619f12c75ce3b2078a">DO_ADDL</a>&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> + <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td></tr>
+<tr class="memitem:aec2aca429ea0daf3ad01ce2383837041" id="r_aec2aca429ea0daf3ad01ce2383837041"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#aec2aca429ea0daf3ad01ce2383837041">DO_S4ADDL</a>&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>((<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 4) + <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td></tr>
+<tr class="memitem:ae5870073e20176f1027ff7d3b7c9cbc5" id="r_ae5870073e20176f1027ff7d3b7c9cbc5"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ae5870073e20176f1027ff7d3b7c9cbc5">DO_S8ADDL</a>&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>((<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 8) + <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td></tr>
+<tr class="memitem:af78a2188777639f3ea3850c201ed0540" id="r_af78a2188777639f3ea3850c201ed0540"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#af78a2188777639f3ea3850c201ed0540">DO_ADDL_V</a></td></tr>
+<tr class="memitem:a97467908a590a9e9e5bd2a7f7ec36eb4" id="r_a97467908a590a9e9e5bd2a7f7ec36eb4"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a97467908a590a9e9e5bd2a7f7ec36eb4">DO_CTLZ</a></td></tr>
+<tr class="memitem:a53a048605a41140676cbbacfc0a620a1" id="r_a53a048605a41140676cbbacfc0a620a1"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a53a048605a41140676cbbacfc0a620a1">DO_CTPOP</a></td></tr>
+<tr class="memitem:af1735a5fd10bba4015e858ef15531972" id="r_af1735a5fd10bba4015e858ef15531972"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#af1735a5fd10bba4015e858ef15531972">DO_CTTZ</a></td></tr>
+<tr class="memitem:a6c8b63929cb973629887177e6d681c03" id="r_a6c8b63929cb973629887177e6d681c03"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a6c8b63929cb973629887177e6d681c03">DO_CMPULT</a>&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = ((<a class="el" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a>) <a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> &lt; (<a class="el" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a>) <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>) ? 1 : 0;</td></tr>
+<tr class="memitem:a14989f289c4addb81a9ad8939c1cb5d8" id="r_a14989f289c4addb81a9ad8939c1cb5d8"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a14989f289c4addb81a9ad8939c1cb5d8">DO_CMPULE</a>&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = ((<a class="el" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a>) <a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> &lt;= (<a class="el" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a>) <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>) ? 1 : 0;</td></tr>
+<tr class="memitem:a0fe5add645871be608cdfe4e42dd38e5" id="r_a0fe5add645871be608cdfe4e42dd38e5"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a0fe5add645871be608cdfe4e42dd38e5">DO_MULL</a>&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(<a class="el" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a>) * <a class="el" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(<a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>));</td></tr>
+<tr class="memitem:a8b7779e8e656b918604096f6de35df39" id="r_a8b7779e8e656b918604096f6de35df39"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a8b7779e8e656b918604096f6de35df39">DO_MULL_V</a></td></tr>
+<tr class="memitem:a9da8b1e665c0705dd154200c39701efc" id="r_a9da8b1e665c0705dd154200c39701efc"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a9da8b1e665c0705dd154200c39701efc">DO_MULQ</a>&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td></tr>
+<tr class="memitem:aa65af5c594ffec7dd9ca36cfe6fdf427" id="r_aa65af5c594ffec7dd9ca36cfe6fdf427"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#aa65af5c594ffec7dd9ca36cfe6fdf427">DO_MULQ_V</a></td></tr>
+<tr class="memitem:a6f12d7e360b77fb5c7c6c6f1c40aa2f9" id="r_a6f12d7e360b77fb5c7c6c6f1c40aa2f9"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a6f12d7e360b77fb5c7c6c6f1c40aa2f9">DO_UMULH</a>&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#af7fe3030783d36c253fefe0241c4e594">uemul64</a>(<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a>, <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>, &amp;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>);</td></tr>
+<tr class="memitem:ad4f7355095fea35853a7705e37ec7956" id="r_ad4f7355095fea35853a7705e37ec7956"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ad4f7355095fea35853a7705e37ec7956">DO_SUBQ</a>&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> - <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td></tr>
+<tr class="memitem:a1c3c576b440907189f2edba4407d6860" id="r_a1c3c576b440907189f2edba4407d6860"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a1c3c576b440907189f2edba4407d6860">DO_S4SUBQ</a>&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = (<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 4) - <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td></tr>
+<tr class="memitem:a78ec9100cf320bb62264668b4ca3d5a6" id="r_a78ec9100cf320bb62264668b4ca3d5a6"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a78ec9100cf320bb62264668b4ca3d5a6">DO_S8SUBQ</a>&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = (<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 8) - <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td></tr>
+<tr class="memitem:a11b0b4c4c2a07403cc5d08e7cf504ab8" id="r_a11b0b4c4c2a07403cc5d08e7cf504ab8"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a11b0b4c4c2a07403cc5d08e7cf504ab8">DO_SUBQ_V</a></td></tr>
+<tr class="memitem:af9c590921172add8687edeefaa482175" id="r_af9c590921172add8687edeefaa482175"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#af9c590921172add8687edeefaa482175">DO_SUBL</a>&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> - <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td></tr>
+<tr class="memitem:acac02e1f6d4e8c08c0791336f3589101" id="r_acac02e1f6d4e8c08c0791336f3589101"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#acac02e1f6d4e8c08c0791336f3589101">DO_S4SUBL</a>&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>((<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 4) - <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td></tr>
+<tr class="memitem:ac5ccbcbeb6c09a32bb7ed841f6f611b6" id="r_ac5ccbcbeb6c09a32bb7ed841f6f611b6"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ac5ccbcbeb6c09a32bb7ed841f6f611b6">DO_S8SUBL</a>&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>((<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 8) - <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td></tr>
+<tr class="memitem:aeb101d1136488748e4aebe487faaa4e9" id="r_aeb101d1136488748e4aebe487faaa4e9"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#aeb101d1136488748e4aebe487faaa4e9">DO_SUBL_V</a></td></tr>
 </table>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>Contains code macros for the processor BWX (byte and word extension) instructions. </p>
-<p>Based on ARM chapter 4.6.</p>
+<div class="textblock"><p>Contains code macros for the processor integer arithmetic instructions. </p>
+<p>Based on ARM chapter 4.4.</p>
 <p>$Id$</p>
-<p>X-1.9 Camiel Vanderhoeven 14-MAR-2008</p><ol type="1">
+<p>X-1.14 Camiel Vanderhoeven 14-MAR-2008</p><ol type="1">
 <li>More meaningful exceptions replace throwing (int) 1.</li>
 <li>U64 macro replaces X64 macro.</li>
 </ol>
-<p>X-1.8 Camiel Vanderhoeven 18-JAN-2008 Replaced sext_64 inlines with sext_u64_&lt;bits&gt; inlines for performance reasons (thanks to David Hittner for spotting this!);</p>
-<p>X-1.7 Camiel Vanderhoeven 2-DEC-2007 Use sext_64 inline.</p>
-<p>X-1.6 Camiel Vanderhoeven 11-APR-2007 Moved all data that should be saved to a state file to a structure "state".</p>
-<p>X-1.5 Camiel Vanderhoeven 30-MAR-2007 Added old changelog comments.</p>
-<p>X-1.4 Camiel Vanderhoeven 7-MAR-2007 Bugfix in INSxH. The Wrong Thing(tm) was done when V_2 = 0. Fixes bug # 1676093.</p>
-<p>X-1.3 Camiel Vanderhoeven 7-MAR-2007 Bugfix in EXTxH. The Wrong Thing(tm) was done when V_2 = 0. Fixes bugs # 1667015, 1667018, 1674311, 1676079 and 1676081.</p>
-<p>X-1.2 Camiel Vanderhoeven 19-FEB-2007 Fixed a compiler-dependent bug (possible &gt;&gt; or &lt;&lt;by 64) in EXTxH, INSxH and MSKxH SRA opcodes.</p>
+<p>X-1.13 Camiel Vanderhoeven 28-JAN-2008 Better floating-point exception handling.</p>
+<p>X-1.12 Camiel Vanderhoeven 24-JAN-2008 Fixed some overflow-detection issues.</p>
+<p>X-1.11 Camiel Vanderhoeven 22-JAN-2008 Also fixed MULQ/V.</p>
+<p>X-1.10 Camiel Vanderhoeven 22-JAN-2008 Use RA, RAV style macro's for integer registers; fixed MULQ.</p>
+<p>X-1.9 Camiel Vanderhoeven 22-JAN-2008 Implemented missing /V integer instructions.</p>
+<p>X-1.8 Camiel Vanderhoeven 21-JAN-2008 Fixed misunderstanding of the INT bit in integer overflow traps.</p>
+<p>X-1.7 Camiel Vanderhoeven 18-JAN-2008 Replaced sext_64 inlines with sext_u64_&lt;bits&gt; inlines for performance reasons (thanks to David Hittner for spotting this!);</p>
+<p>X-1.6 David Hittner 16-JAN-2008 Added ADDL/V instruction</p>
+<p>X-1.5 Camiel Vanderhoeven 2-DEC-2007 Use sext_64 inline.</p>
+<p>X-1.4 Camiel Vanderhoeven 11-APR-2007 Moved all data that should be saved to a state file to a structure "state".</p>
+<p>X-1.3 Camiel Vanderhoeven 30-MAR-2007 Added old changelog comments.</p>
+<p>X-1.2 Camiel Vanderhoeven 18-MAR-2007 Bugfix in CTLZ and CTTZ instructions. Fixes the INCON_SCHED bugcheck (bug # 1680064).</p>
 <p>X-1.1 Camiel Vanderhoeven 18-FEB-2007 File created. Contains code previously found in <a class="el" href="../../d7/d00/a00143.html" title="Contains the definitions for the emulated DecChip 21264CB EV68 Alpha processor.">AlphaCPU.h</a></p>
 <dl class="section author"><dt>Author</dt><dd>Camiel Vanderhoeven </dd></dl>
 
-<p class="definition">Definition in file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
+<p class="definition">Definition in file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
 </div><a name="doc-define-members" id="doc-define-members"></a><h2 id="header-doc-define-members" class="groupheader">Macro Definition Documentation</h2>
-<a id="a372036f3cc8e2a102c691c814c13193c" name="a372036f3cc8e2a102c691c814c13193c"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a372036f3cc8e2a102c691c814c13193c">&#9670;&#160;</a></span>DO_CMPBGE</h2>
+<a id="a533a87340b6cd04af8b4fd925e6ed7da" name="a533a87340b6cd04af8b4fd925e6ed7da"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a533a87340b6cd04af8b4fd925e6ed7da">&#9670;&#160;</a></span>ARITH_TRAP_PRINTF</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">#define DO_CMPBGE</td>
+          <td class="memname">#define ARITH_TRAP_PRINTF</td>
+          <td>(</td>
+          <td class="paramtype"></td>          <td class="paramname"><span class="paramname"><em></em></span>...</td><td>)</td>
+          <td></td>
         </tr>
       </table>
 </div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] =                                                   \</div>
-<div class="line">(((<a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>) (state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &amp; 0xff) &gt;= (<a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>) (<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 0xff)) ? 1 : 0) |                  \</div>
-<div class="line">(((<a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>) ((state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &gt;&gt; 8) &amp; 0xff) &gt;= (<a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>) ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &gt;&gt; 8) &amp; 0xff)) ? 2 : 0) |    \</div>
-<div class="line">(((<a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>) ((state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &gt;&gt; 16) &amp; 0xff) &gt;= (<a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>) ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &gt;&gt; 16) &amp; 0xff)) ? 4 : 0) |  \</div>
-<div class="line">(((<a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>) ((state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &gt;&gt; 24) &amp; 0xff) &gt;= (<a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>) ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &gt;&gt; 24) &amp; 0xff)) ? 8 : 0) |  \</div>
-<div class="line">(((<a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>) ((state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &gt;&gt; 32) &amp; 0xff) &gt;= (<a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>) ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &gt;&gt; 32) &amp; 0xff)) ? 16 : 0) | \</div>
-<div class="line">(((<a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>) ((state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &gt;&gt; 40) &amp; 0xff) &gt;= (<a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>) ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &gt;&gt; 40) &amp; 0xff)) ? 32 : 0) | \</div>
-<div class="line">(((<a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>) ((state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &gt;&gt; 48) &amp; 0xff) &gt;= (<a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>) ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &gt;&gt; 48) &amp; 0xff)) ? 64 : 0) | \</div>
-<div class="line">(((<a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>) ((state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &gt;&gt; 56) &amp; 0xff) &gt;= (<a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>) ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &gt;&gt; 56) &amp; 0xff)) ? 128 : 0);</div>
-<div class="ttc" id="aa00182_html_a100362a825d9eb8f8cc30179894bcdc3"><div class="ttname"><a href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a></div><div class="ttdeci">#define V_2</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00849">cpu_defs.h:849</a></div></div>
-<div class="ttc" id="aa00182_html_a14e5d5a6641dfac1ed51225a7b87bc92"><div class="ttname"><a href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a></div><div class="ttdeci">#define REG_3</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00841">cpu_defs.h:841</a></div></div>
-<div class="ttc" id="aa00182_html_a3cc7326bd3140cc269e686fc46179a21"><div class="ttname"><a href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a></div><div class="ttdeci">#define REG_1</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00839">cpu_defs.h:839</a></div></div>
-<div class="ttc" id="aa00257_html_a987e4d6cf789cb59dbb390728271e4d6"><div class="ttname"><a href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a></div><div class="ttdeci">uint8_t u8</div><div class="ttdef"><b>Definition</b> <a href="../../d9/d00/a00257_source.html#l00123">datatypes.h:123</a></div></div>
+<b>Value:</b><div class="fragment"><div class="line">((void) 0)</div>
 </div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00068">68</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00086">86</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
 
 </div>
 </div>
-<a id="ab82b9647c32461fcbc75ca10ffd36983" name="ab82b9647c32461fcbc75ca10ffd36983"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ab82b9647c32461fcbc75ca10ffd36983">&#9670;&#160;</a></span>DO_EXTBL</h2>
+<a id="ad6ec3e557cf64e619f12c75ce3b2078a" name="ad6ec3e557cf64e619f12c75ce3b2078a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ad6ec3e557cf64e619f12c75ce3b2078a">&#9670;&#160;</a></span>DO_ADDL</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">#define DO_EXTBL</td>
+          <td class="memname">#define DO_ADDL&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> + <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td>
         </tr>
       </table>
 </div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = \</div>
-<div class="line">(                              \</div>
-<div class="line">  state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &gt;&gt;            \</div>
-<div class="line">  ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8)              \</div>
-<div class="line">) &amp; <a class="code hl_define" href="../../d7/d00/a00182.html#a594bc985342666d88c0c87ce02b92bc5">X64_BYTE</a>;</div>
-<div class="ttc" id="aa00182_html_a594bc985342666d88c0c87ce02b92bc5"><div class="ttname"><a href="../../d7/d00/a00182.html#a594bc985342666d88c0c87ce02b92bc5">X64_BYTE</a></div><div class="ttdeci">#define X64_BYTE</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00352">cpu_defs.h:352</a></div></div>
+
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00114">114</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
+
+</div>
+</div>
+<a id="af78a2188777639f3ea3850c201ed0540" name="af78a2188777639f3ea3850c201ed0540"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#af78a2188777639f3ea3850c201ed0540">&#9670;&#160;</a></span>DO_ADDL_V</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_ADDL_V</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<b>Value:</b><div class="fragment"><div class="line">{                                                                             \</div>
+<div class="line">  <a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rav = <a class="code hl_define" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a>;                                                              \</div>
+<div class="line">  <a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rbv = <a class="code hl_define" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;                                                              \</div>
+<div class="line">  <a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="code hl_function" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(rav + rbv);                                               \</div>
+<div class="line">                                                                           \</div>
+<div class="line">                                                \</div>
+<div class="line">  if(((~rav ^ rbv) &amp; (rav ^ <a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>)) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#a7230384aeea638e86d1b5253fa07bb5e">L_SIGN</a>)                                   \</div>
+<div class="line">  {                                                                           \</div>
+<div class="line">    ARITH_TRAP_I(<a class="code hl_define" href="../../de/d00/a00185.html#a161e193f4ff9d271b7cc6ed12c4463ac">TRAP_IOV</a>, <a class="code hl_define" href="../../de/d00/a00185.html#a9de40e06982123e40c3c92b5db6d7640">RC</a>);                                               \</div>
+<div class="line">    ARITH_TRAP_PRINTF(<span class="stringliteral">&quot;ADDL_V %016&quot;</span> PRIx64 <span class="stringliteral">&quot; + %016&quot;</span> PRIx64 <span class="stringliteral">&quot; = %016&quot;</span> PRIx64 <span class="stringliteral">&quot; + TRAP.\n&quot;</span>, \</div>
+<div class="line">                      rav, rbv, <a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>);                                          \</div>
+<div class="line">  }                                                                           \</div>
+<div class="line">}</div>
+<div class="ttc" id="aa00185_html_a161e193f4ff9d271b7cc6ed12c4463ac"><div class="ttname"><a href="../../de/d00/a00185.html#a161e193f4ff9d271b7cc6ed12c4463ac">TRAP_IOV</a></div><div class="ttdeci">#define TRAP_IOV</div><div class="ttdef"><b>Definition</b> <a href="../../de/d00/a00185_source.html#l00882">cpu_defs.h:882</a></div></div>
+<div class="ttc" id="aa00185_html_a2f6f6112bc4d90eddc76fc7b66f5aaf9"><div class="ttname"><a href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a></div><div class="ttdeci">#define RAV</div><div class="ttdef"><b>Definition</b> <a href="../../de/d00/a00185_source.html#l00846">cpu_defs.h:846</a></div></div>
+<div class="ttc" id="aa00185_html_a3bc286803dd900b16f9c3704d4c2f198"><div class="ttname"><a href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a></div><div class="ttdeci">#define RCV</div><div class="ttdef"><b>Definition</b> <a href="../../de/d00/a00185_source.html#l00851">cpu_defs.h:851</a></div></div>
+<div class="ttc" id="aa00185_html_a7230384aeea638e86d1b5253fa07bb5e"><div class="ttname"><a href="../../de/d00/a00185.html#a7230384aeea638e86d1b5253fa07bb5e">L_SIGN</a></div><div class="ttdeci">#define L_SIGN</div><div class="ttdef"><b>Definition</b> <a href="../../de/d00/a00185_source.html#l00358">cpu_defs.h:358</a></div></div>
+<div class="ttc" id="aa00185_html_a9de40e06982123e40c3c92b5db6d7640"><div class="ttname"><a href="../../de/d00/a00185.html#a9de40e06982123e40c3c92b5db6d7640">RC</a></div><div class="ttdeci">#define RC</div><div class="ttdef"><b>Definition</b> <a href="../../de/d00/a00185_source.html#l00850">cpu_defs.h:850</a></div></div>
+<div class="ttc" id="aa00185_html_ae7171e6b384266c5be0595e42b921bfa"><div class="ttname"><a href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a></div><div class="ttdeci">#define RBV</div><div class="ttdef"><b>Definition</b> <a href="../../de/d00/a00185_source.html#l00848">cpu_defs.h:848</a></div></div>
+<div class="ttc" id="aa00263_html_a1af9f95651e921615e75917a6dd1b574"><div class="ttname"><a href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a></div><div class="ttdeci">uint64_t u64</div><div class="ttdef"><b>Definition</b> <a href="../../df/d00/a00263_source.html#l00126">datatypes.h:126</a></div></div>
+<div class="ttc" id="aa00263_html_ab6397ea9cae4b1b067118eacffc71ab7"><div class="ttname"><a href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a></div><div class="ttdeci">u64 sext_u64_32(u64 a)</div><div class="ttdoc">Sign-extend a 32-bit value to 64 bits.</div><div class="ttdef"><b>Definition</b> <a href="../../df/d00/a00263_source.html#l00226">datatypes.h:226</a></div></div>
 </div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00078">78</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00118">118</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
 
 </div>
 </div>
-<a id="ac92d07b8eb4f683568f7d0d10545adea" name="ac92d07b8eb4f683568f7d0d10545adea"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ac92d07b8eb4f683568f7d0d10545adea">&#9670;&#160;</a></span>DO_EXTLH</h2>
+<a id="a311252089a9e7b4376ecb060997cf3b4" name="a311252089a9e7b4376ecb060997cf3b4"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a311252089a9e7b4376ecb060997cf3b4">&#9670;&#160;</a></span>DO_ADDQ</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">#define DO_EXTLH</td>
+          <td class="memname">#define DO_ADDQ&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> + <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td>
         </tr>
       </table>
 </div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] =  \</div>
-<div class="line">(                               \</div>
-<div class="line">  state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &lt;&lt;             \</div>
-<div class="line">  ((64 - ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8)) &amp; 63) \</div>
-<div class="line">) &amp; <a class="code hl_define" href="../../d7/d00/a00182.html#a335d69b27121694e7b3b3665ed905eda">X64_LONG</a>;</div>
-<div class="ttc" id="aa00182_html_a335d69b27121694e7b3b3665ed905eda"><div class="ttname"><a href="../../d7/d00/a00182.html#a335d69b27121694e7b3b3665ed905eda">X64_LONG</a></div><div class="ttdeci">#define X64_LONG</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00354">cpu_defs.h:354</a></div></div>
+
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00095">95</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
+
+</div>
+</div>
+<a id="aa29cb45c4454f1d6660bbb5d161c2cab" name="aa29cb45c4454f1d6660bbb5d161c2cab"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aa29cb45c4454f1d6660bbb5d161c2cab">&#9670;&#160;</a></span>DO_ADDQ_V</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_ADDQ_V</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<b>Value:</b><div class="fragment"><div class="line">{                                                                             \</div>
+<div class="line">  <a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rav = <a class="code hl_define" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a>;                                                              \</div>
+<div class="line">  <a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rbv = <a class="code hl_define" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;                                                              \</div>
+<div class="line">  <a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = rav + rbv;                                                            \</div>
+<div class="line">                                                                           \</div>
+<div class="line">                                                \</div>
+<div class="line">  if(((~rav ^ rbv) &amp; (rav ^ <a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>)) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#ae0b86912655913a225470dcf75c35094">Q_SIGN</a>)                                   \</div>
+<div class="line">  {                                                                           \</div>
+<div class="line">    ARITH_TRAP_I(<a class="code hl_define" href="../../de/d00/a00185.html#a161e193f4ff9d271b7cc6ed12c4463ac">TRAP_IOV</a>, <a class="code hl_define" href="../../de/d00/a00185.html#a9de40e06982123e40c3c92b5db6d7640">RC</a>);                                               \</div>
+<div class="line">    ARITH_TRAP_PRINTF(<span class="stringliteral">&quot;ADDQ_V %016&quot;</span> PRIx64 <span class="stringliteral">&quot; + %016&quot;</span> PRIx64 <span class="stringliteral">&quot; = %016&quot;</span> PRIx64 <span class="stringliteral">&quot; + TRAP.\n&quot;</span>, \</div>
+<div class="line">                      rav, rbv, <a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>);                                          \</div>
+<div class="line">  }                                                                           \</div>
+<div class="line">}</div>
+<div class="ttc" id="aa00185_html_ae0b86912655913a225470dcf75c35094"><div class="ttname"><a href="../../de/d00/a00185.html#ae0b86912655913a225470dcf75c35094">Q_SIGN</a></div><div class="ttdeci">#define Q_SIGN</div><div class="ttdef"><b>Definition</b> <a href="../../de/d00/a00185_source.html#l00359">cpu_defs.h:359</a></div></div>
 </div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00099">99</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00099">99</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
 
 </div>
 </div>
-<a id="a40637e96e246de62996f87b090d44b2e" name="a40637e96e246de62996f87b090d44b2e"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a40637e96e246de62996f87b090d44b2e">&#9670;&#160;</a></span>DO_EXTLL</h2>
+<a id="a4b5ed6c107cf246762a6dd6b5a7da4fe" name="a4b5ed6c107cf246762a6dd6b5a7da4fe"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a4b5ed6c107cf246762a6dd6b5a7da4fe">&#9670;&#160;</a></span>DO_CMPEQ</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">#define DO_EXTLL</td>
+          <td class="memname">#define DO_CMPEQ&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = (<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> == <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>) ? 1 : 0;</td>
         </tr>
       </table>
 </div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = \</div>
-<div class="line">(                              \</div>
-<div class="line">  state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &gt;&gt;            \</div>
-<div class="line">  ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8)              \</div>
-<div class="line">) &amp; <a class="code hl_define" href="../../d7/d00/a00182.html#a335d69b27121694e7b3b3665ed905eda">X64_LONG</a>;</div>
+
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00090">90</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
+
+</div>
+</div>
+<a id="adb837fd5600f65cd86f1e234e62b8531" name="adb837fd5600f65cd86f1e234e62b8531"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#adb837fd5600f65cd86f1e234e62b8531">&#9670;&#160;</a></span>DO_CMPLE</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_CMPLE&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = ((<a class="el" href="../../df/d00/a00263.html#aaab2ef2ca1576408739fdb8e9f52ae0f">s64</a>) <a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> &lt;= (<a class="el" href="../../df/d00/a00263.html#aaab2ef2ca1576408739fdb8e9f52ae0f">s64</a>) <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>) ? 1 : 0;</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00092">92</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
+
+</div>
+</div>
+<a id="a6dc30fdf7e18a4cf3ac24820d1ebef83" name="a6dc30fdf7e18a4cf3ac24820d1ebef83"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a6dc30fdf7e18a4cf3ac24820d1ebef83">&#9670;&#160;</a></span>DO_CMPLT</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_CMPLT&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = ((<a class="el" href="../../df/d00/a00263.html#aaab2ef2ca1576408739fdb8e9f52ae0f">s64</a>) <a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> &lt; (<a class="el" href="../../df/d00/a00263.html#aaab2ef2ca1576408739fdb8e9f52ae0f">s64</a>) <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>) ? 1 : 0;</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00091">91</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
+
+</div>
+</div>
+<a id="a14989f289c4addb81a9ad8939c1cb5d8" name="a14989f289c4addb81a9ad8939c1cb5d8"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a14989f289c4addb81a9ad8939c1cb5d8">&#9670;&#160;</a></span>DO_CMPULE</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_CMPULE&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = ((<a class="el" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a>) <a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> &lt;= (<a class="el" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a>) <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>) ? 1 : 0;</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00208">208</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
+
+</div>
+</div>
+<a id="a6c8b63929cb973629887177e6d681c03" name="a6c8b63929cb973629887177e6d681c03"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a6c8b63929cb973629887177e6d681c03">&#9670;&#160;</a></span>DO_CMPULT</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_CMPULT&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = ((<a class="el" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a>) <a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> &lt; (<a class="el" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a>) <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>) ? 1 : 0;</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00207">207</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
+
+</div>
+</div>
+<a id="a97467908a590a9e9e5bd2a7f7ec36eb4" name="a97467908a590a9e9e5bd2a7f7ec36eb4"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a97467908a590a9e9e5bd2a7f7ec36eb4">&#9670;&#160;</a></span>DO_CTLZ</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_CTLZ</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<b>Value:</b><div class="fragment"><div class="line">temp_64 = 0; \</div>
+<div class="line">temp_64_2 = <a class="code hl_define" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;             \</div>
+<div class="line">for(i = 63; i &gt;= 0; i--)     \</div>
+<div class="line">  <span class="keywordflow">if</span>((temp_64_2 &gt;&gt; i) &amp; 1)   \</div>
+<div class="line">    <span class="keywordflow">break</span>;                   \</div>
+<div class="line">  else                       \</div>
+<div class="line">    temp_64++;               \</div>
+<div class="line"><a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = temp_64;</div>
 </div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00088">88</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00134">134</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
 
 </div>
 </div>
-<a id="a2a20febd2910865ff6c4f056ebc9929a" name="a2a20febd2910865ff6c4f056ebc9929a"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a2a20febd2910865ff6c4f056ebc9929a">&#9670;&#160;</a></span>DO_EXTQH</h2>
+<a id="a53a048605a41140676cbbacfc0a620a1" name="a53a048605a41140676cbbacfc0a620a1"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a53a048605a41140676cbbacfc0a620a1">&#9670;&#160;</a></span>DO_CTPOP</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">#define DO_EXTQH</td>
+          <td class="memname">#define DO_CTPOP</td>
         </tr>
       </table>
 </div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] =  \</div>
-<div class="line">(                               \</div>
-<div class="line">  state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &lt;&lt;             \</div>
-<div class="line">  ((64 - ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8)) &amp; 63) \</div>
-<div class="line">) &amp; <a class="code hl_define" href="../../d7/d00/a00182.html#ac6522d535177e673b18ac636f4c6df1e">X64_QUAD</a>;</div>
-<div class="ttc" id="aa00182_html_ac6522d535177e673b18ac636f4c6df1e"><div class="ttname"><a href="../../d7/d00/a00182.html#ac6522d535177e673b18ac636f4c6df1e">X64_QUAD</a></div><div class="ttdeci">#define X64_QUAD</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00355">cpu_defs.h:355</a></div></div>
+<b>Value:</b><div class="fragment"><div class="line">temp_64 = 0; \</div>
+<div class="line">temp_64_2 = <a class="code hl_define" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;             \</div>
+<div class="line">for(i = 0; i &lt; 64; i++)      \</div>
+<div class="line">  <span class="keywordflow">if</span>((temp_64_2 &gt;&gt; i) &amp; 1)   \</div>
+<div class="line">    temp_64++;               \</div>
+<div class="line"><a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = temp_64;</div>
 </div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00104">104</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00143">143</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
 
 </div>
 </div>
-<a id="a8da6416c0140888536a6d51760d4ebb8" name="a8da6416c0140888536a6d51760d4ebb8"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a8da6416c0140888536a6d51760d4ebb8">&#9670;&#160;</a></span>DO_EXTQL</h2>
+<a id="af1735a5fd10bba4015e858ef15531972" name="af1735a5fd10bba4015e858ef15531972"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#af1735a5fd10bba4015e858ef15531972">&#9670;&#160;</a></span>DO_CTTZ</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">#define DO_EXTQL&#160;&#160;&#160;state.r[<a class="el" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = (state.r[<a class="el" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &gt;&gt; ((<a class="el" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8));</td>
+          <td class="memname">#define DO_CTTZ</td>
         </tr>
       </table>
 </div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00093">93</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
-
-</div>
-</div>
-<a id="a1477843632d0fbae38b74f29c19af66f" name="a1477843632d0fbae38b74f29c19af66f"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a1477843632d0fbae38b74f29c19af66f">&#9670;&#160;</a></span>DO_EXTWH</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_EXTWH</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] =  \</div>
-<div class="line">(                               \</div>
-<div class="line">  state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &lt;&lt;             \</div>
-<div class="line">  ((64 - ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8)) &amp; 63) \</div>
-<div class="line">) &amp; <a class="code hl_define" href="../../d7/d00/a00182.html#a2f250a4a71ca7a2a86cbb9c3796bf223">X64_WORD</a>;</div>
-<div class="ttc" id="aa00182_html_a2f250a4a71ca7a2a86cbb9c3796bf223"><div class="ttname"><a href="../../d7/d00/a00182.html#a2f250a4a71ca7a2a86cbb9c3796bf223">X64_WORD</a></div><div class="ttdeci">#define X64_WORD</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00353">cpu_defs.h:353</a></div></div>
+<b>Value:</b><div class="fragment"><div class="line">temp_64 = 0; \</div>
+<div class="line">temp_64_2 = <a class="code hl_define" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;             \</div>
+<div class="line">for(i = 0; i &lt; 64; i++)      \</div>
+<div class="line">  <span class="keywordflow">if</span>((temp_64_2 &gt;&gt; i) &amp; 1)   \</div>
+<div class="line">    <span class="keywordflow">break</span>;                   \</div>
+<div class="line">  else                       \</div>
+<div class="line">    temp_64++;               \</div>
+<div class="line"><a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = temp_64;</div>
 </div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00094">94</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00150">150</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
 
 </div>
 </div>
-<a id="a1095041dc292439083adb9ac75f78afc" name="a1095041dc292439083adb9ac75f78afc"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a1095041dc292439083adb9ac75f78afc">&#9670;&#160;</a></span>DO_EXTWL</h2>
+<a id="a0fe5add645871be608cdfe4e42dd38e5" name="a0fe5add645871be608cdfe4e42dd38e5"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a0fe5add645871be608cdfe4e42dd38e5">&#9670;&#160;</a></span>DO_MULL</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">#define DO_EXTWL</td>
+          <td class="memname">#define DO_MULL&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(<a class="el" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a>) * <a class="el" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(<a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>));</td>
         </tr>
       </table>
 </div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = \</div>
-<div class="line">(                              \</div>
-<div class="line">  state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &gt;&gt;            \</div>
-<div class="line">  ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8)              \</div>
-<div class="line">) &amp; <a class="code hl_define" href="../../d7/d00/a00182.html#a2f250a4a71ca7a2a86cbb9c3796bf223">X64_WORD</a>;</div>
+
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00211">211</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
+
+</div>
+</div>
+<a id="a8b7779e8e656b918604096f6de35df39" name="a8b7779e8e656b918604096f6de35df39"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a8b7779e8e656b918604096f6de35df39">&#9670;&#160;</a></span>DO_MULL_V</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_MULL_V</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<b>Value:</b><div class="fragment"><div class="line">{                                                                             \</div>
+<div class="line">  <a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rav = <a class="code hl_define" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a>;                                                              \</div>
+<div class="line">  <a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rbv = <a class="code hl_define" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;                                                              \</div>
+<div class="line">  <a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a> sr = <a class="code hl_function" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(rav) * <a class="code hl_function" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(rbv);                               \</div>
+<div class="line">  <a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="code hl_function" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(sr);                                                      \</div>
+<div class="line">  if((<a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> ^ sr) &amp; <a class="code hl_define" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xffffffff00000000))                                    \</div>
+<div class="line">  {                                                                           \</div>
+<div class="line">    ARITH_TRAP_I(<a class="code hl_define" href="../../de/d00/a00185.html#a161e193f4ff9d271b7cc6ed12c4463ac">TRAP_IOV</a>, <a class="code hl_define" href="../../de/d00/a00185.html#a9de40e06982123e40c3c92b5db6d7640">RC</a>);                                               \</div>
+<div class="line">    ARITH_TRAP_PRINTF(<span class="stringliteral">&quot;MULL_V %016&quot;</span> PRIx64 <span class="stringliteral">&quot; * %016&quot;</span> PRIx64 <span class="stringliteral">&quot; = %016&quot;</span> PRIx64 <span class="stringliteral">&quot; + TRAP.\n&quot;</span>, \</div>
+<div class="line">                      rav, rbv, <a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>);                                          \</div>
+<div class="line">  }                                                                           \</div>
+<div class="line">}</div>
+<div class="ttc" id="aa00263_html_a87a27db8f6877dc5bbc36ec833e88c58"><div class="ttname"><a href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a></div><div class="ttdeci">#define U64(a)</div><div class="ttdef"><b>Definition</b> <a href="../../df/d00/a00263_source.html#l00119">datatypes.h:119</a></div></div>
 </div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00083">83</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00213">213</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
 
 </div>
 </div>
-<a id="a83f6074bcb75e3de991c28c43220e95c" name="a83f6074bcb75e3de991c28c43220e95c"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a83f6074bcb75e3de991c28c43220e95c">&#9670;&#160;</a></span>DO_INSBL</h2>
+<a id="a9da8b1e665c0705dd154200c39701efc" name="a9da8b1e665c0705dd154200c39701efc"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a9da8b1e665c0705dd154200c39701efc">&#9670;&#160;</a></span>DO_MULQ</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">#define DO_INSBL</td>
+          <td class="memname">#define DO_MULQ&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td>
         </tr>
       </table>
 </div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = (state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &amp; <a class="code hl_define" href="../../d7/d00/a00182.html#a594bc985342666d88c0c87ce02b92bc5">X64_BYTE</a>) &lt;&lt; \</div>
-<div class="line">((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8);</div>
+
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00227">227</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
+
+</div>
+</div>
+<a id="aa65af5c594ffec7dd9ca36cfe6fdf427" name="aa65af5c594ffec7dd9ca36cfe6fdf427"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aa65af5c594ffec7dd9ca36cfe6fdf427">&#9670;&#160;</a></span>DO_MULQ_V</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_MULQ_V</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<b>Value:</b><div class="fragment"><div class="line">{                                                                             \</div>
+<div class="line">  <a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rav = <a class="code hl_define" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a>;                                                              \</div>
+<div class="line">  <a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rbv = <a class="code hl_define" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;                                                              \</div>
+<div class="line">  <a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a> t64;                                                                    \</div>
+<div class="line">  <a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="code hl_function" href="../../de/d00/a00185.html#af7fe3030783d36c253fefe0241c4e594">uemul64</a>(rav, rbv, &amp;t64);                                              \</div>
+<div class="line">  if(<a class="code hl_define" href="../../de/d00/a00185.html#af37df68c594bb0879682610e0d3a3fb8">Q_GETSIGN</a>(rav))                                                          \</div>
+<div class="line">    t64 -= rbv;                                                               \</div>
+<div class="line">  if(<a class="code hl_define" href="../../de/d00/a00185.html#af37df68c594bb0879682610e0d3a3fb8">Q_GETSIGN</a>(rbv))                                                          \</div>
+<div class="line">    t64 -= rav;                                                               \</div>
+<div class="line">  if(<a class="code hl_define" href="../../de/d00/a00185.html#af37df68c594bb0879682610e0d3a3fb8">Q_GETSIGN</a>(<a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>) ? (t64 != <a class="code hl_define" href="../../de/d00/a00185.html#ac6522d535177e673b18ac636f4c6df1e">X64_QUAD</a>) : (t64 != 0))                         \</div>
+<div class="line">  {                                                                           \</div>
+<div class="line">    ARITH_TRAP_I(<a class="code hl_define" href="../../de/d00/a00185.html#a161e193f4ff9d271b7cc6ed12c4463ac">TRAP_IOV</a>, <a class="code hl_define" href="../../de/d00/a00185.html#a9de40e06982123e40c3c92b5db6d7640">RC</a>);                                               \</div>
+<div class="line">    ARITH_TRAP_PRINTF(<span class="stringliteral">&quot;MULQ_V %016&quot;</span> PRIx64 <span class="stringliteral">&quot; * %016&quot;</span> PRIx64 <span class="stringliteral">&quot; = %016&quot;</span> PRIx64 <span class="stringliteral">&quot; + TRAP.\n&quot;</span>, \</div>
+<div class="line">                      rav, rbv, <a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>);                                          \</div>
+<div class="line">  }                                                                           \</div>
+<div class="line">}</div>
+<div class="ttc" id="aa00185_html_ac6522d535177e673b18ac636f4c6df1e"><div class="ttname"><a href="../../de/d00/a00185.html#ac6522d535177e673b18ac636f4c6df1e">X64_QUAD</a></div><div class="ttdeci">#define X64_QUAD</div><div class="ttdef"><b>Definition</b> <a href="../../de/d00/a00185_source.html#l00355">cpu_defs.h:355</a></div></div>
+<div class="ttc" id="aa00185_html_af37df68c594bb0879682610e0d3a3fb8"><div class="ttname"><a href="../../de/d00/a00185.html#af37df68c594bb0879682610e0d3a3fb8">Q_GETSIGN</a></div><div class="ttdeci">#define Q_GETSIGN(x)</div><div class="ttdef"><b>Definition</b> <a href="../../de/d00/a00185_source.html#l00360">cpu_defs.h:360</a></div></div>
+<div class="ttc" id="aa00185_html_af7fe3030783d36c253fefe0241c4e594"><div class="ttname"><a href="../../de/d00/a00185.html#af7fe3030783d36c253fefe0241c4e594">uemul64</a></div><div class="ttdeci">u64 uemul64(u64 a, u64 b, u64 *hi)</div><div class="ttdef"><b>Definition</b> <a href="../../de/d00/a00185_source.html#l00397">cpu_defs.h:397</a></div></div>
 </div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00110">110</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00229">229</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
 
 </div>
 </div>
-<a id="a61d14ed5f9ab647874e39e4375161277" name="a61d14ed5f9ab647874e39e4375161277"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a61d14ed5f9ab647874e39e4375161277">&#9670;&#160;</a></span>DO_INSLH</h2>
+<a id="aec2aca429ea0daf3ad01ce2383837041" name="aec2aca429ea0daf3ad01ce2383837041"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aec2aca429ea0daf3ad01ce2383837041">&#9670;&#160;</a></span>DO_S4ADDL</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">#define DO_INSLH</td>
+          <td class="memname">#define DO_S4ADDL&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>((<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 4) + <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td>
         </tr>
       </table>
 </div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = (<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) ? \</div>
-<div class="line">((state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &amp; <a class="code hl_define" href="../../d7/d00/a00182.html#a335d69b27121694e7b3b3665ed905eda">X64_LONG</a>) &gt;&gt; ((64 - ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8)) &amp; 63)) : 0;</div>
+
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00115">115</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
+
+</div>
+</div>
+<a id="a2a2cb728bd9116e36d37a717bf80d6f8" name="a2a2cb728bd9116e36d37a717bf80d6f8"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a2a2cb728bd9116e36d37a717bf80d6f8">&#9670;&#160;</a></span>DO_S4ADDQ</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_S4ADDQ&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = (<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 4) + <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00096">96</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
+
+</div>
+</div>
+<a id="acac02e1f6d4e8c08c0791336f3589101" name="acac02e1f6d4e8c08c0791336f3589101"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#acac02e1f6d4e8c08c0791336f3589101">&#9670;&#160;</a></span>DO_S4SUBL</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_S4SUBL&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>((<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 4) - <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00270">270</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
+
+</div>
+</div>
+<a id="a1c3c576b440907189f2edba4407d6860" name="a1c3c576b440907189f2edba4407d6860"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a1c3c576b440907189f2edba4407d6860">&#9670;&#160;</a></span>DO_S4SUBQ</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_S4SUBQ&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = (<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 4) - <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00251">251</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
+
+</div>
+</div>
+<a id="ae5870073e20176f1027ff7d3b7c9cbc5" name="ae5870073e20176f1027ff7d3b7c9cbc5"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ae5870073e20176f1027ff7d3b7c9cbc5">&#9670;&#160;</a></span>DO_S8ADDL</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_S8ADDL&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>((<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 8) + <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00116">116</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
+
+</div>
+</div>
+<a id="a11623e12c0c8c7eb9537f5db0940cba6" name="a11623e12c0c8c7eb9537f5db0940cba6"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a11623e12c0c8c7eb9537f5db0940cba6">&#9670;&#160;</a></span>DO_S8ADDQ</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_S8ADDQ&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = (<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 8) + <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00097">97</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
+
+</div>
+</div>
+<a id="ac5ccbcbeb6c09a32bb7ed841f6f611b6" name="ac5ccbcbeb6c09a32bb7ed841f6f611b6"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ac5ccbcbeb6c09a32bb7ed841f6f611b6">&#9670;&#160;</a></span>DO_S8SUBL</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_S8SUBL&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>((<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 8) - <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00271">271</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
+
+</div>
+</div>
+<a id="a78ec9100cf320bb62264668b4ca3d5a6" name="a78ec9100cf320bb62264668b4ca3d5a6"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a78ec9100cf320bb62264668b4ca3d5a6">&#9670;&#160;</a></span>DO_S8SUBQ</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_S8SUBQ&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = (<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 8) - <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00252">252</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
+
+</div>
+</div>
+<a id="af9c590921172add8687edeefaa482175" name="af9c590921172add8687edeefaa482175"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#af9c590921172add8687edeefaa482175">&#9670;&#160;</a></span>DO_SUBL</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_SUBL&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> - <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00269">269</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
+
+</div>
+</div>
+<a id="aeb101d1136488748e4aebe487faaa4e9" name="aeb101d1136488748e4aebe487faaa4e9"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aeb101d1136488748e4aebe487faaa4e9">&#9670;&#160;</a></span>DO_SUBL_V</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_SUBL_V</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<b>Value:</b><div class="fragment"><div class="line">{                                                                             \</div>
+<div class="line">  <a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rav = <a class="code hl_define" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a>;                                                              \</div>
+<div class="line">  <a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rbv = <a class="code hl_define" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;                                                              \</div>
+<div class="line">  <a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="code hl_function" href="../../df/d00/a00263.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(rav - rbv);                                               \</div>
+<div class="line">                                                                           \</div>
+<div class="line">                                                \</div>
+<div class="line">  if(((rav ^ rbv) &amp; (rav ^ <a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>)) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#a7230384aeea638e86d1b5253fa07bb5e">L_SIGN</a>)                                    \</div>
+<div class="line">  {                                                                           \</div>
+<div class="line">    ARITH_TRAP_I(<a class="code hl_define" href="../../de/d00/a00185.html#a161e193f4ff9d271b7cc6ed12c4463ac">TRAP_IOV</a>, <a class="code hl_define" href="../../de/d00/a00185.html#a9de40e06982123e40c3c92b5db6d7640">RC</a>);                                               \</div>
+<div class="line">    ARITH_TRAP_PRINTF(<span class="stringliteral">&quot;SUBL_V %016&quot;</span> PRIx64 <span class="stringliteral">&quot; - %016&quot;</span> PRIx64 <span class="stringliteral">&quot; = %016&quot;</span> PRIx64 <span class="stringliteral">&quot; + TRAP.\n&quot;</span>, \</div>
+<div class="line">                      rav, rbv, <a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>);                                          \</div>
+<div class="line">  }                                                                           \</div>
+<div class="line">}</div>
 </div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00119">119</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00273">273</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
 
 </div>
 </div>
-<a id="adb7377634aaabb854b67869e6d7b0ba5" name="adb7377634aaabb854b67869e6d7b0ba5"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#adb7377634aaabb854b67869e6d7b0ba5">&#9670;&#160;</a></span>DO_INSLL</h2>
+<a id="ad4f7355095fea35853a7705e37ec7956" name="ad4f7355095fea35853a7705e37ec7956"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ad4f7355095fea35853a7705e37ec7956">&#9670;&#160;</a></span>DO_SUBQ</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">#define DO_INSLL</td>
+          <td class="memname">#define DO_SUBQ&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> - <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td>
         </tr>
       </table>
 </div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = (state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &amp; <a class="code hl_define" href="../../d7/d00/a00182.html#a335d69b27121694e7b3b3665ed905eda">X64_LONG</a>) &lt;&lt; \</div>
-<div class="line">((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8);</div>
+
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00250">250</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
+
+</div>
+</div>
+<a id="a11b0b4c4c2a07403cc5d08e7cf504ab8" name="a11b0b4c4c2a07403cc5d08e7cf504ab8"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a11b0b4c4c2a07403cc5d08e7cf504ab8">&#9670;&#160;</a></span>DO_SUBQ_V</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_SUBQ_V</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<b>Value:</b><div class="fragment"><div class="line">{                                                                             \</div>
+<div class="line">  <a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rav = <a class="code hl_define" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a>;                                                              \</div>
+<div class="line">  <a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rbv = <a class="code hl_define" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;                                                              \</div>
+<div class="line">  <a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = rav - rbv;                                                            \</div>
+<div class="line">                                                                           \</div>
+<div class="line">                                                \</div>
+<div class="line">  if(((rav ^ rbv) &amp; (rav ^ <a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>)) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#ae0b86912655913a225470dcf75c35094">Q_SIGN</a>)                                    \</div>
+<div class="line">  {                                                                           \</div>
+<div class="line">    ARITH_TRAP_I(<a class="code hl_define" href="../../de/d00/a00185.html#a161e193f4ff9d271b7cc6ed12c4463ac">TRAP_IOV</a>, <a class="code hl_define" href="../../de/d00/a00185.html#a9de40e06982123e40c3c92b5db6d7640">RC</a>);                                               \</div>
+<div class="line">    ARITH_TRAP_PRINTF(<span class="stringliteral">&quot;SUBQ_V %016&quot;</span> PRIx64 <span class="stringliteral">&quot; - %016&quot;</span> PRIx64 <span class="stringliteral">&quot; = %016&quot;</span> PRIx64 <span class="stringliteral">&quot; + TRAP.\n&quot;</span>, \</div>
+<div class="line">                      rav, rbv, <a class="code hl_define" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>);                                          \</div>
+<div class="line">  }                                                                           \</div>
+<div class="line">}</div>
 </div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00114">114</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00254">254</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
 
 </div>
 </div>
-<a id="ac4aaee832a97952e925e5558498b5166" name="ac4aaee832a97952e925e5558498b5166"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ac4aaee832a97952e925e5558498b5166">&#9670;&#160;</a></span>DO_INSQH</h2>
+<a id="a6f12d7e360b77fb5c7c6c6f1c40aa2f9" name="a6f12d7e360b77fb5c7c6c6f1c40aa2f9"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a6f12d7e360b77fb5c7c6c6f1c40aa2f9">&#9670;&#160;</a></span>DO_UMULH</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">#define DO_INSQH</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = (<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) ? \</div>
-<div class="line">((state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &amp; <a class="code hl_define" href="../../d7/d00/a00182.html#ac6522d535177e673b18ac636f4c6df1e">X64_QUAD</a>) &gt;&gt; ((64 - ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8)) &amp; 63)) : 0;</div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00121">121</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
-
-</div>
-</div>
-<a id="a115f5127a932ba4a7e7a5cb58209a13d" name="a115f5127a932ba4a7e7a5cb58209a13d"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a115f5127a932ba4a7e7a5cb58209a13d">&#9670;&#160;</a></span>DO_INSQL</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_INSQL&#160;&#160;&#160;state.r[<a class="el" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = (state.r[<a class="el" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>]) &lt;&lt; ((<a class="el" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8);</td>
+          <td class="memname">#define DO_UMULH&#160;&#160;&#160;<a class="el" href="../../de/d00/a00185.html#af7fe3030783d36c253fefe0241c4e594">uemul64</a>(<a class="el" href="../../de/d00/a00185.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a>, <a class="el" href="../../de/d00/a00185.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>, &amp;<a class="el" href="../../de/d00/a00185.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>);</td>
         </tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00116">116</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
-
-</div>
-</div>
-<a id="a712824244f379491b105a4edc9814e5e" name="a712824244f379491b105a4edc9814e5e"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a712824244f379491b105a4edc9814e5e">&#9670;&#160;</a></span>DO_INSWH</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_INSWH</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = (<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) ? \</div>
-<div class="line">((state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &amp; <a class="code hl_define" href="../../d7/d00/a00182.html#a2f250a4a71ca7a2a86cbb9c3796bf223">X64_WORD</a>) &gt;&gt; ((64 - ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8)) &amp; 63)) : 0;</div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00117">117</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
-
-</div>
-</div>
-<a id="adb6144f6a39acc2135860ec558c03a20" name="adb6144f6a39acc2135860ec558c03a20"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#adb6144f6a39acc2135860ec558c03a20">&#9670;&#160;</a></span>DO_INSWL</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_INSWL</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = (state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &amp; <a class="code hl_define" href="../../d7/d00/a00182.html#a2f250a4a71ca7a2a86cbb9c3796bf223">X64_WORD</a>) &lt;&lt; \</div>
-<div class="line">((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8);</div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00112">112</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
-
-</div>
-</div>
-<a id="afa836623b2db0a5d6ce8cd2d4fcefea3" name="afa836623b2db0a5d6ce8cd2d4fcefea3"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#afa836623b2db0a5d6ce8cd2d4fcefea3">&#9670;&#160;</a></span>DO_MSKBL</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_MSKBL</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &amp;~ \</div>
-<div class="line">(<a class="code hl_define" href="../../d7/d00/a00182.html#a594bc985342666d88c0c87ce02b92bc5">X64_BYTE</a> &lt;&lt; ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8));</div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00124">124</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
-
-</div>
-</div>
-<a id="af163a99132459cf319467fd97da7ee91" name="af163a99132459cf319467fd97da7ee91"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#af163a99132459cf319467fd97da7ee91">&#9670;&#160;</a></span>DO_MSKLH</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_MSKLH</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = (<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) ? \</div>
-<div class="line">(state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &amp;~(<a class="code hl_define" href="../../d7/d00/a00182.html#a335d69b27121694e7b3b3665ed905eda">X64_LONG</a> &gt;&gt; ((64 - ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8)) &amp; 63))) : state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>];</div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00134">134</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
-
-</div>
-</div>
-<a id="aeb72fdb5c6c0ada118733f8bb360bc84" name="aeb72fdb5c6c0ada118733f8bb360bc84"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aeb72fdb5c6c0ada118733f8bb360bc84">&#9670;&#160;</a></span>DO_MSKLL</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_MSKLL</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &amp;~ \</div>
-<div class="line">(<a class="code hl_define" href="../../d7/d00/a00182.html#a335d69b27121694e7b3b3665ed905eda">X64_LONG</a> &lt;&lt; ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8));</div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00128">128</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
-
-</div>
-</div>
-<a id="a9a613b45436d25fd3a487d2cfb70a6ab" name="a9a613b45436d25fd3a487d2cfb70a6ab"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a9a613b45436d25fd3a487d2cfb70a6ab">&#9670;&#160;</a></span>DO_MSKQH</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_MSKQH</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = (<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) ? \</div>
-<div class="line">(state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &amp;~(<a class="code hl_define" href="../../d7/d00/a00182.html#ac6522d535177e673b18ac636f4c6df1e">X64_QUAD</a> &gt;&gt; ((64 - ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8)) &amp; 63))) : state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>];</div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00136">136</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
-
-</div>
-</div>
-<a id="a91274c06a2544984be9b45ab75f2dd85" name="a91274c06a2544984be9b45ab75f2dd85"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a91274c06a2544984be9b45ab75f2dd85">&#9670;&#160;</a></span>DO_MSKQL</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_MSKQL</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &amp;~ \</div>
-<div class="line">(<a class="code hl_define" href="../../d7/d00/a00182.html#ac6522d535177e673b18ac636f4c6df1e">X64_QUAD</a> &lt;&lt; ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8));</div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00130">130</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
-
-</div>
-</div>
-<a id="ab94e927be6f5e842c3b06cac81531967" name="ab94e927be6f5e842c3b06cac81531967"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ab94e927be6f5e842c3b06cac81531967">&#9670;&#160;</a></span>DO_MSKWH</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_MSKWH</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = (<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) ? \</div>
-<div class="line">(state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &amp;~(<a class="code hl_define" href="../../d7/d00/a00182.html#a2f250a4a71ca7a2a86cbb9c3796bf223">X64_WORD</a> &gt;&gt; ((64 - ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8)) &amp; 63))) : state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>];</div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00132">132</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
-
-</div>
-</div>
-<a id="af2d9677b3538325ce0287d47da5c43ad" name="af2d9677b3538325ce0287d47da5c43ad"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#af2d9677b3538325ce0287d47da5c43ad">&#9670;&#160;</a></span>DO_MSKWL</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_MSKWL</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &amp;~ \</div>
-<div class="line">(<a class="code hl_define" href="../../d7/d00/a00182.html#a2f250a4a71ca7a2a86cbb9c3796bf223">X64_WORD</a> &lt;&lt; ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 7) * 8));</div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00126">126</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
-
-</div>
-</div>
-<a id="a1f4e71922d944d0c2165bd8cd2897940" name="a1f4e71922d944d0c2165bd8cd2897940"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a1f4e71922d944d0c2165bd8cd2897940">&#9670;&#160;</a></span>DO_SEXTB</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_SEXTB&#160;&#160;&#160;state.r[<a class="el" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = <a class="el" href="../../d9/d00/a00257.html#a0baef53e104078b162417e01d74d6c37">sext_u64_8</a>(<a class="el" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a>);</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00139">139</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
-
-</div>
-</div>
-<a id="ac8f0ffc9582a26dfbc88adc4410795b2" name="ac8f0ffc9582a26dfbc88adc4410795b2"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ac8f0ffc9582a26dfbc88adc4410795b2">&#9670;&#160;</a></span>DO_SEXTW</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_SEXTW&#160;&#160;&#160;state.r[<a class="el" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = <a class="el" href="../../d9/d00/a00257.html#ac6ed27bf1a13ebeacc9881d5c2b40d35">sext_u64_16</a>(<a class="el" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a>);</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00140">140</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
-
-</div>
-</div>
-<a id="ae5a22f70b5fda12dc2a165f08020fb97" name="ae5a22f70b5fda12dc2a165f08020fb97"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ae5a22f70b5fda12dc2a165f08020fb97">&#9670;&#160;</a></span>DO_ZAP</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_ZAP</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &amp;                           \</div>
-<div class="line">(                                                                         \</div>
-<div class="line">  ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 1) ? 0 : <a class="code hl_define" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xff)) | ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 2) ? 0 : <a class="code hl_define" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xff00)) |           \</div>
-<div class="line">    ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 4) ? 0 : <a class="code hl_define" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xff0000)) | ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 8) ? 0 : <a class="code hl_define" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xff000000)) | \</div>
-<div class="line">      ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 16) ? 0 : <a class="code hl_define" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xff00000000)) |                              \</div>
-<div class="line">        ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 32) ? 0 : <a class="code hl_define" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xff0000000000)) |                          \</div>
-<div class="line">          ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 64) ? 0 : <a class="code hl_define" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xff000000000000)) |                      \</div>
-<div class="line">            ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 128) ? 0 : <a class="code hl_define" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xff00000000000000))                   \</div>
-<div class="line">);</div>
-<div class="ttc" id="aa00257_html_a87a27db8f6877dc5bbc36ec833e88c58"><div class="ttname"><a href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a></div><div class="ttdeci">#define U64(a)</div><div class="ttdef"><b>Definition</b> <a href="../../d9/d00/a00257_source.html#l00119">datatypes.h:119</a></div></div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00142">142</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
-
-</div>
-</div>
-<a id="a35d662444896120d13eb3a05ad9651e9" name="a35d662444896120d13eb3a05ad9651e9"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a35d662444896120d13eb3a05ad9651e9">&#9670;&#160;</a></span>DO_ZAPNOT</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_ZAPNOT</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] &amp;                           \</div>
-<div class="line">(                                                                         \</div>
-<div class="line">  ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 1) ? <a class="code hl_define" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xff) : 0) | ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 2) ? <a class="code hl_define" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xff00) : 0) |           \</div>
-<div class="line">    ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 4) ? <a class="code hl_define" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xff0000) : 0) | ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 8) ? <a class="code hl_define" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xff000000) : 0) | \</div>
-<div class="line">      ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 16) ? <a class="code hl_define" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xff00000000) : 0) |                              \</div>
-<div class="line">        ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 32) ? <a class="code hl_define" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xff0000000000) : 0) |                          \</div>
-<div class="line">          ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 64) ? <a class="code hl_define" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xff000000000000) : 0) |                      \</div>
-<div class="line">            ((<a class="code hl_define" href="../../d7/d00/a00182.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a> &amp; 128) ? <a class="code hl_define" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xff00000000000000) : 0)                   \</div>
-<div class="line">);</div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00152">152</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_bwx.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="../../d7/d00/a00173_source.html#l00247">247</a> of file <a class="el" href="../../d7/d00/a00173_source.html">cpu_arith.h</a>.</p>
 
 </div>
 </div>
@@ -698,7 +798,7 @@ Macros</h2></td></tr>
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
-    <li class="navelem"><a href="../../dir_3e504b0d3bcf24da5cd743a5b933950b.html">CPU</a></li><li class="navelem"><a href="../../d7/d00/a00173.html">cpu_bwx.h</a></li>
+    <li class="navelem"><a href="../../dir_3e504b0d3bcf24da5cd743a5b933950b.html">CPU</a></li><li class="navelem"><a href="../../d7/d00/a00173.html">cpu_arith.h</a></li>
     <li class="footer">Generated by <a href="https://www.doxygen.org/index.html"><img class="footer" src="../../doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.18.0 </li>
   </ul>
 </div>

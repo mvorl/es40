@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.18.0"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ES40: CPU/diag_rpcc.h File Reference</title>
+<title>ES40: CPU/cpu_vax.h File Reference</title>
 <link href="../../tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="../../dynsections.js"></script>
 <script type="text/javascript" src="../../codefolding.js"></script>
@@ -26,7 +26,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">ES40<span id="projectnumber">&#160;0.17+</span>
+   <div id="projectname">ES40<span id="projectnumber">&#160;0.92.2</span>
    </div>
   </td>
  </tr>
@@ -109,63 +109,73 @@ document.addEventListener('DOMContentLoaded',() => { initNavTree('dd/d00/a00212.
 </div>
 
 <div class="header">
-  <div class="headertitle"><div class="title">diag_rpcc.h File Reference</div></div>
+  <div class="headertitle"><div class="title">cpu_vax.h File Reference</div></div>
 </div><!--header-->
 <div class="contents">
-<div class="textblock"><code>#include &lt;cstdint&gt;</code><br />
-</div><div class="textblock"><div class="dynheader">
-Include dependency graph for diag_rpcc.h:</div>
-<div class="dyncontent">
-<div class="center"><img src="../../d1/d00/a00213.png" border="0" usemap="#a_c_p_u_2diag__rpcc_8h" loading="lazy" alt=""/></div>
-<map name="a_c_p_u_2diag__rpcc_8h" id="a_c_p_u_2diag__rpcc_8h">
-<area shape="rect" title=" " alt="" coords="5,5,127,32"/>
-<area shape="rect" title=" " alt="" coords="36,80,96,107"/>
-<area shape="poly" title=" " alt="" coords="68,31,69,65,63,64,64,35"/>
-</map>
-</div>
-</div><div class="textblock"><div class="dynheader">
+
+<p>Contains code macros for the processor VAX compatibility instructions.  
+<a href="#details">More...</a></p>
+<div class="textblock"><div class="dynheader">
 This graph shows which files directly or indirectly include this file:</div>
 <div class="dyncontent">
-<div class="center"><img src="../../d3/d00/a00214.png" border="0" usemap="#a_c_p_u_2diag__rpcc_8hdep" loading="lazy" alt=""/></div>
-<map name="a_c_p_u_2diag__rpcc_8hdep" id="a_c_p_u_2diag__rpcc_8hdep">
-<area shape="rect" title=" " alt="" coords="97,5,218,32"/>
+<div class="center"><img src="../../d3/d00/a00214.png" border="0" usemap="#a_c_p_u_2cpu__vax_8hdep" loading="lazy" alt=""/></div>
+<map name="a_c_p_u_2cpu__vax_8hdep" id="a_c_p_u_2cpu__vax_8hdep">
+<area shape="rect" title="Contains code macros for the processor VAX compatibility instructions." alt="" coords="19,5,133,32"/>
 <area shape="rect" href="../../d5/d00/a00140.html" title="Contains the code for the emulated DecChip 21264CB EV68 Alpha processor." alt="" coords="5,80,147,107"/>
-<area shape="poly" title=" " alt="" coords="135,42,92,82,88,77,129,43"/>
-<area shape="rect" href="../../dc/d00/a00278.html" title="Contains the code for the PCI device class." alt="" coords="170,80,310,107"/>
-<area shape="poly" title=" " alt="" coords="184,40,228,80,223,80,182,45"/>
+<area shape="poly" title=" " alt="" coords="78,46,79,80,73,79,74,50"/>
 </map>
 </div>
 </div>
 <p><a href="../../dd/d00/a00212_source.html">Go to the source code of this file.</a></p>
 <table class="memberdecls">
-<tr class="heading"><td colspan="2"><h2 id="header-var-members" class="groupheader"><a id="var-members" name="var-members"></a>
-Variables</h2></td></tr>
-<tr class="memitem:a6f5b116eb3af3289ffea602661d2ddaf" id="r_a6f5b116eb3af3289ffea602661d2ddaf"><td class="memItemLeft"><a class="el" href="../../de/d00/a00134.html#a414156feea104f8f75b4ed9e3121b2f6">int64_t</a>&#160;</td><td class="memItemRight"><a class="el" href="#a6f5b116eb3af3289ffea602661d2ddaf">g_diag_excluded_ns</a></td></tr>
+<tr class="heading"><td colspan="2"><h2 id="header-define-members" class="groupheader"><a id="define-members" name="define-members"></a>
+Macros</h2></td></tr>
+<tr class="memitem:a2a40ebecce29bfab4513ee523bbe57f8" id="r_a2a40ebecce29bfab4513ee523bbe57f8"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a2a40ebecce29bfab4513ee523bbe57f8">DO_RC</a></td></tr>
+<tr class="memitem:a29b69fb50938eb7555c3e37acba60608" id="r_a29b69fb50938eb7555c3e37acba60608"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a29b69fb50938eb7555c3e37acba60608">DO_RS</a></td></tr>
 </table>
-<a name="doc-var-members" id="doc-var-members"></a><h2 id="header-doc-var-members" class="groupheader">Variable Documentation</h2>
-<a id="a6f5b116eb3af3289ffea602661d2ddaf" name="a6f5b116eb3af3289ffea602661d2ddaf"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a6f5b116eb3af3289ffea602661d2ddaf">&#9670;&#160;</a></span>g_diag_excluded_ns</h2>
+<a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
+<div class="textblock"><p>Contains code macros for the processor VAX compatibility instructions. </p>
+<p>X-1.3 Camiel Vanderhoeven 11-APR-2007 Moved all data that should be saved to a state file to a structure "state".</p>
+<p>X-1.2 Camiel Vanderhoeven 30-MAR-2007 Added old changelog comments.</p>
+<p>X-1.1 Camiel Vanderhoeven 18-FEB-2007 File created. Contains code previously found in <a class="el" href="../../d7/d00/a00143.html" title="Contains the definitions for the emulated DecChip 21264CB EV68 Alpha processor.">AlphaCPU.h</a></p>
+<dl class="section author"><dt>Author</dt><dd>Camiel Vanderhoeven </dd></dl>
+
+<p class="definition">Definition in file <a class="el" href="../../dd/d00/a00212_source.html">cpu_vax.h</a>.</p>
+</div><a name="doc-define-members" id="doc-define-members"></a><h2 id="header-doc-define-members" class="groupheader">Macro Definition Documentation</h2>
+<a id="a2a40ebecce29bfab4513ee523bbe57f8" name="a2a40ebecce29bfab4513ee523bbe57f8"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a2a40ebecce29bfab4513ee523bbe57f8">&#9670;&#160;</a></span>DO_RC</h2>
 
 <div class="memitem">
 <div class="memproto">
-<table class="mlabels">
-  <tr>
-  <td class="mlabels-left">
       <table class="memname">
         <tr>
-          <td class="memname"><a class="el" href="../../de/d00/a00134.html#a414156feea104f8f75b4ed9e3121b2f6">int64_t</a> g_diag_excluded_ns</td>
+          <td class="memname">#define DO_RC</td>
         </tr>
       </table>
-  </td>
-  <td class="mlabels-right">
-<span class="mlabels"><span class="mlabel extern">extern</span><span class="mlabel thread_local">thread_local</span></span>  </td>
-  </tr>
-</table>
 </div><div class="memdoc">
+<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] = state.bIntrFlag ? 1 : 0; \</div>
+<div class="line">state.bIntrFlag = <span class="keyword">false</span>;</div>
+<div class="ttc" id="aa00185_html_a3cc7326bd3140cc269e686fc46179a21"><div class="ttname"><a href="../../de/d00/a00185.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a></div><div class="ttdeci">#define REG_1</div><div class="ttdef"><b>Definition</b> <a href="../../de/d00/a00185_source.html#l00839">cpu_defs.h:839</a></div></div>
+</div><!-- fragment -->
+<p class="definition">Definition at line <a class="el" href="../../dd/d00/a00212_source.html#l00042">42</a> of file <a class="el" href="../../dd/d00/a00212_source.html">cpu_vax.h</a>.</p>
 
-<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00278_source.html#l00095">95</a> of file <a class="el" href="../../dc/d00/a00278_source.html">PCIDevice.cpp</a>.</p>
+</div>
+</div>
+<a id="a29b69fb50938eb7555c3e37acba60608" name="a29b69fb50938eb7555c3e37acba60608"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a29b69fb50938eb7555c3e37acba60608">&#9670;&#160;</a></span>DO_RS</h2>
 
-<p class="reference">Referenced by <a class="el" href="../../dc/d00/a00278_source.html#l00099">diag_printf()</a>.</p>
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_RS</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<b>Value:</b><div class="fragment"><div class="line">state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] = state.bIntrFlag ? 1 : 0; \</div>
+<div class="line">state.bIntrFlag = <span class="keyword">true</span>;</div>
+</div><!-- fragment -->
+<p class="definition">Definition at line <a class="el" href="../../dd/d00/a00212_source.html#l00045">45</a> of file <a class="el" href="../../dd/d00/a00212_source.html">cpu_vax.h</a>.</p>
 
 </div>
 </div>
@@ -182,7 +192,7 @@ Variables</h2></td></tr>
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
-    <li class="navelem"><a href="../../dir_3e504b0d3bcf24da5cd743a5b933950b.html">CPU</a></li><li class="navelem"><a href="../../dd/d00/a00212.html">diag_rpcc.h</a></li>
+    <li class="navelem"><a href="../../dir_3e504b0d3bcf24da5cd743a5b933950b.html">CPU</a></li><li class="navelem"><a href="../../dd/d00/a00212.html">cpu_vax.h</a></li>
     <li class="footer">Generated by <a href="https://www.doxygen.org/index.html"><img class="footer" src="../../doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.18.0 </li>
   </ul>
 </div>

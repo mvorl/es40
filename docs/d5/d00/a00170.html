@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.18.0"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ES40: CPU/cpu_arith.h File Reference</title>
+<title>ES40: CPU/AlphaPAL.h File Reference</title>
 <link href="../../tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="../../dynsections.js"></script>
 <script type="text/javascript" src="../../codefolding.js"></script>
@@ -26,7 +26,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">ES40<span id="projectnumber">&#160;0.17+</span>
+   <div id="projectname">ES40<span id="projectnumber">&#160;0.92.2</span>
    </div>
   </td>
  </tr>
@@ -109,679 +109,508 @@ document.addEventListener('DOMContentLoaded',() => { initNavTree('d5/d00/a00170.
 </div>
 
 <div class="header">
-  <div class="headertitle"><div class="title">cpu_arith.h File Reference</div></div>
+  <div class="headertitle"><div class="title">AlphaPAL.h File Reference</div></div>
 </div><!--header-->
 <div class="contents">
-
-<p>Contains code macros for the processor integer arithmetic instructions.  
-<a href="#details">More...</a></p>
-<div class="textblock"><div class="dynheader">
+<div class="textblock"><code>#include &lt;cstdint&gt;</code><br />
+</div><div class="textblock"><div class="dynheader">
+Include dependency graph for AlphaPAL.h:</div>
+<div class="dyncontent">
+<div class="center"><img src="../../d1/d00/a00171.png" border="0" usemap="#a_c_p_u_2_alpha_p_a_l_8h" loading="lazy" alt=""/></div>
+<map name="a_c_p_u_2_alpha_p_a_l_8h" id="a_c_p_u_2_alpha_p_a_l_8h">
+<area shape="rect" title=" " alt="" coords="5,5,128,32"/>
+<area shape="rect" title=" " alt="" coords="36,80,97,107"/>
+<area shape="poly" title=" " alt="" coords="68,31,69,65,64,64,65,35"/>
+</map>
+</div>
+</div><div class="textblock"><div class="dynheader">
 This graph shows which files directly or indirectly include this file:</div>
 <div class="dyncontent">
-<div class="center"><img src="../../d6/d00/a00172.png" border="0" usemap="#a_c_p_u_2cpu__arith_8hdep" loading="lazy" alt=""/></div>
-<map name="a_c_p_u_2cpu__arith_8hdep" id="a_c_p_u_2cpu__arith_8hdep">
-<area shape="rect" title="Contains code macros for the processor integer arithmetic instructions." alt="" coords="17,5,135,32"/>
-<area shape="rect" href="../../d5/d00/a00140.html" title="Contains the code for the emulated DecChip 21264CB EV68 Alpha processor." alt="" coords="5,80,147,107"/>
-<area shape="poly" title=" " alt="" coords="78,46,79,80,73,79,74,50"/>
+<div class="center"><img src="../../d6/d00/a00172.png" border="0" usemap="#a_c_p_u_2_alpha_p_a_l_8hdep" loading="lazy" alt=""/></div>
+<map name="a_c_p_u_2_alpha_p_a_l_8hdep" id="a_c_p_u_2_alpha_p_a_l_8hdep">
+<area shape="rect" title=" " alt="" coords="1162,5,1284,32"/>
+<area shape="rect" href="../../d7/d00/a00236.html" title=" " alt="" coords="1163,80,1282,107"/>
+<area shape="poly" title=" " alt="" coords="1224,46,1225,81,1221,78,1221,50"/>
+<area shape="rect" href="../../d9/d00/a00146.html" title=" " alt="" coords="1140,155,1305,181"/>
+<area shape="poly" title=" " alt="" coords="1224,120,1225,156,1221,153,1221,124"/>
+<area shape="rect" href="../../d7/d00/a00143.html" title="Contains the definitions for the emulated DecChip 21264CB EV68 Alpha processor." alt="" coords="1159,229,1286,256"/>
+<area shape="poly" title=" " alt="" coords="1224,195,1225,231,1221,227,1221,199"/>
+<area shape="rect" href="../../d5/d00/a00140.html" title="Contains the code for the emulated DecChip 21264CB EV68 Alpha processor." alt="" coords="5,304,147,331"/>
+<area shape="poly" title=" " alt="" coords="1140,246,722,266,442,283,159,307,148,308,147,303,158,301,442,277,722,261,1146,246"/>
+<area shape="rect" href="../../da/d00/a00149.html" title="Contains IEEE floating point code for the Alpha CPU." alt="" coords="171,304,368,331"/>
+<area shape="poly" title=" " alt="" coords="1141,249,811,273,380,307,368,308,368,302,380,301,811,268,1146,248"/>
+<area shape="rect" href="../../d7/d00/a00152.html" title="Contains VAX floating point code for the Alpha CPU." alt="" coords="392,304,586,331"/>
+<area shape="poly" title=" " alt="" coords="1146,252,599,307,587,308,587,303,598,301,1141,251"/>
+<area shape="rect" href="../../d3/d00/a00155.html" title="Contains routines that replace parts of the VMS PALcode for the emulated DecChip 21264CB EV68 Alpha p..." alt="" coords="610,304,800,331"/>
+<area shape="poly" title=" " alt="" coords="1146,255,796,306,796,301,1141,255"/>
+<area shape="rect" href="../../d5/d00/a00224.html" title=" " alt="" coords="824,304,957,331"/>
+<area shape="poly" title=" " alt="" coords="1152,260,949,306,948,301,1147,260"/>
+<area shape="rect" href="../../d1/d00/a00230.html" title=" " alt="" coords="981,304,1123,331"/>
+<area shape="poly" title=" " alt="" coords="1181,262,1083,306,1081,301,1176,263"/>
+<area shape="rect" href="../../d9/d00/a00257.html" title="Contains the code for the CPU tracing engine." alt="" coords="1146,304,1299,331"/>
+<area shape="poly" title=" " alt="" coords="1225,270,1225,305,1221,302,1221,274"/>
+<area shape="rect" href="../../d1/d00/a00077.html" title="Contains the code for the configuration file interpreter." alt="" coords="1323,304,1480,331"/>
+<area shape="poly" title=" " alt="" coords="1268,260,1373,304,1367,303,1267,265"/>
+<area shape="rect" href="../../d5/d00/a00599.html" title="Contains the code for the emulated Dual Port Ram and RMC devices." alt="" coords="1504,304,1626,331"/>
+<area shape="poly" title=" " alt="" coords="1298,257,1508,304,1503,303,1297,262"/>
+<area shape="rect" href="../../d0/d00/a00605.html" title="Contains the code for the emulated Flash ROM devices." alt="" coords="1651,304,1776,331"/>
+<area shape="poly" title=" " alt="" coords="1302,252,1639,301,1653,306,1648,306,1638,307,1302,258"/>
+<area shape="rect" href="../../d4/d00/a00617.html" title="Contains the code for the emulated Typhoon Chipset devices." alt="" coords="1800,304,1938,331"/>
+<area shape="poly" title=" " alt="" coords="1302,249,1521,271,1788,301,1802,306,1797,305,1788,307,1521,276,1302,254"/>
+<area shape="rect" href="../../df/d00/a00623.html" title="ES40 (Clipper) board: TIGbus registers and DIMM topology." alt="" coords="1963,304,2136,331"/>
+<area shape="poly" title=" " alt="" coords="1302,247,1588,269,1951,301,1965,305,1960,305,1950,307,1588,274,1302,252"/>
+<area shape="rect" href="../../d6/d00/a00626.html" title="Tsunami/Typhoon chipset (Cchip, Dchip, Pchip) CSRs, interrupt delivery and PCI window translation." alt="" coords="2160,304,2352,331"/>
+<area shape="poly" title=" " alt="" coords="1302,245,1668,266,2148,301,2163,305,2157,305,2148,307,1668,271,1302,251"/>
 </map>
 </div>
 </div>
 <p><a href="../../d5/d00/a00170_source.html">Go to the source code of this file.</a></p>
 <table class="memberdecls">
-<tr class="heading"><td colspan="2"><h2 id="header-define-members" class="groupheader"><a id="define-members" name="define-members"></a>
-Macros</h2></td></tr>
-<tr class="memitem:a533a87340b6cd04af8b4fd925e6ed7da" id="r_a533a87340b6cd04af8b4fd925e6ed7da"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a533a87340b6cd04af8b4fd925e6ed7da">ARITH_TRAP_PRINTF</a>(...)</td></tr>
-<tr class="memitem:a4b5ed6c107cf246762a6dd6b5a7da4fe" id="r_a4b5ed6c107cf246762a6dd6b5a7da4fe"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a4b5ed6c107cf246762a6dd6b5a7da4fe">DO_CMPEQ</a>&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = (<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> == <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>) ? 1 : 0;</td></tr>
-<tr class="memitem:a6dc30fdf7e18a4cf3ac24820d1ebef83" id="r_a6dc30fdf7e18a4cf3ac24820d1ebef83"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a6dc30fdf7e18a4cf3ac24820d1ebef83">DO_CMPLT</a>&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = ((<a class="el" href="../../d9/d00/a00257.html#aaab2ef2ca1576408739fdb8e9f52ae0f">s64</a>) <a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> &lt; (<a class="el" href="../../d9/d00/a00257.html#aaab2ef2ca1576408739fdb8e9f52ae0f">s64</a>) <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>) ? 1 : 0;</td></tr>
-<tr class="memitem:adb837fd5600f65cd86f1e234e62b8531" id="r_adb837fd5600f65cd86f1e234e62b8531"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#adb837fd5600f65cd86f1e234e62b8531">DO_CMPLE</a>&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = ((<a class="el" href="../../d9/d00/a00257.html#aaab2ef2ca1576408739fdb8e9f52ae0f">s64</a>) <a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> &lt;= (<a class="el" href="../../d9/d00/a00257.html#aaab2ef2ca1576408739fdb8e9f52ae0f">s64</a>) <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>) ? 1 : 0;</td></tr>
-<tr class="memitem:a311252089a9e7b4376ecb060997cf3b4" id="r_a311252089a9e7b4376ecb060997cf3b4"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a311252089a9e7b4376ecb060997cf3b4">DO_ADDQ</a>&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> + <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td></tr>
-<tr class="memitem:a2a2cb728bd9116e36d37a717bf80d6f8" id="r_a2a2cb728bd9116e36d37a717bf80d6f8"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a2a2cb728bd9116e36d37a717bf80d6f8">DO_S4ADDQ</a>&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = (<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 4) + <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td></tr>
-<tr class="memitem:a11623e12c0c8c7eb9537f5db0940cba6" id="r_a11623e12c0c8c7eb9537f5db0940cba6"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a11623e12c0c8c7eb9537f5db0940cba6">DO_S8ADDQ</a>&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = (<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 8) + <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td></tr>
-<tr class="memitem:aa29cb45c4454f1d6660bbb5d161c2cab" id="r_aa29cb45c4454f1d6660bbb5d161c2cab"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#aa29cb45c4454f1d6660bbb5d161c2cab">DO_ADDQ_V</a></td></tr>
-<tr class="memitem:ad6ec3e557cf64e619f12c75ce3b2078a" id="r_ad6ec3e557cf64e619f12c75ce3b2078a"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ad6ec3e557cf64e619f12c75ce3b2078a">DO_ADDL</a>&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> + <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td></tr>
-<tr class="memitem:aec2aca429ea0daf3ad01ce2383837041" id="r_aec2aca429ea0daf3ad01ce2383837041"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#aec2aca429ea0daf3ad01ce2383837041">DO_S4ADDL</a>&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>((<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 4) + <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td></tr>
-<tr class="memitem:ae5870073e20176f1027ff7d3b7c9cbc5" id="r_ae5870073e20176f1027ff7d3b7c9cbc5"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ae5870073e20176f1027ff7d3b7c9cbc5">DO_S8ADDL</a>&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>((<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 8) + <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td></tr>
-<tr class="memitem:af78a2188777639f3ea3850c201ed0540" id="r_af78a2188777639f3ea3850c201ed0540"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#af78a2188777639f3ea3850c201ed0540">DO_ADDL_V</a></td></tr>
-<tr class="memitem:a97467908a590a9e9e5bd2a7f7ec36eb4" id="r_a97467908a590a9e9e5bd2a7f7ec36eb4"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a97467908a590a9e9e5bd2a7f7ec36eb4">DO_CTLZ</a></td></tr>
-<tr class="memitem:a53a048605a41140676cbbacfc0a620a1" id="r_a53a048605a41140676cbbacfc0a620a1"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a53a048605a41140676cbbacfc0a620a1">DO_CTPOP</a></td></tr>
-<tr class="memitem:af1735a5fd10bba4015e858ef15531972" id="r_af1735a5fd10bba4015e858ef15531972"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#af1735a5fd10bba4015e858ef15531972">DO_CTTZ</a></td></tr>
-<tr class="memitem:a6c8b63929cb973629887177e6d681c03" id="r_a6c8b63929cb973629887177e6d681c03"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a6c8b63929cb973629887177e6d681c03">DO_CMPULT</a>&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = ((<a class="el" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a>) <a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> &lt; (<a class="el" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a>) <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>) ? 1 : 0;</td></tr>
-<tr class="memitem:a14989f289c4addb81a9ad8939c1cb5d8" id="r_a14989f289c4addb81a9ad8939c1cb5d8"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a14989f289c4addb81a9ad8939c1cb5d8">DO_CMPULE</a>&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = ((<a class="el" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a>) <a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> &lt;= (<a class="el" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a>) <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>) ? 1 : 0;</td></tr>
-<tr class="memitem:a0fe5add645871be608cdfe4e42dd38e5" id="r_a0fe5add645871be608cdfe4e42dd38e5"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a0fe5add645871be608cdfe4e42dd38e5">DO_MULL</a>&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(<a class="el" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a>) * <a class="el" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(<a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>));</td></tr>
-<tr class="memitem:a8b7779e8e656b918604096f6de35df39" id="r_a8b7779e8e656b918604096f6de35df39"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a8b7779e8e656b918604096f6de35df39">DO_MULL_V</a></td></tr>
-<tr class="memitem:a9da8b1e665c0705dd154200c39701efc" id="r_a9da8b1e665c0705dd154200c39701efc"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a9da8b1e665c0705dd154200c39701efc">DO_MULQ</a>&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td></tr>
-<tr class="memitem:aa65af5c594ffec7dd9ca36cfe6fdf427" id="r_aa65af5c594ffec7dd9ca36cfe6fdf427"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#aa65af5c594ffec7dd9ca36cfe6fdf427">DO_MULQ_V</a></td></tr>
-<tr class="memitem:a6f12d7e360b77fb5c7c6c6f1c40aa2f9" id="r_a6f12d7e360b77fb5c7c6c6f1c40aa2f9"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a6f12d7e360b77fb5c7c6c6f1c40aa2f9">DO_UMULH</a>&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#af7fe3030783d36c253fefe0241c4e594">uemul64</a>(<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a>, <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>, &amp;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>);</td></tr>
-<tr class="memitem:ad4f7355095fea35853a7705e37ec7956" id="r_ad4f7355095fea35853a7705e37ec7956"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ad4f7355095fea35853a7705e37ec7956">DO_SUBQ</a>&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> - <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td></tr>
-<tr class="memitem:a1c3c576b440907189f2edba4407d6860" id="r_a1c3c576b440907189f2edba4407d6860"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a1c3c576b440907189f2edba4407d6860">DO_S4SUBQ</a>&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = (<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 4) - <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td></tr>
-<tr class="memitem:a78ec9100cf320bb62264668b4ca3d5a6" id="r_a78ec9100cf320bb62264668b4ca3d5a6"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a78ec9100cf320bb62264668b4ca3d5a6">DO_S8SUBQ</a>&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = (<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 8) - <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td></tr>
-<tr class="memitem:a11b0b4c4c2a07403cc5d08e7cf504ab8" id="r_a11b0b4c4c2a07403cc5d08e7cf504ab8"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a11b0b4c4c2a07403cc5d08e7cf504ab8">DO_SUBQ_V</a></td></tr>
-<tr class="memitem:af9c590921172add8687edeefaa482175" id="r_af9c590921172add8687edeefaa482175"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#af9c590921172add8687edeefaa482175">DO_SUBL</a>&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> - <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td></tr>
-<tr class="memitem:acac02e1f6d4e8c08c0791336f3589101" id="r_acac02e1f6d4e8c08c0791336f3589101"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#acac02e1f6d4e8c08c0791336f3589101">DO_S4SUBL</a>&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>((<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 4) - <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td></tr>
-<tr class="memitem:ac5ccbcbeb6c09a32bb7ed841f6f611b6" id="r_ac5ccbcbeb6c09a32bb7ed841f6f611b6"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ac5ccbcbeb6c09a32bb7ed841f6f611b6">DO_S8SUBL</a>&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>((<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 8) - <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td></tr>
-<tr class="memitem:aeb101d1136488748e4aebe487faaa4e9" id="r_aeb101d1136488748e4aebe487faaa4e9"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#aeb101d1136488748e4aebe487faaa4e9">DO_SUBL_V</a></td></tr>
+<tr class="heading"><td colspan="2"><h2 id="header-nested-classes" class="groupheader"><a id="nested-classes" name="nested-classes"></a>
+Data Structures</h2></td></tr>
+<tr class="memitem:AlphaPALExceptionEntry" id="r_AlphaPALExceptionEntry"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../da/d00/a00993.html">AlphaPALExceptionEntry</a></td></tr>
+<tr class="memitem:AlphaPALCallEntry" id="r_AlphaPALCallEntry"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../d0/d00/a00997.html">AlphaPALCallEntry</a></td></tr>
+<tr class="memitem:AlphaPALReturnDescriptor" id="r_AlphaPALReturnDescriptor"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../df/d00/a01001.html">AlphaPALReturnDescriptor</a></td></tr>
+<tr class="memitem:AlphaPALPolicy" id="r_AlphaPALPolicy"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../d7/d00/a01005.html">AlphaPALPolicy</a></td></tr>
+</table><table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 id="header-enum-members" class="groupheader"><a id="enum-members" name="enum-members"></a>
+Enumerations</h2></td></tr>
+<tr class="memitem:a5c9934e3a54f06127616037536160abd" id="r_a5c9934e3a54f06127616037536160abd"><td class="memItemLeft">enum class &#160;</td><td class="memItemRight"><a class="el" href="#a5c9934e3a54f06127616037536160abd">AlphaPALException</a> { <br />
+&#160;&#160;<a class="el" href="#a5c9934e3a54f06127616037536160abda361aee34d812caaf0faf65b924789608">DataTlbDoubleMiss43</a>
+, <a class="el" href="#a5c9934e3a54f06127616037536160abda321697e481ffee8923abc97d8a8fcd6b">DataTlbDoubleMiss48</a>
+, <a class="el" href="#a5c9934e3a54f06127616037536160abdae077220a4410c229d421d6134c90c968">FloatingPointDisabled</a>
+, <a class="el" href="#a5c9934e3a54f06127616037536160abda9f19679888db198f8dd45606487e6cd6">Unaligned</a>
+, <br />
+&#160;&#160;<a class="el" href="#a5c9934e3a54f06127616037536160abdab7b098553ebc1f6249f61942f47fdda7">DataTlbMiss</a>
+, <a class="el" href="#a5c9934e3a54f06127616037536160abda01a70564dac2a781cf3b11f85fde90ba">DataFault</a>
+, <a class="el" href="#a5c9934e3a54f06127616037536160abda63458a13f289bb736a9af99d72741952">OpcodeDecode</a>
+, <a class="el" href="#a5c9934e3a54f06127616037536160abda503818f8e36c70133791cb193014a806">InstructionAccessViolation</a>
+, <br />
+&#160;&#160;<a class="el" href="#a5c9934e3a54f06127616037536160abda76a0985ad3414f385d1ac16e9c297b7f">MachineCheck</a>
+, <a class="el" href="#a5c9934e3a54f06127616037536160abda41cf96ed58ab05378c27c3ed54cfe00e">InstructionTlbMiss</a>
+, <a class="el" href="#a5c9934e3a54f06127616037536160abda9b8f0983ed147f0f68955c511141037e">Arithmetic</a>
+, <a class="el" href="#a5c9934e3a54f06127616037536160abda1ce92afa20b1c7f6a4e5d0dc73e5c92a">Interrupt</a>
+, <br />
+&#160;&#160;<a class="el" href="#a5c9934e3a54f06127616037536160abdab5f6dedecf0baa25a21be2ad1ea8b424">MtFpcr</a>
+, <a class="el" href="#a5c9934e3a54f06127616037536160abda526d688f37a86d3c3f27d0c5016eb71d">Reset</a>
+<br />
+ }</td></tr>
+<tr class="memitem:a9fc4dbb2fe4593f94c2162933b2efdaa" id="r_a9fc4dbb2fe4593f94c2162933b2efdaa"><td class="memItemLeft">enum class &#160;</td><td class="memItemRight"><a class="el" href="#a9fc4dbb2fe4593f94c2162933b2efdaa">AlphaPALInstructionAccess</a> { <a class="el" href="#a9fc4dbb2fe4593f94c2162933b2efdaaa58d036b9b7f0e7eb38cfb90f1cc70a73">Denied</a>
+, <a class="el" href="#a9fc4dbb2fe4593f94c2162933b2efdaaa847f47d6f694062626164e5471cf3da5">PalOnly</a>
+, <a class="el" href="#a9fc4dbb2fe4593f94c2162933b2efdaaa9fd789a41cb6b7e351712ccde52c328e">PalOrKernelHwe</a>
+ }</td></tr>
+</table><table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 id="header-func-members" class="groupheader"><a id="func-members" name="func-members"></a>
+Functions</h2></td></tr>
+<tr class="memitem:a44e75b3cc228e7710e6d2174d41d9ed0" id="r_a44e75b3cc228e7710e6d2174d41d9ed0"><td class="memItemLeft">constexpr <a class="el" href="../../de/d00/a00134.html#aec6fcb673ff035718c238c8c9d544c47">std::uint64_t</a>&#160;</td><td class="memItemRight"><a class="el" href="#a44e75b3cc228e7710e6d2174d41d9ed0">alpha_pal_return_target</a> (const <a class="el" href="../../df/d00/a01001.html">AlphaPALReturnDescriptor</a> &amp;entry, <a class="el" href="../../de/d00/a00134.html#aec6fcb673ff035718c238c8c9d544c47">std::uint64_t</a> source)</td></tr>
+<tr class="memitem:a66ce0f9f8f472ac548043e941dc24b32" id="r_a66ce0f9f8f472ac548043e941dc24b32"><td class="memItemLeft">constexpr bool&#160;</td><td class="memItemRight"><a class="el" href="#a66ce0f9f8f472ac548043e941dc24b32">alpha_pal_return_compilable</a> (const <a class="el" href="../../df/d00/a01001.html">AlphaPALReturnDescriptor</a> &amp;entry)</td></tr>
+<tr class="memitem:afe55d92d02e3f7101d895b98450c8057" id="r_afe55d92d02e3f7101d895b98450c8057"><td class="memItemLeft">constexpr bool&#160;</td><td class="memItemRight"><a class="el" href="#afe55d92d02e3f7101d895b98450c8057">alpha_pal_instruction_allowed</a> (<a class="el" href="#a9fc4dbb2fe4593f94c2162933b2efdaa">AlphaPALInstructionAccess</a> access, bool pal_mode, <a class="el" href="../../de/d00/a00134.html#a6eb1e68cc391dd753bc8ce896dbb8315">std::uint32_t</a> mode, bool hwe)</td></tr>
+<tr class="memitem:a4c415ae0622a215540658760a91f1233" id="r_a4c415ae0622a215540658760a91f1233"><td class="memItemLeft">constexpr bool&#160;</td><td class="memItemRight"><a class="el" href="#a4c415ae0622a215540658760a91f1233">alpha_pal_instruction_compilable</a> (<a class="el" href="#a9fc4dbb2fe4593f94c2162933b2efdaa">AlphaPALInstructionAccess</a> access)</td></tr>
+<tr class="memitem:ae16c5f4c7b5de3aba54dc894468b1f44" id="r_ae16c5f4c7b5de3aba54dc894468b1f44"><td class="memItemLeft">constexpr <a class="el" href="../../df/d00/a01001.html">AlphaPALReturnDescriptor</a>&#160;</td><td class="memItemRight"><a class="el" href="#ae16c5f4c7b5de3aba54dc894468b1f44">alpha_pal_return_descriptor</a> (const <a class="el" href="../../d7/d00/a01005.html">AlphaPALPolicy</a> &amp;policy, <a class="el" href="../../de/d00/a00134.html#a6eb1e68cc391dd753bc8ce896dbb8315">std::uint32_t</a> instruction)</td></tr>
 </table>
-<a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>Contains code macros for the processor integer arithmetic instructions. </p>
-<p>Based on ARM chapter 4.4.</p>
-<p>$Id$</p>
-<p>X-1.14 Camiel Vanderhoeven 14-MAR-2008</p><ol type="1">
-<li>More meaningful exceptions replace throwing (int) 1.</li>
-<li>U64 macro replaces X64 macro.</li>
-</ol>
-<p>X-1.13 Camiel Vanderhoeven 28-JAN-2008 Better floating-point exception handling.</p>
-<p>X-1.12 Camiel Vanderhoeven 24-JAN-2008 Fixed some overflow-detection issues.</p>
-<p>X-1.11 Camiel Vanderhoeven 22-JAN-2008 Also fixed MULQ/V.</p>
-<p>X-1.10 Camiel Vanderhoeven 22-JAN-2008 Use RA, RAV style macro's for integer registers; fixed MULQ.</p>
-<p>X-1.9 Camiel Vanderhoeven 22-JAN-2008 Implemented missing /V integer instructions.</p>
-<p>X-1.8 Camiel Vanderhoeven 21-JAN-2008 Fixed misunderstanding of the INT bit in integer overflow traps.</p>
-<p>X-1.7 Camiel Vanderhoeven 18-JAN-2008 Replaced sext_64 inlines with sext_u64_&lt;bits&gt; inlines for performance reasons (thanks to David Hittner for spotting this!);</p>
-<p>X-1.6 David Hittner 16-JAN-2008 Added ADDL/V instruction</p>
-<p>X-1.5 Camiel Vanderhoeven 2-DEC-2007 Use sext_64 inline.</p>
-<p>X-1.4 Camiel Vanderhoeven 11-APR-2007 Moved all data that should be saved to a state file to a structure "state".</p>
-<p>X-1.3 Camiel Vanderhoeven 30-MAR-2007 Added old changelog comments.</p>
-<p>X-1.2 Camiel Vanderhoeven 18-MAR-2007 Bugfix in CTLZ and CTTZ instructions. Fixes the INCON_SCHED bugcheck (bug # 1680064).</p>
-<p>X-1.1 Camiel Vanderhoeven 18-FEB-2007 File created. Contains code previously found in <a class="el" href="../../d7/d00/a00143.html" title="Contains the definitions for the emulated DecChip 21264CB EV68 Alpha processor.">AlphaCPU.h</a></p>
-<dl class="section author"><dt>Author</dt><dd>Camiel Vanderhoeven </dd></dl>
-
-<p class="definition">Definition in file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-</div><a name="doc-define-members" id="doc-define-members"></a><h2 id="header-doc-define-members" class="groupheader">Macro Definition Documentation</h2>
-<a id="a533a87340b6cd04af8b4fd925e6ed7da" name="a533a87340b6cd04af8b4fd925e6ed7da"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a533a87340b6cd04af8b4fd925e6ed7da">&#9670;&#160;</a></span>ARITH_TRAP_PRINTF</h2>
+<a name="doc-enum-members" id="doc-enum-members"></a><h2 id="header-doc-enum-members" class="groupheader">Enumeration Type Documentation</h2>
+<a id="a5c9934e3a54f06127616037536160abd" name="a5c9934e3a54f06127616037536160abd"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a5c9934e3a54f06127616037536160abd">&#9670;&#160;</a></span>AlphaPALException</h2>
 
 <div class="memitem">
 <div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
       <table class="memname">
         <tr>
-          <td class="memname">#define ARITH_TRAP_PRINTF</td>
+          <td class="memname">enum class <a class="el" href="#a5c9934e3a54f06127616037536160abd">AlphaPALException</a></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel strong">strong</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+<table class="fieldtable">
+<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="a5c9934e3a54f06127616037536160abda361aee34d812caaf0faf65b924789608" name="a5c9934e3a54f06127616037536160abda361aee34d812caaf0faf65b924789608"></a>DataTlbDoubleMiss43&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a5c9934e3a54f06127616037536160abda321697e481ffee8923abc97d8a8fcd6b" name="a5c9934e3a54f06127616037536160abda321697e481ffee8923abc97d8a8fcd6b"></a>DataTlbDoubleMiss48&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a5c9934e3a54f06127616037536160abdae077220a4410c229d421d6134c90c968" name="a5c9934e3a54f06127616037536160abdae077220a4410c229d421d6134c90c968"></a>FloatingPointDisabled&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a5c9934e3a54f06127616037536160abda9f19679888db198f8dd45606487e6cd6" name="a5c9934e3a54f06127616037536160abda9f19679888db198f8dd45606487e6cd6"></a>Unaligned&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a5c9934e3a54f06127616037536160abdab7b098553ebc1f6249f61942f47fdda7" name="a5c9934e3a54f06127616037536160abdab7b098553ebc1f6249f61942f47fdda7"></a>DataTlbMiss&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a5c9934e3a54f06127616037536160abda01a70564dac2a781cf3b11f85fde90ba" name="a5c9934e3a54f06127616037536160abda01a70564dac2a781cf3b11f85fde90ba"></a>DataFault&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a5c9934e3a54f06127616037536160abda63458a13f289bb736a9af99d72741952" name="a5c9934e3a54f06127616037536160abda63458a13f289bb736a9af99d72741952"></a>OpcodeDecode&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a5c9934e3a54f06127616037536160abda503818f8e36c70133791cb193014a806" name="a5c9934e3a54f06127616037536160abda503818f8e36c70133791cb193014a806"></a>InstructionAccessViolation&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a5c9934e3a54f06127616037536160abda76a0985ad3414f385d1ac16e9c297b7f" name="a5c9934e3a54f06127616037536160abda76a0985ad3414f385d1ac16e9c297b7f"></a>MachineCheck&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a5c9934e3a54f06127616037536160abda41cf96ed58ab05378c27c3ed54cfe00e" name="a5c9934e3a54f06127616037536160abda41cf96ed58ab05378c27c3ed54cfe00e"></a>InstructionTlbMiss&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a5c9934e3a54f06127616037536160abda9b8f0983ed147f0f68955c511141037e" name="a5c9934e3a54f06127616037536160abda9b8f0983ed147f0f68955c511141037e"></a>Arithmetic&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a5c9934e3a54f06127616037536160abda1ce92afa20b1c7f6a4e5d0dc73e5c92a" name="a5c9934e3a54f06127616037536160abda1ce92afa20b1c7f6a4e5d0dc73e5c92a"></a>Interrupt&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a5c9934e3a54f06127616037536160abdab5f6dedecf0baa25a21be2ad1ea8b424" name="a5c9934e3a54f06127616037536160abdab5f6dedecf0baa25a21be2ad1ea8b424"></a>MtFpcr&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a5c9934e3a54f06127616037536160abda526d688f37a86d3c3f27d0c5016eb71d" name="a5c9934e3a54f06127616037536160abda526d688f37a86d3c3f27d0c5016eb71d"></a>Reset&#160;</td><td class="fielddoc"></td></tr>
+</table>
+
+<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00033">33</a> of file <a class="el" href="../../d5/d00/a00170_source.html">AlphaPAL.h</a>.</p>
+
+</div>
+</div>
+<a id="a9fc4dbb2fe4593f94c2162933b2efdaa" name="a9fc4dbb2fe4593f94c2162933b2efdaa"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a9fc4dbb2fe4593f94c2162933b2efdaa">&#9670;&#160;</a></span>AlphaPALInstructionAccess</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">enum class <a class="el" href="#a9fc4dbb2fe4593f94c2162933b2efdaa">AlphaPALInstructionAccess</a></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel strong">strong</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+<table class="fieldtable">
+<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="a9fc4dbb2fe4593f94c2162933b2efdaaa58d036b9b7f0e7eb38cfb90f1cc70a73" name="a9fc4dbb2fe4593f94c2162933b2efdaaa58d036b9b7f0e7eb38cfb90f1cc70a73"></a>Denied&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a9fc4dbb2fe4593f94c2162933b2efdaaa847f47d6f694062626164e5471cf3da5" name="a9fc4dbb2fe4593f94c2162933b2efdaaa847f47d6f694062626164e5471cf3da5"></a>PalOnly&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a9fc4dbb2fe4593f94c2162933b2efdaaa9fd789a41cb6b7e351712ccde52c328e" name="a9fc4dbb2fe4593f94c2162933b2efdaaa9fd789a41cb6b7e351712ccde52c328e"></a>PalOrKernelHwe&#160;</td><td class="fielddoc"></td></tr>
+</table>
+
+<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00090">90</a> of file <a class="el" href="../../d5/d00/a00170_source.html">AlphaPAL.h</a>.</p>
+
+</div>
+</div>
+<a name="doc-func-members" id="doc-func-members"></a><h2 id="header-doc-func-members" class="groupheader">Function Documentation</h2>
+<a id="afe55d92d02e3f7101d895b98450c8057" name="afe55d92d02e3f7101d895b98450c8057"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#afe55d92d02e3f7101d895b98450c8057">&#9670;&#160;</a></span>alpha_pal_instruction_allowed()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool alpha_pal_instruction_allowed </td>
           <td>(</td>
-          <td class="paramtype"></td>          <td class="paramname"><span class="paramname"><em></em></span>...</td><td>)</td>
+          <td class="paramtype"><a class="el" href="#a9fc4dbb2fe4593f94c2162933b2efdaa">AlphaPALInstructionAccess</a></td>          <td class="paramname"><span class="paramname"><em>access</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">bool</td>          <td class="paramname"><span class="paramname"><em>pal_mode</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype"><a class="el" href="../../de/d00/a00134.html#a6eb1e68cc391dd753bc8ce896dbb8315">std::uint32_t</a></td>          <td class="paramname"><span class="paramname"><em>mode</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">bool</td>          <td class="paramname"><span class="paramname"><em>hwe</em></span>&#160;)</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel constexpr">constexpr</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00097">97</a> of file <a class="el" href="../../d5/d00/a00170_source.html">AlphaPAL.h</a>.</p>
+
+<p class="reference">References <a class="el" href="../../d5/d00/a00170_source.html#l00097">alpha_pal_instruction_allowed()</a>, <a class="el" href="../../d5/d00/a00170_source.html#l00092">Denied</a>, <a class="el" href="../../d5/d00/a00170_source.html#l00093">PalOnly</a>, and <a class="el" href="../../d5/d00/a00170_source.html#l00094">PalOrKernelHwe</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d5/d00/a00170_source.html#l00097">alpha_pal_instruction_allowed()</a>, and <a class="el" href="../../d5/d00/a00140_source.html#l00588">CAlphaCPU::pal_hardware_instruction_valid()</a>.</p>
+<div class="dynheader">
+Here is the call graph for this function:</div>
+<div class="dyncontent">
+<div class="center"><img src="../../d5/d00/a00170_afe55d92d02e3f7101d895b98450c8057_cgraph.png" border="0" usemap="#ad5/d00/a00170_afe55d92d02e3f7101d895b98450c8057_cgraph" loading="lazy" alt=""/></div>
+<map name="ad5/d00/a00170_afe55d92d02e3f7101d895b98450c8057_cgraph" id="ad5/d00/a00170_afe55d92d02e3f7101d895b98450c8057_cgraph">
+<area shape="rect" title=" " alt="" coords="5,29,149,72"/>
+<area shape="poly" title=" " alt="" coords="49,28,48,19,52,11,62,5,77,3,93,5,104,14,98,14,91,10,77,8,64,10,56,14,53,20,54,29"/>
+</map>
+</div>
+<div class="dynheader">
+Here is the caller graph for this function:</div>
+<div class="dyncontent">
+<div class="center"><img src="../../d5/d00/a00170_afe55d92d02e3f7101d895b98450c8057_icgraph.png" border="0" usemap="#ad5/d00/a00170_afe55d92d02e3f7101d895b98450c8057_icgraph" loading="lazy" alt=""/></div>
+<map name="ad5/d00/a00170_afe55d92d02e3f7101d895b98450c8057_icgraph" id="ad5/d00/a00170_afe55d92d02e3f7101d895b98450c8057_icgraph">
+<area shape="rect" title=" " alt="" coords="2011,48,2154,91"/>
+<area shape="poly" title=" " alt="" coords="2115,32,2104,29,2083,27,2063,29,2051,33,2046,39,2047,49,2043,46,2041,38,2048,29,2062,23,2083,21,2105,24,2120,33"/>
+<area shape="rect" href="../../dd/d00/a00921.html#a16401b942f7785a61d7990ec8a0e223e" title=" " alt="" coords="1785,48,1963,91"/>
+<area shape="poly" title=" " alt="" coords="1993,69,1963,72,1963,67,1998,69"/>
+<area shape="rect" href="../../dd/d00/a00921.html#a64999b9a0ad5d81bef72e6be67e423aa" title="Called each clock&#45;cycle." alt="" coords="1589,56,1737,83"/>
+<area shape="poly" title=" " alt="" coords="1766,69,1737,72,1737,67,1772,69"/>
+<area shape="rect" href="../../dd/d00/a00921.html#a266adde24b8ec06d267522055eefb53c" title="Produce disassembly&#45;listing with marker." alt="" coords="1400,5,1535,32"/>
+<area shape="poly" title=" " alt="" coords="1591,51,1522,35,1522,30,1596,52"/>
+<area shape="rect" href="../../dd/d00/a00921.html#a920854ec4029c667ee80ec021d526065" title=" " alt="" coords="1408,56,1527,83"/>
+<area shape="poly" title=" " alt="" coords="1571,69,1528,72,1527,67,1577,69"/>
+<area shape="rect" href="../../d4/d00/a01817.html#a6f662062bc316b82491050ba08a60df0" title="Do one clock tick." alt="" coords="1394,107,1541,133"/>
+<area shape="poly" title=" " alt="" coords="1596,87,1522,109,1522,103,1591,88"/>
+<area shape="rect" href="../../d1/d00/a01041.html#ad0519606483dddcd3a7964f55d8d053f" title="Parse an IDB command." alt="" coords="562,69,706,96"/>
+<area shape="poly" title=" " alt="" coords="1376,111,1346,111,986,93,706,86,706,81,987,88,1346,105,1382,111"/>
+<area shape="rect" href="../../d4/d00/a00617.html#abd5e968a4201d6c14e21977fe4ea280e" title="Run one progress chunk of the SRM self&#45;decompressor on CPU 0." alt="" coords="1208,144,1346,171"/>
+<area shape="poly" title=" " alt="" coords="1384,137,1347,146,1346,141,1379,137"/>
+<area shape="rect" href="../../d1/d00/a01041.html#a0baf94f44b4686e2dadfd9401009a121" title="Run an IDB script, or prompt user for input." alt="" coords="344,69,514,96"/>
+<area shape="poly" title=" " alt="" coords="543,92,514,94,514,89,549,91"/>
+<area shape="poly" title=" " alt="" coords="529,71,564,74,559,74,530,76"/>
+<area shape="rect" href="../../d7/d00/a00002.html#a103d46ddda22631adbfcee6fe3b9e48d" title="Run the emulator, and clean up after it terminates." alt="" coords="200,120,296,147"/>
+<area shape="poly" title=" " alt="" coords="367,100,297,123,296,117,362,101"/>
+<area shape="poly" title=" " alt="" coords="267,104,261,101,248,99,236,101,230,105,228,111,231,121,227,118,223,111,225,102,234,96,248,93,263,96,272,105"/>
+<area shape="rect" href="../../d7/d00/a00002.html#a0ddf1224851353fc92bfbff6f499fa97" title="Entry point for the application." alt="" coords="103,145,152,172"/>
+<area shape="poly" title=" " alt="" coords="187,146,153,156,152,151,182,147"/>
+<area shape="poly" title=" " alt="" coords="142,129,137,126,127,124,118,126,113,130,112,136,114,146,109,144,106,136,108,127,116,121,127,119,140,121,147,130"/>
+<area shape="rect" href="../../d2/d00/a00083.html#a3c04138a5bfe5d72780bb7e82a18e627" title=" " alt="" coords="5,145,55,172"/>
+<area shape="poly" title=" " alt="" coords="85,160,55,161,55,156,89,157"/>
+<area shape="poly" title=" " alt="" coords="1308,128,1298,125,1277,123,1257,125,1247,129,1244,135,1249,145,1244,142,1239,135,1243,126,1256,119,1277,117,1299,120,1313,129"/>
+<area shape="rect" href="../../d4/d00/a01817.html#a390eeea8f34b1dcc08338563e803d738" title="Load ROM contents from file." alt="" coords="1016,144,1160,171"/>
+<area shape="poly" title=" " alt="" coords="1190,157,1160,160,1160,155,1195,157"/>
+<area shape="poly" title=" " alt="" coords="1003,165,832,180,635,187,428,187,348,184,270,178,152,165,153,159,271,173,349,179,428,181,635,181,832,175,998,166"/>
+<area shape="rect" href="../../d4/d00/a01817.html#a6f6f008fbad719e2227708fc07def6c5" title=" " alt="" coords="754,120,968,147"/>
+<area shape="poly" title=" " alt="" coords="998,148,968,147,969,142,1003,148"/>
+<area shape="poly" title=" " alt="" coords="780,116,697,99,697,94,786,116"/>
+<area shape="rect" href="../../d4/d00/a01817.html#ad5d2be74cd6988c52f4172dcf66d8dfd" title="Run the system by clocking the CPU(s) and devices." alt="" coords="375,120,483,147"/>
+<area shape="poly" title=" " alt="" coords="736,134,484,136,484,131,741,133"/>
+<area shape="poly" title=" " alt="" coords="357,134,297,136,297,131,362,133"/>
+</map>
+</div>
+
+</div>
+</div>
+<a id="a4c415ae0622a215540658760a91f1233" name="a4c415ae0622a215540658760a91f1233"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a4c415ae0622a215540658760a91f1233">&#9670;&#160;</a></span>alpha_pal_instruction_compilable()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool alpha_pal_instruction_compilable </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="#a9fc4dbb2fe4593f94c2162933b2efdaa">AlphaPALInstructionAccess</a></td>          <td class="paramname"><span class="paramname"><em>access</em></span></td><td>)</td>
           <td></td>
         </tr>
       </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel constexpr">constexpr</span></span>  </td>
+  </tr>
+</table>
 </div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">((void) 0)</div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00086">86</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
+
+<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00113">113</a> of file <a class="el" href="../../d5/d00/a00170_source.html">AlphaPAL.h</a>.</p>
+
+<p class="reference">References <a class="el" href="../../d5/d00/a00170_source.html#l00113">alpha_pal_instruction_compilable()</a>, <a class="el" href="../../d5/d00/a00170_source.html#l00093">PalOnly</a>, and <a class="el" href="../../d5/d00/a00170_source.html#l00094">PalOrKernelHwe</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d5/d00/a00170_source.html#l00113">alpha_pal_instruction_compilable()</a>.</p>
+<div class="dynheader">
+Here is the call graph for this function:</div>
+<div class="dyncontent">
+<div class="center"><img src="../../d5/d00/a00170_a4c415ae0622a215540658760a91f1233_cgraph.png" border="0" usemap="#ad5/d00/a00170_a4c415ae0622a215540658760a91f1233_cgraph" loading="lazy" alt=""/></div>
+<map name="ad5/d00/a00170_a4c415ae0622a215540658760a91f1233_cgraph" id="ad5/d00/a00170_a4c415ae0622a215540658760a91f1233_cgraph">
+<area shape="rect" title=" " alt="" coords="5,29,149,72"/>
+<area shape="poly" title=" " alt="" coords="49,28,48,19,52,11,62,5,77,3,93,5,104,14,98,14,91,10,77,8,64,10,56,14,53,20,54,29"/>
+</map>
+</div>
+<div class="dynheader">
+Here is the caller graph for this function:</div>
+<div class="dyncontent">
+<div class="center"><img src="../../d5/d00/a00170_a4c415ae0622a215540658760a91f1233_icgraph.png" border="0" usemap="#ad5/d00/a00170_a4c415ae0622a215540658760a91f1233_icgraph" loading="lazy" alt=""/></div>
+<map name="ad5/d00/a00170_a4c415ae0622a215540658760a91f1233_icgraph" id="ad5/d00/a00170_a4c415ae0622a215540658760a91f1233_icgraph">
+<area shape="rect" title=" " alt="" coords="5,29,149,72"/>
+<area shape="poly" title=" " alt="" coords="98,14,91,10,77,8,64,10,56,14,53,20,54,29,49,28,48,19,52,11,62,5,77,3,93,5,104,14"/>
+</map>
+</div>
 
 </div>
 </div>
-<a id="ad6ec3e557cf64e619f12c75ce3b2078a" name="ad6ec3e557cf64e619f12c75ce3b2078a"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ad6ec3e557cf64e619f12c75ce3b2078a">&#9670;&#160;</a></span>DO_ADDL</h2>
+<a id="a66ce0f9f8f472ac548043e941dc24b32" name="a66ce0f9f8f472ac548043e941dc24b32"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a66ce0f9f8f472ac548043e941dc24b32">&#9670;&#160;</a></span>alpha_pal_return_compilable()</h2>
 
 <div class="memitem">
 <div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
       <table class="memname">
         <tr>
-          <td class="memname">#define DO_ADDL&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> + <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td>
+          <td class="memname">bool alpha_pal_return_compilable </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="../../df/d00/a01001.html">AlphaPALReturnDescriptor</a> &amp;</td>          <td class="paramname"><span class="paramname"><em>entry</em></span></td><td>)</td>
+          <td></td>
         </tr>
       </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel constexpr">constexpr</span></span>  </td>
+  </tr>
+</table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00114">114</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00084">84</a> of file <a class="el" href="../../d5/d00/a00170_source.html">AlphaPAL.h</a>.</p>
+
+<p class="reference">References <a class="el" href="../../d5/d00/a00170_source.html#l00084">alpha_pal_return_compilable()</a>, <a class="el" href="../../d5/d00/a00170_source.html#l00074">AlphaPALReturnDescriptor::clear_lock</a>, <a class="el" href="../../d5/d00/a00170_source.html#l00075">AlphaPALReturnDescriptor::compilable</a>, and <a class="el" href="../../d5/d00/a00170_source.html#l00071">AlphaPALReturnDescriptor::valid</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d5/d00/a00170_source.html#l00084">alpha_pal_return_compilable()</a>.</p>
+<div class="dynheader">
+Here is the call graph for this function:</div>
+<div class="dyncontent">
+<div class="center"><img src="../../d5/d00/a00170_a66ce0f9f8f472ac548043e941dc24b32_cgraph.png" border="0" usemap="#ad5/d00/a00170_a66ce0f9f8f472ac548043e941dc24b32_cgraph" loading="lazy" alt=""/></div>
+<map name="ad5/d00/a00170_a66ce0f9f8f472ac548043e941dc24b32_cgraph" id="ad5/d00/a00170_a66ce0f9f8f472ac548043e941dc24b32_cgraph">
+<area shape="rect" title=" " alt="" coords="5,29,191,56"/>
+<area shape="poly" title=" " alt="" coords="66,28,61,21,65,11,77,5,98,3,120,5,133,14,128,14,119,10,98,8,79,10,68,15,66,20,71,29"/>
+</map>
+</div>
+<div class="dynheader">
+Here is the caller graph for this function:</div>
+<div class="dyncontent">
+<div class="center"><img src="../../d5/d00/a00170_a66ce0f9f8f472ac548043e941dc24b32_icgraph.png" border="0" usemap="#ad5/d00/a00170_a66ce0f9f8f472ac548043e941dc24b32_icgraph" loading="lazy" alt=""/></div>
+<map name="ad5/d00/a00170_a66ce0f9f8f472ac548043e941dc24b32_icgraph" id="ad5/d00/a00170_a66ce0f9f8f472ac548043e941dc24b32_icgraph">
+<area shape="rect" title=" " alt="" coords="5,29,191,56"/>
+<area shape="poly" title=" " alt="" coords="128,14,119,10,98,8,79,10,68,15,66,20,71,29,66,28,61,21,65,11,77,5,98,3,120,5,133,14"/>
+</map>
+</div>
 
 </div>
 </div>
-<a id="af78a2188777639f3ea3850c201ed0540" name="af78a2188777639f3ea3850c201ed0540"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#af78a2188777639f3ea3850c201ed0540">&#9670;&#160;</a></span>DO_ADDL_V</h2>
+<a id="ae16c5f4c7b5de3aba54dc894468b1f44" name="ae16c5f4c7b5de3aba54dc894468b1f44"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ae16c5f4c7b5de3aba54dc894468b1f44">&#9670;&#160;</a></span>alpha_pal_return_descriptor()</h2>
 
 <div class="memitem">
 <div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
       <table class="memname">
         <tr>
-          <td class="memname">#define DO_ADDL_V</td>
+          <td class="memname"><a class="el" href="../../df/d00/a01001.html">AlphaPALReturnDescriptor</a> alpha_pal_return_descriptor </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="../../d7/d00/a01005.html">AlphaPALPolicy</a> &amp;</td>          <td class="paramname"><span class="paramname"><em>policy</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype"><a class="el" href="../../de/d00/a00134.html#a6eb1e68cc391dd753bc8ce896dbb8315">std::uint32_t</a></td>          <td class="paramname"><span class="paramname"><em>instruction</em></span>&#160;)</td>
         </tr>
       </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel constexpr">constexpr</span></span>  </td>
+  </tr>
+</table>
 </div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">{                                                                             \</div>
-<div class="line">  <a class="code hl_typedef" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rav = <a class="code hl_define" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a>;                                                              \</div>
-<div class="line">  <a class="code hl_typedef" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rbv = <a class="code hl_define" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;                                                              \</div>
-<div class="line">  <a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="code hl_function" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(rav + rbv);                                               \</div>
-<div class="line">                                                                           \</div>
-<div class="line">                                                \</div>
-<div class="line">  if(((~rav ^ rbv) &amp; (rav ^ <a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>)) &amp; <a class="code hl_define" href="../../d7/d00/a00182.html#a7230384aeea638e86d1b5253fa07bb5e">L_SIGN</a>)                                   \</div>
-<div class="line">  {                                                                           \</div>
-<div class="line">    ARITH_TRAP_I(<a class="code hl_define" href="../../d7/d00/a00182.html#a161e193f4ff9d271b7cc6ed12c4463ac">TRAP_IOV</a>, <a class="code hl_define" href="../../d7/d00/a00182.html#a9de40e06982123e40c3c92b5db6d7640">RC</a>);                                               \</div>
-<div class="line">    ARITH_TRAP_PRINTF(<span class="stringliteral">&quot;ADDL_V %016&quot;</span> PRIx64 <span class="stringliteral">&quot; + %016&quot;</span> PRIx64 <span class="stringliteral">&quot; = %016&quot;</span> PRIx64 <span class="stringliteral">&quot; + TRAP.\n&quot;</span>, \</div>
-<div class="line">                      rav, rbv, <a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>);                                          \</div>
-<div class="line">  }                                                                           \</div>
-<div class="line">}</div>
-<div class="ttc" id="aa00182_html_a161e193f4ff9d271b7cc6ed12c4463ac"><div class="ttname"><a href="../../d7/d00/a00182.html#a161e193f4ff9d271b7cc6ed12c4463ac">TRAP_IOV</a></div><div class="ttdeci">#define TRAP_IOV</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00882">cpu_defs.h:882</a></div></div>
-<div class="ttc" id="aa00182_html_a2f6f6112bc4d90eddc76fc7b66f5aaf9"><div class="ttname"><a href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a></div><div class="ttdeci">#define RAV</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00846">cpu_defs.h:846</a></div></div>
-<div class="ttc" id="aa00182_html_a3bc286803dd900b16f9c3704d4c2f198"><div class="ttname"><a href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a></div><div class="ttdeci">#define RCV</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00851">cpu_defs.h:851</a></div></div>
-<div class="ttc" id="aa00182_html_a7230384aeea638e86d1b5253fa07bb5e"><div class="ttname"><a href="../../d7/d00/a00182.html#a7230384aeea638e86d1b5253fa07bb5e">L_SIGN</a></div><div class="ttdeci">#define L_SIGN</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00358">cpu_defs.h:358</a></div></div>
-<div class="ttc" id="aa00182_html_a9de40e06982123e40c3c92b5db6d7640"><div class="ttname"><a href="../../d7/d00/a00182.html#a9de40e06982123e40c3c92b5db6d7640">RC</a></div><div class="ttdeci">#define RC</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00850">cpu_defs.h:850</a></div></div>
-<div class="ttc" id="aa00182_html_ae7171e6b384266c5be0595e42b921bfa"><div class="ttname"><a href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a></div><div class="ttdeci">#define RBV</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00848">cpu_defs.h:848</a></div></div>
-<div class="ttc" id="aa00257_html_a1af9f95651e921615e75917a6dd1b574"><div class="ttname"><a href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a></div><div class="ttdeci">uint64_t u64</div><div class="ttdef"><b>Definition</b> <a href="../../d9/d00/a00257_source.html#l00126">datatypes.h:126</a></div></div>
-<div class="ttc" id="aa00257_html_ab6397ea9cae4b1b067118eacffc71ab7"><div class="ttname"><a href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a></div><div class="ttdeci">u64 sext_u64_32(u64 a)</div><div class="ttdoc">Sign-extend a 32-bit value to 64 bits.</div><div class="ttdef"><b>Definition</b> <a href="../../d9/d00/a00257_source.html#l00226">datatypes.h:226</a></div></div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00118">118</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
+
+<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00134">134</a> of file <a class="el" href="../../d5/d00/a00170_source.html">AlphaPAL.h</a>.</p>
+
+<p class="reference">References <a class="el" href="../../d5/d00/a00170_source.html#l00134">alpha_pal_return_descriptor()</a>, and <a class="el" href="../../d5/d00/a00170_source.html#l00131">AlphaPALPolicy::hardware_return</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d5/d00/a00170_source.html#l00134">alpha_pal_return_descriptor()</a>, and <a class="el" href="../../d5/d00/a00140_source.html#l02949">CAlphaCPU::execute()</a>.</p>
+<div class="dynheader">
+Here is the call graph for this function:</div>
+<div class="dyncontent">
+<div class="center"><img src="../../d5/d00/a00170_ae16c5f4c7b5de3aba54dc894468b1f44_cgraph.png" border="0" usemap="#ad5/d00/a00170_ae16c5f4c7b5de3aba54dc894468b1f44_cgraph" loading="lazy" alt=""/></div>
+<map name="ad5/d00/a00170_ae16c5f4c7b5de3aba54dc894468b1f44_cgraph" id="ad5/d00/a00170_ae16c5f4c7b5de3aba54dc894468b1f44_cgraph">
+<area shape="rect" title=" " alt="" coords="5,29,186,56"/>
+<area shape="poly" title=" " alt="" coords="64,28,59,21,63,11,75,5,96,3,117,5,130,14,125,14,115,10,95,8,77,10,67,15,64,20,69,29"/>
+</map>
+</div>
+<div class="dynheader">
+Here is the caller graph for this function:</div>
+<div class="dyncontent">
+<div class="center"><img src="../../d5/d00/a00170_ae16c5f4c7b5de3aba54dc894468b1f44_icgraph.png" border="0" usemap="#ad5/d00/a00170_ae16c5f4c7b5de3aba54dc894468b1f44_icgraph" loading="lazy" alt=""/></div>
+<map name="ad5/d00/a00170_ae16c5f4c7b5de3aba54dc894468b1f44_icgraph" id="ad5/d00/a00170_ae16c5f4c7b5de3aba54dc894468b1f44_icgraph">
+<area shape="rect" title=" " alt="" coords="1785,56,1965,83"/>
+<area shape="poly" title=" " alt="" coords="1910,40,1899,37,1875,35,1853,37,1841,41,1838,47,1844,57,1839,54,1833,47,1837,38,1851,31,1875,29,1900,32,1915,41"/>
+<area shape="rect" href="../../dd/d00/a00921.html#a64999b9a0ad5d81bef72e6be67e423aa" title="Called each clock&#45;cycle." alt="" coords="1589,56,1737,83"/>
+<area shape="poly" title=" " alt="" coords="1766,69,1737,72,1737,67,1772,69"/>
+<area shape="rect" href="../../dd/d00/a00921.html#a266adde24b8ec06d267522055eefb53c" title="Produce disassembly&#45;listing with marker." alt="" coords="1400,5,1535,32"/>
+<area shape="poly" title=" " alt="" coords="1591,51,1522,35,1522,30,1596,52"/>
+<area shape="rect" href="../../dd/d00/a00921.html#a920854ec4029c667ee80ec021d526065" title=" " alt="" coords="1408,56,1527,83"/>
+<area shape="poly" title=" " alt="" coords="1571,69,1528,72,1527,67,1577,69"/>
+<area shape="rect" href="../../d4/d00/a01817.html#a6f662062bc316b82491050ba08a60df0" title="Do one clock tick." alt="" coords="1394,107,1541,133"/>
+<area shape="poly" title=" " alt="" coords="1596,87,1522,109,1522,103,1591,88"/>
+<area shape="rect" href="../../d1/d00/a01041.html#ad0519606483dddcd3a7964f55d8d053f" title="Parse an IDB command." alt="" coords="562,69,706,96"/>
+<area shape="poly" title=" " alt="" coords="1376,111,1346,111,986,93,706,86,706,81,987,88,1346,105,1382,111"/>
+<area shape="rect" href="../../d4/d00/a00617.html#abd5e968a4201d6c14e21977fe4ea280e" title="Run one progress chunk of the SRM self&#45;decompressor on CPU 0." alt="" coords="1208,144,1346,171"/>
+<area shape="poly" title=" " alt="" coords="1384,137,1347,146,1346,141,1379,137"/>
+<area shape="rect" href="../../d1/d00/a01041.html#a0baf94f44b4686e2dadfd9401009a121" title="Run an IDB script, or prompt user for input." alt="" coords="344,69,514,96"/>
+<area shape="poly" title=" " alt="" coords="543,92,514,94,514,89,549,91"/>
+<area shape="poly" title=" " alt="" coords="529,71,564,74,559,74,530,76"/>
+<area shape="rect" href="../../d7/d00/a00002.html#a103d46ddda22631adbfcee6fe3b9e48d" title="Run the emulator, and clean up after it terminates." alt="" coords="200,120,296,147"/>
+<area shape="poly" title=" " alt="" coords="367,100,297,123,296,117,362,101"/>
+<area shape="poly" title=" " alt="" coords="267,104,261,101,248,99,236,101,230,105,228,111,231,121,227,118,223,111,225,102,234,96,248,93,263,96,272,105"/>
+<area shape="rect" href="../../d7/d00/a00002.html#a0ddf1224851353fc92bfbff6f499fa97" title="Entry point for the application." alt="" coords="103,145,152,172"/>
+<area shape="poly" title=" " alt="" coords="187,146,153,156,152,151,182,147"/>
+<area shape="poly" title=" " alt="" coords="142,129,137,126,127,124,118,126,113,130,112,136,114,146,109,144,106,136,108,127,116,121,127,119,140,121,147,130"/>
+<area shape="rect" href="../../d2/d00/a00083.html#a3c04138a5bfe5d72780bb7e82a18e627" title=" " alt="" coords="5,145,55,172"/>
+<area shape="poly" title=" " alt="" coords="85,160,55,161,55,156,89,157"/>
+<area shape="poly" title=" " alt="" coords="1308,128,1298,125,1277,123,1257,125,1247,129,1244,135,1249,145,1244,142,1239,135,1243,126,1256,119,1277,117,1299,120,1313,129"/>
+<area shape="rect" href="../../d4/d00/a01817.html#a390eeea8f34b1dcc08338563e803d738" title="Load ROM contents from file." alt="" coords="1016,144,1160,171"/>
+<area shape="poly" title=" " alt="" coords="1190,157,1160,160,1160,155,1195,157"/>
+<area shape="poly" title=" " alt="" coords="1003,165,832,180,635,187,428,187,348,184,270,178,152,165,153,159,271,173,349,179,428,181,635,181,832,175,998,166"/>
+<area shape="rect" href="../../d4/d00/a01817.html#a6f6f008fbad719e2227708fc07def6c5" title=" " alt="" coords="754,120,968,147"/>
+<area shape="poly" title=" " alt="" coords="998,148,968,147,969,142,1003,148"/>
+<area shape="poly" title=" " alt="" coords="780,116,697,99,697,94,786,116"/>
+<area shape="rect" href="../../d4/d00/a01817.html#ad5d2be74cd6988c52f4172dcf66d8dfd" title="Run the system by clocking the CPU(s) and devices." alt="" coords="375,120,483,147"/>
+<area shape="poly" title=" " alt="" coords="736,134,484,136,484,131,741,133"/>
+<area shape="poly" title=" " alt="" coords="357,134,297,136,297,131,362,133"/>
+</map>
+</div>
 
 </div>
 </div>
-<a id="a311252089a9e7b4376ecb060997cf3b4" name="a311252089a9e7b4376ecb060997cf3b4"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a311252089a9e7b4376ecb060997cf3b4">&#9670;&#160;</a></span>DO_ADDQ</h2>
+<a id="a44e75b3cc228e7710e6d2174d41d9ed0" name="a44e75b3cc228e7710e6d2174d41d9ed0"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a44e75b3cc228e7710e6d2174d41d9ed0">&#9670;&#160;</a></span>alpha_pal_return_target()</h2>
 
 <div class="memitem">
 <div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
       <table class="memname">
         <tr>
-          <td class="memname">#define DO_ADDQ&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> + <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td>
+          <td class="memname"><a class="el" href="../../de/d00/a00134.html#aec6fcb673ff035718c238c8c9d544c47">std::uint64_t</a> alpha_pal_return_target </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="../../df/d00/a01001.html">AlphaPALReturnDescriptor</a> &amp;</td>          <td class="paramname"><span class="paramname"><em>entry</em></span>, </td>
         </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00095">95</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="aa29cb45c4454f1d6660bbb5d161c2cab" name="aa29cb45c4454f1d6660bbb5d161c2cab"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aa29cb45c4454f1d6660bbb5d161c2cab">&#9670;&#160;</a></span>DO_ADDQ_V</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
         <tr>
-          <td class="memname">#define DO_ADDQ_V</td>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype"><a class="el" href="../../de/d00/a00134.html#aec6fcb673ff035718c238c8c9d544c47">std::uint64_t</a></td>          <td class="paramname"><span class="paramname"><em>source</em></span>&#160;)</td>
         </tr>
       </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">{                                                                             \</div>
-<div class="line">  <a class="code hl_typedef" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rav = <a class="code hl_define" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a>;                                                              \</div>
-<div class="line">  <a class="code hl_typedef" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rbv = <a class="code hl_define" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;                                                              \</div>
-<div class="line">  <a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = rav + rbv;                                                            \</div>
-<div class="line">                                                                           \</div>
-<div class="line">                                                \</div>
-<div class="line">  if(((~rav ^ rbv) &amp; (rav ^ <a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>)) &amp; <a class="code hl_define" href="../../d7/d00/a00182.html#ae0b86912655913a225470dcf75c35094">Q_SIGN</a>)                                   \</div>
-<div class="line">  {                                                                           \</div>
-<div class="line">    ARITH_TRAP_I(<a class="code hl_define" href="../../d7/d00/a00182.html#a161e193f4ff9d271b7cc6ed12c4463ac">TRAP_IOV</a>, <a class="code hl_define" href="../../d7/d00/a00182.html#a9de40e06982123e40c3c92b5db6d7640">RC</a>);                                               \</div>
-<div class="line">    ARITH_TRAP_PRINTF(<span class="stringliteral">&quot;ADDQ_V %016&quot;</span> PRIx64 <span class="stringliteral">&quot; + %016&quot;</span> PRIx64 <span class="stringliteral">&quot; = %016&quot;</span> PRIx64 <span class="stringliteral">&quot; + TRAP.\n&quot;</span>, \</div>
-<div class="line">                      rav, rbv, <a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>);                                          \</div>
-<div class="line">  }                                                                           \</div>
-<div class="line">}</div>
-<div class="ttc" id="aa00182_html_ae0b86912655913a225470dcf75c35094"><div class="ttname"><a href="../../d7/d00/a00182.html#ae0b86912655913a225470dcf75c35094">Q_SIGN</a></div><div class="ttdeci">#define Q_SIGN</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00359">cpu_defs.h:359</a></div></div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00099">99</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="a4b5ed6c107cf246762a6dd6b5a7da4fe" name="a4b5ed6c107cf246762a6dd6b5a7da4fe"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a4b5ed6c107cf246762a6dd6b5a7da4fe">&#9670;&#160;</a></span>DO_CMPEQ</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_CMPEQ&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = (<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> == <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>) ? 1 : 0;</td>
-        </tr>
-      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel constexpr">constexpr</span></span>  </td>
+  </tr>
+</table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00090">90</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00078">78</a> of file <a class="el" href="../../d5/d00/a00170_source.html">AlphaPAL.h</a>.</p>
 
+<p class="reference">References <a class="el" href="../../d5/d00/a00170_source.html#l00078">alpha_pal_return_target()</a>, <a class="el" href="../../d5/d00/a00170_source.html#l00073">AlphaPALReturnDescriptor::target_bits</a>, and <a class="el" href="../../d5/d00/a00170_source.html#l00072">AlphaPALReturnDescriptor::target_mask</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d5/d00/a00170_source.html#l00078">alpha_pal_return_target()</a>.</p>
+<div class="dynheader">
+Here is the call graph for this function:</div>
+<div class="dyncontent">
+<div class="center"><img src="../../d5/d00/a00170_a44e75b3cc228e7710e6d2174d41d9ed0_cgraph.png" border="0" usemap="#ad5/d00/a00170_a44e75b3cc228e7710e6d2174d41d9ed0_cgraph" loading="lazy" alt=""/></div>
+<map name="ad5/d00/a00170_a44e75b3cc228e7710e6d2174d41d9ed0_cgraph" id="ad5/d00/a00170_a44e75b3cc228e7710e6d2174d41d9ed0_cgraph">
+<area shape="rect" title=" " alt="" coords="5,29,162,56"/>
+<area shape="poly" title=" " alt="" coords="56,28,52,21,55,11,66,5,84,3,102,5,114,14,108,14,101,10,83,8,67,10,59,15,57,20,61,29"/>
+</map>
 </div>
+<div class="dynheader">
+Here is the caller graph for this function:</div>
+<div class="dyncontent">
+<div class="center"><img src="../../d5/d00/a00170_a44e75b3cc228e7710e6d2174d41d9ed0_icgraph.png" border="0" usemap="#ad5/d00/a00170_a44e75b3cc228e7710e6d2174d41d9ed0_icgraph" loading="lazy" alt=""/></div>
+<map name="ad5/d00/a00170_a44e75b3cc228e7710e6d2174d41d9ed0_icgraph" id="ad5/d00/a00170_a44e75b3cc228e7710e6d2174d41d9ed0_icgraph">
+<area shape="rect" title=" " alt="" coords="5,29,162,56"/>
+<area shape="poly" title=" " alt="" coords="108,14,101,10,83,8,67,10,59,15,57,20,61,29,56,28,52,21,55,11,66,5,84,3,102,5,114,14"/>
+</map>
 </div>
-<a id="adb837fd5600f65cd86f1e234e62b8531" name="adb837fd5600f65cd86f1e234e62b8531"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#adb837fd5600f65cd86f1e234e62b8531">&#9670;&#160;</a></span>DO_CMPLE</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_CMPLE&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = ((<a class="el" href="../../d9/d00/a00257.html#aaab2ef2ca1576408739fdb8e9f52ae0f">s64</a>) <a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> &lt;= (<a class="el" href="../../d9/d00/a00257.html#aaab2ef2ca1576408739fdb8e9f52ae0f">s64</a>) <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>) ? 1 : 0;</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00092">92</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="a6dc30fdf7e18a4cf3ac24820d1ebef83" name="a6dc30fdf7e18a4cf3ac24820d1ebef83"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a6dc30fdf7e18a4cf3ac24820d1ebef83">&#9670;&#160;</a></span>DO_CMPLT</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_CMPLT&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = ((<a class="el" href="../../d9/d00/a00257.html#aaab2ef2ca1576408739fdb8e9f52ae0f">s64</a>) <a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> &lt; (<a class="el" href="../../d9/d00/a00257.html#aaab2ef2ca1576408739fdb8e9f52ae0f">s64</a>) <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>) ? 1 : 0;</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00091">91</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="a14989f289c4addb81a9ad8939c1cb5d8" name="a14989f289c4addb81a9ad8939c1cb5d8"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a14989f289c4addb81a9ad8939c1cb5d8">&#9670;&#160;</a></span>DO_CMPULE</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_CMPULE&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = ((<a class="el" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a>) <a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> &lt;= (<a class="el" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a>) <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>) ? 1 : 0;</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00208">208</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="a6c8b63929cb973629887177e6d681c03" name="a6c8b63929cb973629887177e6d681c03"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a6c8b63929cb973629887177e6d681c03">&#9670;&#160;</a></span>DO_CMPULT</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_CMPULT&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = ((<a class="el" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a>) <a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> &lt; (<a class="el" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a>) <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>) ? 1 : 0;</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00207">207</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="a97467908a590a9e9e5bd2a7f7ec36eb4" name="a97467908a590a9e9e5bd2a7f7ec36eb4"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a97467908a590a9e9e5bd2a7f7ec36eb4">&#9670;&#160;</a></span>DO_CTLZ</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_CTLZ</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">temp_64 = 0; \</div>
-<div class="line">temp_64_2 = <a class="code hl_define" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;             \</div>
-<div class="line">for(i = 63; i &gt;= 0; i--)     \</div>
-<div class="line">  <span class="keywordflow">if</span>((temp_64_2 &gt;&gt; i) &amp; 1)   \</div>
-<div class="line">    <span class="keywordflow">break</span>;                   \</div>
-<div class="line">  else                       \</div>
-<div class="line">    temp_64++;               \</div>
-<div class="line"><a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = temp_64;</div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00134">134</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="a53a048605a41140676cbbacfc0a620a1" name="a53a048605a41140676cbbacfc0a620a1"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a53a048605a41140676cbbacfc0a620a1">&#9670;&#160;</a></span>DO_CTPOP</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_CTPOP</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">temp_64 = 0; \</div>
-<div class="line">temp_64_2 = <a class="code hl_define" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;             \</div>
-<div class="line">for(i = 0; i &lt; 64; i++)      \</div>
-<div class="line">  <span class="keywordflow">if</span>((temp_64_2 &gt;&gt; i) &amp; 1)   \</div>
-<div class="line">    temp_64++;               \</div>
-<div class="line"><a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = temp_64;</div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00143">143</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="af1735a5fd10bba4015e858ef15531972" name="af1735a5fd10bba4015e858ef15531972"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#af1735a5fd10bba4015e858ef15531972">&#9670;&#160;</a></span>DO_CTTZ</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_CTTZ</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">temp_64 = 0; \</div>
-<div class="line">temp_64_2 = <a class="code hl_define" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;             \</div>
-<div class="line">for(i = 0; i &lt; 64; i++)      \</div>
-<div class="line">  <span class="keywordflow">if</span>((temp_64_2 &gt;&gt; i) &amp; 1)   \</div>
-<div class="line">    <span class="keywordflow">break</span>;                   \</div>
-<div class="line">  else                       \</div>
-<div class="line">    temp_64++;               \</div>
-<div class="line"><a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = temp_64;</div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00150">150</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="a0fe5add645871be608cdfe4e42dd38e5" name="a0fe5add645871be608cdfe4e42dd38e5"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a0fe5add645871be608cdfe4e42dd38e5">&#9670;&#160;</a></span>DO_MULL</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_MULL&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(<a class="el" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a>) * <a class="el" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(<a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>));</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00211">211</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="a8b7779e8e656b918604096f6de35df39" name="a8b7779e8e656b918604096f6de35df39"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a8b7779e8e656b918604096f6de35df39">&#9670;&#160;</a></span>DO_MULL_V</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_MULL_V</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">{                                                                             \</div>
-<div class="line">  <a class="code hl_typedef" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rav = <a class="code hl_define" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a>;                                                              \</div>
-<div class="line">  <a class="code hl_typedef" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rbv = <a class="code hl_define" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;                                                              \</div>
-<div class="line">  <a class="code hl_typedef" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a> sr = <a class="code hl_function" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(rav) * <a class="code hl_function" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(rbv);                               \</div>
-<div class="line">  <a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="code hl_function" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(sr);                                                      \</div>
-<div class="line">  if((<a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> ^ sr) &amp; <a class="code hl_define" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xffffffff00000000))                                    \</div>
-<div class="line">  {                                                                           \</div>
-<div class="line">    ARITH_TRAP_I(<a class="code hl_define" href="../../d7/d00/a00182.html#a161e193f4ff9d271b7cc6ed12c4463ac">TRAP_IOV</a>, <a class="code hl_define" href="../../d7/d00/a00182.html#a9de40e06982123e40c3c92b5db6d7640">RC</a>);                                               \</div>
-<div class="line">    ARITH_TRAP_PRINTF(<span class="stringliteral">&quot;MULL_V %016&quot;</span> PRIx64 <span class="stringliteral">&quot; * %016&quot;</span> PRIx64 <span class="stringliteral">&quot; = %016&quot;</span> PRIx64 <span class="stringliteral">&quot; + TRAP.\n&quot;</span>, \</div>
-<div class="line">                      rav, rbv, <a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>);                                          \</div>
-<div class="line">  }                                                                           \</div>
-<div class="line">}</div>
-<div class="ttc" id="aa00257_html_a87a27db8f6877dc5bbc36ec833e88c58"><div class="ttname"><a href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a></div><div class="ttdeci">#define U64(a)</div><div class="ttdef"><b>Definition</b> <a href="../../d9/d00/a00257_source.html#l00119">datatypes.h:119</a></div></div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00213">213</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="a9da8b1e665c0705dd154200c39701efc" name="a9da8b1e665c0705dd154200c39701efc"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a9da8b1e665c0705dd154200c39701efc">&#9670;&#160;</a></span>DO_MULQ</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_MULQ&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00227">227</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="aa65af5c594ffec7dd9ca36cfe6fdf427" name="aa65af5c594ffec7dd9ca36cfe6fdf427"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aa65af5c594ffec7dd9ca36cfe6fdf427">&#9670;&#160;</a></span>DO_MULQ_V</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_MULQ_V</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">{                                                                             \</div>
-<div class="line">  <a class="code hl_typedef" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rav = <a class="code hl_define" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a>;                                                              \</div>
-<div class="line">  <a class="code hl_typedef" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rbv = <a class="code hl_define" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;                                                              \</div>
-<div class="line">  <a class="code hl_typedef" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a> t64;                                                                    \</div>
-<div class="line">  <a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="code hl_function" href="../../d7/d00/a00182.html#af7fe3030783d36c253fefe0241c4e594">uemul64</a>(rav, rbv, &amp;t64);                                              \</div>
-<div class="line">  if(<a class="code hl_define" href="../../d7/d00/a00182.html#af37df68c594bb0879682610e0d3a3fb8">Q_GETSIGN</a>(rav))                                                          \</div>
-<div class="line">    t64 -= rbv;                                                               \</div>
-<div class="line">  if(<a class="code hl_define" href="../../d7/d00/a00182.html#af37df68c594bb0879682610e0d3a3fb8">Q_GETSIGN</a>(rbv))                                                          \</div>
-<div class="line">    t64 -= rav;                                                               \</div>
-<div class="line">  if(<a class="code hl_define" href="../../d7/d00/a00182.html#af37df68c594bb0879682610e0d3a3fb8">Q_GETSIGN</a>(<a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>) ? (t64 != <a class="code hl_define" href="../../d7/d00/a00182.html#ac6522d535177e673b18ac636f4c6df1e">X64_QUAD</a>) : (t64 != 0))                         \</div>
-<div class="line">  {                                                                           \</div>
-<div class="line">    ARITH_TRAP_I(<a class="code hl_define" href="../../d7/d00/a00182.html#a161e193f4ff9d271b7cc6ed12c4463ac">TRAP_IOV</a>, <a class="code hl_define" href="../../d7/d00/a00182.html#a9de40e06982123e40c3c92b5db6d7640">RC</a>);                                               \</div>
-<div class="line">    ARITH_TRAP_PRINTF(<span class="stringliteral">&quot;MULQ_V %016&quot;</span> PRIx64 <span class="stringliteral">&quot; * %016&quot;</span> PRIx64 <span class="stringliteral">&quot; = %016&quot;</span> PRIx64 <span class="stringliteral">&quot; + TRAP.\n&quot;</span>, \</div>
-<div class="line">                      rav, rbv, <a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>);                                          \</div>
-<div class="line">  }                                                                           \</div>
-<div class="line">}</div>
-<div class="ttc" id="aa00182_html_ac6522d535177e673b18ac636f4c6df1e"><div class="ttname"><a href="../../d7/d00/a00182.html#ac6522d535177e673b18ac636f4c6df1e">X64_QUAD</a></div><div class="ttdeci">#define X64_QUAD</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00355">cpu_defs.h:355</a></div></div>
-<div class="ttc" id="aa00182_html_af37df68c594bb0879682610e0d3a3fb8"><div class="ttname"><a href="../../d7/d00/a00182.html#af37df68c594bb0879682610e0d3a3fb8">Q_GETSIGN</a></div><div class="ttdeci">#define Q_GETSIGN(x)</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00360">cpu_defs.h:360</a></div></div>
-<div class="ttc" id="aa00182_html_af7fe3030783d36c253fefe0241c4e594"><div class="ttname"><a href="../../d7/d00/a00182.html#af7fe3030783d36c253fefe0241c4e594">uemul64</a></div><div class="ttdeci">u64 uemul64(u64 a, u64 b, u64 *hi)</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00397">cpu_defs.h:397</a></div></div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00229">229</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="aec2aca429ea0daf3ad01ce2383837041" name="aec2aca429ea0daf3ad01ce2383837041"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aec2aca429ea0daf3ad01ce2383837041">&#9670;&#160;</a></span>DO_S4ADDL</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_S4ADDL&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>((<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 4) + <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00115">115</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="a2a2cb728bd9116e36d37a717bf80d6f8" name="a2a2cb728bd9116e36d37a717bf80d6f8"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a2a2cb728bd9116e36d37a717bf80d6f8">&#9670;&#160;</a></span>DO_S4ADDQ</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_S4ADDQ&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = (<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 4) + <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00096">96</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="acac02e1f6d4e8c08c0791336f3589101" name="acac02e1f6d4e8c08c0791336f3589101"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#acac02e1f6d4e8c08c0791336f3589101">&#9670;&#160;</a></span>DO_S4SUBL</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_S4SUBL&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>((<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 4) - <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00270">270</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="a1c3c576b440907189f2edba4407d6860" name="a1c3c576b440907189f2edba4407d6860"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a1c3c576b440907189f2edba4407d6860">&#9670;&#160;</a></span>DO_S4SUBQ</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_S4SUBQ&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = (<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 4) - <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00251">251</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="ae5870073e20176f1027ff7d3b7c9cbc5" name="ae5870073e20176f1027ff7d3b7c9cbc5"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ae5870073e20176f1027ff7d3b7c9cbc5">&#9670;&#160;</a></span>DO_S8ADDL</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_S8ADDL&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>((<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 8) + <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00116">116</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="a11623e12c0c8c7eb9537f5db0940cba6" name="a11623e12c0c8c7eb9537f5db0940cba6"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a11623e12c0c8c7eb9537f5db0940cba6">&#9670;&#160;</a></span>DO_S8ADDQ</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_S8ADDQ&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = (<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 8) + <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00097">97</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="ac5ccbcbeb6c09a32bb7ed841f6f611b6" name="ac5ccbcbeb6c09a32bb7ed841f6f611b6"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ac5ccbcbeb6c09a32bb7ed841f6f611b6">&#9670;&#160;</a></span>DO_S8SUBL</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_S8SUBL&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>((<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 8) - <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00271">271</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="a78ec9100cf320bb62264668b4ca3d5a6" name="a78ec9100cf320bb62264668b4ca3d5a6"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a78ec9100cf320bb62264668b4ca3d5a6">&#9670;&#160;</a></span>DO_S8SUBQ</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_S8SUBQ&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = (<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> * 8) - <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00252">252</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="af9c590921172add8687edeefaa482175" name="af9c590921172add8687edeefaa482175"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#af9c590921172add8687edeefaa482175">&#9670;&#160;</a></span>DO_SUBL</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_SUBL&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> - <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>);</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00269">269</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="aeb101d1136488748e4aebe487faaa4e9" name="aeb101d1136488748e4aebe487faaa4e9"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aeb101d1136488748e4aebe487faaa4e9">&#9670;&#160;</a></span>DO_SUBL_V</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_SUBL_V</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">{                                                                             \</div>
-<div class="line">  <a class="code hl_typedef" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rav = <a class="code hl_define" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a>;                                                              \</div>
-<div class="line">  <a class="code hl_typedef" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rbv = <a class="code hl_define" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;                                                              \</div>
-<div class="line">  <a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="code hl_function" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(rav - rbv);                                               \</div>
-<div class="line">                                                                           \</div>
-<div class="line">                                                \</div>
-<div class="line">  if(((rav ^ rbv) &amp; (rav ^ <a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>)) &amp; <a class="code hl_define" href="../../d7/d00/a00182.html#a7230384aeea638e86d1b5253fa07bb5e">L_SIGN</a>)                                    \</div>
-<div class="line">  {                                                                           \</div>
-<div class="line">    ARITH_TRAP_I(<a class="code hl_define" href="../../d7/d00/a00182.html#a161e193f4ff9d271b7cc6ed12c4463ac">TRAP_IOV</a>, <a class="code hl_define" href="../../d7/d00/a00182.html#a9de40e06982123e40c3c92b5db6d7640">RC</a>);                                               \</div>
-<div class="line">    ARITH_TRAP_PRINTF(<span class="stringliteral">&quot;SUBL_V %016&quot;</span> PRIx64 <span class="stringliteral">&quot; - %016&quot;</span> PRIx64 <span class="stringliteral">&quot; = %016&quot;</span> PRIx64 <span class="stringliteral">&quot; + TRAP.\n&quot;</span>, \</div>
-<div class="line">                      rav, rbv, <a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>);                                          \</div>
-<div class="line">  }                                                                           \</div>
-<div class="line">}</div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00273">273</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="ad4f7355095fea35853a7705e37ec7956" name="ad4f7355095fea35853a7705e37ec7956"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ad4f7355095fea35853a7705e37ec7956">&#9670;&#160;</a></span>DO_SUBQ</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_SUBQ&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = <a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a> - <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00250">250</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="a11b0b4c4c2a07403cc5d08e7cf504ab8" name="a11b0b4c4c2a07403cc5d08e7cf504ab8"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a11b0b4c4c2a07403cc5d08e7cf504ab8">&#9670;&#160;</a></span>DO_SUBQ_V</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_SUBQ_V</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">{                                                                             \</div>
-<div class="line">  <a class="code hl_typedef" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rav = <a class="code hl_define" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a>;                                                              \</div>
-<div class="line">  <a class="code hl_typedef" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a> rbv = <a class="code hl_define" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>;                                                              \</div>
-<div class="line">  <a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a> = rav - rbv;                                                            \</div>
-<div class="line">                                                                           \</div>
-<div class="line">                                                \</div>
-<div class="line">  if(((rav ^ rbv) &amp; (rav ^ <a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>)) &amp; <a class="code hl_define" href="../../d7/d00/a00182.html#ae0b86912655913a225470dcf75c35094">Q_SIGN</a>)                                    \</div>
-<div class="line">  {                                                                           \</div>
-<div class="line">    ARITH_TRAP_I(<a class="code hl_define" href="../../d7/d00/a00182.html#a161e193f4ff9d271b7cc6ed12c4463ac">TRAP_IOV</a>, <a class="code hl_define" href="../../d7/d00/a00182.html#a9de40e06982123e40c3c92b5db6d7640">RC</a>);                                               \</div>
-<div class="line">    ARITH_TRAP_PRINTF(<span class="stringliteral">&quot;SUBQ_V %016&quot;</span> PRIx64 <span class="stringliteral">&quot; - %016&quot;</span> PRIx64 <span class="stringliteral">&quot; = %016&quot;</span> PRIx64 <span class="stringliteral">&quot; + TRAP.\n&quot;</span>, \</div>
-<div class="line">                      rav, rbv, <a class="code hl_define" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>);                                          \</div>
-<div class="line">  }                                                                           \</div>
-<div class="line">}</div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00254">254</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
-
-</div>
-</div>
-<a id="a6f12d7e360b77fb5c7c6c6f1c40aa2f9" name="a6f12d7e360b77fb5c7c6c6f1c40aa2f9"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a6f12d7e360b77fb5c7c6c6f1c40aa2f9">&#9670;&#160;</a></span>DO_UMULH</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_UMULH&#160;&#160;&#160;<a class="el" href="../../d7/d00/a00182.html#af7fe3030783d36c253fefe0241c4e594">uemul64</a>(<a class="el" href="../../d7/d00/a00182.html#a2f6f6112bc4d90eddc76fc7b66f5aaf9">RAV</a>, <a class="el" href="../../d7/d00/a00182.html#ae7171e6b384266c5be0595e42b921bfa">RBV</a>, &amp;<a class="el" href="../../d7/d00/a00182.html#a3bc286803dd900b16f9c3704d4c2f198">RCV</a>);</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00170_source.html#l00247">247</a> of file <a class="el" href="../../d5/d00/a00170_source.html">cpu_arith.h</a>.</p>
 
 </div>
 </div>
@@ -798,7 +627,7 @@ Macros</h2></td></tr>
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
-    <li class="navelem"><a href="../../dir_3e504b0d3bcf24da5cd743a5b933950b.html">CPU</a></li><li class="navelem"><a href="../../d5/d00/a00170.html">cpu_arith.h</a></li>
+    <li class="navelem"><a href="../../dir_3e504b0d3bcf24da5cd743a5b933950b.html">CPU</a></li><li class="navelem"><a href="../../d5/d00/a00170.html">AlphaPAL.h</a></li>
     <li class="footer">Generated by <a href="https://www.doxygen.org/index.html"><img class="footer" src="../../doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.18.0 </li>
   </ul>
 </div>

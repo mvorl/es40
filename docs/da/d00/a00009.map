@@ -1,6 +1,6 @@
 <map id="audio/ES1370.h" name="audio/ES1370.h">
 <area shape="rect" id="Node000001" title=" " alt="" coords="2063,5,2176,32"/>
-<area shape="rect" id="Node000002" href="$d5/d00/a00518.html" title="Standard includes." alt="" coords="1297,80,1369,107"/>
+<area shape="rect" id="Node000002" href="$d9/d00/a00524.html" title="Standard includes." alt="" coords="1297,80,1369,107"/>
 <area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="2060,26,1385,90,1384,85,2065,25"/>
 <area shape="rect" id="Node000010" title=" " alt="" coords="1990,304,2047,331"/>
 <area shape="poly" id="edge74_Node000001_Node000010" title=" " alt="" coords="2122,30,2125,72,2124,129,2113,194,2103,227,2090,257,2073,279,2053,297,2051,292,2069,276,2085,255,2098,225,2108,193,2118,129,2120,72,2119,34"/>
@@ -10,17 +10,17 @@
 <area shape="poly" id="edge71_Node000001_Node000016" title=" " alt="" coords="2065,31,1981,54,1891,83,1807,117,1725,156,1597,224,1595,219,1722,151,1804,112,1889,77,1979,49,2060,32"/>
 <area shape="rect" id="Node000018" title=" " alt="" coords="1616,229,1741,256"/>
 <area shape="poly" id="edge73_Node000001_Node000018" title=" " alt="" coords="2084,32,1954,83,1875,118,1798,157,1748,189,1705,222,1703,217,1745,185,1796,152,1873,113,1952,78,2079,33"/>
-<area shape="rect" id="Node000033" href="$d7/d00/a00614.html" title="Contains the definitions for the emulated Typhoon Chipset devices." alt="" coords="2713,80,2838,107"/>
+<area shape="rect" id="Node000033" href="$dc/d00/a00620.html" title="Contains the definitions for the emulated Typhoon Chipset devices." alt="" coords="2713,80,2838,107"/>
 <area shape="poly" id="edge49_Node000001_Node000033" title=" " alt="" coords="2177,24,2700,83,2695,84,2177,29"/>
-<area shape="rect" id="Node000034" href="$d6/d00/a00287.html" title="Contains definitions for the base class for devices that connect to the chipset." alt="" coords="2456,155,2629,181"/>
+<area shape="rect" id="Node000034" href="$d6/d00/a00293.html" title="Contains definitions for the base class for devices that connect to the chipset." alt="" coords="2456,155,2629,181"/>
 <area shape="poly" id="edge67_Node000001_Node000034" title=" " alt="" coords="2177,29,2260,50,2351,77,2435,111,2507,148,2502,147,2433,116,2349,83,2259,55,2177,35"/>
-<area shape="rect" id="Node000041" href="$d2/d00/a00281.html" title="Contains the definitions for the PCI Device base class." alt="" coords="2213,80,2338,107"/>
+<area shape="rect" id="Node000041" href="$d6/d00/a00287.html" title="Contains the definitions for the PCI Device base class." alt="" coords="2213,80,2338,107"/>
 <area shape="poly" id="edge68_Node000001_Node000041" title=" " alt="" coords="2147,30,2237,73,2232,73,2146,35"/>
 <area shape="rect" id="Node000042" title=" " alt="" coords="2861,80,2956,107"/>
 <area shape="poly" id="edge70_Node000001_Node000042" title=" " alt="" coords="2177,20,2461,37,2650,54,2849,80,2843,80,2650,59,2460,42,2177,25"/>
 <area shape="rect" id="Node000003" href="$d7/d00/a00131.html" title=" " alt="" coords="377,155,486,181"/>
 <area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="1293,96,974,115,743,132,502,157,501,152,742,127,974,110,1299,95"/>
-<area shape="rect" id="Node000004" href="$d9/d00/a00257.html" title="Contains the datatype definitions for use with Microsoft Visual C++ and Linux." alt="" coords="2658,229,2747,256"/>
+<area shape="rect" id="Node000004" href="$df/d00/a00263.html" title="Contains the datatype definitions for use with Microsoft Visual C++ and Linux." alt="" coords="2658,229,2747,256"/>
 <area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="1369,93,1567,97,1860,107,2159,124,2284,137,2378,152,2411,165,2444,179,2549,207,2645,230,2640,230,2548,212,2443,184,2409,169,2376,157,2283,142,2158,130,1859,112,1567,102,1370,98"/>
 <area shape="rect" id="Node000005" title=" " alt="" coords="2379,229,2446,256"/>
 <area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="1369,92,1581,96,1887,106,2177,124,2283,137,2319,144,2343,152,2362,165,2378,181,2402,217,2397,215,2374,184,2359,169,2341,157,2318,149,2282,142,2177,129,1886,112,1581,102,1369,98"/>
@@ -36,9 +36,9 @@
 <area shape="poly" id="edge31_Node000002_Node000025" title=" " alt="" coords="1370,97,1796,156,1791,156,1370,102"/>
 <area shape="rect" id="Node000027" href="$d4/d00/a00035.html" title=" " alt="" coords="510,155,625,181"/>
 <area shape="poly" id="edge37_Node000002_Node000027" title=" " alt="" coords="1295,100,641,162,640,157,1298,96"/>
-<area shape="rect" id="Node000029" href="$db/d00/a00296.html" title="Contains macro&#39;s and prototypes for debugging." alt="" coords="95,155,197,181"/>
+<area shape="rect" id="Node000029" href="$d0/d00/a00302.html" title="Contains macro&#39;s and prototypes for debugging." alt="" coords="95,155,197,181"/>
 <area shape="poly" id="edge45_Node000002_Node000029" title=" " alt="" coords="1296,99,321,157,213,165,212,159,321,152,1296,94"/>
-<area shape="rect" id="Node000031" href="$df/d00/a00299.html" title="Contains byte&#45;order conversion helpers." alt="" coords="892,155,998,181"/>
+<area shape="rect" id="Node000031" href="$d3/d00/a00305.html" title="Contains byte&#45;order conversion helpers." alt="" coords="892,155,998,181"/>
 <area shape="poly" id="edge47_Node000002_Node000031" title=" " alt="" coords="1299,101,1013,157,1012,151,1294,102"/>
 <area shape="rect" id="Node000007" title=" " alt="" coords="2228,229,2305,256"/>
 <area shape="poly" id="edge6_Node000006_Node000007" title=" " alt="" coords="2270,180,2269,216,2265,212,2266,184"/>
@@ -97,9 +97,9 @@
 <area shape="poly" id="edge60_Node000033_Node000016" title=" " alt="" coords="2710,96,2251,116,1988,133,1879,144,1797,157,1743,171,1691,189,1602,225,1600,220,1689,184,1742,166,1796,152,1879,139,1988,128,2251,111,2716,96"/>
 <area shape="poly" id="edge62_Node000033_Node000019" title=" " alt="" coords="2796,105,2824,126,2850,153,2866,184,2876,216,2871,213,2861,186,2845,156,2821,130,2795,110"/>
 <area shape="poly" id="edge50_Node000033_Node000034" title=" " alt="" coords="2737,107,2598,152,2597,147,2732,108"/>
-<area shape="rect" id="Node000036" href="$d7/d00/a00254.html" title="Contains the definitions for the CPU tracing engine." alt="" coords="2653,155,2791,181"/>
+<area shape="rect" id="Node000036" href="$dd/d00/a00260.html" title="Contains the definitions for the CPU tracing engine." alt="" coords="2653,155,2791,181"/>
 <area shape="poly" id="edge54_Node000033_Node000036" title=" " alt="" coords="2769,106,2742,144,2739,140,2764,108"/>
-<area shape="rect" id="Node000037" href="$d4/d00/a00608.html" title=" " alt="" coords="2917,155,2994,181"/>
+<area shape="rect" id="Node000037" href="$d7/d00/a00614.html" title=" " alt="" coords="2917,155,2994,181"/>
 <area shape="poly" id="edge56_Node000033_Node000037" title=" " alt="" coords="2807,105,2913,149,2907,148,2806,110"/>
 <area shape="rect" id="Node000039" title=" " alt="" coords="3022,229,3079,256"/>
 <area shape="poly" id="edge66_Node000033_Node000039" title=" " alt="" coords="2838,102,2935,124,2978,137,3008,153,3032,182,3045,216,3041,213,3027,185,3004,157,2976,142,2934,129,2838,108"/>

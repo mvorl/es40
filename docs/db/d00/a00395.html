@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.18.0"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ES40: gui/sdlkeys.h File Reference</title>
+<title>ES40: gui/scancodes.h File Reference</title>
 <link href="../../tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="../../dynsections.js"></script>
 <script type="text/javascript" src="../../codefolding.js"></script>
@@ -26,7 +26,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">ES40<span id="projectnumber">&#160;0.17+</span>
+   <div id="projectname">ES40<span id="projectnumber">&#160;0.92.2</span>
    </div>
   </td>
  </tr>
@@ -109,34 +109,115 @@ document.addEventListener('DOMContentLoaded',() => { initNavTree('db/d00/a00395.
 </div>
 
 <div class="header">
-  <div class="headertitle"><div class="title">sdlkeys.h File Reference</div></div>
+  <div class="headertitle"><div class="title">scancodes.h File Reference</div></div>
 </div><!--header-->
 <div class="contents">
 
-<p>This file is simply a list of SDL key symbols taken from &lt;SDL/SDL_keysym.h&gt;.  
+<p>Contains definitions for scancode table.  
 <a href="#details">More...</a></p>
-<div class="textblock"><div class="dynheader">
+<div class="textblock"><code>#include &quot;<a class="el" href="../../d6/d00/a00371_source.html">gui.h</a>&quot;</code><br />
+</div><div class="textblock"><div class="dynheader">
+Include dependency graph for scancodes.h:</div>
+<div class="dyncontent">
+<div class="center"><img src="../../d9/d00/a00396.png" border="0" usemap="#agui_2scancodes_8h" loading="lazy" alt=""/></div>
+<map name="agui_2scancodes_8h" id="agui_2scancodes_8h">
+<area shape="rect" title="Contains definitions for scancode table." alt="" coords="62,5,178,32"/>
+<area shape="rect" href="../../d6/d00/a00371.html" title="Contains the definitions for the bx_gui_c base class used for interfacing with SDL and other device i..." alt="" coords="96,80,145,107"/>
+<area shape="poly" title=" " alt="" coords="121,30,123,65,118,64,119,35"/>
+<area shape="rect" title=" " alt="" coords="5,155,70,181"/>
+<area shape="poly" title=" " alt="" coords="108,106,65,146,61,142,103,108"/>
+<area shape="rect" title=" " alt="" coords="94,155,147,181"/>
+<area shape="poly" title=" " alt="" coords="122,105,123,140,118,138,118,109"/>
+<area shape="rect" href="../../d8/d00/a01932.html" title="Definitions for VGA cards." alt="" coords="171,155,224,181"/>
+<area shape="poly" title=" " alt="" coords="135,105,176,144,170,144,133,110"/>
+</map>
+</div>
+</div><div class="textblock"><div class="dynheader">
 This graph shows which files directly or indirectly include this file:</div>
 <div class="dyncontent">
-<div class="center"><img src="../../d7/d00/a00397.png" border="0" usemap="#agui_2sdlkeys_8hdep" loading="lazy" alt=""/></div>
-<map name="agui_2sdlkeys_8hdep" id="agui_2sdlkeys_8hdep">
-<area shape="rect" title="This file is simply a list of SDL key symbols taken from &lt;SDL/SDL_keysym.h&gt;." alt="" coords="5,5,104,32"/>
-<area shape="rect" href="../../d4/d00/a00392.html" title="Contains the code for the bx_sdl_gui_c class used for interfacing with SDL." alt="" coords="12,80,97,107"/>
-<area shape="poly" title=" " alt="" coords="56,46,57,80,52,79,53,50"/>
+<div class="center"><img src="../../d7/d00/a00397.png" border="0" usemap="#agui_2scancodes_8hdep" loading="lazy" alt=""/></div>
+<map name="agui_2scancodes_8hdep" id="agui_2scancodes_8hdep">
+<area shape="rect" title="Contains definitions for scancode table." alt="" coords="217,5,334,32"/>
+<area shape="rect" href="../../dc/d00/a00053.html" title="Contains the code for the emulated Ali M1543C IDE chipset part." alt="" coords="5,80,186,107"/>
+<area shape="poly" title=" " alt="" coords="233,38,128,82,126,77,228,38"/>
+<area shape="rect" href="../../d4/d00/a00392.html" title="Contains scancodes used to translate host keys to scancodes for the emulated keyboard controller." alt="" coords="210,80,341,107"/>
+<area shape="poly" title=" " alt="" coords="277,46,278,81,273,78,274,50"/>
+<area shape="rect" href="../../df/d00/a00416.html" title="Contains the code for the emulated Keyboard and mouse devices and controller." alt="" coords="364,80,480,107"/>
+<area shape="poly" title=" " alt="" coords="315,37,399,79,394,79,314,42"/>
 </map>
 </div>
 </div>
 <p><a href="../../db/d00/a00395_source.html">Go to the source code of this file.</a></p>
+<table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 id="header-nested-classes" class="groupheader"><a id="nested-classes" name="nested-classes"></a>
+Data Structures</h2></td></tr>
+<tr class="memitem:scancode" id="r_scancode"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../da/d00/a01457.html">scancode</a></td></tr>
+</table><table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 id="header-var-members" class="groupheader"><a id="var-members" name="var-members"></a>
+Variables</h2></td></tr>
+<tr class="memitem:a7f0e8c4fb68c1d8c66eba95692662e8f" id="r_a7f0e8c4fb68c1d8c66eba95692662e8f"><td class="memItemLeft">unsigned char&#160;</td><td class="memItemRight"><a class="el" href="#a7f0e8c4fb68c1d8c66eba95692662e8f">translation8042</a> [256]</td></tr>
+<tr class="memitem:af45274cdf70d1c81c6d6a3e222c93d81" id="r_af45274cdf70d1c81c6d6a3e222c93d81"><td class="memItemLeft"><a class="el" href="../../da/d00/a01457.html">scancode</a>&#160;</td><td class="memItemRight"><a class="el" href="#af45274cdf70d1c81c6d6a3e222c93d81">scancodes</a> [119][3]</td></tr>
+</table>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>This file is simply a list of SDL key symbols taken from &lt;SDL/SDL_keysym.h&gt;. </p>
-<p>The order in this file is not important. In sdl.cc, <a class="el" href="../../d4/d00/a00392.html#a09afb17631341fb7f9aeb31793219e4c">DEF_SDL_KEY()</a> is defined as a macro and then it includes this file to fill in all the data in its key mapping table.</p>
-<p>The symbols, such as SDLK_RETURN, are used for two purposes. They are converted into a string (by the # operator in processor), which is compared to the host key name in the keymap file. Also, the value of the symbol is inserted into the key mapping table. Then the value is compared with the keysym field of each key up/down event as it arrives.</p>
-<p>If you get undefined symbol errors in this file, it must mean that your SDL library version doesn't define those same SDLK_* symbols in &lt;SDL/SDL_keysym.h&gt;. You can't fix it with #ifdef SDLK_SYM because they are enums, so you'll just have to comment out the offending line. The list was generated using symbols from SDL 1.2.3.</p>
+<div class="textblock"><p>Contains definitions for scancode table. </p>
 <p>$Id$ X-1.3 Camiel Vanderhoeven 02-JAN-2008 Comments.</p>
 <p>X-1.1 Camiel Vanderhoeven 6-DEC-2007 Initial version for ES40 emulator. </p>
 
-<p class="definition">Definition in file <a class="el" href="../../db/d00/a00395_source.html">sdlkeys.h</a>.</p>
-</div></div><!-- contents -->
+<p class="definition">Definition in file <a class="el" href="../../db/d00/a00395_source.html">scancodes.h</a>.</p>
+</div><a name="doc-var-members" id="doc-var-members"></a><h2 id="header-doc-var-members" class="groupheader">Variable Documentation</h2>
+<a id="af45274cdf70d1c81c6d6a3e222c93d81" name="af45274cdf70d1c81c6d6a3e222c93d81"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#af45274cdf70d1c81c6d6a3e222c93d81">&#9670;&#160;</a></span>scancodes</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname"><a class="el" href="../../da/d00/a01457.html">scancode</a> scancodes[119][3]</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel extern">extern</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../d4/d00/a00392_source.html#l00073">73</a> of file <a class="el" href="../../d4/d00/a00392_source.html">scancodes.cpp</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../df/d00/a00416_source.html#l00239">CKeyboard::gen_scancode()</a>, and <a class="el" href="../../d9/d00/a00398_source.html#l01196">sdl_event_dispatcher::suppress_hotkey_releases()</a>.</p>
+
+</div>
+</div>
+<a id="a7f0e8c4fb68c1d8c66eba95692662e8f" name="a7f0e8c4fb68c1d8c66eba95692662e8f"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a7f0e8c4fb68c1d8c66eba95692662e8f">&#9670;&#160;</a></span>translation8042</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">unsigned char translation8042[256]</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel extern">extern</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../d4/d00/a00392_source.html#l00050">50</a> of file <a class="el" href="../../d4/d00/a00392_source.html">scancodes.cpp</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../df/d00/a00416_source.html#l01215">CKeyboard::ctrl_to_kbd()</a>, and <a class="el" href="../../df/d00/a00416_source.html#l00239">CKeyboard::gen_scancode()</a>.</p>
+
+</div>
+</div>
+</div><!-- contents -->
 </div><!-- doc-content -->
 <div id="page-nav" class="page-nav-panel">
 <div id="page-nav-resize-handle"></div>
@@ -149,7 +230,7 @@ This graph shows which files directly or indirectly include this file:</div>
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
-    <li class="navelem"><a href="../../dir_11bc0974ce736ce9a6fadebbeb7a8314.html">gui</a></li><li class="navelem"><a href="../../db/d00/a00395.html">sdlkeys.h</a></li>
+    <li class="navelem"><a href="../../dir_11bc0974ce736ce9a6fadebbeb7a8314.html">gui</a></li><li class="navelem"><a href="../../db/d00/a00395.html">scancodes.h</a></li>
     <li class="footer">Generated by <a href="https://www.doxygen.org/index.html"><img class="footer" src="../../doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.18.0 </li>
   </ul>
 </div>

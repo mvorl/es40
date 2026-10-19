@@ -1,0 +1,18 @@
+<map id="storage/Disk.h" name="storage/Disk.h">
+<area shape="rect" id="Node000001" title="Contains definitions for the disk base class." alt="" coords="104,5,211,32"/>
+<area shape="rect" id="Node000002" href="$d4/d00/a00536.html" title="Contains definitions for the disk controller base class." alt="" coords="5,80,121,107"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="140,35,93,72,89,69,143,30"/>
+<area shape="rect" id="Node000003" href="$d7/d00/a00584.html" title="Contains definitions for the SCSI device base class." alt="" coords="105,155,210,181"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="159,30,160,140,155,139,156,35"/>
+<area shape="rect" id="Node000004" href="$dd/d00/a00578.html" title="Contains definitions for the SCSI bus class." alt="" coords="195,80,283,107"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="172,30,216,69,211,70,172,35"/>
+<area shape="poly" id="edge8_Node000004_Node000003" title=" " alt="" coords="223,109,185,146,181,142,227,105"/>
+<area shape="rect" id="Node000005" href="$d6/d00/a00293.html" title="Contains definitions for the base class for devices that connect to the chipset." alt="" coords="235,155,408,181"/>
+<area shape="poly" id="edge4_Node000004_Node000005" title=" " alt="" coords="254,105,299,144,293,145,253,110"/>
+<area shape="rect" id="Node000006" href="$da/d00/a00080.html" title="Contains the definitions for the configuration file interpreter." alt="" coords="185,229,328,256"/>
+<area shape="poly" id="edge5_Node000005_Node000006" title=" " alt="" coords="313,180,279,220,276,216,308,183"/>
+<area shape="rect" id="Node000008" title=" " alt="" coords="352,229,419,256"/>
+<area shape="poly" id="edge7_Node000005_Node000008" title=" " alt="" coords="334,179,367,218,362,217,332,184"/>
+<area shape="rect" id="Node000007" title=" " alt="" coords="230,304,283,331"/>
+<area shape="poly" id="edge6_Node000006_Node000007" title=" " alt="" coords="258,255,259,290,254,287,254,258"/>
+</map>

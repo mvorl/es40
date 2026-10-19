@@ -1,4 +1,4 @@
 var a00101 =
 [
-    [ "ShrinkingChoiceQuestion", "d3/d00/a00914.html", "d3/d00/a00914" ]
+    [ "ShrinkingChoiceQuestion", "de/d00/a00909.html", "de/d00/a00909" ]
 ];

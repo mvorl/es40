@@ -1,15 +1,17 @@
 var a00302 =
 [
-    [ "GET_TILE_UPDATED", "d0/d00/a00302.html#ad6d16739cea2c466dc55b113733884e9", null ],
-    [ "SET_TILE_UPDATED", "d0/d00/a00302.html#a4841d6efa0b151531738a8306cd6a493", null ],
-    [ "ccdat", "d0/d00/a00302.html#a8edcd0d29836070bd44ce83ac5dc3245", null ],
-    [ "cirrus_cfg_data", "d0/d00/a00302.html#abd73d21b9610f0f4398922d936febdda", null ],
-    [ "cirrus_cfg_mask", "d0/d00/a00302.html#ac06ea2812bee04219272e9c80b6a1411", null ],
-    [ "cirrus_magic1", "d0/d00/a00302.html#abdd769b335e69276a1cba32f617f935f", null ],
-    [ "cirrus_magic2", "d0/d00/a00302.html#a646396f63b9692d92017da0e08f637e7", null ],
-    [ "old_iHeight", "d0/d00/a00302.html#a7738cce7f0be79c23367ee93fcf242cf", null ],
-    [ "old_iWidth", "d0/d00/a00302.html#ada2c2fbe0749069456dbb4bea87210fe", null ],
-    [ "old_MSL", "d0/d00/a00302.html#a72ec0ed121d3d6e9936e638d15ea5b2f", null ],
-    [ "option_rom", "d0/d00/a00302.html#a021962ab1d0403c0d0c0ec1aaea85bb2", null ],
-    [ "rom_max", "d0/d00/a00302.html#a5cb15c028d022b5700ff00022d0979f1", null ]
+    [ "CHECK_ALLOCATION", "d0/d00/a00302.html#a59661d12c2cd12b9612a73f2097bbd8d", null ],
+    [ "CHECK_REALLOCATION", "d0/d00/a00302.html#a040fdb0700e5702e5efc4eb8a738a9e1", null ],
+    [ "DEBUG_BUFSIZE", "d0/d00/a00302.html#a71801a462cb421b85d381899e6b0f87f", null ],
+    [ "DEBUG_INDENTATION", "d0/d00/a00302.html#a37d833fbb137583737871c2d2659eae6", null ],
+    [ "FAILURE", "d0/d00/a00302.html#a5641b3e8b9f16e5ce6f4ba1f83943832", null ],
+    [ "FAILURE_1", "d0/d00/a00302.html#a4e7e9b5a4d9c0dcab3c0ac1f4f7e8014", null ],
+    [ "FAILURE_2", "d0/d00/a00302.html#a4ab93ebe58e8ae19380d2483a6183121", null ],
+    [ "FAILURE_3", "d0/d00/a00302.html#ae40bf0f0834a008ee6d1b6c76fbd5695", null ],
+    [ "FAILURE_4", "d0/d00/a00302.html#a13c413d3ed48df8e88119a8121c7057e", null ],
+    [ "FAILURE_5", "d0/d00/a00302.html#a7aafb04ba0519eff36a511757c9242d3", null ],
+    [ "FAILURE_6", "d0/d00/a00302.html#ad4f718b50417dc8cbc874c429d3d36ff", null ],
+    [ "debug", "d0/d00/a00302.html#a3627c620cc9c0c2bfdd890a59306286a", null ],
+    [ "debug_indentation", "d0/d00/a00302.html#a4f0d9bd05e6cac75f07f7404d592b4f6", null ],
+    [ "fatal", "d0/d00/a00302.html#ab56c14a5ed99df4361152c41d2e40a4c", null ]
 ];

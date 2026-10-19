@@ -1,5 +1,6 @@
 var a00416 =
 [
-    [ "p80_magic1", "df/d00/a00416.html#a90d9f978ccb083ffed3b2adfc5635eda", null ],
-    [ "p80_magic2", "df/d00/a00416.html#a7998b508cf3789305664d6f0435eae5a", null ]
+    [ "kb_magic1", "df/d00/a00416.html#a2e0c0df7c07289cb9312581e8d336b74", null ],
+    [ "kb_magic2", "df/d00/a00416.html#aa9d73cc508d4ac70a77126db0546c214", null ],
+    [ "theKeyboard", "df/d00/a00416.html#a4ea2122889fd4c8e556305c40b617cd3", null ]
 ];

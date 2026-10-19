@@ -1,9 +1,5 @@
 var a00557 =
 [
-    [ "cmdinfo_t", "d6/d00/a01678.html", "d6/d00/a01678" ],
-    [ "FDC_DEBUG", "d8/d00/a00557.html#a387a53e350ddacd1d9d2d1c1c7cdf5e2", null ],
-    [ "cmdinfo", "d8/d00/a00557.html#a8103ccf2cbcb21f5fe21ef1cd4d66780", null ],
-    [ "datarate_name", "d8/d00/a00557.html#a1d4870032ce3e30f76f0a74aca0d7020", null ],
-    [ "fdc_magic1", "d8/d00/a00557.html#a9c715258efb93f0f4595adb90043c21c", null ],
-    [ "fdc_magic2", "d8/d00/a00557.html#ab663ab2daf3db712c79998070faec1a0", null ]
+    [ "ramdisk_magic1", "d8/d00/a00557.html#a6188341e2abfde240b16de5e056f58bf", null ],
+    [ "ramdisk_magic2", "d8/d00/a00557.html#a9acd6fd3edaf1e0c8c97fb5b355336de", null ]
 ];

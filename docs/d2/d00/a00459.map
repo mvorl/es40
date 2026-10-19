@@ -1,5 +1,0 @@
-<map id="network/lockstep.h" name="network/lockstep.h">
-<area shape="rect" id="Node000001" title="Contains telnet declarations for the lock&#45;step code." alt="" coords="5,5,137,32"/>
-<area shape="rect" id="Node000002" href="$df/d00/a00509.html" title="Contains TCP/IP declarations used by the serial port emulator and lock&#45;step code." alt="" coords="39,80,103,107"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="73,31,74,65,68,64,69,35"/>
-</map>

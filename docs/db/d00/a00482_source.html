@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.18.0"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ES40: network/NetworkTap.h Source File</title>
+<title>ES40: network/NetworkSlirp.h Source File</title>
 <link href="../../tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="../../dynsections.js"></script>
 <script type="text/javascript" src="../../codefolding.js"></script>
@@ -26,7 +26,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">ES40<span id="projectnumber">&#160;0.17+</span>
+   <div id="projectname">ES40<span id="projectnumber">&#160;0.92.2</span>
    </div>
   </td>
  </tr>
@@ -109,7 +109,7 @@ document.addEventListener('DOMContentLoaded',() => { initNavTree('db/d00/a00482_
 </div>
 
 <div class="header">
-  <div class="headertitle"><div class="title">NetworkTap.h</div></div>
+  <div class="headertitle"><div class="title">NetworkSlirp.h</div></div>
 </div><!--header-->
 <div class="contents">
 <a href="../../db/d00/a00482.html">Go to the documentation of this file.</a><div class="fragment"><div class="line"><a id="l00001" name="l00001"></a><span class="lineno">    1</span><span class="comment">/* ES40 Emulator.</span></div>
@@ -137,54 +137,53 @@ document.addEventListener('DOMContentLoaded',() => { initNavTree('db/d00/a00482_
 <div class="line"><a id="l00023" name="l00023"></a><span class="lineno">   23</span><span class="comment"> *</span></div>
 <div class="line"><a id="l00024" name="l00024"></a><span class="lineno">   24</span><span class="comment"> */</span></div>
 <div class="line"><a id="l00025" name="l00025"></a><span class="lineno">   25</span></div>
-<div class="line"><a id="l00036" name="l00036"></a><span class="lineno">   36</span><span class="preprocessor">#ifndef INCLUDED_NETWORK_TAP_H_</span></div>
-<div class="line"><a id="l00037" name="l00037"></a><span class="lineno">   37</span><span class="preprocessor">#define INCLUDED_NETWORK_TAP_H_</span></div>
-<div class="line"><a id="l00038" name="l00038"></a><span class="lineno">   38</span> </div>
-<div class="line"><a id="l00039" name="l00039"></a><span class="lineno">   39</span><span class="preprocessor">#include &quot;<a class="code" href="../../d2/d00/a00464.html">NetworkBackend.h</a>&quot;</span></div>
-<div class="line"><a id="l00040" name="l00040"></a><span class="lineno">   40</span> </div>
-<div class="line"><a id="l00041" name="l00041"></a><span class="lineno">   41</span><span class="preprocessor">#if defined(HAVE_TAP_NET)</span></div>
-<div class="line"><a id="l00042" name="l00042"></a><span class="lineno">   42</span> </div>
-<div class="line"><a id="l00043" name="l00043"></a><span class="lineno">   43</span><span class="preprocessor">#include &lt;net/if.h&gt;</span></div>
-<div class="line"><a id="l00044" name="l00044"></a><span class="lineno">   44</span> </div>
-<div class="line"><a id="l00045" name="l00045"></a><span class="lineno">   45</span><span class="keyword">class </span>CNetworkTap: <span class="keyword">public</span> <a class="code hl_class" href="../../d9/d00/a01574.html">CNetworkBackend</a> {</div>
-<div class="line"><a id="l00046" name="l00046"></a><span class="lineno">   46</span><span class="keyword">public</span>:</div>
-<div class="line"><a id="l00047" name="l00047"></a><span class="lineno">   47</span>        CNetworkTap();</div>
-<div class="line"><a id="l00048" name="l00048"></a><span class="lineno">   48</span>        <span class="keyword">virtual</span> ~CNetworkTap();</div>
-<div class="line"><a id="l00049" name="l00049"></a><span class="lineno">   49</span> </div>
-<div class="line"><a id="l00050" name="l00050"></a><span class="lineno">   50</span>        <span class="keyword">virtual</span> <span class="keywordtype">bool</span> init(<span class="keyword">const</span> <span class="keywordtype">char</span> *devid_string, CConfigurator *cfg);</div>
-<div class="line"><a id="l00051" name="l00051"></a><span class="lineno">   51</span>        <span class="keyword">virtual</span> <span class="keywordtype">int</span>  send(<span class="keyword">const</span> <a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a> *data, <span class="keywordtype">int</span> len);</div>
-<div class="line"><a id="l00052" name="l00052"></a><span class="lineno">   52</span>        <span class="keyword">virtual</span> <span class="keywordtype">int</span>  receive(<span class="keyword">const</span> <a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a> **data, <span class="keywordtype">int</span> *len);</div>
-<div class="line"><a id="l00053" name="l00053"></a><span class="lineno">   53</span>        <span class="keyword">virtual</span> <span class="keywordtype">void</span> set_filter(<a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a> mac_list[][6], <span class="keywordtype">int</span> num_macs,</div>
-<div class="line"><a id="l00054" name="l00054"></a><span class="lineno">   54</span>                                <span class="keywordtype">bool</span> promiscuous, <span class="keywordtype">bool</span> receive_all,</div>
-<div class="line"><a id="l00055" name="l00055"></a><span class="lineno">   55</span>                                <span class="keywordtype">bool</span> pass_multicast, <span class="keywordtype">bool</span> inverse);</div>
-<div class="line"><a id="l00056" name="l00056"></a><span class="lineno">   56</span>        <span class="keyword">virtual</span> <span class="keywordtype">void</span> close();</div>
-<div class="line"><a id="l00057" name="l00057"></a><span class="lineno">   57</span>        <span class="keyword">virtual</span> <span class="keywordtype">int</span>  get_wait_fd() { <span class="keywordflow">return</span> tap_fd; }</div>
-<div class="line"><a id="l00058" name="l00058"></a><span class="lineno">   58</span> </div>
-<div class="line"><a id="l00059" name="l00059"></a><span class="lineno">   59</span><span class="keyword">private</span>:</div>
-<div class="line"><a id="l00060" name="l00060"></a><span class="lineno">   60</span>        <span class="keywordtype">int</span>  tap_fd;</div>
-<div class="line"><a id="l00061" name="l00061"></a><span class="lineno">   61</span>        <span class="keywordtype">char</span> ifname[IFNAMSIZ];</div>
-<div class="line"><a id="l00062" name="l00062"></a><span class="lineno">   62</span>        <span class="keywordtype">unsigned</span> <span class="keywordtype">char</span> rx_buf[2048]; <span class="comment">/* Max ethernet frame, rounded up.  */</span></div>
-<div class="line"><a id="l00063" name="l00063"></a><span class="lineno">   63</span> </div>
-<div class="line"><a id="l00064" name="l00064"></a><span class="lineno">   64</span>        <span class="keyword">const</span> <span class="keywordtype">char</span> *devid_for_log;</div>
-<div class="line"><a id="l00065" name="l00065"></a><span class="lineno">   65</span> </div>
-<div class="line"><a id="l00066" name="l00066"></a><span class="lineno">   66</span>        <span class="comment">// --- device open/create: platform-specific implementation lives in</span></div>
-<div class="line"><a id="l00067" name="l00067"></a><span class="lineno">   67</span>        <span class="comment">//     NetworkTap.cpp, split by #if defined(__linux__) / BSD. ---</span></div>
-<div class="line"><a id="l00068" name="l00068"></a><span class="lineno">   68</span>        <span class="keywordtype">bool</span> tap_open(<span class="keyword">const</span> <span class="keywordtype">char</span> *devid_string, <span class="keyword">const</span> <span class="keywordtype">char</span> *name);</div>
-<div class="line"><a id="l00069" name="l00069"></a><span class="lineno">   69</span>};</div>
-<div class="line"><a id="l00070" name="l00070"></a><span class="lineno">   70</span> </div>
-<div class="line"><a id="l00071" name="l00071"></a><span class="lineno">   71</span><span class="preprocessor">#endif </span><span class="comment">/* defined(HAVE_TAP_NET)  */</span><span class="preprocessor"></span></div>
-<div class="line"><a id="l00072" name="l00072"></a><span class="lineno">   72</span> </div>
-<div class="line"><a id="l00073" name="l00073"></a><span class="lineno">   73</span><span class="preprocessor">#endif </span><span class="comment">/* !defined(INCLUDED_NETWORK_TAP_H_)  */</span><span class="preprocessor"></span></div>
-<div class="ttc" id="aa00257_html_a987e4d6cf789cb59dbb390728271e4d6"><div class="ttname"><a href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a></div><div class="ttdeci">uint8_t u8</div><div class="ttdef"><b>Definition</b> <a href="../../d9/d00/a00257_source.html#l00123">datatypes.h:123</a></div></div>
-<div class="ttc" id="aa00464_html"><div class="ttname"><a href="../../d2/d00/a00464.html">NetworkBackend.h</a></div><div class="ttdoc">Abstract interface separating the emulated DEC 21143 NIC from the host networking method used to get ...</div></div>
-<div class="ttc" id="aa01574_html"><div class="ttname"><a href="../../d9/d00/a01574.html">CNetworkBackend</a></div><div class="ttdoc">Abstract network backend interface.</div><div class="ttdef"><b>Definition</b> <a href="../../d2/d00/a00464_source.html#l00049">NetworkBackend.h:49</a></div></div>
+<div class="line"><a id="l00039" name="l00039"></a><span class="lineno">   39</span><span class="preprocessor">#ifndef INCLUDED_NETWORK_SLIRP_H_</span></div>
+<div class="line"><a id="l00040" name="l00040"></a><span class="lineno">   40</span><span class="preprocessor">#define INCLUDED_NETWORK_SLIRP_H_</span></div>
+<div class="line"><a id="l00041" name="l00041"></a><span class="lineno">   41</span> </div>
+<div class="line"><a id="l00042" name="l00042"></a><span class="lineno">   42</span><span class="preprocessor">#if !defined(__VMS)</span></div>
+<div class="line"><a id="l00043" name="l00043"></a><span class="lineno">   43</span> </div>
+<div class="line"><a id="l00044" name="l00044"></a><span class="lineno">   44</span><span class="preprocessor">#include &quot;<a class="code" href="../../d0/d00/a00470.html">NetworkBackend.h</a>&quot;</span></div>
+<div class="line"><a id="l00045" name="l00045"></a><span class="lineno">   45</span> </div>
+<div class="line"><a id="l00046" name="l00046"></a><span class="lineno">   46</span><span class="preprocessor">#if defined(HAVE_SLIRP)</span></div>
+<div class="line"><a id="l00047" name="l00047"></a><span class="lineno">   47</span></div>
+<div class="line"><a id="l00049" name="l00049"></a><span class="lineno">   49</span><span class="preprocessor">#define ES40_SLIRP_BUF 65536</span></div>
+<div class="line"><a id="l00050" name="l00050"></a><span class="lineno">   50</span> </div>
+<div class="line"><a id="l00051" name="l00051"></a><span class="lineno">   51</span><span class="keyword">class </span>CNetworkSlirp: <span class="keyword">public</span> <a class="code hl_class" href="../../da/d00/a01581.html">CNetworkBackend</a> {</div>
+<div class="line"><a id="l00052" name="l00052"></a><span class="lineno">   52</span><span class="keyword">public</span>:</div>
+<div class="line"><a id="l00053" name="l00053"></a><span class="lineno">   53</span>        CNetworkSlirp();</div>
+<div class="line"><a id="l00054" name="l00054"></a><span class="lineno">   54</span>        <span class="keyword">virtual</span> ~CNetworkSlirp();</div>
+<div class="line"><a id="l00055" name="l00055"></a><span class="lineno">   55</span> </div>
+<div class="line"><a id="l00056" name="l00056"></a><span class="lineno">   56</span>        <span class="keyword">virtual</span> <span class="keywordtype">bool</span> init(<span class="keyword">const</span> <span class="keywordtype">char</span> *devid_string, CConfigurator *cfg);</div>
+<div class="line"><a id="l00057" name="l00057"></a><span class="lineno">   57</span>        <span class="keyword">virtual</span> <span class="keywordtype">int</span>  send(<span class="keyword">const</span> <a class="code hl_typedef" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a> *data, <span class="keywordtype">int</span> len);</div>
+<div class="line"><a id="l00058" name="l00058"></a><span class="lineno">   58</span>        <span class="keyword">virtual</span> <span class="keywordtype">int</span>  receive(<span class="keyword">const</span> <a class="code hl_typedef" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a> **data, <span class="keywordtype">int</span> *len);</div>
+<div class="line"><a id="l00059" name="l00059"></a><span class="lineno">   59</span>        <span class="keyword">virtual</span> <span class="keywordtype">void</span> set_filter(<a class="code hl_typedef" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a> mac_list[][6], <span class="keywordtype">int</span> num_macs,</div>
+<div class="line"><a id="l00060" name="l00060"></a><span class="lineno">   60</span>                                <span class="keywordtype">bool</span> promiscuous, <span class="keywordtype">bool</span> receive_all,</div>
+<div class="line"><a id="l00061" name="l00061"></a><span class="lineno">   61</span>                                <span class="keywordtype">bool</span> pass_multicast, <span class="keywordtype">bool</span> inverse);</div>
+<div class="line"><a id="l00062" name="l00062"></a><span class="lineno">   62</span>        <span class="keyword">virtual</span> <span class="keywordtype">void</span> close();</div>
+<div class="line"><a id="l00063" name="l00063"></a><span class="lineno">   63</span>        <span class="keyword">virtual</span> <span class="keywordtype">int</span>  get_wait_fd();</div>
+<div class="line"><a id="l00064" name="l00064"></a><span class="lineno">   64</span> </div>
+<div class="line"><a id="l00065" name="l00065"></a><span class="lineno">   65</span><span class="keyword">private</span>:</div>
+<div class="line"><a id="l00066" name="l00066"></a><span class="lineno">   66</span>        <span class="keywordtype">void</span> *ctx; <span class="comment">/* opaque Es40Slirp* owned by the Rust backend */</span></div>
+<div class="line"><a id="l00067" name="l00067"></a><span class="lineno">   67</span>        <span class="keywordtype">unsigned</span> <span class="keywordtype">char</span> rx_buf[ES40_SLIRP_BUF];</div>
+<div class="line"><a id="l00068" name="l00068"></a><span class="lineno">   68</span> </div>
+<div class="line"><a id="l00069" name="l00069"></a><span class="lineno">   69</span>        <span class="keyword">const</span> <span class="keywordtype">char</span> *devid_for_log;</div>
+<div class="line"><a id="l00070" name="l00070"></a><span class="lineno">   70</span>};</div>
+<div class="line"><a id="l00071" name="l00071"></a><span class="lineno">   71</span> </div>
+<div class="line"><a id="l00072" name="l00072"></a><span class="lineno">   72</span><span class="preprocessor">#endif </span><span class="comment">/* defined(HAVE_SLIRP)  */</span><span class="preprocessor"></span></div>
+<div class="line"><a id="l00073" name="l00073"></a><span class="lineno">   73</span> </div>
+<div class="line"><a id="l00074" name="l00074"></a><span class="lineno">   74</span><span class="preprocessor">#endif </span><span class="comment">/* !defined(__VMS) */</span><span class="preprocessor"></span></div>
+<div class="line"><a id="l00075" name="l00075"></a><span class="lineno">   75</span> </div>
+<div class="line"><a id="l00076" name="l00076"></a><span class="lineno">   76</span><span class="preprocessor">#endif </span><span class="comment">/* !defined(INCLUDED_NETWORK_SLIRP_H_)  */</span><span class="preprocessor"></span></div>
+<div class="ttc" id="aa00263_html_a987e4d6cf789cb59dbb390728271e4d6"><div class="ttname"><a href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a></div><div class="ttdeci">uint8_t u8</div><div class="ttdef"><b>Definition</b> <a href="../../df/d00/a00263_source.html#l00123">datatypes.h:123</a></div></div>
+<div class="ttc" id="aa00470_html"><div class="ttname"><a href="../../d0/d00/a00470.html">NetworkBackend.h</a></div><div class="ttdoc">Abstract interface separating the emulated DEC 21143 NIC from the host networking method used to get ...</div></div>
+<div class="ttc" id="aa01581_html"><div class="ttname"><a href="../../da/d00/a01581.html">CNetworkBackend</a></div><div class="ttdoc">Abstract network backend interface.</div><div class="ttdef"><b>Definition</b> <a href="../../d0/d00/a00470_source.html#l00049">NetworkBackend.h:49</a></div></div>
 </div><!-- fragment --></div><!-- contents -->
 </div><!-- doc-content -->
 </div><!-- container -->
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
-    <li class="navelem"><a href="../../dir_c901c14b65aa229498a52b725b3d4a2c.html">network</a></li><li class="navelem"><a href="../../db/d00/a00482.html">NetworkTap.h</a></li>
+    <li class="navelem"><a href="../../dir_c901c14b65aa229498a52b725b3d4a2c.html">network</a></li><li class="navelem"><a href="../../db/d00/a00482.html">NetworkSlirp.h</a></li>
     <li class="footer">Generated by <a href="https://www.doxygen.org/index.html"><img class="footer" src="../../doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.18.0 </li>
   </ul>
 </div>

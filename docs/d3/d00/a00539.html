@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.18.0"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ES40: storage/DiskFile.cpp File Reference</title>
+<title>ES40: storage/DiskDevice.cpp File Reference</title>
 <link href="../../tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="../../dynsections.js"></script>
 <script type="text/javascript" src="../../codefolding.js"></script>
@@ -26,7 +26,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">ES40<span id="projectnumber">&#160;0.17+</span>
+   <div id="projectname">ES40<span id="projectnumber">&#160;0.92.2</span>
    </div>
   </td>
  </tr>
@@ -109,197 +109,141 @@ document.addEventListener('DOMContentLoaded',() => { initNavTree('d3/d00/a00539.
 </div>
 
 <div class="header">
-  <div class="headertitle"><div class="title">DiskFile.cpp File Reference</div></div>
+  <div class="headertitle"><div class="title">DiskDevice.cpp File Reference</div></div>
 </div><!--header-->
 <div class="contents">
 
-<p>Contains code to use a file as a disk image.  
+<p>Contains code to use a raw device as a disk image.  
 <a href="#details">More...</a></p>
-<div class="textblock"><code>#include &quot;<a class="el" href="../../d5/d00/a00518_source.html">StdAfx.h</a>&quot;</code><br />
-<code>#include &quot;<a class="el" href="../../d0/d00/a00542_source.html">DiskFile.h</a>&quot;</code><br />
-<code>#include &quot;<a class="el" href="../../d9/d00/a00404_source.html">gui/sdl_media.h</a>&quot;</code><br />
-<code>#include &lt;ctype.h&gt;</code><br />
-<code>#include &lt;exception&gt;</code><br />
-<code>#include &lt;filesystem&gt;</code><br />
-<code>#include &lt;string&gt;</code><br />
-<code>#include &lt;string.h&gt;</code><br />
-<code>#include &lt;cerrno&gt;</code><br />
-<code>#include &lt;climits&gt;</code><br />
-<code>#include &lt;limits&gt;</code><br />
-<code>#include &lt;sstream&gt;</code><br />
-<code>#include &lt;sys/stat.h&gt;</code><br />
-<code>#include &lt;sys/file.h&gt;</code><br />
+<div class="textblock"><code>#include &quot;<a class="el" href="../../d9/d00/a00524_source.html">StdAfx.h</a>&quot;</code><br />
+<code>#include &quot;<a class="el" href="../../d0/d00/a00542_source.html">DiskDevice.h</a>&quot;</code><br />
 <code>#include &lt;unistd.h&gt;</code><br />
+<code>#include &lt;cerrno&gt;</code><br />
 </div><div class="textblock"><div class="dynheader">
-Include dependency graph for DiskFile.cpp:</div>
+Include dependency graph for DiskDevice.cpp:</div>
 <div class="dyncontent">
-<div class="center"><img src="../../d4/d00/a00540.png" border="0" usemap="#astorage_2_disk_file_8cpp" loading="lazy" alt=""/></div>
-<map name="astorage_2_disk_file_8cpp" id="astorage_2_disk_file_8cpp">
-<area shape="rect" title="Contains code to use a file as a disk image." alt="" coords="2264,5,2405,32"/>
-<area shape="rect" href="../../d5/d00/a00518.html" title="Standard includes." alt="" coords="939,80,1012,107"/>
-<area shape="poly" title=" " alt="" coords="2262,26,1027,92,1027,87,2264,21"/>
-<area shape="rect" title=" " alt="" coords="1821,229,1898,256"/>
-<area shape="poly" title=" " alt="" coords="2261,27,2145,45,2007,71,1942,88,1884,108,1839,131,1811,156,1806,171,1810,187,1820,203,1834,220,1829,218,1816,206,1805,189,1801,171,1807,153,1836,126,1882,103,1940,83,2006,66,2144,40,2266,27"/>
-<area shape="rect" title=" " alt="" coords="1922,229,1976,256"/>
-<area shape="poly" title=" " alt="" coords="2266,28,2140,51,2085,66,2048,82,2016,112,1991,148,1972,184,1959,217,1956,213,1968,182,1987,145,2012,108,2045,78,2083,61,2139,46,2260,29"/>
-<area shape="rect" title=" " alt="" coords="1728,229,1796,256"/>
-<area shape="poly" title=" " alt="" coords="2260,24,2054,45,1950,61,1909,71,1878,82,1852,97,1833,112,1800,156,1784,186,1772,216,1769,212,1779,183,1796,153,1829,108,1849,93,1876,78,1907,66,1949,56,2053,40,2266,24"/>
-<area shape="rect" href="../../d0/d00/a00542.html" title="Contains definitions to use a file as a disk image." alt="" coords="2069,155,2149,181"/>
-<area shape="poly" title=" " alt="" coords="2260,26,2204,35,2143,46,2090,62,2071,71,2059,82,2053,96,2058,112,2068,128,2083,145,2078,144,2064,131,2053,114,2048,96,2055,78,2069,67,2088,57,2141,41,2203,30,2266,25"/>
-<area shape="rect" href="../../d9/d00/a00404.html" title=" " alt="" coords="2069,80,2181,107"/>
-<area shape="poly" title=" " alt="" coords="2300,32,2176,77,2175,72,2295,33"/>
-<area shape="rect" title=" " alt="" coords="2205,80,2269,107"/>
-<area shape="poly" title=" " alt="" coords="2320,32,2267,73,2265,68,2315,34"/>
-<area shape="rect" title=" " alt="" coords="2294,80,2375,107"/>
-<area shape="poly" title=" " alt="" coords="2336,31,2336,66,2332,63,2332,35"/>
-<area shape="rect" title=" " alt="" coords="2399,80,2464,107"/>
-<area shape="poly" title=" " alt="" coords="2352,30,2405,71,2400,70,2350,35"/>
-<area shape="rect" title=" " alt="" coords="2488,80,2546,107"/>
-<area shape="poly" title=" " alt="" coords="2366,30,2476,75,2471,75,2366,35"/>
-<area shape="rect" title=" " alt="" coords="2570,80,2629,107"/>
-<area shape="poly" title=" " alt="" coords="2383,30,2557,79,2552,79,2382,35"/>
-<area shape="rect" title=" " alt="" coords="2653,80,2706,107"/>
-<area shape="poly" title=" " alt="" coords="2405,29,2512,49,2641,80,2636,80,2511,54,2405,34"/>
-<area shape="rect" title=" " alt="" coords="2729,80,2808,107"/>
-<area shape="poly" title=" " alt="" coords="2405,27,2545,47,2716,79,2711,79,2544,52,2405,32"/>
-<area shape="rect" title=" " alt="" coords="2833,80,2907,107"/>
-<area shape="poly" title=" " alt="" coords="2405,24,2589,43,2820,80,2815,80,2588,48,2405,29"/>
-<area shape="rect" title=" " alt="" coords="2931,80,2998,107"/>
-<area shape="poly" title=" " alt="" coords="2405,21,2630,39,2771,55,2919,80,2913,80,2770,60,2629,44,2405,26"/>
-<area shape="rect" href="../../d7/d00/a00131.html" title=" " alt="" coords="745,155,854,181"/>
-<area shape="poly" title=" " alt="" coords="947,106,845,151,844,146,942,108"/>
-<area shape="rect" href="../../d9/d00/a00257.html" title="Contains the datatype definitions for use with Microsoft Visual C++ and Linux." alt="" coords="879,155,968,181"/>
-<area shape="poly" title=" " alt="" coords="969,106,943,144,940,140,964,109"/>
-<area shape="rect" title=" " alt="" coords="992,155,1060,181"/>
-<area shape="poly" title=" " alt="" coords="985,105,1011,143,1006,141,983,110"/>
-<area shape="rect" href="../../d3/d00/a00023.html" title=" " alt="" coords="1821,155,1943,181"/>
-<area shape="poly" title=" " alt="" coords="1012,95,1808,159,1803,162,1012,100"/>
-<area shape="rect" href="../../d5/d00/a00029.html" title=" " alt="" coords="752,229,852,256"/>
-<area shape="poly" title=" " alt="" coords="1009,104,1038,119,1064,137,1079,158,1080,171,1073,183,1049,193,997,205,868,232,867,226,996,200,1047,187,1070,179,1075,170,1074,160,1061,141,1035,123,1008,110"/>
-<area shape="rect" href="../../dd/d00/a00041.html" title=" " alt="" coords="1275,155,1380,181"/>
-<area shape="poly" title=" " alt="" coords="1012,99,1263,153,1258,153,1012,105"/>
-<area shape="rect" href="../../dc/d00/a00032.html" title=" " alt="" coords="1617,229,1704,256"/>
-<area shape="poly" title=" " alt="" coords="1012,95,1178,114,1285,131,1392,152,1513,186,1616,224,1611,223,1511,191,1391,157,1284,136,1177,119,1012,101"/>
-<area shape="rect" href="../../d8/d00/a00038.html" title=" " alt="" coords="394,229,525,256"/>
-<area shape="poly" title=" " alt="" coords="936,96,873,102,786,111,690,129,595,157,536,188,487,222,485,217,533,183,593,152,689,124,785,106,873,97,942,95"/>
-<area shape="rect" href="../../d4/d00/a00035.html" title=" " alt="" coords="606,155,721,181"/>
-<area shape="poly" title=" " alt="" coords="937,104,733,153,732,148,942,102"/>
-<area shape="rect" href="../../db/d00/a00296.html" title="Contains macro&#39;s and prototypes for debugging." alt="" coords="94,155,196,181"/>
-<area shape="poly" title=" " alt="" coords="939,101,212,164,211,158,939,95"/>
-<area shape="rect" href="../../df/d00/a00299.html" title="Contains byte&#45;order conversion helpers." alt="" coords="320,155,426,181"/>
-<area shape="poly" title=" " alt="" coords="937,101,441,161,441,156,940,97"/>
-<area shape="poly" title=" " alt="" coords="1880,180,1870,217,1866,212,1876,184"/>
-<area shape="poly" title=" " alt="" coords="1895,179,1930,219,1925,217,1893,184"/>
-<area shape="rect" title=" " alt="" coords="1272,304,1330,331"/>
-<area shape="poly" title=" " alt="" coords="853,249,1259,309,1254,310,853,254"/>
-<area shape="rect" title=" " alt="" coords="545,304,606,331"/>
-<area shape="poly" title=" " alt="" coords="765,256,621,304,620,299,760,257"/>
-<area shape="rect" title=" " alt="" coords="912,304,970,331"/>
-<area shape="poly" title=" " alt="" coords="827,254,906,297,900,296,826,259"/>
-<area shape="rect" title=" " alt="" coords="774,304,830,331"/>
-<area shape="poly" title=" " alt="" coords="804,255,804,290,800,287,800,258"/>
-<area shape="rect" title=" " alt="" coords="644,304,723,331"/>
-<area shape="poly" title=" " alt="" coords="784,256,718,298,716,293,779,257"/>
-<area shape="poly" title=" " alt="" coords="1380,169,1606,184,1754,201,1909,229,1904,229,1753,206,1606,190,1380,174"/>
-<area shape="poly" title=" " alt="" coords="1380,169,1446,176,1512,191,1537,202,1554,217,1560,236,1550,258,1536,269,1515,279,1462,296,1345,314,1345,309,1460,290,1513,274,1533,265,1545,254,1554,235,1550,220,1534,207,1510,196,1445,182,1380,175"/>
-<area shape="poly" title=" " alt="" coords="1272,172,998,195,848,211,786,221,740,232,703,245,668,262,607,298,606,292,665,258,701,241,739,227,785,216,847,206,997,189,1277,172"/>
-<area shape="poly" title=" " alt="" coords="1380,174,1433,185,1482,201,1501,212,1513,225,1515,241,1505,258,1477,272,1426,283,1279,301,1115,312,985,317,985,312,1115,306,1279,295,1425,278,1476,267,1502,254,1510,240,1508,227,1498,216,1480,206,1432,190,1380,179"/>
-<area shape="poly" title=" " alt="" coords="1278,176,1156,199,1018,232,923,265,843,300,842,294,921,260,1016,227,1155,194,1272,177"/>
-<area shape="poly" title=" " alt="" coords="1277,174,1124,196,1032,212,940,232,903,244,866,259,737,301,736,296,864,253,901,239,939,227,1031,207,1123,191,1272,175"/>
-<area shape="rect" title=" " alt="" coords="1431,229,1491,256"/>
-<area shape="poly" title=" " alt="" coords="1351,179,1427,222,1422,221,1350,184"/>
-<area shape="poly" title=" " alt="" coords="1380,173,1527,193,1715,229,1710,229,1526,199,1380,178"/>
-<area shape="rect" title=" " alt="" coords="294,304,420,331"/>
-<area shape="poly" title=" " alt="" coords="1272,172,762,202,502,218,418,226,383,232,373,243,366,258,359,291,355,287,361,256,369,240,381,227,417,221,501,213,761,196,1277,171"/>
-<area shape="rect" title=" " alt="" coords="2000,229,2068,256"/>
-<area shape="poly" title=" " alt="" coords="1380,169,1637,185,1808,202,1987,229,1982,229,1807,207,1636,190,1380,174"/>
-<area shape="rect" title=" " alt="" coords="1029,229,1125,256"/>
-<area shape="poly" title=" " alt="" coords="1286,181,1136,227,1135,222,1281,182"/>
-<area shape="poly" title=" " alt="" coords="1381,178,1605,229,1599,229,1380,183"/>
-<area shape="rect" title=" " alt="" coords="1148,229,1224,256"/>
-<area shape="poly" title=" " alt="" coords="1305,181,1225,224,1224,219,1300,183"/>
-<area shape="rect" title=" " alt="" coords="1248,229,1316,256"/>
-<area shape="poly" title=" " alt="" coords="1322,181,1300,218,1297,214,1317,183"/>
-<area shape="rect" title=" " alt="" coords="1340,229,1406,256"/>
-<area shape="poly" title=" " alt="" coords="1337,180,1359,217,1354,215,1334,184"/>
-<area shape="poly" title=" " alt="" coords="525,247,1257,310,1256,315,525,252"/>
-<area shape="poly" title=" " alt="" coords="480,254,545,296,539,295,479,259"/>
-<area shape="poly" title=" " alt="" coords="499,254,633,299,627,299,498,259"/>
-<area shape="poly" title=" " alt="" coords="444,256,389,297,386,292,439,257"/>
-<area shape="rect" title=" " alt="" coords="443,304,508,331"/>
-<area shape="poly" title=" " alt="" coords="464,254,472,290,467,287,461,259"/>
-<area shape="poly" title=" " alt="" coords="688,179,767,222,762,221,687,184"/>
-<area shape="poly" title=" " alt="" coords="658,181,592,293,589,289,654,183"/>
-<area shape="poly" title=" " alt="" coords="718,179,802,202,840,215,866,227,901,257,927,292,922,290,897,261,863,232,838,220,800,207,718,185"/>
-<area shape="poly" title=" " alt="" coords="675,180,741,254,780,294,775,292,738,258,673,184"/>
-<area shape="poly" title=" " alt="" coords="659,180,648,216,645,236,647,255,666,293,661,290,642,257,640,236,642,215,655,183"/>
-<area shape="poly" title=" " alt="" coords="721,177,733,179,836,189,923,194,1073,197,1224,203,1312,211,1418,229,1413,229,1312,217,1224,208,1073,202,923,200,835,194,733,184,721,182"/>
-<area shape="rect" title=" " alt="" coords="216,229,319,256"/>
-<area shape="poly" title=" " alt="" coords="604,181,335,232,334,227,608,179"/>
-<area shape="rect" title=" " alt="" coords="5,229,74,256"/>
-<area shape="poly" title=" " alt="" coords="125,184,72,222,69,218,128,180"/>
-<area shape="rect" href="../../df/d00/a00122.html" title=" " alt="" coords="98,229,192,256"/>
-<area shape="poly" title=" " alt="" coords="331,183,200,227,198,222,335,180"/>
-<area shape="poly" title=" " alt="" coords="2084,181,1990,226,1989,220,2078,182"/>
-<area shape="poly" title=" " alt="" coords="2111,180,2106,220,2097,241,2082,258,2066,267,2040,274,1964,287,1750,305,1518,314,1345,318,1345,313,1518,309,1750,299,1963,282,2038,269,2064,262,2079,254,2092,238,2101,219,2107,184"/>
-<area shape="poly" title=" " alt="" coords="2071,174,1507,239,1506,234,2066,174"/>
-<area shape="poly" title=" " alt="" coords="2098,181,2059,221,2057,216,2093,183"/>
-<area shape="rect" href="../../d9/d00/a00524.html" title="Contains definitions for the disk base class." alt="" coords="2143,229,2202,256"/>
-<area shape="poly" title=" " alt="" coords="2121,179,2154,218,2149,217,2119,184"/>
-<area shape="rect" href="../../d8/d00/a00545.html" title="Contains definitions for BIN/CUE CD image support within CDiskFile." alt="" coords="2227,229,2350,256"/>
-<area shape="poly" title=" " alt="" coords="2141,179,2246,223,2241,223,2140,185"/>
-<area shape="rect" title=" " alt="" coords="2374,229,2430,256"/>
-<area shape="poly" title=" " alt="" coords="2149,176,2361,229,2356,228,2149,181"/>
-<area shape="rect" title=" " alt="" coords="2455,229,2512,256"/>
-<area shape="poly" title=" " alt="" coords="2150,176,2161,179,2299,201,2361,211,2442,229,2437,229,2360,216,2298,206,2160,184,2149,182"/>
-<area shape="rect" href="../../da/d00/a00530.html" title="Contains definitions for the disk controller base class." alt="" coords="2115,304,2230,331"/>
-<area shape="poly" title=" " alt="" coords="2175,255,2175,290,2171,287,2171,258"/>
-<area shape="poly" title=" " alt="" coords="2108,106,2082,129,2059,156,2046,185,2039,216,2035,212,2041,184,2055,153,2078,126,2103,108"/>
-<area shape="rect" title=" " alt="" coords="2173,155,2314,181"/>
-<area shape="poly" title=" " alt="" coords="2146,105,2213,147,2207,146,2145,110"/>
-<area shape="rect" title=" " alt="" coords="2338,155,2472,181"/>
-<area shape="poly" title=" " alt="" coords="2174,105,2344,150,2339,150,2173,110"/>
+<div class="center"><img src="../../d4/d00/a00540.png" border="0" usemap="#astorage_2_disk_device_8cpp" loading="lazy" alt=""/></div>
+<map name="astorage_2_disk_device_8cpp" id="astorage_2_disk_device_8cpp">
+<area shape="rect" title="Contains code to use a raw device as a disk image." alt="" coords="1428,5,1589,32"/>
+<area shape="rect" href="../../d9/d00/a00524.html" title="Standard includes." alt="" coords="913,229,986,256"/>
+<area shape="poly" title=" " alt="" coords="1479,32,996,226,994,221,1474,33"/>
+<area shape="rect" href="../../d0/d00/a00542.html" title="Contains definitions to use a raw device as a disk image." alt="" coords="1405,80,1505,107"/>
+<area shape="poly" title=" " alt="" coords="1501,31,1475,70,1471,65,1497,34"/>
+<area shape="rect" title=" " alt="" coords="1529,80,1596,107"/>
+<area shape="poly" title=" " alt="" coords="1519,30,1547,68,1542,67,1517,35"/>
+<area shape="rect" title=" " alt="" coords="1621,80,1678,107"/>
+<area shape="poly" title=" " alt="" coords="1533,30,1614,73,1609,72,1532,35"/>
+<area shape="rect" href="../../d7/d00/a00131.html" title=" " alt="" coords="330,304,439,331"/>
+<area shape="poly" title=" " alt="" coords="910,249,719,273,458,307,455,307,453,302,457,301,718,268,916,247"/>
+<area shape="rect" href="../../df/d00/a00263.html" title="Contains the datatype definitions for use with Microsoft Visual C++ and Linux." alt="" coords="1344,304,1433,331"/>
+<area shape="poly" title=" " alt="" coords="986,246,1132,268,1331,303,1325,303,1131,273,986,252"/>
+<area shape="rect" title=" " alt="" coords="1434,379,1502,405"/>
+<area shape="poly" title=" " alt="" coords="986,241,1092,241,1229,248,1298,256,1360,267,1411,282,1447,302,1458,315,1465,331,1471,365,1466,362,1460,333,1454,318,1444,306,1409,287,1359,272,1297,261,1229,253,1092,247,986,246"/>
+<area shape="rect" href="../../d3/d00/a00023.html" title=" " alt="" coords="1198,304,1320,331"/>
+<area shape="poly" title=" " alt="" coords="986,250,1193,300,1187,300,986,255"/>
+<area shape="rect" href="../../d5/d00/a00029.html" title=" " alt="" coords="331,379,432,405"/>
+<area shape="poly" title=" " alt="" coords="911,243,836,247,732,254,616,273,558,287,503,306,450,336,407,370,404,366,447,332,500,302,557,282,615,267,732,249,836,241,916,243"/>
+<area shape="rect" href="../../dd/d00/a00041.html" title=" " alt="" coords="787,379,891,405"/>
+<area shape="poly" title=" " alt="" coords="937,255,913,279,889,306,869,336,852,367,849,363,864,333,885,302,909,276,932,257"/>
+<area shape="rect" href="../../dc/d00/a00032.html" title=" " alt="" coords="1346,453,1433,480"/>
+<area shape="poly" title=" " alt="" coords="946,255,933,305,929,335,929,360,936,382,955,403,984,419,1025,431,1073,438,1127,442,1237,445,1333,453,1328,453,1237,450,1127,447,1073,443,1024,436,982,424,952,407,932,385,924,361,924,335,928,303,942,258"/>
+<area shape="rect" href="../../d8/d00/a00038.html" title=" " alt="" coords="176,379,307,405"/>
+<area shape="poly" title=" " alt="" coords="910,244,785,249,610,257,521,264,439,275,369,289,319,306,300,319,283,334,258,368,254,364,280,331,297,315,316,302,368,283,438,269,521,259,610,251,785,243,916,244"/>
+<area shape="rect" href="../../d4/d00/a00035.html" title=" " alt="" coords="514,304,628,331"/>
+<area shape="poly" title=" " alt="" coords="910,252,644,305,643,300,915,250"/>
+<area shape="rect" href="../../d0/d00/a00302.html" title="Contains macro&#39;s and prototypes for debugging." alt="" coords="942,304,1045,331"/>
+<area shape="poly" title=" " alt="" coords="958,254,980,292,976,290,956,259"/>
+<area shape="rect" href="../../d3/d00/a00305.html" title="Contains byte&#45;order conversion helpers." alt="" coords="1069,304,1174,331"/>
+<area shape="poly" title=" " alt="" coords="980,254,1080,298,1075,297,979,259"/>
+<area shape="rect" title=" " alt="" coords="1220,379,1298,405"/>
+<area shape="poly" title=" " alt="" coords="1261,329,1261,365,1257,361,1257,333"/>
+<area shape="rect" title=" " alt="" coords="1458,453,1511,480"/>
+<area shape="poly" title=" " alt="" coords="1279,329,1455,445,1450,444,1277,334"/>
+<area shape="rect" title=" " alt="" coords="329,453,386,480"/>
+<area shape="poly" title=" " alt="" coords="379,404,368,440,365,437,375,407"/>
+<area shape="rect" title=" " alt="" coords="94,453,154,480"/>
+<area shape="poly" title=" " alt="" coords="338,408,170,455,169,450,334,404"/>
+<area shape="rect" title=" " alt="" coords="513,453,570,480"/>
+<area shape="poly" title=" " alt="" coords="410,403,502,447,497,446,409,408"/>
+<area shape="rect" title=" " alt="" coords="595,453,651,480"/>
+<area shape="poly" title=" " alt="" coords="424,403,583,452,577,453,424,409"/>
+<area shape="rect" title=" " alt="" coords="410,453,489,480"/>
+<area shape="poly" title=" " alt="" coords="394,403,430,443,425,441,392,408"/>
+<area shape="poly" title=" " alt="" coords="891,396,954,403,1090,413,1198,419,1305,428,1445,453,1439,453,1305,433,1197,424,1090,419,953,408,891,402"/>
+<area shape="poly" title=" " alt="" coords="789,399,593,426,402,456,401,451,592,421,783,400"/>
+<area shape="poly" title=" " alt="" coords="784,399,724,408,570,419,448,424,326,433,170,456,169,451,325,428,447,419,569,414,724,403,789,399"/>
+<area shape="poly" title=" " alt="" coords="789,405,586,455,585,450,784,405"/>
+<area shape="poly" title=" " alt="" coords="804,405,666,454,665,449,799,406"/>
+<area shape="poly" title=" " alt="" coords="789,402,504,455,503,450,784,402"/>
+<area shape="rect" title=" " alt="" coords="675,453,736,480"/>
+<area shape="poly" title=" " alt="" coords="818,405,743,448,741,443,813,407"/>
+<area shape="rect" title=" " alt="" coords="1254,453,1322,480"/>
+<area shape="poly" title=" " alt="" coords="891,400,910,403,1073,424,1146,434,1241,453,1236,453,1145,439,1072,429,909,408,891,405"/>
+<area shape="rect" title=" " alt="" coords="179,453,304,480"/>
+<area shape="poly" title=" " alt="" coords="786,402,320,456,319,450,786,396"/>
+<area shape="rect" title=" " alt="" coords="759,453,828,480"/>
+<area shape="poly" title=" " alt="" coords="833,405,811,442,808,438,829,407"/>
+<area shape="rect" title=" " alt="" coords="852,453,948,480"/>
+<area shape="poly" title=" " alt="" coords="851,403,882,442,877,441,848,408"/>
+<area shape="poly" title=" " alt="" coords="892,400,910,403,1027,417,1119,425,1212,434,1333,453,1328,453,1212,439,1119,430,1026,422,909,408,892,405"/>
+<area shape="rect" title=" " alt="" coords="972,453,1047,480"/>
+<area shape="poly" title=" " alt="" coords="869,403,968,447,963,446,868,408"/>
+<area shape="rect" title=" " alt="" coords="1072,453,1139,480"/>
+<area shape="poly" title=" " alt="" coords="886,403,1060,452,1055,452,885,409"/>
+<area shape="rect" title=" " alt="" coords="1163,453,1229,480"/>
+<area shape="poly" title=" " alt="" coords="892,400,1006,421,1151,453,1145,453,1005,426,891,405"/>
+<area shape="poly" title=" " alt="" coords="262,403,327,445,321,445,261,408"/>
+<area shape="poly" title=" " alt="" coords="224,405,159,447,156,443,218,407"/>
+<area shape="poly" title=" " alt="" coords="278,403,401,447,396,448,277,409"/>
+<area shape="poly" title=" " alt="" coords="243,404,244,439,239,436,240,408"/>
+<area shape="rect" title=" " alt="" coords="5,453,70,480"/>
+<area shape="poly" title=" " alt="" coords="207,408,86,451,84,446,205,403"/>
+<area shape="poly" title=" " alt="" coords="540,330,430,375,428,370,535,332"/>
+<area shape="poly" title=" " alt="" coords="511,327,303,356,210,371,165,381,154,393,144,408,132,440,127,437,139,405,149,390,163,376,209,365,303,351,516,324"/>
+<area shape="poly" title=" " alt="" coords="568,329,555,379,546,440,542,436,550,378,564,333"/>
+<area shape="poly" title=" " alt="" coords="576,329,599,404,613,441,608,438,594,406,572,333"/>
+<area shape="poly" title=" " alt="" coords="563,330,471,443,468,439,558,332"/>
+<area shape="poly" title=" " alt="" coords="629,323,656,330,682,341,707,356,726,377,733,393,733,409,722,442,719,438,728,409,727,394,722,380,703,360,680,345,654,335,628,328"/>
+<area shape="rect" title=" " alt="" coords="608,379,712,405"/>
+<area shape="poly" title=" " alt="" coords="587,329,636,369,630,368,586,334"/>
+<area shape="rect" title=" " alt="" coords="966,379,1034,405"/>
+<area shape="poly" title=" " alt="" coords="996,329,1000,365,995,361,993,333"/>
+<area shape="rect" href="../../df/d00/a00122.html" title=" " alt="" coords="1075,379,1168,405"/>
+<area shape="poly" title=" " alt="" coords="1123,329,1124,365,1119,361,1120,333"/>
+<area shape="rect" href="../../da/d00/a00530.html" title="Contains definitions for the disk base class." alt="" coords="1613,155,1672,181"/>
+<area shape="poly" title=" " alt="" coords="1488,105,1601,150,1596,150,1487,110"/>
+<area shape="rect" href="../../d4/d00/a00536.html" title="Contains definitions for the disk controller base class." alt="" coords="1648,229,1763,256"/>
+<area shape="poly" title=" " alt="" coords="1655,179,1687,218,1682,217,1653,184"/>
+<area shape="rect" href="../../d7/d00/a00584.html" title="Contains definitions for the SCSI device base class." alt="" coords="1734,304,1840,331"/>
+<area shape="poly" title=" " alt="" coords="1673,172,1727,190,1754,206,1777,228,1790,258,1792,290,1787,287,1784,259,1773,231,1751,210,1725,194,1672,177"/>
+<area shape="rect" href="../../dd/d00/a00578.html" title="Contains definitions for the SCSI bus class." alt="" coords="1536,229,1624,256"/>
+<area shape="poly" title=" " alt="" coords="1634,181,1602,220,1600,215,1630,183"/>
+<area shape="poly" title=" " alt="" coords="1617,254,1739,299,1734,298,1616,259"/>
+<area shape="rect" href="../../d6/d00/a00293.html" title="Contains definitions for the base class for devices that connect to the chipset." alt="" coords="1508,304,1682,331"/>
+<area shape="poly" title=" " alt="" coords="1584,254,1591,290,1587,287,1581,259"/>
+<area shape="poly" title=" " alt="" coords="1575,330,1504,373,1503,368,1570,332"/>
+<area shape="rect" href="../../da/d00/a00080.html" title="Contains the definitions for the configuration file interpreter." alt="" coords="1526,379,1669,405"/>
+<area shape="poly" title=" " alt="" coords="1597,329,1598,365,1594,361,1593,333"/>
+<area shape="poly" title=" " alt="" coords="1580,405,1518,447,1516,442,1575,407"/>
 </map>
 </div>
 </div>
 <p><a href="../../d3/d00/a00539_source.html">Go to the source code of this file.</a></p>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>Contains code to use a file as a disk image. </p>
+<div class="textblock"><p>Contains code to use a raw device as a disk image. </p>
 <p>$Id$</p>
-<p>X-1.23 Added BIN/CUE support.</p><ul>
-<li>Transparent: ISO/raw images and all existing OpenVMS disk images continue to work with zero code-path changes.</li>
-<li>Activated automatically when filename ends in .cue (case-insensitive comparison, works on VMS/Win/Unix).</li>
-<li>Supports single- and multi-file BIN/CUE layouts, MODE1/2048, MODE1/2352, MODE2/2336, MODE2/2352, AUDIO.</li>
-<li>Falls back to raw-image handling if .cue parsing fails.</li>
-<li>Multi-track TOC exposed via get_track() / get_track_for_lba() for use by the SCSI READ TOC handler in <a class="el" href="../../d7/d00/a00521.html" title="Contains code for the disk base class.">Disk.cpp</a>.</li>
-</ul>
-<p>X-1.22 Camiel Vanderhoeven 26-MAR-2008 Support OpenVMS path names.</p>
-<p>X-1.21 Camiel Vanderhoeven 14-MAR-2008 Formatting.</p>
-<p>X-1.20 Camiel Vanderhoeven 19-MAR-2008 Use fopen_large to support files &gt;2GB on linux.</p>
-<p>X-1.19 Camiel Vanderhoeven 14-MAR-2008</p><ol type="1">
+<p>X-1.7 Camiel Vanderhoeven 14-MAR-2008</p><ol type="1">
 <li>More meaningful exceptions replace throwing (int) 1.</li>
 <li>U64 macro replaces X64 macro.</li>
 </ol>
-<p>X-1.18 Camiel Vanderhoeven 05-MAR-2008 Multi-threading version.</p>
-<p>X-1.17 Camiel Vanderhoeven 02-MAR-2008 Natural way to specify large numeric values ("10M") in config file.</p>
-<p>X-1.16 David Leonard 20-FEB-2008 Show disk creation progress.</p>
-<p>X-1.15 Camiel Vanderhoeven 25-JAN-2008 Create file if it doesn't exist and autocreate_size is specified.</p>
-<p>X-1.14 Camiel Vanderhoeven 13-JAN-2008 Use determine_layout instead of calc_cylinders.</p>
-<p>X-1.13 Brian Wheeler 09-JAN-2008 Put filename in disk model number (without path).</p>
-<p>X-1.12 Camiel Vanderhoeven 09-JAN-2008 Save disk state to state file.</p>
-<p>X-1.11 Camiel Vanderhoeven 06-JAN-2008 Set default blocksize to 2048 for cd-rom devices.</p>
-<p>X-1.10 Camiel Vanderhoeven 06-JAN-2008 Support changing the block size (required for SCSI, ATAPI).</p>
-<p>X-1.9 Camiel Vanderhoeven 04-JAN-2008 64-bit file I/O.</p>
-<p>X-1.8 Camiel Vanderhoeven 02-JAN-2008 Cleanup.</p>
-<p>X-1.7 Camiel Vanderhoeven 28-DEC-2007 Throw exceptions rather than just exiting when errors occur.</p>
-<p>X-1.6 Camiel Vanderhoeven 28-DEC-2007 Keep the compiler happy.</p>
-<p>X-1.5 Camiel Vanderhoeven 20-DEC-2007 Close files and free memory when the emulator shuts down.</p>
-<p>X-1.4 Camiel Vanderhoeven 18-DEC-2007 Byte-sized transfers for SCSI controller.</p>
-<p>X-1.3 Brian Wheeler 17-DEC-2007 Changed last cylinder number.</p>
-<p>X-1.2 Brian Wheeler 16-DEC-2007 Fixed case of <a class="el" href="../../d5/d00/a00518.html" title="Standard includes.">StdAfx.h</a>.</p>
-<p>X-1.1 Camiel Vanderhoeven 12-DEC-2007 Initial version in CVS. </p>
+<p>X-1.6 Brian Wheeler 27-FEB-2008 Avoid compiler warnings.</p>
+<p>X-1.5 Camiel Vanderhoeven 13-JAN-2008 Use determine_layout in stead of calc_cylinders.</p>
+<p>X-1.4 Camiel Vanderhoeven 09-JAN-2008 Save disk state to state file.</p>
+<p>X-1.3 Camiel Vanderhoeven 06-JAN-2008 Set default blocksize to 2048 for cd-rom devices.</p>
+<p>X-1.2 Camiel Vanderhoeven 06-JAN-2008 Support changing the block size (required for SCSI, ATAPI).</p>
+<p>X-1.1 Camiel Vanderhoeven 05-JAN-2008 Initial version in CVS. </p>
 
-<p class="definition">Definition in file <a class="el" href="../../d3/d00/a00539_source.html">DiskFile.cpp</a>.</p>
+<p class="definition">Definition in file <a class="el" href="../../d3/d00/a00539_source.html">DiskDevice.cpp</a>.</p>
 </div></div><!-- contents -->
 </div><!-- doc-content -->
 <div id="page-nav" class="page-nav-panel">
@@ -313,7 +257,7 @@ Include dependency graph for DiskFile.cpp:</div>
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
-    <li class="navelem"><a href="../../dir_70f20ecf11358dff00a0daf546d3147e.html">storage</a></li><li class="navelem"><a href="../../d3/d00/a00539.html">DiskFile.cpp</a></li>
+    <li class="navelem"><a href="../../dir_70f20ecf11358dff00a0daf546d3147e.html">storage</a></li><li class="navelem"><a href="../../d3/d00/a00539.html">DiskDevice.cpp</a></li>
     <li class="footer">Generated by <a href="https://www.doxygen.org/index.html"><img class="footer" src="../../doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.18.0 </li>
   </ul>
 </div>

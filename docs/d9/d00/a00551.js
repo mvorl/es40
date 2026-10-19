@@ -1,5 +1,13 @@
 var a00551 =
 [
-    [ "ramdisk_magic1", "d9/d00/a00551.html#a6188341e2abfde240b16de5e056f58bf", null ],
-    [ "ramdisk_magic2", "d9/d00/a00551.html#a9acd6fd3edaf1e0c8c97fb5b355336de", null ]
+    [ "CueTrack", "d2/d00/a01677.html", "d2/d00/a01677" ],
+    [ "BINCUE_MAX_PATH", "d9/d00/a00551.html#a591b46b1ddf777ad4b96ee0f5af67844", null ],
+    [ "CueTrackMode", "d9/d00/a00551.html#a30508746728eeb6c8de7c2fd3374615a", [
+      [ "TRACK_MODE_UNKNOWN", "d9/d00/a00551.html#a30508746728eeb6c8de7c2fd3374615aaca49d144dd470dfaf0a9a205403e2f4e", null ],
+      [ "TRACK_MODE_AUDIO", "d9/d00/a00551.html#a30508746728eeb6c8de7c2fd3374615aa7e47fe04cfd0fa6a246212bda180f980", null ],
+      [ "TRACK_MODE1_2048", "d9/d00/a00551.html#a30508746728eeb6c8de7c2fd3374615aa6eae97ceec3df3fe173c0f58b1b22e24", null ],
+      [ "TRACK_MODE1_2352", "d9/d00/a00551.html#a30508746728eeb6c8de7c2fd3374615aaa26fc07e6f65e007f7c67e3986039f31", null ],
+      [ "TRACK_MODE2_2336", "d9/d00/a00551.html#a30508746728eeb6c8de7c2fd3374615aab9ebf0468f98cf6d3b16508438ef9bcd", null ],
+      [ "TRACK_MODE2_2352", "d9/d00/a00551.html#a30508746728eeb6c8de7c2fd3374615aa300ffe45d37866912e2441146b06fb15", null ]
+    ] ]
 ];

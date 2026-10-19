@@ -1,7 +1,7 @@
 var a00080 =
 [
-    [ "CConfigurator", "df/d00/a00874.html", "df/d00/a00874" ],
-    [ "CConfigurator::SCfg_Value", "d5/d00/a00878.html", "d5/d00/a00878" ],
+    [ "CConfigurator", "d3/d00/a00869.html", "d3/d00/a00869" ],
+    [ "CConfigurator::SCfg_Value", "d9/d00/a00873.html", "d9/d00/a00873" ],
     [ "CFG_MAX_CHILDREN", "da/d00/a00080.html#a9e4b15856c5b7125d730771228ac1cbd", null ],
     [ "CFG_MAX_VALUES", "da/d00/a00080.html#ae95bf5de84faf510ad3c96fe84e48250", null ],
     [ "classid", "da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78", [

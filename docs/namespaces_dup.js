@@ -1,76 +1,16 @@
 var namespaces_dup =
 [
-    [ "bench_openvms", "dd/d00/a00639.html", [
-      [ "ingest", "dd/d00/a00639.html#a78ce668db7a5a12ccb8915e34245ac3d", null ],
-      [ "send_line", "dd/d00/a00639.html#a1e98d1878412bdedd8d3ff2cf3930c33", null ],
-      [ "wait_rx", "dd/d00/a00639.html#a3ebb1550dca4d988b7bcd8f0de91e35f", null ],
-      [ "action", "dd/d00/a00639.html#af296fb0b7637278dcf943d72631cd55d", null ],
-      [ "args", "dd/d00/a00639.html#a6ac1e981a3e9136c961261a19db68eaa", null ],
-      [ "bench_stats", "dd/d00/a00639.html#a1b279df82c60529df672a9996b2975c6", null ],
-      [ "check", "dd/d00/a00639.html#aaad4308d75e505c08a0a1a44f3c9afc7", null ],
-      [ "command", "dd/d00/a00639.html#aa7812b3d96d13992a230bef15fd0be46", null ],
-      [ "daemon", "dd/d00/a00639.html#ad2c8a8f9c55a920e5d0cb955c3de4e6d", null ],
-      [ "deadline", "dd/d00/a00639.html#ac24b5ef6e26094f21c0b969f67d426b3", null ],
-      [ "default", "dd/d00/a00639.html#a1bebd36eb30c604e15a389392e3b107d", null ],
-      [ "done", "dd/d00/a00639.html#ad9b48302a0b9aae9285d8f054c0d87de", null ],
-      [ "drain_stdout", "dd/d00/a00639.html#add7ac3d6074bcae226f33537622b58d4", null ],
-      [ "encoding", "dd/d00/a00639.html#a036b42e5f53d80a1456075510978770c", null ],
-      [ "guest", "dd/d00/a00639.html#a8f963f91810b10c915ffad13db327e2d", null ],
-      [ "host_seconds", "dd/d00/a00639.html#abee31b2217293e807eeaa6f2bd580364", null ],
-      [ "logged_in", "dd/d00/a00639.html#a7ad1ff0032fdd22c71edcc0dd57ee444", null ],
-      [ "mark", "dd/d00/a00639.html#a0b26307cfbb92c7b76b0f746f2ba9663", null ],
-      [ "parser", "dd/d00/a00639.html#ad60805498a18b5b6e25de3febd4fdec3", null ],
-      [ "password", "dd/d00/a00639.html#a025db2adc879a714a128f3a54b87baab", null ],
-      [ "proc", "dd/d00/a00639.html#a80d3d4928e8ed9e31a4d9955f61c3b24", null ],
-      [ "profile_path", "dd/d00/a00639.html#acebc07f973c270adf486371d63e2e8c0", null ],
-      [ "prompt", "dd/d00/a00639.html#a81c76b73793bb241eb126630e4c4e6b2", null ],
-      [ "result", "dd/d00/a00639.html#a23af56e356fc9569ae34a935af89c61a", null ],
-      [ "score", "dd/d00/a00639.html#a23392772a73d5696fb393141f64bdd8d", null ],
-      [ "selected", "dd/d00/a00639.html#a9fcf99a282f92f0bfba498b6069b93f9", null ],
-      [ "shutdown_complete", "dd/d00/a00639.html#a4d9f0ded09fb32096cf6b503cbe215a7", null ],
-      [ "shutdown_mark", "dd/d00/a00639.html#abd1cfd8bbac11de1427b67b193f9048a", null ],
-      [ "shutdown_text", "dd/d00/a00639.html#a82e96e2a681cdc3c797d7989b1634b26", null ],
-      [ "slow", "dd/d00/a00639.html#aca68b2d0ea2f3d44f6ebbb65ca1f0ed1", null ],
-      [ "sock", "dd/d00/a00639.html#a431174647766757c4cf869197e4e9e55", null ],
-      [ "start", "dd/d00/a00639.html#a9684bc2ef1b8570bc596e9dd56848e79", null ],
-      [ "stats", "dd/d00/a00639.html#a8ff68cae514180f7cf541a47c6dbde26", null ],
-      [ "stop", "dd/d00/a00639.html#aaa7da170a3a651d7f7d872fdc2e676ee", null ],
-      [ "target", "dd/d00/a00639.html#a5a27eeeac1b64c7f77d9be2bcee7ec7a", null ],
-      [ "textbuf", "dd/d00/a00639.html#a33c372ae3f78ee9ac900e9941b5877bc", null ],
-      [ "work", "dd/d00/a00639.html#ae3821862cdba3a27d959021b51510656", null ]
+    [ "Ev68HWLoad", "d9/d00/a00633.html", [
+      [ "decode", "d9/d00/a00633.html#a6ef575390ccf121a4fc439aeb84c9443", null ]
     ] ],
-    [ "Ev68HWLoad", "db/d00/a00636.html", [
-      [ "decode", "db/d00/a00636.html#a6ef575390ccf121a4fc439aeb84c9443", null ]
+    [ "Ev68HWStore", "d7/d00/a00634.html", [
+      [ "decode", "d7/d00/a00634.html#a2dd4aa9781534103378d8fe1dcdbeaef", null ]
     ] ],
-    [ "Ev68PAL", "de/d00/a00637.html", [
-      [ "call_pal_entry", "de/d00/a00637.html#a6938b3390a140c2858ff50f9d218f31a", null ],
-      [ "call_pal_valid", "de/d00/a00637.html#a281cae4ce6d3bc180eea1f670c629c3c", null ],
-      [ "exception_entry", "de/d00/a00637.html#ab5f18181f8f4b54aa10c9de9850620d1", null ],
-      [ "hardware_instruction_access", "de/d00/a00637.html#a9c73c99b536a98636036d2b384d8bb62", null ]
-    ] ],
-    [ "shutdown_openvms", "db/d00/a00641.html", [
-      [ "ingest", "db/d00/a00641.html#a78ce668db7a5a12ccb8915e34245ac3d", null ],
-      [ "send_line", "db/d00/a00641.html#a1e98d1878412bdedd8d3ff2cf3930c33", null ],
-      [ "wait_for", "db/d00/a00641.html#abd0874362c0bdbd54ad66d019e8d1b2f", null ],
-      [ "encoding", "db/d00/a00641.html#a36c0b59ea4aba43ec64157562c8f49c0", null ],
-      [ "mark", "db/d00/a00641.html#a52ca4f07eaec2b248e59ad996ee69ea6", null ],
-      [ "prompt", "db/d00/a00641.html#aa00dd8bf1e629770f17e982fd137dadd", null ],
-      [ "shutdown_text", "db/d00/a00641.html#af1d2f4db11976acfaadfa3f7ea99f7c7", null ],
-      [ "slow", "db/d00/a00641.html#a2ec193cf79a2af15ce981ff5a29755d3", null ],
-      [ "sock", "db/d00/a00641.html#a6e44d34ed353cebf7e7a1327ebd15df3", null ],
-      [ "stop", "db/d00/a00641.html#a37b062eaed342bcff049b113e4ecb555", null ],
-      [ "text", "db/d00/a00641.html#a4c8f4fd464e7baa13c8ad82198495bca", null ],
-      [ "user", "db/d00/a00641.html#afb58b923d888b342d218446f16804902", null ]
-    ] ],
-    [ "verify", "dc/d00/a00640.html", [
-      [ "main", "dc/d00/a00640.html#af7ddbe060b21e2a7d87a8d4f0f1e64e7", null ],
-      [ "read_decompressed", "dc/d00/a00640.html#ab689596d7edf93cf989a5e3dcb98d046", null ],
-      [ "read_flash_container", "dc/d00/a00640.html#af47a008995323450c1f5ef9518433c6a", null ],
-      [ "sha256", "dc/d00/a00640.html#a07a84764b3ce803efff15cd2463e4b30", null ],
-      [ "FLASH_BOOT_MAGIC", "dc/d00/a00640.html#aad6655801183e503c0b1562c92c9e83e", null ],
-      [ "FLASH_MAGIC1", "dc/d00/a00640.html#a2c3579baaffacf0dd3292880e846d037", null ],
-      [ "FLASH_MAGIC2", "dc/d00/a00640.html#a9e8c96ee264f02f02d934f9a88dd1e43", null ],
-      [ "ROM_SIZE", "dc/d00/a00640.html#aa1e139c41754c84d3e39fb9db69d5b16", null ],
-      [ "STATE_SIZE_EXPECTED", "dc/d00/a00640.html#a7009eb33fcdd228157dd7e88569dbc28", null ]
+    [ "Ev68PAL", "d4/d00/a00635.html", [
+      [ "call_pal_entry", "d4/d00/a00635.html#a6938b3390a140c2858ff50f9d218f31a", null ],
+      [ "call_pal_valid", "d4/d00/a00635.html#a281cae4ce6d3bc180eea1f670c629c3c", null ],
+      [ "exception_entry", "d4/d00/a00635.html#ab5f18181f8f4b54aa10c9de9850620d1", null ],
+      [ "hardware_instruction_access", "d4/d00/a00635.html#a9c73c99b536a98636036d2b384d8bb62", null ],
+      [ "hardware_return", "d4/d00/a00635.html#acb1d6a77149bd1da677fb15f86abf668", null ]
     ] ]
 ];

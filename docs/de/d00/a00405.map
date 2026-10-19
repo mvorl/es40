@@ -1,9 +1,0 @@
-<map id="gui/sdl_media.h" name="gui/sdl_media.h">
-<area shape="rect" id="Node000001" title=" " alt="" coords="181,5,294,32"/>
-<area shape="rect" id="Node000002" title=" " alt="" coords="5,80,147,107"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="212,32,119,76,117,71,207,33"/>
-<area shape="rect" id="Node000003" title=" " alt="" coords="171,80,304,107"/>
-<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="239,31,240,66,235,63,235,34"/>
-<area shape="rect" id="Node000004" title=" " alt="" coords="328,80,397,107"/>
-<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="260,30,331,72,325,72,258,35"/>
-</map>

@@ -1,5 +1,7 @@
-<map id="CAliM1543C_ide::SAliM1543C_ideState::SControllerState" name="CAliM1543C_ide::SAliM1543C_ideState::SControllerState">
-<area shape="rect" id="Node000001" title=" " alt="" coords="5,120,196,163"/>
-<area shape="rect" id="Node000002" href="$d0/d00/a00806.html" title=" " alt="" coords="5,5,196,48"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="103,62,103,120,98,119,98,65"/>
+<map id="CAliM1543C_pmu" name="CAliM1543C_pmu">
+<area shape="rect" id="Node000001" title=" " alt="" coords="13,155,141,181"/>
+<area shape="rect" id="Node000002" href="$d8/d00/a01113.html" title="Abstract base class for devices on the PCI&#45;bus." alt="" coords="29,80,125,107"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="79,121,80,155,74,153,75,124"/>
+<area shape="rect" id="Node000003" href="$dd/d00/a01121.html" title="Abstract base class for devices that connect to the Typhoon chipset." alt="" coords="5,5,149,32"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="78,45,80,80,74,79,76,50"/>
 </map>

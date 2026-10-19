@@ -1,11 +1,11 @@
 var a00188 =
 [
-    [ "DO_LDF", "da/d00/a00188.html#acc2b8b35fa85cc738c3822df08590e1a", null ],
-    [ "DO_LDG", "da/d00/a00188.html#a5b234b248d4e35d0b6bed81bb0785f49", null ],
-    [ "DO_LDS", "da/d00/a00188.html#a0a4da3503839dd3e22ab3e8347449c31", null ],
-    [ "DO_LDT", "da/d00/a00188.html#a189c1b62e80012ea03de47bcb56d915c", null ],
-    [ "DO_STF", "da/d00/a00188.html#aaa863c79355ef39a83370828022d2c40", null ],
-    [ "DO_STG", "da/d00/a00188.html#aae10ad9ebabaacc0e656333d3bdbc49f", null ],
-    [ "DO_STS", "da/d00/a00188.html#aebeb90b233fd19c1a7fdbfc4690f3ed8", null ],
-    [ "DO_STT", "da/d00/a00188.html#a321a3084e9755bdd1a4e8bb01e589907", null ]
+    [ "DO_FBEQ", "da/d00/a00188.html#a9c8f6b0d938a7405cd833d7245454d03", null ],
+    [ "DO_FBGE", "da/d00/a00188.html#a9e049daec1f76e1586c02baaa3094f9f", null ],
+    [ "DO_FBGT", "da/d00/a00188.html#abd2eeb8d077703b57095d1b1033d41b0", null ],
+    [ "DO_FBLE", "da/d00/a00188.html#a626450b6b526a8befc122d7a50ea98cc", null ],
+    [ "DO_FBLT", "da/d00/a00188.html#ac7d7895e1e0e49d90b6e8b269e48c093", null ],
+    [ "DO_FBNE", "da/d00/a00188.html#a13bddfdb496f68a5429ae23fd465237a", null ],
+    [ "FP_IS_NEGATIVE", "da/d00/a00188.html#a6f52790b6d3c56191d155e4a701ffd39", null ],
+    [ "FP_IS_ZERO", "da/d00/a00188.html#a35cbff736c397d624b27c6ba10d4b26e", null ]
 ];

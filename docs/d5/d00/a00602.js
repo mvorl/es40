@@ -1,6 +1,6 @@
 var a00602 =
 [
-    [ "CFlash", "df/d00/a01778.html", "df/d00/a01778" ],
-    [ "CFlash::SFlash_state", "dd/d00/a01782.html", "dd/d00/a01782" ],
-    [ "theSROM", "d5/d00/a00602.html#ac6030b77c2d04175c983cf2554459dee", null ]
+    [ "CDPR", "d3/d00/a01777.html", "d3/d00/a01777" ],
+    [ "CDPR::SDPR_state", "d6/d00/a01781.html", "d6/d00/a01781" ],
+    [ "theDPR", "d5/d00/a00602.html#a872e87bc655edce06e62807ebaab70da", null ]
 ];

@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.18.0"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ES40: CPU/cpu_fp_memory.h Source File</title>
+<title>ES40: CPU/cpu_fp_branch.h Source File</title>
 <link href="../../tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="../../dynsections.js"></script>
 <script type="text/javascript" src="../../codefolding.js"></script>
@@ -26,7 +26,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">ES40<span id="projectnumber">&#160;0.17+</span>
+   <div id="projectname">ES40<span id="projectnumber">&#160;0.92.2</span>
    </div>
   </td>
  </tr>
@@ -109,85 +109,78 @@ document.addEventListener('DOMContentLoaded',() => { initNavTree('da/d00/a00188_
 </div>
 
 <div class="header">
-  <div class="headertitle"><div class="title">cpu_fp_memory.h</div></div>
+  <div class="headertitle"><div class="title">cpu_fp_branch.h</div></div>
 </div><!--header-->
 <div class="contents">
 <a href="../../da/d00/a00188.html">Go to the documentation of this file.</a><div class="fragment"><div class="line"><a id="l00001" name="l00001"></a><span class="lineno">    1</span><span class="comment">/* ES40 Emulator.</span></div>
 <div class="line"><a id="l00002" name="l00002"></a><span class="lineno">    2</span><span class="comment"> * Copyright (C) 2007-2008 by the ES40 Emulator Project</span></div>
-<div class="line"><a id="l00003" name="l00003"></a><span class="lineno">    3</span><span class="comment"> *</span></div>
-<div class="line"><a id="l00004" name="l00004"></a><span class="lineno">    4</span><span class="comment"> * WWW    : https://github.com/ES40-Emu/es40</span></div>
-<div class="line"><a id="l00005" name="l00005"></a><span class="lineno">    5</span><span class="comment"> *</span></div>
-<div class="line"><a id="l00006" name="l00006"></a><span class="lineno">    6</span><span class="comment"> * This program is free software; you can redistribute it and/or</span></div>
-<div class="line"><a id="l00007" name="l00007"></a><span class="lineno">    7</span><span class="comment"> * modify it under the terms of the GNU General Public License</span></div>
-<div class="line"><a id="l00008" name="l00008"></a><span class="lineno">    8</span><span class="comment"> * as published by the Free Software Foundation; either version 2</span></div>
-<div class="line"><a id="l00009" name="l00009"></a><span class="lineno">    9</span><span class="comment"> * of the License, or (at your option) any later version.</span></div>
-<div class="line"><a id="l00010" name="l00010"></a><span class="lineno">   10</span><span class="comment"> *</span></div>
-<div class="line"><a id="l00011" name="l00011"></a><span class="lineno">   11</span><span class="comment"> * This program is distributed in the hope that it will be useful,</span></div>
-<div class="line"><a id="l00012" name="l00012"></a><span class="lineno">   12</span><span class="comment"> * but WITHOUT ANY WARRANTY; without even the implied warranty of</span></div>
-<div class="line"><a id="l00013" name="l00013"></a><span class="lineno">   13</span><span class="comment"> * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the</span></div>
-<div class="line"><a id="l00014" name="l00014"></a><span class="lineno">   14</span><span class="comment"> * GNU General Public License for more details.</span></div>
-<div class="line"><a id="l00015" name="l00015"></a><span class="lineno">   15</span><span class="comment"> *</span></div>
-<div class="line"><a id="l00016" name="l00016"></a><span class="lineno">   16</span><span class="comment"> * You should have received a copy of the GNU General Public License</span></div>
-<div class="line"><a id="l00017" name="l00017"></a><span class="lineno">   17</span><span class="comment"> * along with this program; if not, write to the Free Software</span></div>
-<div class="line"><a id="l00018" name="l00018"></a><span class="lineno">   18</span><span class="comment"> * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.</span></div>
-<div class="line"><a id="l00019" name="l00019"></a><span class="lineno">   19</span><span class="comment"> *</span></div>
-<div class="line"><a id="l00020" name="l00020"></a><span class="lineno">   20</span><span class="comment"> * Although this is not required, the author would appreciate being notified of,</span></div>
-<div class="line"><a id="l00021" name="l00021"></a><span class="lineno">   21</span><span class="comment"> * and receiving any modifications you may make to the source code that might serve</span></div>
-<div class="line"><a id="l00022" name="l00022"></a><span class="lineno">   22</span><span class="comment"> * the general public.</span></div>
-<div class="line"><a id="l00023" name="l00023"></a><span class="lineno">   23</span><span class="comment"> *</span></div>
-<div class="line"><a id="l00024" name="l00024"></a><span class="lineno">   24</span><span class="comment"> */</span></div>
-<div class="line"><a id="l00025" name="l00025"></a><span class="lineno">   25</span></div>
-<div class="line"><a id="l00084" name="l00084"></a><span class="lineno">   84</span> </div>
-<div class="foldopen" id="foldopen00085" data-start="" data-end="">
-<div class="line"><a id="l00085" name="l00085"></a><span class="lineno"><a class="line" href="../../da/d00/a00188.html#acc2b8b35fa85cc738c3822df08590e1a">   85</a></span><span class="preprocessor">#define DO_LDF  FPSTART;                                  \</span></div>
-<div class="line"><a id="l00086" name="l00086"></a><span class="lineno">   86</span><span class="preprocessor">  if(FREG_1 != 31)                                        \</span></div>
-<div class="line"><a id="l00087" name="l00087"></a><span class="lineno">   87</span><span class="preprocessor">  {                                                       \</span></div>
-<div class="line"><a id="l00088" name="l00088"></a><span class="lineno">   88</span><span class="preprocessor">    READ_VIRT_F(state.r[REG_2] + DISP_16, 32, state.f[FREG_1], vax_ldf);          \</span></div>
-<div class="line"><a id="l00089" name="l00089"></a><span class="lineno">   89</span><span class="preprocessor">  }</span></div>
+<div class="line"><a id="l00003" name="l00003"></a><span class="lineno">    3</span><span class="comment"> * Copyright (C) 2025 by gdwnldsKSC</span></div>
+<div class="line"><a id="l00004" name="l00004"></a><span class="lineno">    4</span><span class="comment"> *</span></div>
+<div class="line"><a id="l00005" name="l00005"></a><span class="lineno">    5</span><span class="comment"> * WWW    : https://github.com/ES40-Emu/es40</span></div>
+<div class="line"><a id="l00006" name="l00006"></a><span class="lineno">    6</span><span class="comment"> *</span></div>
+<div class="line"><a id="l00007" name="l00007"></a><span class="lineno">    7</span><span class="comment"> * This program is free software; you can redistribute it and/or</span></div>
+<div class="line"><a id="l00008" name="l00008"></a><span class="lineno">    8</span><span class="comment"> * modify it under the terms of the GNU General Public License</span></div>
+<div class="line"><a id="l00009" name="l00009"></a><span class="lineno">    9</span><span class="comment"> * as published by the Free Software Foundation; either version 2</span></div>
+<div class="line"><a id="l00010" name="l00010"></a><span class="lineno">   10</span><span class="comment"> * of the License, or (at your option) any later version.</span></div>
+<div class="line"><a id="l00011" name="l00011"></a><span class="lineno">   11</span><span class="comment"> *</span></div>
+<div class="line"><a id="l00012" name="l00012"></a><span class="lineno">   12</span><span class="comment"> * This program is distributed in the hope that it will be useful,</span></div>
+<div class="line"><a id="l00013" name="l00013"></a><span class="lineno">   13</span><span class="comment"> * but WITHOUT ANY WARRANTY; without even the implied warranty of</span></div>
+<div class="line"><a id="l00014" name="l00014"></a><span class="lineno">   14</span><span class="comment"> * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the</span></div>
+<div class="line"><a id="l00015" name="l00015"></a><span class="lineno">   15</span><span class="comment"> * GNU General Public License for more details.</span></div>
+<div class="line"><a id="l00016" name="l00016"></a><span class="lineno">   16</span><span class="comment"> *</span></div>
+<div class="line"><a id="l00017" name="l00017"></a><span class="lineno">   17</span><span class="comment"> * You should have received a copy of the GNU General Public License</span></div>
+<div class="line"><a id="l00018" name="l00018"></a><span class="lineno">   18</span><span class="comment"> * along with this program; if not, write to the Free Software</span></div>
+<div class="line"><a id="l00019" name="l00019"></a><span class="lineno">   19</span><span class="comment"> * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.</span></div>
+<div class="line"><a id="l00020" name="l00020"></a><span class="lineno">   20</span><span class="comment"> *</span></div>
+<div class="line"><a id="l00021" name="l00021"></a><span class="lineno">   21</span><span class="comment"> * Although this is not required, the author would appreciate being notified of,</span></div>
+<div class="line"><a id="l00022" name="l00022"></a><span class="lineno">   22</span><span class="comment"> * and receiving any modifications you may make to the source code that might serve</span></div>
+<div class="line"><a id="l00023" name="l00023"></a><span class="lineno">   23</span><span class="comment"> * the general public.</span></div>
+<div class="line"><a id="l00024" name="l00024"></a><span class="lineno">   24</span><span class="comment"> *</span></div>
+<div class="line"><a id="l00025" name="l00025"></a><span class="lineno">   25</span><span class="comment"> */</span></div>
+<div class="line"><a id="l00026" name="l00026"></a><span class="lineno">   26</span></div>
+<div class="line"><a id="l00074" name="l00074"></a><span class="lineno"><a class="line" href="../../da/d00/a00188.html#a35cbff736c397d624b27c6ba10d4b26e">   74</a></span><span class="preprocessor">#define FP_IS_ZERO(val) (((val) &amp; ~FPR_SIGN) == 0)</span></div>
+<div class="line"><a id="l00075" name="l00075"></a><span class="lineno"><a class="line" href="../../da/d00/a00188.html#a6f52790b6d3c56191d155e4a701ffd39">   75</a></span><span class="preprocessor">#define FP_IS_NEGATIVE(val) (((val) &amp; FPR_SIGN) != 0)</span></div>
+<div class="line"><a id="l00076" name="l00076"></a><span class="lineno">   76</span> </div>
+<div class="line"><a id="l00077" name="l00077"></a><span class="lineno">   77</span><span class="comment">// Branch if equal to zero (+0 or -0)</span></div>
+<div class="foldopen" id="foldopen00078" data-start="" data-end="">
+<div class="line"><a id="l00078" name="l00078"></a><span class="lineno"><a class="line" href="../../da/d00/a00188.html#a9c8f6b0d938a7405cd833d7245454d03">   78</a></span><span class="preprocessor">#define DO_FBEQ FPSTART; \</span></div>
+<div class="line"><a id="l00079" name="l00079"></a><span class="lineno">   79</span><span class="preprocessor">  if(FP_IS_ZERO(state.f[FREG_1])) \</span></div>
+<div class="line"><a id="l00080" name="l00080"></a><span class="lineno">   80</span><span class="preprocessor">    add_pc(DISP_21 * 4);</span></div>
 </div>
-<div class="line"><a id="l00090" name="l00090"></a><span class="lineno">   90</span> </div>
-<div class="foldopen" id="foldopen00091" data-start="" data-end="">
-<div class="line"><a id="l00091" name="l00091"></a><span class="lineno"><a class="line" href="../../da/d00/a00188.html#a5b234b248d4e35d0b6bed81bb0785f49">   91</a></span><span class="preprocessor">#define DO_LDG  FPSTART;                                  \</span></div>
-<div class="line"><a id="l00092" name="l00092"></a><span class="lineno">   92</span><span class="preprocessor">  if(FREG_1 != 31)                                        \</span></div>
-<div class="line"><a id="l00093" name="l00093"></a><span class="lineno">   93</span><span class="preprocessor">  {                                                       \</span></div>
-<div class="line"><a id="l00094" name="l00094"></a><span class="lineno">   94</span><span class="preprocessor">    READ_VIRT_F(state.r[REG_2] + DISP_16, 64, state.f[FREG_1], vax_ldg);          \</span></div>
-<div class="line"><a id="l00095" name="l00095"></a><span class="lineno">   95</span><span class="preprocessor">  }</span></div>
+<div class="line"><a id="l00081" name="l00081"></a><span class="lineno">   81</span> </div>
+<div class="line"><a id="l00082" name="l00082"></a><span class="lineno">   82</span><span class="comment">// Branch if &gt;= 0 (positive or zero, including -0)</span></div>
+<div class="foldopen" id="foldopen00083" data-start="" data-end="">
+<div class="line"><a id="l00083" name="l00083"></a><span class="lineno"><a class="line" href="../../da/d00/a00188.html#a9e049daec1f76e1586c02baaa3094f9f">   83</a></span><span class="preprocessor">#define DO_FBGE FPSTART; \</span></div>
+<div class="line"><a id="l00084" name="l00084"></a><span class="lineno">   84</span><span class="preprocessor">  if(!FP_IS_NEGATIVE(state.f[FREG_1]) || FP_IS_ZERO(state.f[FREG_1])) \</span></div>
+<div class="line"><a id="l00085" name="l00085"></a><span class="lineno">   85</span><span class="preprocessor">    add_pc(DISP_21 * 4);</span></div>
+</div>
+<div class="line"><a id="l00086" name="l00086"></a><span class="lineno">   86</span> </div>
+<div class="line"><a id="l00087" name="l00087"></a><span class="lineno">   87</span><span class="comment">// Branch if &gt; 0 (positive and non-zero)</span></div>
+<div class="foldopen" id="foldopen00088" data-start="" data-end="">
+<div class="line"><a id="l00088" name="l00088"></a><span class="lineno"><a class="line" href="../../da/d00/a00188.html#abd2eeb8d077703b57095d1b1033d41b0">   88</a></span><span class="preprocessor">#define DO_FBGT FPSTART; \</span></div>
+<div class="line"><a id="l00089" name="l00089"></a><span class="lineno">   89</span><span class="preprocessor">  if(!FP_IS_NEGATIVE(state.f[FREG_1]) &amp;&amp; !FP_IS_ZERO(state.f[FREG_1])) \</span></div>
+<div class="line"><a id="l00090" name="l00090"></a><span class="lineno">   90</span><span class="preprocessor">    add_pc(DISP_21 * 4);</span></div>
+</div>
+<div class="line"><a id="l00091" name="l00091"></a><span class="lineno">   91</span> </div>
+<div class="line"><a id="l00092" name="l00092"></a><span class="lineno">   92</span><span class="comment">// Branch if &lt;= 0 (negative or zero)</span></div>
+<div class="foldopen" id="foldopen00093" data-start="" data-end="">
+<div class="line"><a id="l00093" name="l00093"></a><span class="lineno"><a class="line" href="../../da/d00/a00188.html#a626450b6b526a8befc122d7a50ea98cc">   93</a></span><span class="preprocessor">#define DO_FBLE FPSTART; \</span></div>
+<div class="line"><a id="l00094" name="l00094"></a><span class="lineno">   94</span><span class="preprocessor">  if(FP_IS_NEGATIVE(state.f[FREG_1]) || FP_IS_ZERO(state.f[FREG_1])) \</span></div>
+<div class="line"><a id="l00095" name="l00095"></a><span class="lineno">   95</span><span class="preprocessor">    add_pc(DISP_21 * 4);</span></div>
 </div>
 <div class="line"><a id="l00096" name="l00096"></a><span class="lineno">   96</span> </div>
-<div class="foldopen" id="foldopen00097" data-start="" data-end="">
-<div class="line"><a id="l00097" name="l00097"></a><span class="lineno"><a class="line" href="../../da/d00/a00188.html#a0a4da3503839dd3e22ab3e8347449c31">   97</a></span><span class="preprocessor">#define DO_LDS  FPSTART;                                  \</span></div>
-<div class="line"><a id="l00098" name="l00098"></a><span class="lineno">   98</span><span class="preprocessor">  if(FREG_1 != 31)                                        \</span></div>
-<div class="line"><a id="l00099" name="l00099"></a><span class="lineno">   99</span><span class="preprocessor">  {                                                       \</span></div>
-<div class="line"><a id="l00100" name="l00100"></a><span class="lineno">  100</span><span class="preprocessor">    READ_VIRT_F(state.r[REG_2] + DISP_16, 32, state.f[FREG_1], ieee_lds);          \</span></div>
-<div class="line"><a id="l00101" name="l00101"></a><span class="lineno">  101</span><span class="preprocessor">  }</span></div>
+<div class="line"><a id="l00097" name="l00097"></a><span class="lineno">   97</span><span class="comment">// Branch if &lt; 0 (negative and non-zero)</span></div>
+<div class="foldopen" id="foldopen00098" data-start="" data-end="">
+<div class="line"><a id="l00098" name="l00098"></a><span class="lineno"><a class="line" href="../../da/d00/a00188.html#ac7d7895e1e0e49d90b6e8b269e48c093">   98</a></span><span class="preprocessor">#define DO_FBLT FPSTART; \</span></div>
+<div class="line"><a id="l00099" name="l00099"></a><span class="lineno">   99</span><span class="preprocessor">  if(FP_IS_NEGATIVE(state.f[FREG_1]) &amp;&amp; !FP_IS_ZERO(state.f[FREG_1])) \</span></div>
+<div class="line"><a id="l00100" name="l00100"></a><span class="lineno">  100</span><span class="preprocessor">    add_pc(DISP_21 * 4);</span></div>
 </div>
-<div class="line"><a id="l00102" name="l00102"></a><span class="lineno">  102</span> </div>
+<div class="line"><a id="l00101" name="l00101"></a><span class="lineno">  101</span> </div>
+<div class="line"><a id="l00102" name="l00102"></a><span class="lineno">  102</span><span class="comment">// Branch if not equal to zero</span></div>
 <div class="foldopen" id="foldopen00103" data-start="" data-end="">
-<div class="line"><a id="l00103" name="l00103"></a><span class="lineno"><a class="line" href="../../da/d00/a00188.html#a189c1b62e80012ea03de47bcb56d915c">  103</a></span><span class="preprocessor">#define DO_LDT  FPSTART;                                      \</span></div>
-<div class="line"><a id="l00104" name="l00104"></a><span class="lineno">  104</span><span class="preprocessor">  if(FREG_1 != 31)                                            \</span></div>
-<div class="line"><a id="l00105" name="l00105"></a><span class="lineno">  105</span><span class="preprocessor">  {                                                           \</span></div>
-<div class="line"><a id="l00106" name="l00106"></a><span class="lineno">  106</span><span class="preprocessor">    READ_VIRT(state.r[REG_2] + DISP_16, 64, state.f[FREG_1]); \</span></div>
-<div class="line"><a id="l00107" name="l00107"></a><span class="lineno">  107</span><span class="preprocessor">  }</span></div>
-</div>
-<div class="line"><a id="l00108" name="l00108"></a><span class="lineno">  108</span> </div>
-<div class="foldopen" id="foldopen00109" data-start="" data-end="">
-<div class="line"><a id="l00109" name="l00109"></a><span class="lineno"><a class="line" href="../../da/d00/a00188.html#aaa863c79355ef39a83370828022d2c40">  109</a></span><span class="preprocessor">#define DO_STF  FPSTART;                                \</span></div>
-<div class="line"><a id="l00110" name="l00110"></a><span class="lineno">  110</span><span class="preprocessor">  WRITE_VIRT(state.r[REG_2] + DISP_16, 32, vax_stf(state.f[FREG_1]));</span></div>
-</div>
-<div class="line"><a id="l00111" name="l00111"></a><span class="lineno">  111</span> </div>
-<div class="foldopen" id="foldopen00112" data-start="" data-end="">
-<div class="line"><a id="l00112" name="l00112"></a><span class="lineno"><a class="line" href="../../da/d00/a00188.html#aae10ad9ebabaacc0e656333d3bdbc49f">  112</a></span><span class="preprocessor">#define DO_STG  FPSTART;                                \</span></div>
-<div class="line"><a id="l00113" name="l00113"></a><span class="lineno">  113</span><span class="preprocessor">  WRITE_VIRT(state.r[REG_2] + DISP_16, 64, vax_stg(state.f[FREG_1]));</span></div>
-</div>
-<div class="line"><a id="l00114" name="l00114"></a><span class="lineno">  114</span> </div>
-<div class="foldopen" id="foldopen00115" data-start="" data-end="">
-<div class="line"><a id="l00115" name="l00115"></a><span class="lineno"><a class="line" href="../../da/d00/a00188.html#aebeb90b233fd19c1a7fdbfc4690f3ed8">  115</a></span><span class="preprocessor">#define DO_STS  FPSTART;                                \</span></div>
-<div class="line"><a id="l00116" name="l00116"></a><span class="lineno">  116</span><span class="preprocessor">  WRITE_VIRT(state.r[REG_2] + DISP_16, 32, ieee_sts(state.f[FREG_1]));</span></div>
-</div>
-<div class="line"><a id="l00117" name="l00117"></a><span class="lineno">  117</span> </div>
-<div class="foldopen" id="foldopen00118" data-start="" data-end="">
-<div class="line"><a id="l00118" name="l00118"></a><span class="lineno"><a class="line" href="../../da/d00/a00188.html#a321a3084e9755bdd1a4e8bb01e589907">  118</a></span><span class="preprocessor">#define DO_STT  FPSTART;                                \</span></div>
-<div class="line"><a id="l00119" name="l00119"></a><span class="lineno">  119</span><span class="preprocessor">  WRITE_VIRT(state.r[REG_2] + DISP_16, 64, state.f[FREG_1]);</span></div>
+<div class="line"><a id="l00103" name="l00103"></a><span class="lineno"><a class="line" href="../../da/d00/a00188.html#a13bddfdb496f68a5429ae23fd465237a">  103</a></span><span class="preprocessor">#define DO_FBNE FPSTART; \</span></div>
+<div class="line"><a id="l00104" name="l00104"></a><span class="lineno">  104</span><span class="preprocessor">  if(!FP_IS_ZERO(state.f[FREG_1])) \</span></div>
+<div class="line"><a id="l00105" name="l00105"></a><span class="lineno">  105</span><span class="preprocessor">    add_pc(DISP_21 * 4);</span></div>
 </div>
 </div><!-- fragment --></div><!-- contents -->
 </div><!-- doc-content -->
@@ -195,7 +188,7 @@ document.addEventListener('DOMContentLoaded',() => { initNavTree('da/d00/a00188_
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
-    <li class="navelem"><a href="../../dir_3e504b0d3bcf24da5cd743a5b933950b.html">CPU</a></li><li class="navelem"><a href="../../da/d00/a00188.html">cpu_fp_memory.h</a></li>
+    <li class="navelem"><a href="../../dir_3e504b0d3bcf24da5cd743a5b933950b.html">CPU</a></li><li class="navelem"><a href="../../da/d00/a00188.html">cpu_fp_branch.h</a></li>
     <li class="footer">Generated by <a href="https://www.doxygen.org/index.html"><img class="footer" src="../../doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.18.0 </li>
   </ul>
 </div>

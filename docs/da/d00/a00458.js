@@ -1,11 +1,8 @@
 var a00458 =
 [
-    [ "lockstep_compare", "da/d00/a00458.html#a019bbfcd3f60ab4df0ad2578cd73f636", null ],
-    [ "lockstep_init", "da/d00/a00458.html#aa72983489060743593655a52e3c05484", null ],
-    [ "lockstep_receive", "da/d00/a00458.html#a12d841b7884a5b067928f9365cf4f659", null ],
-    [ "lockstep_send", "da/d00/a00458.html#a1b33b32a1570638720de82e5f7b3cfed", null ],
-    [ "lockstep_sync_m2s", "da/d00/a00458.html#a4c1259e01d22f15dad0840da4fe2f348", null ],
-    [ "lockstep_sync_s2m", "da/d00/a00458.html#aa292ee0b71c185d28fbc01d97f2dd7bf", null ],
-    [ "ls_IP", "da/d00/a00458.html#a21aaefc0affb27d517fd6f5db5775c35", null ],
-    [ "ls_Socket", "da/d00/a00458.html#a420e694f3bd69046e6c5cd282519546a", null ]
+    [ "eth_frame", "d9/d00/a01569.html", "d9/d00/a01569" ],
+    [ "eth_packet", "d6/d00/a01573.html", "d6/d00/a01573" ],
+    [ "CPacketQueue", "d3/d00/a01577.html", "d3/d00/a01577" ],
+    [ "ETH_MAX_PACKET_CRC", "da/d00/a00458.html#aa39608c91dfed902ed6ea750ad44614d", null ],
+    [ "ETH_MAX_PACKET_RAW", "da/d00/a00458.html#a0992880f77f5bfef1a2e2c3cbe9c8ff0", null ]
 ];

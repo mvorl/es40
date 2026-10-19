@@ -1,7 +1,7 @@
 var a00116 =
 [
-    [ "regex_t", "d0/d00/a00918.html", "d0/d00/a00918" ],
-    [ "regmatch_t", "dd/d00/a00922.html", "dd/d00/a00922" ],
+    [ "regex_t", "d9/d00/a00913.html", "d9/d00/a00913" ],
+    [ "regmatch_t", "d4/d00/a00917.html", "d4/d00/a00917" ],
     [ "REG_BADPAT", "d4/d00/a00116.html#ad7e13616a54be821d6b686d8b2587401", null ],
     [ "REG_ESPACE", "d4/d00/a00116.html#ae0ee85477e8756f1cf2d7fab21e56235", null ],
     [ "REG_EXTENDED", "d4/d00/a00116.html#a5fc31e6da9b77e09ea62b4544ac4767f", null ],

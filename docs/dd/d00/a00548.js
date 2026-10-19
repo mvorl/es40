@@ -1,11 +1,13 @@
 var a00548 =
 [
-    [ "QCOW2_COMPRESSED", "dd/d00/a00548.html#a390be6075728caae3c671e4308bd8222", null ],
-    [ "QCOW2_COPIED", "dd/d00/a00548.html#a7ce09d4626a05ee5ec9a9be4c3542d7d", null ],
-    [ "QCOW2_DIRTY", "dd/d00/a00548.html#a2b906b5591b1ae2cd71cd8b5132450b9", null ],
-    [ "QCOW2_MAX_CHECK_BYTES", "dd/d00/a00548.html#a82c94dd4fc2cc232094e46df679c5423", null ],
-    [ "QCOW2_MAX_L1_BYTES", "dd/d00/a00548.html#a24f1f19b32a04ca7d047daa695459b64", null ],
-    [ "QCOW2_MAX_REFCOUNT_TABLE_BYTES", "dd/d00/a00548.html#af0e80583c6e7297c4d420455bcff6902", null ],
-    [ "QCOW2_OFFSET_MASK", "dd/d00/a00548.html#a1f5e31fcc04edc6c25d9aded8e4120ff", null ],
-    [ "QCOW2_ZERO", "dd/d00/a00548.html#a2aebe80148de23f4b0614c19076ddd52", null ]
+    [ "SDiskFileMediaAction", "d4/d00/a01661.html", "d4/d00/a01661" ],
+    [ "CDiskFileMediaMailbox", "d9/d00/a01665.html", "d9/d00/a01665" ],
+    [ "CDiskFile", "dc/d00/a01669.html", "dc/d00/a01669" ],
+    [ "CDiskFile::Qcow2State", "d9/d00/a01673.html", "d9/d00/a01673" ],
+    [ "EDiskFileMediaAction", "dd/d00/a00548.html#a3a5b88e93995fcb72b420a657325d117", [
+      [ "ChangeImage", "dd/d00/a00548.html#a3a5b88e93995fcb72b420a657325d117a2c161a1721e72d68d96bcf322210a5da", null ],
+      [ "CreateBlankFloppy", "dd/d00/a00548.html#a3a5b88e93995fcb72b420a657325d117a94db933e734bfb5c12a1bd43525bcb86", null ],
+      [ "Eject", "dd/d00/a00548.html#a3a5b88e93995fcb72b420a657325d117ab988d4b6f0a70633b29140fbffea2d72", null ],
+      [ "SetReadOnly", "dd/d00/a00548.html#a3a5b88e93995fcb72b420a657325d117a9595c9bd5b34dfbf29595c73137df5af", null ]
+    ] ]
 ];

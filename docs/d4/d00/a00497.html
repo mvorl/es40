@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.18.0"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ES40: network/NetworkVmnetProto.h File Reference</title>
+<title>ES40: network/NetworkVmnetIPC.cpp File Reference</title>
 <link href="../../tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="../../dynsections.js"></script>
 <script type="text/javascript" src="../../codefolding.js"></script>
@@ -26,7 +26,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">ES40<span id="projectnumber">&#160;0.17+</span>
+   <div id="projectname">ES40<span id="projectnumber">&#160;0.92.2</span>
    </div>
   </td>
  </tr>
@@ -109,233 +109,99 @@ document.addEventListener('DOMContentLoaded',() => { initNavTree('d4/d00/a00497.
 </div>
 
 <div class="header">
-  <div class="headertitle"><div class="title">NetworkVmnetProto.h File Reference</div></div>
+  <div class="headertitle"><div class="title">NetworkVmnetIPC.cpp File Reference</div></div>
 </div><!--header-->
 <div class="contents">
-
-<p>Private protocol between ES40 and its macOS vmnet helper.  
-<a href="#details">More...</a></p>
-<div class="textblock"><code>#include &lt;net/if.h&gt;</code><br />
-<code>#include &lt;stdint.h&gt;</code><br />
+<div class="textblock"><code>#include &quot;<a class="el" href="../../d9/d00/a00524_source.html">../StdAfx.h</a>&quot;</code><br />
 </div><div class="textblock"><div class="dynheader">
-Include dependency graph for NetworkVmnetProto.h:</div>
+Include dependency graph for NetworkVmnetIPC.cpp:</div>
 <div class="dyncontent">
-<div class="center"><img src="../../d8/d00/a00498.png" border="0" usemap="#anetwork_2_network_vmnet_proto_8h" loading="lazy" alt=""/></div>
-<map name="anetwork_2_network_vmnet_proto_8h" id="anetwork_2_network_vmnet_proto_8h">
-<area shape="rect" title="Private protocol between ES40 and its macOS vmnet helper." alt="" coords="5,5,206,32"/>
-<area shape="rect" title=" " alt="" coords="32,80,94,107"/>
-<area shape="poly" title=" " alt="" coords="100,31,80,68,76,65,96,34"/>
-<area shape="rect" title=" " alt="" coords="117,80,182,107"/>
-<area shape="poly" title=" " alt="" coords="114,30,137,67,131,66,112,35"/>
-</map>
-</div>
-</div><div class="textblock"><div class="dynheader">
-This graph shows which files directly or indirectly include this file:</div>
-<div class="dyncontent">
-<div class="center"><img src="../../d8/d00/a00499.png" border="0" usemap="#anetwork_2_network_vmnet_proto_8hdep" loading="lazy" alt=""/></div>
-<map name="anetwork_2_network_vmnet_proto_8hdep" id="anetwork_2_network_vmnet_proto_8hdep">
-<area shape="rect" title="Private protocol between ES40 and its macOS vmnet helper." alt="" coords="5,5,206,32"/>
-<area shape="rect" href="../../d5/d00/a00494.html" title=" " alt="" coords="9,80,202,107"/>
-<area shape="poly" title=" " alt="" coords="107,46,108,81,103,79,104,50"/>
+<div class="center"><img src="../../d8/d00/a00498.png" border="0" usemap="#anetwork_2_network_vmnet_i_p_c_8cpp" loading="lazy" alt=""/></div>
+<map name="anetwork_2_network_vmnet_i_p_c_8cpp" id="anetwork_2_network_vmnet_i_p_c_8cpp">
+<area shape="rect" title=" " alt="" coords="570,5,776,32"/>
+<area shape="rect" href="../../d9/d00/a00524.html" title="Standard includes." alt="" coords="631,80,716,107"/>
+<area shape="poly" title=" " alt="" coords="675,30,676,66,671,63,672,35"/>
+<area shape="rect" href="../../d7/d00/a00131.html" title=" " alt="" coords="220,155,329,181"/>
+<area shape="poly" title=" " alt="" coords="629,104,345,157,344,151,633,101"/>
+<area shape="rect" href="../../df/d00/a00263.html" title="Contains the datatype definitions for use with Microsoft Visual C++ and Linux." alt="" coords="354,155,443,181"/>
+<area shape="poly" title=" " alt="" coords="629,107,459,154,458,148,634,105"/>
+<area shape="rect" title=" " alt="" coords="468,155,535,181"/>
+<area shape="poly" title=" " alt="" coords="646,106,546,151,544,146,641,108"/>
+<area shape="rect" href="../../d3/d00/a00023.html" title=" " alt="" coords="144,229,266,256"/>
+<area shape="poly" title=" " alt="" coords="658,106,548,184,498,198,429,212,282,234,281,229,428,207,497,193,546,179,653,108"/>
+<area shape="rect" href="../../d5/d00/a00029.html" title=" " alt="" coords="496,229,597,256"/>
+<area shape="poly" title=" " alt="" coords="673,105,664,143,656,164,643,183,619,206,591,224,589,219,615,202,639,180,651,162,659,142,669,109"/>
+<area shape="rect" href="../../dd/d00/a00041.html" title=" " alt="" coords="952,229,1056,256"/>
+<area shape="poly" title=" " alt="" coords="712,105,838,152,910,187,972,222,967,221,907,191,836,157,712,110"/>
+<area shape="rect" href="../../dc/d00/a00032.html" title=" " alt="" coords="1523,304,1610,331"/>
+<area shape="poly" title=" " alt="" coords="716,103,795,124,885,152,1135,253,1237,275,1319,283,1402,288,1511,304,1505,304,1402,293,1318,288,1236,280,1134,259,883,157,794,129,716,108"/>
+<area shape="rect" href="../../d8/d00/a00038.html" title=" " alt="" coords="342,229,472,256"/>
+<area shape="poly" title=" " alt="" coords="667,106,636,146,616,166,592,184,540,210,486,227,485,222,538,205,589,179,612,162,633,142,662,109"/>
+<area shape="rect" href="../../d4/d00/a00035.html" title=" " alt="" coords="711,155,825,181"/>
+<area shape="poly" title=" " alt="" coords="690,105,742,145,737,145,689,110"/>
+<area shape="rect" href="../../d0/d00/a00302.html" title="Contains macro&#39;s and prototypes for debugging." alt="" coords="1130,155,1232,181"/>
+<area shape="poly" title=" " alt="" coords="716,97,1112,152,1117,155,1112,155,1112,157,716,103"/>
+<area shape="rect" href="../../d3/d00/a00305.html" title="Contains byte&#45;order conversion helpers." alt="" coords="1257,155,1362,181"/>
+<area shape="poly" title=" " alt="" coords="716,95,937,116,1244,154,1239,155,936,121,716,101"/>
+<area shape="rect" title=" " alt="" coords="5,304,83,331"/>
+<area shape="poly" title=" " alt="" coords="179,259,87,300,85,295,176,254"/>
+<area shape="rect" title=" " alt="" coords="195,304,248,331"/>
+<area shape="poly" title=" " alt="" coords="210,254,218,290,213,288,206,259"/>
+<area shape="rect" title=" " alt="" coords="523,304,581,331"/>
+<area shape="poly" title=" " alt="" coords="549,255,552,290,548,287,546,259"/>
+<area shape="rect" title=" " alt="" coords="604,304,665,331"/>
+<area shape="poly" title=" " alt="" coords="563,254,610,295,605,293,561,259"/>
+<area shape="rect" title=" " alt="" coords="689,304,746,331"/>
+<area shape="poly" title=" " alt="" coords="577,254,677,298,672,298,576,259"/>
+<area shape="rect" title=" " alt="" coords="770,304,827,331"/>
+<area shape="poly" title=" " alt="" coords="592,254,758,303,753,303,591,259"/>
+<area shape="rect" title=" " alt="" coords="272,304,350,331"/>
+<area shape="poly" title=" " alt="" coords="508,256,365,302,364,297,503,257"/>
+<area shape="poly" title=" " alt="" coords="949,247,613,271,417,287,264,307,263,301,416,282,612,265,954,246"/>
+<area shape="poly" title=" " alt="" coords="954,249,796,271,698,286,596,306,595,301,697,281,795,266,949,249"/>
+<area shape="poly" title=" " alt="" coords="954,252,832,275,680,306,680,301,831,270,949,252"/>
+<area shape="poly" title=" " alt="" coords="954,256,762,306,761,301,949,257"/>
+<area shape="poly" title=" " alt="" coords="971,256,842,304,841,298,966,257"/>
+<area shape="poly" title=" " alt="" coords="949,247,702,266,537,283,366,306,365,301,536,278,702,261,954,246"/>
+<area shape="rect" title=" " alt="" coords="851,304,912,331"/>
+<area shape="poly" title=" " alt="" coords="985,256,917,298,915,293,980,257"/>
+<area shape="rect" title=" " alt="" coords="1218,304,1286,331"/>
+<area shape="poly" title=" " alt="" coords="1048,254,1205,302,1200,302,1047,259"/>
+<area shape="rect" title=" " alt="" coords="373,304,499,331"/>
+<area shape="poly" title=" " alt="" coords="954,250,514,306,513,301,949,249"/>
+<area shape="rect" title=" " alt="" coords="1310,304,1378,331"/>
+<area shape="poly" title=" " alt="" coords="1057,251,1298,303,1292,303,1056,256"/>
+<area shape="rect" title=" " alt="" coords="1402,304,1499,331"/>
+<area shape="poly" title=" " alt="" coords="1057,250,1075,253,1230,276,1390,304,1385,303,1229,282,1074,259,1056,256"/>
+<area shape="poly" title=" " alt="" coords="1057,251,1075,253,1195,268,1290,276,1386,285,1511,304,1505,304,1385,290,1290,281,1195,273,1074,259,1057,256"/>
+<area shape="rect" title=" " alt="" coords="936,304,1011,331"/>
+<area shape="poly" title=" " alt="" coords="1001,255,986,292,983,287,996,258"/>
+<area shape="rect" title=" " alt="" coords="1036,304,1103,331"/>
+<area shape="poly" title=" " alt="" coords="1016,254,1051,293,1046,292,1014,259"/>
+<area shape="rect" title=" " alt="" coords="1127,304,1193,331"/>
+<area shape="poly" title=" " alt="" coords="1032,254,1122,297,1116,297,1031,259"/>
+<area shape="poly" title=" " alt="" coords="433,254,516,297,510,297,431,259"/>
+<area shape="poly" title=" " alt="" coords="447,254,592,302,587,302,446,259"/>
+<area shape="poly" title=" " alt="" coords="392,256,341,297,338,292,387,257"/>
+<area shape="poly" title=" " alt="" coords="413,254,428,291,423,288,410,259"/>
+<area shape="rect" title=" " alt="" coords="106,304,171,331"/>
+<area shape="poly" title=" " alt="" coords="362,258,187,306,185,300,357,255"/>
+<area shape="poly" title=" " alt="" coords="732,181,601,227,599,221,727,182"/>
+<area shape="poly" title=" " alt="" coords="733,181,694,203,662,231,647,259,639,290,635,286,642,257,658,228,691,199,727,183"/>
+<area shape="poly" title=" " alt="" coords="777,179,792,215,795,236,790,257,775,279,754,297,752,292,771,276,786,255,790,236,787,217,774,184"/>
+<area shape="poly" title=" " alt="" coords="789,179,815,200,834,228,838,245,836,262,820,294,817,289,830,261,833,245,830,230,811,204,788,184"/>
+<area shape="poly" title=" " alt="" coords="708,174,488,198,385,214,350,222,331,231,322,243,316,258,311,290,307,287,311,257,317,241,328,227,348,217,384,208,488,193,713,173"/>
+<area shape="poly" title=" " alt="" coords="794,179,826,200,854,228,870,258,879,290,874,287,865,260,850,231,822,204,793,184"/>
+<area shape="rect" title=" " alt="" coords="672,229,776,256"/>
+<area shape="poly" title=" " alt="" coords="763,180,741,218,738,214,758,183"/>
+<area shape="rect" title=" " alt="" coords="1147,229,1216,256"/>
+<area shape="poly" title=" " alt="" coords="1183,180,1183,215,1179,212,1180,184"/>
+<area shape="rect" href="../../df/d00/a00122.html" title=" " alt="" coords="1263,229,1356,256"/>
+<area shape="poly" title=" " alt="" coords="1311,180,1311,215,1307,212,1308,184"/>
 </map>
 </div>
 </div>
 <p><a href="../../d4/d00/a00497_source.html">Go to the source code of this file.</a></p>
-<table class="memberdecls">
-<tr class="heading"><td colspan="2"><h2 id="header-nested-classes" class="groupheader"><a id="nested-classes" name="nested-classes"></a>
-Data Structures</h2></td></tr>
-<tr class="memitem:es40_5Fvmnet_5Fmsg" id="r_es40_5Fvmnet_5Fmsg"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../d2/d00/a01586.html">es40_vmnet_msg</a></td></tr>
-<tr class="memitem:es40_5Fvmnet_5Fopen_5Freq" id="r_es40_5Fvmnet_5Fopen_5Freq"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../d4/d00/a01590.html">es40_vmnet_open_req</a></td></tr>
-<tr class="memitem:es40_5Fvmnet_5Fopen_5Freply" id="r_es40_5Fvmnet_5Fopen_5Freply"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../dc/d00/a01594.html">es40_vmnet_open_reply</a></td></tr>
-<tr class="memitem:es40_5Fvmnet_5Fstatus" id="r_es40_5Fvmnet_5Fstatus"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../d3/d00/a01598.html">es40_vmnet_status</a></td></tr>
-</table><table class="memberdecls">
-<tr class="heading"><td colspan="2"><h2 id="header-define-members" class="groupheader"><a id="define-members" name="define-members"></a>
-Macros</h2></td></tr>
-<tr class="memitem:af6dbe87ffe18f5f23e77f31c810a00ef" id="r_af6dbe87ffe18f5f23e77f31c810a00ef"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#af6dbe87ffe18f5f23e77f31c810a00ef">ES40_VMNET_HELPER_NAME</a>&#160;&#160;&#160;&quot;es40_vmnet_helper&quot;</td></tr>
-<tr class="memitem:ac4a4e86463480ea27227adbbc64c6f09" id="r_ac4a4e86463480ea27227adbbc64c6f09"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ac4a4e86463480ea27227adbbc64c6f09">ES40_VMNET_HELPER_FD</a>&#160;&#160;&#160;3</td></tr>
-<tr class="memitem:a48f9395342c895af883b0223cc6c1d26" id="r_a48f9395342c895af883b0223cc6c1d26"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a48f9395342c895af883b0223cc6c1d26">ES40_VMNET_PROTO_MAGIC</a>&#160;&#160;&#160;0x30345345u</td></tr>
-<tr class="memitem:ae040efee058d8ef9ecd36a6f5b650144" id="r_ae040efee058d8ef9ecd36a6f5b650144"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ae040efee058d8ef9ecd36a6f5b650144">ES40_VMNET_PROTO_VERSION</a>&#160;&#160;&#160;2u</td></tr>
-<tr class="memitem:a20476203e3e7e79fa5ae5e217fae290b" id="r_a20476203e3e7e79fa5ae5e217fae290b"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a20476203e3e7e79fa5ae5e217fae290b">ES40_VMNET_MAX_FRAME</a>&#160;&#160;&#160;65536u</td></tr>
-<tr class="memitem:af8538c2f718f983d2fd04f69952974bc" id="r_af8538c2f718f983d2fd04f69952974bc"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#af8538c2f718f983d2fd04f69952974bc">ES40_VMNET_STATUS_OK</a>&#160;&#160;&#160;0u</td></tr>
-<tr class="memitem:aff0436d89b3cfc41a04d24a51e2b24a9" id="r_aff0436d89b3cfc41a04d24a51e2b24a9"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#aff0436d89b3cfc41a04d24a51e2b24a9">ES40_VMNET_STATUS_HELPER_ERROR</a>&#160;&#160;&#160;0xffffffffu</td></tr>
-</table><table class="memberdecls">
-<tr class="heading"><td colspan="2"><h2 id="header-enum-members" class="groupheader"><a id="enum-members" name="enum-members"></a>
-Enumerations</h2></td></tr>
-<tr class="memitem:a41001c1dee37072dcccb49e65462a74c" id="r_a41001c1dee37072dcccb49e65462a74c"><td class="memItemLeft">enum &#160;</td><td class="memItemRight"><a class="el" href="#a41001c1dee37072dcccb49e65462a74c">es40_vmnet_msg_type</a> { <br />
-&#160;&#160;<a class="el" href="#a41001c1dee37072dcccb49e65462a74ca5e70ea1b18816580833a084750f0f7d0">ES40_VMNET_MSG_OPEN</a> = 1
-, <a class="el" href="#a41001c1dee37072dcccb49e65462a74ca6b3a9051b75393b711746d5156c2259d">ES40_VMNET_MSG_OPEN_REPLY</a> = 2
-, <a class="el" href="#a41001c1dee37072dcccb49e65462a74ca90c8931f538ccd3ee7107982079f71e9">ES40_VMNET_MSG_PACKET</a> = 3
-, <a class="el" href="#a41001c1dee37072dcccb49e65462a74ca573b858587c676813644270dd06f8a2a">ES40_VMNET_MSG_STATUS</a> = 4
-, <br />
-&#160;&#160;<a class="el" href="#a41001c1dee37072dcccb49e65462a74cae5c695178e4a0892e42af9c625fed52c">ES40_VMNET_MSG_SHUTDOWN</a> = 5
-<br />
- }</td></tr>
-<tr class="memitem:a55f3cfb317f6d99eecad86136ecff215" id="r_a55f3cfb317f6d99eecad86136ecff215"><td class="memItemLeft">enum &#160;</td><td class="memItemRight"><a class="el" href="#a55f3cfb317f6d99eecad86136ecff215">es40_vmnet_operation</a> { <a class="el" href="#a55f3cfb317f6d99eecad86136ecff215aa8cb30a55efa0ae2450991c79c67e8f4">ES40_VMNET_OP_READ</a> = 1
-, <a class="el" href="#a55f3cfb317f6d99eecad86136ecff215a8f92c5f9ceb8996508619977e6533a89">ES40_VMNET_OP_WRITE</a> = 2
- }</td></tr>
-</table>
-<a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>Private protocol between ES40 and its macOS vmnet helper. </p>
-<p>Each message is one UNIX-domain datagram. Packet messages consist of an <a class="el" href="../../d2/d00/a01586.html">es40_vmnet_msg</a> header followed by one complete Ethernet frame. </p>
-
-<p class="definition">Definition in file <a class="el" href="../../d4/d00/a00497_source.html">NetworkVmnetProto.h</a>.</p>
-</div><a name="doc-define-members" id="doc-define-members"></a><h2 id="header-doc-define-members" class="groupheader">Macro Definition Documentation</h2>
-<a id="ac4a4e86463480ea27227adbbc64c6f09" name="ac4a4e86463480ea27227adbbc64c6f09"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ac4a4e86463480ea27227adbbc64c6f09">&#9670;&#160;</a></span>ES40_VMNET_HELPER_FD</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define ES40_VMNET_HELPER_FD&#160;&#160;&#160;3</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d4/d00/a00497_source.html#l00039">39</a> of file <a class="el" href="../../d4/d00/a00497_source.html">NetworkVmnetProto.h</a>.</p>
-
-</div>
-</div>
-<a id="af6dbe87ffe18f5f23e77f31c810a00ef" name="af6dbe87ffe18f5f23e77f31c810a00ef"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#af6dbe87ffe18f5f23e77f31c810a00ef">&#9670;&#160;</a></span>ES40_VMNET_HELPER_NAME</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define ES40_VMNET_HELPER_NAME&#160;&#160;&#160;&quot;es40_vmnet_helper&quot;</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d4/d00/a00497_source.html#l00038">38</a> of file <a class="el" href="../../d4/d00/a00497_source.html">NetworkVmnetProto.h</a>.</p>
-
-</div>
-</div>
-<a id="a20476203e3e7e79fa5ae5e217fae290b" name="a20476203e3e7e79fa5ae5e217fae290b"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a20476203e3e7e79fa5ae5e217fae290b">&#9670;&#160;</a></span>ES40_VMNET_MAX_FRAME</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define ES40_VMNET_MAX_FRAME&#160;&#160;&#160;65536u</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d4/d00/a00497_source.html#l00042">42</a> of file <a class="el" href="../../d4/d00/a00497_source.html">NetworkVmnetProto.h</a>.</p>
-
-</div>
-</div>
-<a id="a48f9395342c895af883b0223cc6c1d26" name="a48f9395342c895af883b0223cc6c1d26"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a48f9395342c895af883b0223cc6c1d26">&#9670;&#160;</a></span>ES40_VMNET_PROTO_MAGIC</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define ES40_VMNET_PROTO_MAGIC&#160;&#160;&#160;0x30345345u</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d4/d00/a00497_source.html#l00040">40</a> of file <a class="el" href="../../d4/d00/a00497_source.html">NetworkVmnetProto.h</a>.</p>
-
-</div>
-</div>
-<a id="ae040efee058d8ef9ecd36a6f5b650144" name="ae040efee058d8ef9ecd36a6f5b650144"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ae040efee058d8ef9ecd36a6f5b650144">&#9670;&#160;</a></span>ES40_VMNET_PROTO_VERSION</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define ES40_VMNET_PROTO_VERSION&#160;&#160;&#160;2u</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d4/d00/a00497_source.html#l00041">41</a> of file <a class="el" href="../../d4/d00/a00497_source.html">NetworkVmnetProto.h</a>.</p>
-
-</div>
-</div>
-<a id="aff0436d89b3cfc41a04d24a51e2b24a9" name="aff0436d89b3cfc41a04d24a51e2b24a9"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aff0436d89b3cfc41a04d24a51e2b24a9">&#9670;&#160;</a></span>ES40_VMNET_STATUS_HELPER_ERROR</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define ES40_VMNET_STATUS_HELPER_ERROR&#160;&#160;&#160;0xffffffffu</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d4/d00/a00497_source.html#l00058">58</a> of file <a class="el" href="../../d4/d00/a00497_source.html">NetworkVmnetProto.h</a>.</p>
-
-</div>
-</div>
-<a id="af8538c2f718f983d2fd04f69952974bc" name="af8538c2f718f983d2fd04f69952974bc"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#af8538c2f718f983d2fd04f69952974bc">&#9670;&#160;</a></span>ES40_VMNET_STATUS_OK</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define ES40_VMNET_STATUS_OK&#160;&#160;&#160;0u</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d4/d00/a00497_source.html#l00057">57</a> of file <a class="el" href="../../d4/d00/a00497_source.html">NetworkVmnetProto.h</a>.</p>
-
-</div>
-</div>
-<a name="doc-enum-members" id="doc-enum-members"></a><h2 id="header-doc-enum-members" class="groupheader">Enumeration Type Documentation</h2>
-<a id="a41001c1dee37072dcccb49e65462a74c" name="a41001c1dee37072dcccb49e65462a74c"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a41001c1dee37072dcccb49e65462a74c">&#9670;&#160;</a></span>es40_vmnet_msg_type</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">enum <a class="el" href="#a41001c1dee37072dcccb49e65462a74c">es40_vmnet_msg_type</a></td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<table class="fieldtable">
-<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="a41001c1dee37072dcccb49e65462a74ca5e70ea1b18816580833a084750f0f7d0" name="a41001c1dee37072dcccb49e65462a74ca5e70ea1b18816580833a084750f0f7d0"></a>ES40_VMNET_MSG_OPEN&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a41001c1dee37072dcccb49e65462a74ca6b3a9051b75393b711746d5156c2259d" name="a41001c1dee37072dcccb49e65462a74ca6b3a9051b75393b711746d5156c2259d"></a>ES40_VMNET_MSG_OPEN_REPLY&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a41001c1dee37072dcccb49e65462a74ca90c8931f538ccd3ee7107982079f71e9" name="a41001c1dee37072dcccb49e65462a74ca90c8931f538ccd3ee7107982079f71e9"></a>ES40_VMNET_MSG_PACKET&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a41001c1dee37072dcccb49e65462a74ca573b858587c676813644270dd06f8a2a" name="a41001c1dee37072dcccb49e65462a74ca573b858587c676813644270dd06f8a2a"></a>ES40_VMNET_MSG_STATUS&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a41001c1dee37072dcccb49e65462a74cae5c695178e4a0892e42af9c625fed52c" name="a41001c1dee37072dcccb49e65462a74cae5c695178e4a0892e42af9c625fed52c"></a>ES40_VMNET_MSG_SHUTDOWN&#160;</td><td class="fielddoc"></td></tr>
-</table>
-
-<p class="definition">Definition at line <a class="el" href="../../d4/d00/a00497_source.html#l00044">44</a> of file <a class="el" href="../../d4/d00/a00497_source.html">NetworkVmnetProto.h</a>.</p>
-
-</div>
-</div>
-<a id="a55f3cfb317f6d99eecad86136ecff215" name="a55f3cfb317f6d99eecad86136ecff215"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a55f3cfb317f6d99eecad86136ecff215">&#9670;&#160;</a></span>es40_vmnet_operation</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">enum <a class="el" href="#a55f3cfb317f6d99eecad86136ecff215">es40_vmnet_operation</a></td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<table class="fieldtable">
-<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="a55f3cfb317f6d99eecad86136ecff215aa8cb30a55efa0ae2450991c79c67e8f4" name="a55f3cfb317f6d99eecad86136ecff215aa8cb30a55efa0ae2450991c79c67e8f4"></a>ES40_VMNET_OP_READ&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a55f3cfb317f6d99eecad86136ecff215a8f92c5f9ceb8996508619977e6533a89" name="a55f3cfb317f6d99eecad86136ecff215a8f92c5f9ceb8996508619977e6533a89"></a>ES40_VMNET_OP_WRITE&#160;</td><td class="fielddoc"></td></tr>
-</table>
-
-<p class="definition">Definition at line <a class="el" href="../../d4/d00/a00497_source.html#l00052">52</a> of file <a class="el" href="../../d4/d00/a00497_source.html">NetworkVmnetProto.h</a>.</p>
-
-</div>
-</div>
 </div><!-- contents -->
 </div><!-- doc-content -->
 <div id="page-nav" class="page-nav-panel">
@@ -349,7 +215,7 @@ Enumerations</h2></td></tr>
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
-    <li class="navelem"><a href="../../dir_c901c14b65aa229498a52b725b3d4a2c.html">network</a></li><li class="navelem"><a href="../../d4/d00/a00497.html">NetworkVmnetProto.h</a></li>
+    <li class="navelem"><a href="../../dir_c901c14b65aa229498a52b725b3d4a2c.html">network</a></li><li class="navelem"><a href="../../d4/d00/a00497.html">NetworkVmnetIPC.cpp</a></li>
     <li class="footer">Generated by <a href="https://www.doxygen.org/index.html"><img class="footer" src="../../doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.18.0 </li>
   </ul>
 </div>

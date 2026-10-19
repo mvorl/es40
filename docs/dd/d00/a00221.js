@@ -1,6 +1,5 @@
 var a00221 =
 [
-    [ "Ev68IPR", "dc/d00/a01006.html", "dc/d00/a01006" ],
-    [ "kEv68IPRReadPolicy", "dd/d00/a00221.html#ac72e7b81fb425e5ebbce074acda1caf7", null ],
-    [ "kEv68IPRWritePolicy", "dd/d00/a00221.html#ac5a652b053679c56a4f876bb9f861408", null ]
+    [ "Ev68HWStore::decode", "d7/d00/a00634.html#a2dd4aa9781534103378d8fe1dcdbeaef", null ],
+    [ "kEv68HWStorePolicy", "dd/d00/a00221.html#a0d8be7fe2edf0a9abd0e211520fced2f", null ]
 ];

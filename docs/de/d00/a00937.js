@@ -1,0 +1,12 @@
+var a00937 =
+[
+    [ "access", "de/d00/a00937.html#ae30727e791524ac82c2d0bf1b414f987", null ],
+    [ "asm_bit", "de/d00/a00937.html#a4dd64e03f9e0533f1f00b4802cd49c24", null ],
+    [ "asn", "de/d00/a00937.html#ad0ad2f1bbf68de68f8b40b40730a6fd8", null ],
+    [ "fault", "de/d00/a00937.html#abba9561c62b37bd20d0626f71100abaf", null ],
+    [ "keep_mask", "de/d00/a00937.html#a1f45f222ec6aa4685cf116a01232fec4", null ],
+    [ "match_mask", "de/d00/a00937.html#a69d6e5dae4e59b36469ea4890c56f342", null ],
+    [ "phys", "de/d00/a00937.html#a6d3349185035b12df1aaa0770b823ae1", null ],
+    [ "valid", "de/d00/a00937.html#a1e7309cca06710fa8d063681be7a6982", null ],
+    [ "virt", "de/d00/a00937.html#a68aadcebc8f6b2adee2d2f85688200ed", null ]
+];

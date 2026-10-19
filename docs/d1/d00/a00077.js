@@ -1,6 +1,6 @@
 var a00077 =
 [
-    [ "classinfo", "da/d00/a00870.html", "da/d00/a00870" ],
+    [ "classinfo", "dd/d00/a00865.html", "dd/d00/a00865" ],
     [ "HAS_DISK", "d1/d00/a00077.html#aeebb39fe18598c4c50919f54b83ff923", null ],
     [ "HAS_ISA", "d1/d00/a00077.html#ac6096d12bd75db94380854ac5f3903b0", null ],
     [ "HAS_PCI", "d1/d00/a00077.html#a4569ba5b59d5416077a261823566b4ae", null ],

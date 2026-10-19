@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.18.0"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ES40: system/System_tsunami.cpp File Reference</title>
+<title>ES40: system/System.h File Reference</title>
 <link href="../../tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="../../dynsections.js"></script>
 <script type="text/javascript" src="../../codefolding.js"></script>
@@ -26,7 +26,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">ES40<span id="projectnumber">&#160;0.17+</span>
+   <div id="projectname">ES40<span id="projectnumber">&#160;0.92.2</span>
    </div>
   </td>
  </tr>
@@ -109,198 +109,582 @@ document.addEventListener('DOMContentLoaded',() => { initNavTree('dc/d00/a00620.
 </div>
 
 <div class="header">
-  <div class="headertitle"><div class="title">System_tsunami.cpp File Reference</div></div>
+  <div class="headertitle"><div class="title">System.h File Reference</div></div>
 </div><!--header-->
 <div class="contents">
 
-<p>Tsunami/Typhoon chipset (Cchip, Dchip, Pchip) CSRs, interrupt delivery and PCI window translation.  
+<p>Contains the definitions for the emulated Typhoon Chipset devices.  
 <a href="#details">More...</a></p>
-<div class="textblock"><code>#include &quot;<a class="el" href="../../d5/d00/a00518_source.html">StdAfx.h</a>&quot;</code><br />
-<code>#include &quot;<a class="el" href="../../d7/d00/a00614_source.html">System.h</a>&quot;</code><br />
-<code>#include &quot;<a class="el" href="../../d2/d00/a00281_source.html">emu/PCIDevice.h</a>&quot;</code><br />
-<code>#include &quot;<a class="el" href="../../d7/d00/a00143_source.html">CPU/AlphaCPU.h</a>&quot;</code><br />
+<div class="textblock"><code>#include &quot;<a class="el" href="../../d6/d00/a00293_source.html">emu/SystemComponent.h</a>&quot;</code><br />
+<code>#include &quot;<a class="el" href="../../dd/d00/a00260_source.html">CPU/TraceEngine.h</a>&quot;</code><br />
+<code>#include &quot;<a class="el" href="../../d7/d00/a00614_source.html">i2c_spd.h</a>&quot;</code><br />
+<code>#include &lt;atomic&gt;</code><br />
+<code>#include &lt;chrono&gt;</code><br />
+<code>#include &lt;memory&gt;</code><br />
+<code>#include &lt;mutex&gt;</code><br />
+<code>#include &lt;string&gt;</code><br />
+<code>#include &lt;unordered_map&gt;</code><br />
+<code>#include &lt;vector&gt;</code><br />
 </div><div class="textblock"><div class="dynheader">
-Include dependency graph for System_tsunami.cpp:</div>
+Include dependency graph for System.h:</div>
 <div class="dyncontent">
-<div class="center"><img src="../../dc/d00/a00621.png" border="0" usemap="#asystem_2_system__tsunami_8cpp" loading="lazy" alt=""/></div>
-<map name="asystem_2_system__tsunami_8cpp" id="asystem_2_system__tsunami_8cpp">
-<area shape="rect" title="Tsunami/Typhoon chipset (Cchip, Dchip, Pchip) CSRs, interrupt delivery and PCI window translation." alt="" coords="2186,5,2377,32"/>
-<area shape="rect" href="../../d5/d00/a00518.html" title="Standard includes." alt="" coords="914,80,986,107"/>
-<area shape="poly" title=" " alt="" coords="2184,28,1001,92,1001,87,2187,23"/>
-<area shape="rect" href="../../d7/d00/a00614.html" title="Contains the definitions for the emulated Typhoon Chipset devices." alt="" coords="2556,155,2634,181"/>
-<area shape="poly" title=" " alt="" coords="2374,30,2443,48,2478,61,2511,78,2550,108,2580,144,2575,142,2546,112,2508,82,2476,66,2442,53,2374,35"/>
-<area shape="rect" href="../../d2/d00/a00281.html" title="Contains the definitions for the PCI Device base class." alt="" coords="2372,80,2498,107"/>
-<area shape="poly" title=" " alt="" coords="2309,30,2397,73,2392,73,2308,35"/>
-<area shape="rect" href="../../d7/d00/a00143.html" title="Contains the definitions for the emulated DecChip 21264CB EV68 Alpha processor." alt="" coords="2143,80,2271,107"/>
-<area shape="poly" title=" " alt="" coords="2271,31,2232,72,2229,67,2266,34"/>
-<area shape="rect" href="../../d7/d00/a00131.html" title=" " alt="" coords="528,155,638,181"/>
-<area shape="poly" title=" " alt="" coords="911,103,654,155,653,150,916,101"/>
-<area shape="rect" href="../../d9/d00/a00257.html" title="Contains the datatype definitions for use with Microsoft Visual C++ and Linux." alt="" coords="2590,304,2680,331"/>
-<area shape="poly" title=" " alt="" coords="986,93,1566,110,1897,128,2018,139,2089,152,2123,172,2162,203,2201,234,2233,254,2285,265,2377,279,2578,309,2573,309,2376,285,2284,270,2231,258,2198,238,2159,207,2120,176,2088,157,2018,144,1897,133,1566,115,986,98"/>
-<area shape="rect" title=" " alt="" coords="2232,304,2299,331"/>
-<area shape="poly" title=" " alt="" coords="986,93,1214,98,1549,110,1868,128,1985,139,2054,152,2240,295,2235,294,2051,157,1984,144,1868,133,1548,115,1214,104,987,98"/>
-<area shape="rect" href="../../d3/d00/a00023.html" title=" " alt="" coords="203,155,326,181"/>
-<area shape="poly" title=" " alt="" coords="913,101,341,161,341,156,914,96"/>
-<area shape="rect" href="../../d5/d00/a00029.html" title=" " alt="" coords="945,229,1045,256"/>
-<area shape="poly" title=" " alt="" coords="956,105,974,154,991,216,986,213,969,155,953,109"/>
-<area shape="rect" href="../../dd/d00/a00041.html" title=" " alt="" coords="486,229,590,256"/>
-<area shape="poly" title=" " alt="" coords="911,94,819,97,699,104,640,112,588,123,546,137,518,156,512,169,512,184,523,217,518,215,507,185,507,168,514,153,543,133,586,117,639,107,698,99,818,92,916,93"/>
-<area shape="rect" href="../../dc/d00/a00032.html" title=" " alt="" coords="173,304,260,331"/>
-<area shape="poly" title=" " alt="" coords="910,95,719,99,444,107,306,114,186,125,94,139,63,147,45,157,23,179,11,203,10,228,23,254,50,280,84,298,122,308,160,315,155,317,121,313,83,303,47,285,18,258,5,229,5,202,18,176,42,153,62,142,93,134,185,120,306,109,443,102,719,94,916,94"/>
-<area shape="rect" href="../../d8/d00/a00038.html" title=" " alt="" coords="1315,229,1446,256"/>
-<area shape="poly" title=" " alt="" coords="987,102,1151,152,1338,223,1332,223,1149,157,986,108"/>
-<area shape="rect" href="../../d4/d00/a00035.html" title=" " alt="" coords="845,155,959,181"/>
-<area shape="poly" title=" " alt="" coords="944,106,920,144,917,140,939,109"/>
-<area shape="rect" href="../../db/d00/a00296.html" title="Contains macro&#39;s and prototypes for debugging." alt="" coords="1036,155,1138,181"/>
-<area shape="poly" title=" " alt="" coords="974,105,1052,147,1047,147,973,110"/>
-<area shape="rect" href="../../df/d00/a00299.html" title="Contains byte&#45;order conversion helpers." alt="" coords="54,155,160,181"/>
-<area shape="poly" title=" " alt="" coords="911,98,615,119,405,136,191,157,177,159,174,154,191,152,405,131,614,114,915,96"/>
-<area shape="rect" title=" " alt="" coords="150,229,227,256"/>
-<area shape="poly" title=" " alt="" coords="253,180,214,221,211,217,249,184"/>
-<area shape="rect" title=" " alt="" coords="1584,379,1638,405"/>
-<area shape="poly" title=" " alt="" coords="265,180,260,218,252,239,241,258,228,271,211,281,178,297,157,311,156,319,162,329,183,337,226,346,369,359,566,370,795,377,1257,385,1571,391,1566,391,1257,391,795,382,566,375,368,365,225,351,181,342,159,333,150,320,152,308,175,292,208,277,224,267,237,254,248,236,255,217,262,184"/>
-<area shape="rect" title=" " alt="" coords="1478,304,1536,331"/>
-<area shape="poly" title=" " alt="" coords="1046,247,1254,271,1466,304,1460,304,1254,276,1046,252"/>
-<area shape="rect" title=" " alt="" coords="1156,304,1216,331"/>
-<area shape="poly" title=" " alt="" coords="1029,254,1144,299,1139,299,1028,259"/>
-<area shape="rect" title=" " alt="" coords="830,304,888,331"/>
-<area shape="poly" title=" " alt="" coords="974,256,897,299,895,294,969,257"/>
-<area shape="rect" title=" " alt="" coords="912,304,969,331"/>
-<area shape="poly" title=" " alt="" coords="988,255,960,294,958,289,983,258"/>
-<area shape="rect" title=" " alt="" coords="993,304,1072,331"/>
-<area shape="poly" title=" " alt="" coords="1003,254,1021,291,1017,289,1000,259"/>
-<area shape="poly" title=" " alt="" coords="590,252,675,272,768,302,794,316,820,328,887,342,977,354,1194,371,1412,382,1572,390,1566,390,1412,387,1194,377,976,359,886,347,818,333,792,321,766,306,674,277,590,257"/>
-<area shape="poly" title=" " alt="" coords="590,244,1052,272,1466,304,1460,305,1052,278,590,250"/>
-<area shape="poly" title=" " alt="" coords="591,247,1083,301,1143,311,1138,311,1083,307,590,252"/>
-<area shape="poly" title=" " alt="" coords="590,252,812,301,818,305,813,305,811,307,590,258"/>
-<area shape="poly" title=" " alt="" coords="590,248,726,268,900,303,894,304,725,273,590,253"/>
-<area shape="poly" title=" " alt="" coords="590,247,759,267,981,304,975,304,758,273,590,252"/>
-<area shape="rect" title=" " alt="" coords="1814,304,1875,331"/>
-<area shape="poly" title=" " alt="" coords="590,244,754,253,1799,311,1798,316,754,259,591,250"/>
-<area shape="rect" title=" " alt="" coords="686,304,755,331"/>
-<area shape="poly" title=" " alt="" coords="570,254,677,298,671,298,569,259"/>
-<area shape="rect" title=" " alt="" coords="1240,304,1366,331"/>
-<area shape="poly" title=" " alt="" coords="590,245,858,264,1228,303,1222,304,858,270,590,250"/>
-<area shape="rect" title=" " alt="" coords="2770,304,2839,331"/>
-<area shape="poly" title=" " alt="" coords="590,245,754,253,1049,263,1299,267,1724,269,2148,275,2398,284,2693,301,2758,310,2752,310,2692,307,2397,290,2148,280,1724,274,1299,273,1049,268,754,259,591,250"/>
-<area shape="rect" title=" " alt="" coords="284,304,381,331"/>
-<area shape="poly" title=" " alt="" coords="505,256,383,301,382,296,499,257"/>
-<area shape="poly" title=" " alt="" coords="483,257,276,305,275,300,487,255"/>
-<area shape="rect" title=" " alt="" coords="404,304,479,331"/>
-<area shape="poly" title=" " alt="" coords="523,255,472,297,469,292,519,258"/>
-<area shape="rect" title=" " alt="" coords="504,304,571,331"/>
-<area shape="poly" title=" " alt="" coords="540,255,540,290,536,287,536,259"/>
-<area shape="rect" title=" " alt="" coords="595,304,662,331"/>
-<area shape="poly" title=" " alt="" coords="554,254,604,295,599,294,553,259"/>
-<area shape="poly" title=" " alt="" coords="1403,254,1475,296,1469,295,1402,259"/>
-<area shape="poly" title=" " alt="" coords="1349,256,1231,302,1230,297,1344,257"/>
-<area shape="poly" title=" " alt="" coords="1322,256,1087,307,1087,302,1317,257"/>
-<area shape="poly" title=" " alt="" coords="1369,255,1329,296,1326,291,1365,258"/>
-<area shape="rect" title=" " alt="" coords="1390,304,1454,331"/>
-<area shape="poly" title=" " alt="" coords="1389,254,1410,292,1405,289,1386,259"/>
-<area shape="poly" title=" " alt="" coords="919,179,970,220,964,219,917,184"/>
-<area shape="poly" title=" " alt="" coords="942,179,999,200,1059,227,1113,260,1160,295,1155,294,1110,264,1057,232,997,205,942,185"/>
-<area shape="poly" title=" " alt="" coords="841,175,817,184,789,195,764,210,744,231,739,242,740,253,746,262,755,272,784,289,818,304,813,303,782,293,752,276,741,266,735,254,734,241,740,228,761,206,787,190,815,179,847,174"/>
-<area shape="poly" title=" " alt="" coords="847,180,805,195,770,211,758,220,751,230,750,242,756,254,900,303,895,303,752,258,745,243,746,229,754,217,767,206,803,190,842,181"/>
-<area shape="poly" title=" " alt="" coords="905,180,915,217,923,236,934,254,959,277,989,298,984,297,956,282,930,258,918,239,910,218,902,184"/>
-<area shape="poly" title=" " alt="" coords="959,173,1025,179,1119,185,1199,186,1337,183,1403,184,1473,190,1551,204,1643,227,1669,239,1694,254,1802,300,1797,299,1691,258,1666,244,1641,232,1550,209,1472,196,1402,190,1337,188,1199,191,1119,190,1024,184,959,178"/>
-<area shape="rect" title=" " alt="" coords="766,229,869,256"/>
-<area shape="poly" title=" " alt="" coords="890,181,845,221,843,217,885,183"/>
-<area shape="rect" title=" " alt="" coords="1121,229,1189,256"/>
-<area shape="poly" title=" " alt="" coords="1100,179,1136,219,1130,217,1098,184"/>
-<area shape="rect" href="../../df/d00/a00122.html" title=" " alt="" coords="32,229,126,256"/>
-<area shape="poly" title=" " alt="" coords="103,179,92,216,87,214,101,184"/>
-<area shape="poly" title=" " alt="" coords="2634,167,2714,171,2810,180,2899,198,2933,211,2956,227,2974,254,2981,280,2977,307,2959,333,2939,342,2898,350,2766,363,2584,373,2372,381,1945,390,1653,393,1653,388,1945,385,2372,375,2584,368,2766,357,2897,344,2937,337,2956,329,2972,305,2976,281,2969,256,2952,231,2930,216,2897,203,2809,186,2714,176,2634,173"/>
-<area shape="poly" title=" " alt="" coords="2559,176,2470,200,2370,232,2345,246,2319,259,2270,267,2189,275,1966,292,1551,316,1551,311,1966,287,2189,270,2270,262,2317,253,2342,241,2367,227,2468,195,2554,177"/>
-<area shape="poly" title=" " alt="" coords="2559,174,2491,184,2267,190,1895,195,1523,207,1385,218,1336,224,1304,232,1277,244,1251,260,1209,295,1207,291,1248,256,1274,240,1302,227,1335,219,1384,212,1523,202,1894,190,2267,184,2491,179,2554,175"/>
-<area shape="poly" title=" " alt="" coords="2597,180,2591,220,2582,241,2567,258,2536,267,2471,275,2276,292,1890,316,1890,311,2276,287,2470,270,2535,262,2564,254,2578,238,2586,219,2593,184"/>
-<area shape="poly" title=" " alt="" coords="2634,169,2669,174,2709,185,2747,202,2781,228,2798,257,2805,290,2801,287,2793,259,2777,231,2745,207,2707,190,2668,180,2634,174"/>
-<area shape="rect" href="../../d6/d00/a00287.html" title="Contains definitions for the base class for devices that connect to the chipset." alt="" coords="2380,229,2554,256"/>
-<area shape="poly" title=" " alt="" coords="2575,181,2503,224,2502,219,2570,183"/>
-<area shape="rect" href="../../d7/d00/a00254.html" title="Contains the definitions for the CPU tracing engine." alt="" coords="2629,229,2767,256"/>
-<area shape="poly" title=" " alt="" coords="2614,179,2670,221,2665,219,2612,184"/>
-<area shape="rect" href="../../d4/d00/a00608.html" title=" " alt="" coords="2842,229,2919,256"/>
-<area shape="poly" title=" " alt="" coords="2634,177,2829,228,2824,228,2634,182"/>
-<area shape="rect" title=" " alt="" coords="2888,304,2945,331"/>
-<area shape="poly" title=" " alt="" coords="2634,168,2709,172,2799,181,2881,199,2912,212,2933,228,2941,243,2942,259,2932,292,2929,288,2937,259,2936,244,2929,231,2910,216,2879,204,2798,187,2709,177,2634,173"/>
-<area shape="rect" title=" " alt="" coords="3044,229,3154,256"/>
-<area shape="poly" title=" " alt="" coords="2634,172,3026,227,3031,230,3026,230,3025,232,2634,177"/>
-<area shape="poly" title=" " alt="" coords="2435,256,2315,301,2313,296,2429,257"/>
-<area shape="rect" href="../../da/d00/a00080.html" title="Contains the definitions for the configuration file interpreter." alt="" coords="2360,304,2502,331"/>
-<area shape="poly" title=" " alt="" coords="2463,255,2446,292,2443,288,2459,258"/>
-<area shape="poly" title=" " alt="" coords="2362,326,2311,333,1653,390,1653,385,2311,328,2357,326"/>
-<area shape="poly" title=" " alt="" coords="2689,255,2657,295,2655,290,2684,258"/>
-<area shape="poly" title=" " alt="" coords="2870,256,2829,296,2827,291,2865,258"/>
-<area shape="rect" title=" " alt="" coords="2076,304,2136,331"/>
-<area shape="poly" title=" " alt="" coords="2844,249,2779,259,2500,283,2221,307,2152,314,2151,308,2220,301,2500,278,2779,253,2839,249"/>
-<area shape="poly" title=" " alt="" coords="2888,254,2906,291,2901,289,2885,259"/>
-<area shape="poly" title=" " alt="" coords="2453,105,2476,126,2494,154,2497,170,2496,187,2484,218,2481,214,2491,186,2492,170,2489,156,2472,129,2452,110"/>
-<area shape="poly" title=" " alt="" coords="2140,97,1945,111,1682,135,1549,152,1426,174,1324,200,1283,215,1250,232,1234,244,1220,259,1199,292,1196,288,1216,256,1230,240,1247,227,1280,210,1322,195,1425,169,1548,147,1681,129,1945,106,2146,97"/>
-<area shape="poly" title=" " alt="" coords="2141,96,1849,102,1439,112,1054,130,914,142,833,157,788,174,748,195,734,208,727,221,726,237,733,254,745,266,766,278,818,302,813,301,764,282,742,270,729,258,721,238,722,220,730,204,745,191,785,169,832,152,914,137,1054,125,1439,107,1848,97,2146,95"/>
-<area shape="poly" title=" " alt="" coords="2199,106,2133,179,2085,221,2031,258,1996,276,1958,290,1890,310,1889,304,1957,285,1994,271,2028,254,2082,217,2129,175,2194,108"/>
-<area shape="poly" title=" " alt="" coords="2271,104,2544,157,2538,157,2271,109"/>
-<area shape="poly" title=" " alt="" coords="2236,105,2332,152,2439,221,2434,220,2330,157,2235,110"/>
-<area shape="rect" href="../../d6/d00/a00026.html" title=" " alt="" coords="1470,229,1629,256"/>
-<area shape="poly" title=" " alt="" coords="2146,106,1898,157,1612,228,1611,222,1897,152,2140,107"/>
-<area shape="rect" href="../../d6/d00/a00233.html" title=" " alt="" coords="2223,155,2319,181"/>
-<area shape="poly" title=" " alt="" coords="2219,105,2252,144,2247,142,2217,110"/>
-<area shape="rect" href="../../d7/d00/a00182.html" title="Contains some macro definitions and some inline functions for the Alpha CPU." alt="" coords="2394,155,2479,181"/>
-<area shape="poly" title=" " alt="" coords="2247,105,2384,150,2379,149,2247,110"/>
-<area shape="rect" href="../../d9/d00/a00146.html" title=" " alt="" coords="1909,155,2041,181"/>
-<area shape="poly" title=" " alt="" coords="2169,107,2031,152,2029,147,2164,108"/>
-<area shape="poly" title=" " alt="" coords="1545,255,1524,293,1521,288,1540,258"/>
-<area shape="poly" title=" " alt="" coords="1474,256,1362,279,1232,306,1231,301,1361,274,1469,257"/>
-<area shape="poly" title=" " alt="" coords="1509,256,1361,302,1360,297,1504,257"/>
-<area shape="poly" title=" " alt="" coords="1630,252,2063,310,2057,310,1630,257"/>
-<area shape="rect" title=" " alt="" coords="2245,229,2305,256"/>
-<area shape="poly" title=" " alt="" coords="2274,180,2276,215,2272,212,2270,184"/>
-<area shape="poly" title=" " alt="" coords="1987,179,2032,228,2088,293,2083,291,2028,231,1985,184"/>
-<area shape="rect" href="../../d1/d00/a00230.html" title=" " alt="" coords="1823,229,1909,256"/>
-<area shape="poly" title=" " alt="" coords="1959,181,1898,223,1896,218,1954,183"/>
-<area shape="rect" href="../../dd/d00/a00221.html" title=" " alt="" coords="1932,229,2018,256"/>
-<area shape="poly" title=" " alt="" coords="1977,180,1977,215,1973,212,1973,184"/>
-<area shape="rect" href="../../d9/d00/a00227.html" title=" " alt="" coords="1704,229,1798,256"/>
-<area shape="poly" title=" " alt="" coords="1939,181,1805,227,1804,222,1933,182"/>
+<div class="center"><img src="../../dc/d00/a00621.png" border="0" usemap="#asystem_2_system_8h" loading="lazy" alt=""/></div>
+<map name="asystem_2_system_8h" id="asystem_2_system_8h">
+<area shape="rect" title="Contains the definitions for the emulated Typhoon Chipset devices." alt="" coords="541,5,665,32"/>
+<area shape="rect" href="../../d6/d00/a00293.html" title="Contains definitions for the base class for devices that connect to the chipset." alt="" coords="66,80,239,107"/>
+<area shape="poly" title=" " alt="" coords="539,32,247,80,246,74,542,28"/>
+<area shape="rect" title=" " alt="" coords="195,229,248,256"/>
+<area shape="poly" title=" " alt="" coords="538,27,406,48,344,63,304,82,237,217,232,214,300,78,343,58,405,43,543,25"/>
+<area shape="rect" href="../../dd/d00/a00260.html" title="Contains the definitions for the CPU tracing engine." alt="" coords="314,80,452,107"/>
+<area shape="poly" title=" " alt="" coords="562,34,437,77,435,72,567,32"/>
+<area shape="rect" href="../../d7/d00/a00614.html" title=" " alt="" coords="527,80,604,107"/>
+<area shape="poly" title=" " alt="" coords="599,31,581,68,577,64,594,34"/>
+<area shape="rect" title=" " alt="" coords="454,155,512,181"/>
+<area shape="poly" title=" " alt="" coords="579,31,546,54,517,82,501,110,490,141,487,138,496,108,513,78,543,50,574,34"/>
+<area shape="rect" title=" " alt="" coords="620,155,688,181"/>
+<area shape="poly" title=" " alt="" coords="609,30,647,141,642,139,606,35"/>
+<area shape="rect" title=" " alt="" coords="680,80,740,107"/>
+<area shape="poly" title=" " alt="" coords="622,30,681,71,676,71,621,35"/>
+<area shape="rect" title=" " alt="" coords="764,80,824,107"/>
+<area shape="poly" title=" " alt="" coords="636,30,752,75,747,75,636,35"/>
+<area shape="rect" title=" " alt="" coords="848,80,905,107"/>
+<area shape="poly" title=" " alt="" coords="655,30,835,79,830,79,654,35"/>
+<area shape="rect" title=" " alt="" coords="929,80,1040,107"/>
+<area shape="poly" title=" " alt="" coords="666,29,916,78,911,79,665,34"/>
+<area shape="rect" href="../../da/d00/a00080.html" title="Contains the definitions for the configuration file interpreter." alt="" coords="97,155,240,181"/>
+<area shape="poly" title=" " alt="" coords="156,105,165,140,160,139,154,110"/>
+<area shape="rect" title=" " alt="" coords="5,155,73,181"/>
+<area shape="poly" title=" " alt="" coords="131,109,73,148,70,144,134,105"/>
+<area shape="poly" title=" " alt="" coords="179,179,206,217,201,216,176,184"/>
+<area shape="rect" href="../../df/d00/a00263.html" title="Contains the datatype definitions for use with Microsoft Visual C++ and Linux." alt="" coords="338,155,428,181"/>
+<area shape="poly" title=" " alt="" coords="385,105,385,140,381,138,381,109"/>
+<area shape="rect" title=" " alt="" coords="536,155,596,181"/>
+<area shape="poly" title=" " alt="" coords="567,105,568,141,564,137,564,109"/>
+<area shape="poly" title=" " alt="" coords="554,106,510,147,507,142,549,108"/>
+<area shape="poly" title=" " alt="" coords="582,105,629,145,624,144,580,110"/>
+</map>
+</div>
+</div><div class="textblock"><div class="dynheader">
+This graph shows which files directly or indirectly include this file:</div>
+<div class="dyncontent">
+<div class="center"><img src="../../d0/d00/a00622.png" border="0" usemap="#asystem_2_system_8hdep" loading="lazy" alt=""/></div>
+<map name="asystem_2_system_8hdep" id="asystem_2_system_8hdep">
+<area shape="rect" title="Contains the definitions for the emulated Typhoon Chipset devices." alt="" coords="3254,5,3378,32"/>
+<area shape="rect" href="../../d7/d00/a00002.html" title="Defines the entry point for the application." alt="" coords="1144,80,1246,107"/>
+<area shape="poly" title=" " alt="" coords="3236,21,2277,40,1693,57,1449,69,1264,83,1247,85,1246,80,1264,77,1449,64,1693,52,2277,34,3241,21"/>
+<area shape="rect" href="../../d7/d00/a00143.html" title="Contains the definitions for the emulated DecChip 21264CB EV68 Alpha processor." alt="" coords="1320,80,1448,107"/>
+<area shape="poly" title=" " alt="" coords="3236,20,2954,26,2524,35,2014,53,1492,83,1448,87,1448,81,1492,77,2014,48,2524,30,2954,21,3241,20"/>
+<area shape="rect" href="../../d9/d00/a00257.html" title="Contains the code for the CPU tracing engine." alt="" coords="5,155,158,181"/>
+<area shape="poly" title=" " alt="" coords="3236,20,2817,26,2214,35,1911,42,1641,53,1431,66,1358,74,1309,83,1295,88,1284,95,1274,103,1258,109,1154,129,1023,140,874,147,716,149,408,150,276,152,170,157,159,158,158,153,169,152,276,146,408,144,716,144,874,141,1023,135,1153,123,1257,104,1271,98,1281,91,1292,84,1307,77,1357,69,1431,61,1641,47,1910,37,2214,29,2817,21,3241,20"/>
+<area shape="rect" href="../../d1/d00/a00077.html" title="Contains the code for the configuration file interpreter." alt="" coords="2194,155,2350,181"/>
+<area shape="poly" title=" " alt="" coords="3236,20,2907,26,2460,35,2244,42,2060,53,1928,66,1888,74,1869,82,1864,93,1868,105,2196,156,2191,156,1865,109,1858,93,1865,78,1886,69,1927,61,2060,47,2244,37,2460,29,2907,21,3241,20"/>
+<area shape="rect" href="../../d5/d00/a00599.html" title="Contains the code for the emulated Dual Port Ram and RMC devices." alt="" coords="1323,155,1445,181"/>
+<area shape="poly" title=" " alt="" coords="3236,20,2917,25,2463,34,2005,52,1814,65,1670,83,1598,98,1528,118,1417,157,1416,151,1526,113,1597,93,1669,77,1813,60,2004,46,2463,29,2917,20,3241,20"/>
+<area shape="rect" href="../../d0/d00/a00605.html" title="Contains the code for the emulated Flash ROM devices." alt="" coords="1470,155,1595,181"/>
+<area shape="poly" title=" " alt="" coords="3236,20,2934,24,2508,31,2287,39,2080,49,1903,64,1769,83,1709,98,1650,118,1559,157,1557,152,1648,113,1707,93,1768,77,1902,59,2080,44,2287,33,2508,26,2934,19,3241,20"/>
+<area shape="rect" href="../../d4/d00/a00617.html" title="Contains the code for the emulated Typhoon Chipset devices." alt="" coords="1619,155,1757,181"/>
+<area shape="poly" title=" " alt="" coords="3236,21,2917,29,2479,39,2069,57,1920,69,1833,83,1795,98,1759,118,1704,157,1702,152,1756,113,1792,93,1831,77,1919,63,2068,52,2479,34,2917,23,3241,21"/>
+<area shape="rect" href="../../df/d00/a00623.html" title="ES40 (Clipper) board: TIGbus registers and DIMM topology." alt="" coords="1782,155,1955,181"/>
+<area shape="poly" title=" " alt="" coords="3236,20,2902,26,2449,34,2229,42,2042,52,1907,66,1867,74,1847,82,1840,98,1842,117,1861,156,1856,153,1837,119,1835,97,1844,78,1865,68,1907,60,2042,47,2229,37,2449,29,2902,20,3241,20"/>
+<area shape="rect" href="../../d6/d00/a00626.html" title="Tsunami/Typhoon chipset (Cchip, Dchip, Pchip) CSRs, interrupt delivery and PCI window translation." alt="" coords="1979,155,2170,181"/>
+<area shape="poly" title=" " alt="" coords="3236,20,2904,26,2455,34,2237,42,2051,52,1918,66,1877,74,1858,82,1853,93,1858,105,1878,119,1910,132,1992,154,1987,154,1908,137,1875,124,1854,108,1848,93,1854,78,1876,69,1917,60,2051,47,2237,37,2454,29,2904,20,3241,20"/>
+<area shape="rect" href="../../d4/d00/a00008.html" title=" " alt="" coords="1878,80,1992,107"/>
+<area shape="poly" title=" " alt="" coords="3236,20,3025,25,2719,34,2364,52,2182,65,2003,83,1992,84,1992,79,2003,77,2181,60,2364,46,2719,28,3025,20,3241,20"/>
+<area shape="rect" href="../../d6/d00/a00047.html" title="Contains the code for the emulated Ali M1543C chipset devices." alt="" coords="2015,80,2172,107"/>
+<area shape="poly" title=" " alt="" coords="3236,22,2790,42,2489,59,2183,83,2172,84,2172,78,2183,77,2489,53,2790,36,3241,22"/>
+<area shape="rect" href="../../dc/d00/a00053.html" title="Contains the code for the emulated Ali M1543C IDE chipset part." alt="" coords="2195,80,2376,107"/>
+<area shape="poly" title=" " alt="" coords="3241,23,2871,47,2387,83,2376,84,2376,78,2387,77,2871,41,3236,24"/>
+<area shape="rect" href="../../d3/d00/a00059.html" title="Stub PMU/ACPI device at PCI 0:17:0 for the ALi M1543C bridge." alt="" coords="2399,80,2588,107"/>
+<area shape="poly" title=" " alt="" coords="3241,26,2957,51,2600,83,2588,84,2588,79,2600,77,2957,45,3236,26"/>
+<area shape="rect" href="../../de/d00/a00065.html" title="Contains the code for the emulated Ali M1543C IDE chipset part." alt="" coords="2612,80,2796,107"/>
+<area shape="poly" title=" " alt="" coords="3241,29,2797,84,2797,78,3236,29"/>
+<area shape="rect" href="../../d0/d00/a00071.html" title="Contains the code for the emulated DMA controller." alt="" coords="2820,80,2943,107"/>
+<area shape="poly" title=" " alt="" coords="3241,33,2943,84,2943,79,3236,33"/>
+<area shape="rect" href="../../db/d00/a00284.html" title="Contains the code for the PCI device class." alt="" coords="2966,80,3106,107"/>
+<area shape="poly" title=" " alt="" coords="3256,36,3086,82,3085,77,3250,37"/>
+<area shape="rect" href="../../de/d00/a00290.html" title="Contains code for the base class for devices that connect to the chipset." alt="" coords="3130,80,3318,107"/>
+<area shape="poly" title=" " alt="" coords="3291,41,3241,82,3239,77,3286,43"/>
+<area shape="rect" href="../../d5/d00/a00308.html" title="Contains the code for the emulated Cirrus CL GD&#45;5434 Video Card device." alt="" coords="3342,80,3477,107"/>
+<area shape="poly" title=" " alt="" coords="3345,39,3396,80,3391,79,3344,44"/>
+<area shape="rect" href="../../d0/d00/a00314.html" title=" " alt="" coords="3501,80,3681,107"/>
+<area shape="poly" title=" " alt="" coords="3379,34,3545,80,3540,79,3378,39"/>
+<area shape="rect" href="../../dc/d00/a00332.html" title=" " alt="" coords="3705,80,3898,107"/>
+<area shape="poly" title=" " alt="" coords="3394,29,3719,79,3714,79,3393,34"/>
+<area shape="rect" href="../../dc/d00/a00338.html" title=" " alt="" coords="3922,80,4094,107"/>
+<area shape="poly" title=" " alt="" coords="3394,25,3910,77,3924,81,3919,81,3909,83,3393,30"/>
+<area shape="rect" href="../../d6/d00/a00356.html" title=" " alt="" coords="4118,80,4269,107"/>
+<area shape="poly" title=" " alt="" coords="3394,22,3706,42,4107,77,4120,81,4115,81,4107,83,3706,47,3394,27"/>
+<area shape="rect" href="../../de/d00/a00362.html" title=" " alt="" coords="4294,80,4421,107"/>
+<area shape="poly" title=" " alt="" coords="3394,20,3776,37,4027,54,4282,77,4296,82,4291,81,4281,83,4027,59,3776,42,3394,25"/>
+<area shape="rect" href="../../da/d00/a00383.html" title="Contains the code for the bx_keymap_c class used for keyboard interfacing with SDL and other device i..." alt="" coords="4445,80,4558,107"/>
+<area shape="poly" title=" " alt="" coords="3394,18,3579,22,3836,32,4133,50,4434,77,4447,82,4442,81,4433,83,4133,55,3836,38,3579,28,3394,24"/>
+<area shape="rect" href="../../d9/d00/a00398.html" title="Contains the code for the bx_sdl_gui_c class used for interfacing with SDL." alt="" coords="4582,80,4666,107"/>
+<area shape="poly" title=" " alt="" coords="3394,16,3599,17,3891,24,4228,42,4402,57,4571,77,4584,82,4579,82,4570,83,4401,63,4228,48,3890,29,3599,22,3394,22"/>
+<area shape="rect" href="../../d1/d00/a00407.html" title=" " alt="" coords="4690,80,4817,107"/>
+<area shape="poly" title=" " alt="" coords="3394,18,3614,21,3932,29,4302,47,4492,61,4679,77,4693,81,4687,81,4679,83,4492,66,4302,53,3932,35,3614,26,3394,23"/>
+<area shape="rect" href="../../df/d00/a00416.html" title="Contains the code for the emulated Keyboard and mouse devices and controller." alt="" coords="4841,80,4956,107"/>
+<area shape="poly" title=" " alt="" coords="3394,17,3636,18,3990,26,4405,44,4619,58,4828,77,4843,82,4838,81,4828,83,4618,64,4405,49,3990,31,3635,23,3394,22"/>
+<area shape="rect" href="../../db/d00/a00422.html" title="Contains the code for the emulated Port 80 device." alt="" coords="4980,80,5079,107"/>
+<area shape="poly" title=" " alt="" coords="3394,19,4171,36,4631,54,4823,65,4968,77,4982,82,4977,81,4968,83,4823,70,4631,59,4171,42,3394,24"/>
+<area shape="rect" href="../../d4/d00/a00428.html" title="Contains the code for the emulated Serial Port devices." alt="" coords="5103,80,5196,107"/>
+<area shape="poly" title=" " alt="" coords="3394,18,3737,23,4228,34,4726,52,4934,64,5091,77,5105,82,5100,81,5091,83,4933,69,4726,57,4228,40,3737,29,3394,24"/>
+<area shape="rect" href="../../de/d00/a00440.html" title="Contains the code for the emulated DEC 21143 NIC device." alt="" coords="5220,80,5380,107"/>
+<area shape="poly" title=" " alt="" coords="3394,17,3688,18,4134,26,4665,44,4939,58,5208,77,5223,81,5217,81,5208,83,4939,64,4664,49,4134,31,3687,24,3394,22"/>
+<area shape="rect" href="../../dc/d00/a00563.html" title="Contains the code for the emulated Floppy Controller devices." alt="" coords="5403,80,5592,107"/>
+<area shape="poly" title=" " alt="" coords="3394,17,3712,19,4204,26,4790,45,5094,59,5392,77,5405,81,5400,81,5392,83,5094,64,4790,50,4204,32,3712,24,3394,23"/>
+<area shape="rect" href="../../d4/d00/a00569.html" title="Contains the code for the emulated LSI Logic 53C1020 controller." alt="" coords="5616,80,5782,107"/>
+<area shape="poly" title=" " alt="" coords="3394,18,4463,37,5121,54,5396,65,5604,77,5618,81,5613,81,5604,83,5396,71,5121,60,4463,42,3394,24"/>
+<area shape="rect" href="../../de/d00/a00587.html" title="Contains the code for the emulated Symbios SCSI controller." alt="" coords="5806,80,5971,107"/>
+<area shape="poly" title=" " alt="" coords="3394,18,4550,36,5266,53,5567,65,5794,77,5808,81,5802,81,5793,83,5567,70,5266,59,4549,41,3394,23"/>
+<area shape="rect" href="../../d2/d00/a00593.html" title="Contains the code for the emulated Symbios SCSI controller." alt="" coords="5995,80,6160,107"/>
+<area shape="poly" title=" " alt="" coords="3394,18,4636,34,5412,52,5737,64,5983,77,5997,81,5992,81,5983,83,5737,69,5412,57,4636,40,3394,23"/>
+<area shape="rect" href="../../d5/d00/a00140.html" title="Contains the code for the emulated DecChip 21264CB EV68 Alpha processor." alt="" coords="182,155,323,181"/>
+<area shape="poly" title=" " alt="" coords="1308,106,1302,109,1155,122,1030,129,818,133,606,138,482,145,335,157,324,159,323,153,335,152,482,140,606,133,818,128,1030,123,1154,116,1301,104,1302,107"/>
+<area shape="rect" href="../../da/d00/a00149.html" title="Contains IEEE floating point code for the Alpha CPU." alt="" coords="347,155,544,181"/>
+<area shape="poly" title=" " alt="" coords="1308,106,1302,109,1092,127,929,136,766,143,556,157,545,158,544,153,556,152,766,137,929,130,1092,122,1301,104,1302,107"/>
+<area shape="rect" href="../../d7/d00/a00152.html" title="Contains VAX floating point code for the Alpha CPU." alt="" coords="568,155,763,181"/>
+<area shape="poly" title=" " alt="" coords="1308,106,1302,109,1039,135,775,157,763,159,763,153,775,152,1038,130,1301,104,1302,106"/>
+<area shape="rect" href="../../d3/d00/a00155.html" title="Contains routines that replace parts of the VMS PALcode for the emulated DecChip 21264CB EV68 Alpha p..." alt="" coords="786,155,977,181"/>
+<area shape="poly" title=" " alt="" coords="1308,106,1302,109,971,157,970,151,1301,104,1302,106"/>
+<area shape="rect" href="../../d5/d00/a00224.html" title=" " alt="" coords="1001,155,1133,181"/>
+<area shape="poly" title=" " alt="" coords="1316,110,1123,157,1122,151,1311,111"/>
+<area shape="rect" href="../../d1/d00/a00230.html" title=" " alt="" coords="1158,155,1299,181"/>
+<area shape="poly" title=" " alt="" coords="1346,113,1256,157,1255,151,1341,114"/>
+<area shape="poly" title=" " alt="" coords="1308,106,1302,109,1130,123,984,130,736,134,488,138,342,144,170,157,159,158,158,153,169,152,341,139,487,132,736,129,984,125,1129,118,1301,104,1302,107"/>
+<area shape="poly" title=" " alt="" coords="1464,96,1779,117,2183,152,2196,156,2191,156,2183,157,1778,122,1463,102"/>
+<area shape="poly" title=" " alt="" coords="1386,121,1386,156,1382,152,1382,124"/>
+<area shape="poly" title=" " alt="" coords="1424,111,1509,155,1504,154,1423,116"/>
+<area shape="poly" title=" " alt="" coords="1452,108,1638,154,1632,154,1452,113"/>
+<area shape="poly" title=" " alt="" coords="1463,104,1786,154,1781,154,1463,109"/>
+<area shape="poly" title=" " alt="" coords="1464,100,1967,152,1982,156,1976,156,1967,157,1463,105"/>
+<area shape="poly" title=" " alt="" coords="2007,107,2216,154,2210,154,2006,113"/>
+<area shape="rect" href="../../dd/d00/a00005.html" title=" " alt="" coords="2374,155,2501,181"/>
+<area shape="poly" title=" " alt="" coords="2007,105,2186,129,2363,152,2376,156,2371,156,2362,157,2186,134,2007,110"/>
 </map>
 </div>
 </div>
 <p><a href="../../dc/d00/a00620_source.html">Go to the source code of this file.</a></p>
 <table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 id="header-nested-classes" class="groupheader"><a id="nested-classes" name="nested-classes"></a>
+Data Structures</h2></td></tr>
+<tr class="memitem:MPDState" id="r_MPDState"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../d7/d00/a01805.html">MPDState</a></td></tr>
+<tr class="memitem:SMemoryUser" id="r_SMemoryUser"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../de/d00/a01809.html">SMemoryUser</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Structure used for mapping memory ranges to devices.  <a href="../../de/d00/a01809.html#details">More...</a><br /></td></tr>
+<tr class="memitem:SConfig" id="r_SConfig"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../d1/d00/a01813.html">SConfig</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Structure used for configuration values.  <a href="../../d1/d00/a01813.html#details">More...</a><br /></td></tr>
+<tr class="memitem:CSystem" id="r_CSystem"><td class="memItemLeft">class &#160;</td><td class="memItemRight"><a class="el" href="../../d4/d00/a01817.html">CSystem</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Emulated Typhoon 21272 chipset.  <a href="../../d4/d00/a01817.html#details">More...</a><br /></td></tr>
+<tr class="memitem:CSystem_3A_3ASDisplayOutput" id="r_CSystem_3A_3ASDisplayOutput"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../de/d00/a01821.html">CSystem::SDisplayOutput</a></td></tr>
+<tr class="memitem:CSystem_3A_3ASDimmLayout" id="r_CSystem_3A_3ASDimmLayout"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../df/d00/a01825.html">CSystem::SDimmLayout</a></td></tr>
+<tr class="memitem:CSystem_3A_3ASDeviceAccessScope" id="r_CSystem_3A_3ASDeviceAccessScope"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../d6/d00/a01829.html">CSystem::SDeviceAccessScope</a></td></tr>
+<tr class="memitem:CSystem_3A_3ASDecodeClaims" id="r_CSystem_3A_3ASDecodeClaims"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../db/d00/a01833.html">CSystem::SDecodeClaims</a></td></tr>
+<tr class="memitem:CSystem_3A_3ASSys_5Fstate" id="r_CSystem_3A_3ASSys_5Fstate"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../d7/d00/a01837.html">CSystem::SSys_state</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">The state structure contains all elements that need to be saved to the statefile.  <a href="../../d7/d00/a01837.html#details">More...</a><br /></td></tr>
+<tr class="memitem:CSystem_3A_3ASSys_5Fstate_3A_3ASSys_5Ftig" id="r_CSystem_3A_3ASSys_5Fstate_3A_3ASSys_5Ftig"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../d2/d00/a01841.html">CSystem::SSys_state::SSys_tig</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">TIGbus state data.  <a href="../../d2/d00/a01841.html#details">More...</a><br /></td></tr>
+<tr class="memitem:CSystem_3A_3ASSys_5Fstate_3A_3ASSys_5Fcchip" id="r_CSystem_3A_3ASSys_5Fstate_3A_3ASSys_5Fcchip"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../da/d00/a01845.html">CSystem::SSys_state::SSys_cchip</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">CCHIP state data.  <a href="../../da/d00/a01845.html#details">More...</a><br /></td></tr>
+<tr class="memitem:CSystem_3A_3ASSys_5Fstate_3A_3ASSys_5Fdchip" id="r_CSystem_3A_3ASSys_5Fstate_3A_3ASSys_5Fdchip"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../db/d00/a01849.html">CSystem::SSys_state::SSys_dchip</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">DCHIP state data.  <a href="../../db/d00/a01849.html#details">More...</a><br /></td></tr>
+<tr class="memitem:CSystem_3A_3ASSys_5Fstate_3A_3ASSys_5Fpchip" id="r_CSystem_3A_3ASSys_5Fstate_3A_3ASSys_5Fpchip"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../db/d00/a01853.html">CSystem::SSys_state::SSys_pchip</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">PCHIP state data.  <a href="../../db/d00/a01853.html#details">More...</a><br /></td></tr>
+<tr class="memitem:CSystem_3A_3ASPioTrace" id="r_CSystem_3A_3ASPioTrace"><td class="memItemLeft">struct &#160;</td><td class="memItemRight"><a class="el" href="../../de/d00/a01857.html">CSystem::SPioTrace</a></td></tr>
+</table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 id="header-define-members" class="groupheader"><a id="define-members" name="define-members"></a>
 Macros</h2></td></tr>
-<tr class="memitem:aacbb9e1f38be71e22df1584a37c56693" id="r_aacbb9e1f38be71e22df1584a37c56693"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#aacbb9e1f38be71e22df1584a37c56693">__STDC_FORMAT_MACROS</a>&#160;&#160;&#160;1</td></tr>
+<tr class="memitem:ac0229041b76cf2ce9939eaba4f46117b" id="r_ac0229041b76cf2ce9939eaba4f46117b"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ac0229041b76cf2ce9939eaba4f46117b">PANIC_NOSHUTDOWN</a>&#160;&#160;&#160;0</td></tr>
+<tr class="memitem:ab5f5466a39bf4fa6d4ce07f7e6423b46" id="r_ab5f5466a39bf4fa6d4ce07f7e6423b46"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ab5f5466a39bf4fa6d4ce07f7e6423b46">PANIC_SHUTDOWN</a>&#160;&#160;&#160;1</td></tr>
+<tr class="memitem:a3ad46d233f4ed929ca28890e51c706a0" id="r_a3ad46d233f4ed929ca28890e51c706a0"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a3ad46d233f4ed929ca28890e51c706a0">PANIC_ASKSHUTDOWN</a>&#160;&#160;&#160;2</td></tr>
+<tr class="memitem:aa3badb247d3b2bad1d70de1452d61f41" id="r_aa3badb247d3b2bad1d70de1452d61f41"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#aa3badb247d3b2bad1d70de1452d61f41">PANIC_LISTING</a>&#160;&#160;&#160;4</td></tr>
+<tr class="memitem:a61cdd5f9411ad5696d7d8f87664ede9d" id="r_a61cdd5f9411ad5696d7d8f87664ede9d"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a61cdd5f9411ad5696d7d8f87664ede9d">PCI_PCTL_HOLE</a>&#160;&#160;&#160;<a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x0000000000000020)</td></tr>
+<tr class="memitem:a7e316023a6e748ca9ec195aac7c6e378" id="r_a7e316023a6e748ca9ec195aac7c6e378"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a7e316023a6e748ca9ec195aac7c6e378">PCI_PCTL_HOLE_START</a>&#160;&#160;&#160;0x00080000</td></tr>
+<tr class="memitem:ad7b669fabfe6a535506aaae958e49a09" id="r_ad7b669fabfe6a535506aaae958e49a09"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ad7b669fabfe6a535506aaae958e49a09">PCI_PCTL_HOLE_END</a>&#160;&#160;&#160;0x000fffff</td></tr>
+<tr class="memitem:a79eec04a8535a5e26019a19778995eea" id="r_a79eec04a8535a5e26019a19778995eea"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a79eec04a8535a5e26019a19778995eea">PCI_WSM_MASK</a>&#160;&#160;&#160;<a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x00000000fff00000)</td></tr>
+<tr class="memitem:a9b451fe8dc579463fa53103057417669" id="r_a9b451fe8dc579463fa53103057417669"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a9b451fe8dc579463fa53103057417669">PCI_ADD_MASK</a>&#160;&#160;&#160;<a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x00000000000fffff)</td></tr>
+<tr class="memitem:a81397ad7fad3e004fa30db2477b1cdd9" id="r_a81397ad7fad3e004fa30db2477b1cdd9"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a81397ad7fad3e004fa30db2477b1cdd9">PCI_TBA_MASK</a>&#160;&#160;&#160;<a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x00000007fff00000)</td></tr>
+<tr class="memitem:a9db0752e6406d2c45fd8bd9bf074c6c4" id="r_a9db0752e6406d2c45fd8bd9bf074c6c4"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a9db0752e6406d2c45fd8bd9bf074c6c4">PCI_PTE_ADD_MASK</a>&#160;&#160;&#160;<a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x00000000000fe000)</td></tr>
+<tr class="memitem:a2d01e575fb6c80c6bad3536a1791108c" id="r_a2d01e575fb6c80c6bad3536a1791108c"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a2d01e575fb6c80c6bad3536a1791108c">PCI_PTE_ADD_SHIFT</a>&#160;&#160;&#160;10</td></tr>
+<tr class="memitem:a4657d69318b955395871b0031a6dc793" id="r_a4657d69318b955395871b0031a6dc793"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a4657d69318b955395871b0031a6dc793">PCI_PTE_TBA_MASK</a>&#160;&#160;&#160;<a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x00000007fffffc00)</td></tr>
+<tr class="memitem:a3d69f4af6d2b683ac00e511dae9b7294" id="r_a3d69f4af6d2b683ac00e511dae9b7294"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a3d69f4af6d2b683ac00e511dae9b7294">PCI_PTE_MASK</a>&#160;&#160;&#160;<a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x00000007ffffe000)</td></tr>
+<tr class="memitem:ae4941d8181d01d01c8e971edfad3391c" id="r_ae4941d8181d01d01c8e971edfad3391c"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ae4941d8181d01d01c8e971edfad3391c">PCI_PTE_SHIFT</a>&#160;&#160;&#160;12</td></tr>
+<tr class="memitem:aba17c30b6d715644298f125ace93e7a4" id="r_aba17c30b6d715644298f125ace93e7a4"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#aba17c30b6d715644298f125ace93e7a4">PCI_PTE_ADD2_MASK</a>&#160;&#160;&#160;<a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x0000000000001fff)</td></tr>
+<tr class="memitem:ab52460ff37e4ece400e2610033ff4463" id="r_ab52460ff37e4ece400e2610033ff4463"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ab52460ff37e4ece400e2610033ff4463">PCI_PTE_PEER_BIT</a>&#160;&#160;&#160;<a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x0000000090000000)</td></tr>
+<tr class="memitem:ac681ab4da5839185a147e0ab83c5619c" id="r_ac681ab4da5839185a147e0ab83c5619c"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ac681ab4da5839185a147e0ab83c5619c">PHYS_PIO_ACCESS</a>&#160;&#160;&#160;<a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x0000080000000000)</td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 id="header-var-members" class="groupheader"><a id="var-members" name="var-members"></a>
 Variables</h2></td></tr>
-<tr class="memitem:a359ee3444d82aa73ce1a39de9601bd68" id="r_a359ee3444d82aa73ce1a39de9601bd68"><td class="memItemLeft">static const <a class="el" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a>&#160;</td><td class="memItemRight"><a class="el" href="#a359ee3444d82aa73ce1a39de9601bd68">pchip_error_flags</a> = <a class="el" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xdff)</td></tr>
-<tr class="memdesc:a359ee3444d82aa73ce1a39de9601bd68"><td class="mdescLeft">&#160;</td><td class="mdescRight">Read one of the PCHIP registers.  <br /></td></tr>
-<tr class="memitem:aaeedbf686ab4c87440391c19d4a87024" id="r_aaeedbf686ab4c87440391c19d4a87024"><td class="memItemLeft">static const <a class="el" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a>&#160;</td><td class="memItemRight"><a class="el" href="#aaeedbf686ab4c87440391c19d4a87024">pchip_error_info</a> = <a class="el" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xffffffffffff0000)</td></tr>
+<tr class="memitem:abc293cf295b84b4862942d89d8c97be5" id="r_abc293cf295b84b4862942d89d8c97be5"><td class="memItemLeft">char *&#160;</td><td class="memItemRight"><a class="el" href="#abc293cf295b84b4862942d89d8c97be5">dbg_strptr</a></td></tr>
+<tr class="memitem:aafe688c41067fa06cca88b7b1281ec2f" id="r_aafe688c41067fa06cca88b7b1281ec2f"><td class="memItemLeft"><a class="el" href="../../d4/d00/a01817.html">CSystem</a> *&#160;</td><td class="memItemRight"><a class="el" href="#aafe688c41067fa06cca88b7b1281ec2f">theSystem</a></td></tr>
 </table>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>Tsunami/Typhoon chipset (Cchip, Dchip, Pchip) CSRs, interrupt delivery and PCI window translation. </p>
-<p>Split out of <a class="el" href="../../dd/d00/a00611.html" title="Contains the code for the emulated Typhoon Chipset devices.">System.cpp</a>; change history remains there. </p>
+<div class="textblock"><p>Contains the definitions for the emulated Typhoon Chipset devices. </p>
+<p>$Id$</p>
+<p>X-1.34 Camiel Vanderhoeven 26-MAR-2008 Fix compiler warnings.</p>
+<p>X-1.33 Camiel Vanderhoeven 14-MAR-2008 Formatting.</p>
+<p>X-1.32 Camiel Vanderhoeven 14-MAR-2008</p><ol type="1">
+<li>More meaningful exceptions replace throwing (int) 1.</li>
+<li>U64 macro replaces X64 macro.</li>
+</ol>
+<p>X-1.31 Camiel Vanderhoeven 13-MAR-2008 Create init(), start_threads() and stop_threads() functions.</p>
+<p>X-1.30 Camiel Vanderhoeven 11-MAR-2008 Named, debuggable mutexes.</p>
+<p>X-1.29 Camiel Vanderhoeven 05-MAR-2008 Multi-threading version.</p>
+<p>X-1.28 Camiel Vanderhoeven 04-MAR-2008 Support some basic MP features. (CPUID read from C-Chip MISC register, inter-processor interrupts)</p>
+<p>X-1.27 Camiel Vanderhoeven 26-FEB-2008 Added CF8/CFC method for getting at PCI config space.</p>
+<p>X-1.26 Camiel Vanderhoeven 08-FEB-2008 Show originating device name on memory errors.</p>
+<p>X-1.25 Camiel Vanderhoeven 04-FEB-2008 Corrected a typo in the definition of PTE_SHIFT (2 should be 12) that caused an OpenVMS procgone bugcheck.</p>
+<p>X-1.24 Camiel Vanderhoeven 01-FEB-2008 Avoid unnecessary shift-operations to calculate constant values.</p>
+<p>X-1.23 Camiel Vanderhoeven 08-JAN-2008 Layout of comments.</p>
+<p>X-1.22 Camiel Vanderhoeven 08-JAN-2008 Split out chipset registers.</p>
+<p>X-1.21 Camiel Vanderhoeven 07-JAN-2008 DMA scatter/gather access. Split out some things.</p>
+<p>X-1.20 Camiel Vanderhoeven 02-JAN-2008 Comments.</p>
+<p>X-1.19 Camiel Vanderhoeven 10-DEC-2007 Added get_cpu</p>
+<p>X-1.18 Camiel Vanderhoeven 10-DEC-2007 Use configurator.</p>
+<p>X-1.17 Camiel Vanderhoeven 2-DEC-2007 Added support for code profiling, and for direct operations on the Tsunami/Typhoon's interrupt registers.</p>
+<p>X-1.16 Brian Wheeler 1-DEC-2007 Added panic.</p>
+<p>X-1.15 Camiel Vanderhoeven 16-NOV-2007 Replaced PCI_ReadMem and PCI_WriteMem with PCI_Phys.</p>
+<p>X-1.14 Camiel Vanderhoeven 18-APR-2007 Faster lockstep mechanism (send info 50 cpu cycles at a time)</p>
+<p>X-1.13 Camiel Vanderhoeven 11-APR-2007 Moved all data that should be saved to a state file to a structure "state".</p>
+<p>X-1.12 Camiel Vanderhoeven 10-APR-2007 Replaced LoadROM(...) and SelectROM() calls with a single LoadROM() call. (See <a class="el" href="../../d4/d00/a00617.html" title="Contains the code for the emulated Typhoon Chipset devices.">System.cpp</a>, X-1.23).</p>
+<p>X-1.11 Camiel Vanderhoeven 10-APR-2007 Removed obsolete ROM-handling code.</p>
+<p>X-1.10 Camiel Vanderhoeven 30-MAR-2007 Added old changelog comments.</p>
+<p>X-1.9 Camiel Vanderhoeven 1-MAR-2007 Removes $-sign from variable names. The Sun C-compiler can't handle these.</p>
+<p>X-1.8 Camiel Vanderhoeven 18-FEB-2007 Added iSSCycles variable to handle cycle-counting/slow-clocking in single-step mode.</p>
+<p>X-1.7 Camiel Vanderhoeven 16-FEB-2007 a) Replaced DoClock with run and single_step. b) Added support for slow-clocked devices.</p>
+<p>X-1.6 Camiel Vanderhoeven 12-FEB-2007 Added comments.</p>
+<p>X-1.5 Brian Wheeler 7-FEB-2007 <a class="el" href="../../d4/d00/a01817.html" title="Emulated Typhoon 21272 chipset.">CSystem</a> constructor takes filename of configuration file as an argument.</p>
+<p>X-1.4 Camiel Vanderhoeven 7-FEB-2007 Added trace (pointer to <a class="el" href="../../d1/d00/a01041.html" title="CPU tracing engine.">CTraceEngine</a>)</p>
+<p>X-1.3 Brian Wheeler 3-FEB-2007 Formatting.</p>
+<p>X-1.2 Brian Wheeler 3-FEB-2007 Add support for configuration file.</p>
+<p>X-1.1 Camiel Vanderhoeven 19-JAN-2007 Initial version in CVS.</p>
+<dl class="section author"><dt>Author</dt><dd>Camiel Vanderhoeven </dd></dl>
 
-<p class="definition">Definition in file <a class="el" href="../../dc/d00/a00620_source.html">System_tsunami.cpp</a>.</p>
+<p class="definition">Definition in file <a class="el" href="../../dc/d00/a00620_source.html">System.h</a>.</p>
 </div><a name="doc-define-members" id="doc-define-members"></a><h2 id="header-doc-define-members" class="groupheader">Macro Definition Documentation</h2>
-<a id="aacbb9e1f38be71e22df1584a37c56693" name="aacbb9e1f38be71e22df1584a37c56693"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aacbb9e1f38be71e22df1584a37c56693">&#9670;&#160;</a></span>__STDC_FORMAT_MACROS</h2>
+<a id="a3ad46d233f4ed929ca28890e51c706a0" name="a3ad46d233f4ed929ca28890e51c706a0"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a3ad46d233f4ed929ca28890e51c706a0">&#9670;&#160;</a></span>PANIC_ASKSHUTDOWN</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">#define __STDC_FORMAT_MACROS&#160;&#160;&#160;1</td>
+          <td class="memname">#define PANIC_ASKSHUTDOWN&#160;&#160;&#160;2</td>
         </tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00033">33</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System_tsunami.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00328">328</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d4/d00/a00617_source.html#l02015">CSystem::panic()</a>.</p>
+
+</div>
+</div>
+<a id="aa3badb247d3b2bad1d70de1452d61f41" name="aa3badb247d3b2bad1d70de1452d61f41"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aa3badb247d3b2bad1d70de1452d61f41">&#9670;&#160;</a></span>PANIC_LISTING</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define PANIC_LISTING&#160;&#160;&#160;4</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00329">329</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d4/d00/a00617_source.html#l02015">CSystem::panic()</a>.</p>
+
+</div>
+</div>
+<a id="ac0229041b76cf2ce9939eaba4f46117b" name="ac0229041b76cf2ce9939eaba4f46117b"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ac0229041b76cf2ce9939eaba4f46117b">&#9670;&#160;</a></span>PANIC_NOSHUTDOWN</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define PANIC_NOSHUTDOWN&#160;&#160;&#160;0</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00326">326</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System.h</a>.</p>
+
+</div>
+</div>
+<a id="ab5f5466a39bf4fa6d4ce07f7e6423b46" name="ab5f5466a39bf4fa6d4ce07f7e6423b46"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ab5f5466a39bf4fa6d4ce07f7e6423b46">&#9670;&#160;</a></span>PANIC_SHUTDOWN</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define PANIC_SHUTDOWN&#160;&#160;&#160;1</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00327">327</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d4/d00/a00617_source.html#l02015">CSystem::panic()</a>.</p>
+
+</div>
+</div>
+<a id="a9b451fe8dc579463fa53103057417669" name="a9b451fe8dc579463fa53103057417669"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a9b451fe8dc579463fa53103057417669">&#9670;&#160;</a></span>PCI_ADD_MASK</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define PCI_ADD_MASK&#160;&#160;&#160;<a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x00000000000fffff)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00692">692</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d6/d00/a00626_source.html#l01643">CSystem::PCI_Phys_direct_mapped()</a>.</p>
+
+</div>
+</div>
+<a id="a61cdd5f9411ad5696d7d8f87664ede9d" name="a61cdd5f9411ad5696d7d8f87664ede9d"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a61cdd5f9411ad5696d7d8f87664ede9d">&#9670;&#160;</a></span>PCI_PCTL_HOLE</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define PCI_PCTL_HOLE&#160;&#160;&#160;<a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x0000000000000020)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00686">686</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d6/d00/a00626_source.html#l01545">CSystem::PCI_Phys()</a>.</p>
+
+</div>
+</div>
+<a id="ad7b669fabfe6a535506aaae958e49a09" name="ad7b669fabfe6a535506aaae958e49a09"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ad7b669fabfe6a535506aaae958e49a09">&#9670;&#160;</a></span>PCI_PCTL_HOLE_END</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define PCI_PCTL_HOLE_END&#160;&#160;&#160;0x000fffff</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00688">688</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d6/d00/a00626_source.html#l01545">CSystem::PCI_Phys()</a>.</p>
+
+</div>
+</div>
+<a id="a7e316023a6e748ca9ec195aac7c6e378" name="a7e316023a6e748ca9ec195aac7c6e378"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a7e316023a6e748ca9ec195aac7c6e378">&#9670;&#160;</a></span>PCI_PCTL_HOLE_START</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define PCI_PCTL_HOLE_START&#160;&#160;&#160;0x00080000</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00687">687</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d6/d00/a00626_source.html#l01545">CSystem::PCI_Phys()</a>.</p>
+
+</div>
+</div>
+<a id="aba17c30b6d715644298f125ace93e7a4" name="aba17c30b6d715644298f125ace93e7a4"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aba17c30b6d715644298f125ace93e7a4">&#9670;&#160;</a></span>PCI_PTE_ADD2_MASK</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define PCI_PTE_ADD2_MASK&#160;&#160;&#160;<a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x0000000000001fff)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00699">699</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d6/d00/a00626_source.html#l01722">CSystem::PCI_Phys_scatter_gather()</a>.</p>
+
+</div>
+</div>
+<a id="a9db0752e6406d2c45fd8bd9bf074c6c4" name="a9db0752e6406d2c45fd8bd9bf074c6c4"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a9db0752e6406d2c45fd8bd9bf074c6c4">&#9670;&#160;</a></span>PCI_PTE_ADD_MASK</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define PCI_PTE_ADD_MASK&#160;&#160;&#160;<a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x00000000000fe000)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00694">694</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d6/d00/a00626_source.html#l01722">CSystem::PCI_Phys_scatter_gather()</a>.</p>
+
+</div>
+</div>
+<a id="a2d01e575fb6c80c6bad3536a1791108c" name="a2d01e575fb6c80c6bad3536a1791108c"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a2d01e575fb6c80c6bad3536a1791108c">&#9670;&#160;</a></span>PCI_PTE_ADD_SHIFT</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define PCI_PTE_ADD_SHIFT&#160;&#160;&#160;10</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00695">695</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d6/d00/a00626_source.html#l01722">CSystem::PCI_Phys_scatter_gather()</a>.</p>
+
+</div>
+</div>
+<a id="a3d69f4af6d2b683ac00e511dae9b7294" name="a3d69f4af6d2b683ac00e511dae9b7294"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a3d69f4af6d2b683ac00e511dae9b7294">&#9670;&#160;</a></span>PCI_PTE_MASK</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define PCI_PTE_MASK&#160;&#160;&#160;<a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x00000007ffffe000)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00697">697</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d6/d00/a00626_source.html#l01722">CSystem::PCI_Phys_scatter_gather()</a>.</p>
+
+</div>
+</div>
+<a id="ab52460ff37e4ece400e2610033ff4463" name="ab52460ff37e4ece400e2610033ff4463"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ab52460ff37e4ece400e2610033ff4463">&#9670;&#160;</a></span>PCI_PTE_PEER_BIT</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define PCI_PTE_PEER_BIT&#160;&#160;&#160;<a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x0000000090000000)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00700">700</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d6/d00/a00626_source.html#l01722">CSystem::PCI_Phys_scatter_gather()</a>.</p>
+
+</div>
+</div>
+<a id="ae4941d8181d01d01c8e971edfad3391c" name="ae4941d8181d01d01c8e971edfad3391c"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ae4941d8181d01d01c8e971edfad3391c">&#9670;&#160;</a></span>PCI_PTE_SHIFT</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define PCI_PTE_SHIFT&#160;&#160;&#160;12</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00698">698</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d6/d00/a00626_source.html#l01722">CSystem::PCI_Phys_scatter_gather()</a>.</p>
+
+</div>
+</div>
+<a id="a4657d69318b955395871b0031a6dc793" name="a4657d69318b955395871b0031a6dc793"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a4657d69318b955395871b0031a6dc793">&#9670;&#160;</a></span>PCI_PTE_TBA_MASK</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define PCI_PTE_TBA_MASK&#160;&#160;&#160;<a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x00000007fffffc00)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00696">696</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d6/d00/a00626_source.html#l01722">CSystem::PCI_Phys_scatter_gather()</a>.</p>
+
+</div>
+</div>
+<a id="a81397ad7fad3e004fa30db2477b1cdd9" name="a81397ad7fad3e004fa30db2477b1cdd9"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a81397ad7fad3e004fa30db2477b1cdd9">&#9670;&#160;</a></span>PCI_TBA_MASK</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define PCI_TBA_MASK&#160;&#160;&#160;<a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x00000007fff00000)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00693">693</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d6/d00/a00626_source.html#l01643">CSystem::PCI_Phys_direct_mapped()</a>.</p>
+
+</div>
+</div>
+<a id="a79eec04a8535a5e26019a19778995eea" name="a79eec04a8535a5e26019a19778995eea"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a79eec04a8535a5e26019a19778995eea">&#9670;&#160;</a></span>PCI_WSM_MASK</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define PCI_WSM_MASK&#160;&#160;&#160;<a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x00000000fff00000)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00691">691</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d6/d00/a00626_source.html#l01643">CSystem::PCI_Phys_direct_mapped()</a>, and <a class="el" href="../../d6/d00/a00626_source.html#l01722">CSystem::PCI_Phys_scatter_gather()</a>.</p>
+
+</div>
+</div>
+<a id="ac681ab4da5839185a147e0ab83c5619c" name="ac681ab4da5839185a147e0ab83c5619c"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ac681ab4da5839185a147e0ab83c5619c">&#9670;&#160;</a></span>PHYS_PIO_ACCESS</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define PHYS_PIO_ACCESS&#160;&#160;&#160;<a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x0000080000000000)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00702">702</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System.h</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../d6/d00/a00626_source.html#l01722">CSystem::PCI_Phys_scatter_gather()</a>.</p>
 
 </div>
 </div>
 <a name="doc-var-members" id="doc-var-members"></a><h2 id="header-doc-var-members" class="groupheader">Variable Documentation</h2>
-<a id="a359ee3444d82aa73ce1a39de9601bd68" name="a359ee3444d82aa73ce1a39de9601bd68"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a359ee3444d82aa73ce1a39de9601bd68">&#9670;&#160;</a></span>pchip_error_flags</h2>
+<a id="abc293cf295b84b4862942d89d8c97be5" name="abc293cf295b84b4862942d89d8c97be5"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#abc293cf295b84b4862942d89d8c97be5">&#9670;&#160;</a></span>dbg_strptr</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -309,326 +693,24 @@ Variables</h2></td></tr>
   <td class="mlabels-left">
       <table class="memname">
         <tr>
-          <td class="memname">const <a class="el" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a> pchip_error_flags = <a class="el" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xdff)</td>
+          <td class="memname">char* dbg_strptr</td>
         </tr>
       </table>
   </td>
   <td class="mlabels-right">
-<span class="mlabels"><span class="mlabel static">static</span></span>  </td>
+<span class="mlabels"><span class="mlabel extern">extern</span></span>  </td>
   </tr>
 </table>
 </div><div class="memdoc">
 
-<p>Read one of the PCHIP registers. </p>
-<p>Source: HRM, 10.2.5:</p>
-<div class="fragment"><div class="line">+-------------+---------------+------+----+</div>
-<div class="line">|Register     | Address       | Type | ## |</div>
-<div class="line">+-------------+---------------+------+----+</div>
-<div class="line">| P0-WSBA0    | 801.8000.0000 | RW   | 00 |</div>
-<div class="line">| P0-WSBA1    | 801.8000.0040 | RW   | 01 |</div>
-<div class="line">| P0-WSBA2    | 801.8000.0080 | RW   | 02 |</div>
-<div class="line">| P0-WSBA3    | 801.8000.00C0 | RW   | 03 |</div>
-<div class="line">+-------------+---------------+------+----+</div>
-<div class="line">| P0-WSM0     | 801.8000.0100 | RW   | 04 |</div>
-<div class="line">| P0-WSM1     | 801.8000.0140 | RW   | 05 |</div>
-<div class="line">| P0-WSM2     | 801.8000.0180 | RW   | 06 |</div>
-<div class="line">| P0-WSM3     | 801.8000.01C0 | RW   | 07 |</div>
-<div class="line">+-------------+---------------+------+----+</div>
-<div class="line">| P0-TBA0     | 801.8000.0200 | RW   | 08 |</div>
-<div class="line">| P0-TBA1     | 801.8000.0240 | RW   | 09 |</div>
-<div class="line">| P0-TBA2     | 801.8000.0280 | RW   | 0A |</div>
-<div class="line">| P0-TBA3     | 801.8000.02C0 | RW   | 0B |</div>
-<div class="line">+-------------+---------------+------+----+</div>
-<div class="line">| P0-PCTL     | 801.8000.0300 | RW   | 0C |</div>
-<div class="line">+-------------+---------------+------+----+</div>
-<div class="line">| P0-PLAT     | 801.8000.0340 | RW   | 0D |</div>
-<div class="line">+-------------+---------------+------+----+</div>
-<div class="line">| P0-RES      | 801.8000.0380 | RW   | 0E |</div>
-<div class="line">+-------------+---------------+------+----+</div>
-<div class="line">| P0-PERROR   | 801.8000.03C0 | RW   | 0F |</div>
-<div class="line">| P0-PERRMASK | 801.8000.0400 | RW   | 10 |</div>
-<div class="line">| P0-PERRSET  | 801.8000.0440 | WO   | 11 |</div>
-<div class="line">+-------------+---------------+------+----+</div>
-<div class="line">| P0-TLBIV    | 801.8000.0480 | WO   | 12 |</div>
-<div class="line">| P0-TLBIA    | 801.8000.04C0 | WO   | 13 |</div>
-<div class="line">+-------------+---------------+------+----+</div>
-<div class="line">| P0-PMONCTL  | 801.8000.0500 | RW   | 14 |</div>
-<div class="line">| P0-PMONCNT  | 801.8000.0540 | RO   | 15 |</div>
-<div class="line">+-------------+---------------+------+----+</div>
-<div class="line">| P0-SPRST    | 801.8000.0800 | WO   | 20 |</div>
-<div class="line">+-------------+---------------+------+----+</div>
-</div><!-- fragment --><p>Window Space Base Address Register (WSBAn - RW)</p>
-<p>Because the information in the WSBAn registers and WSMn registers is used to compare against the PCI address, a clock-domain crossing (from i_sysclk to i_pclko&lt;7:0&gt;) is made when these registers are written. Therefore, for a period of several clock cycles, a window is disabled when its contents are disabled. If PCI bus activity, which accesses the window in question, is not stopped before updating that window, the Pchip might fail to respond with b_devsel_l when it should. This would result in a master abort condition on the PCI bus. Therefore, before a window (base or mask) is updated, all PCI activity accessing that window must be stopped, even if only some activity is being added or deleted.</p>
-<p>The contents of the window may be read back to confirm that the update has taken place. Then PCI activity through that window can be resumed.</p>
-<div class="fragment"><div class="line">+-------+---------+---------+------+--------------------------+</div>
-<div class="line">| Field | Bits    | Type    | Init | Description              |</div>
-<div class="line">+-------+---------+---------+------+--------------------------+</div>
-<div class="line">| RES   | &lt;63:40&gt; | MBZ,RAZ | 0    | Reserved                 |</div>
-<div class="line">+-------+---------+---------+------+--------------------------+</div>
-<div class="line">| DAC   | &lt;39&gt;    | RW      | 0    | DAC enable (WSBA3 only!) |</div>
-<div class="line">+-------+---------+---------+------+--------------------------+</div>
-<div class="line">| RES   | &lt;38:32&gt; | MBZ,RAZ | 0    | Reserved                 |</div>
-<div class="line">+-------+---------+---------+------+--------------------------+</div>
-<div class="line">| ADDR  | &lt;31:20&gt; | RW      | 0    | Base address (not used   |</div>
-<div class="line">|       |         |         |      | DAC enable = 1)          |</div>
-<div class="line">+-------+---------+---------+------+--------------------------+</div>
-<div class="line">| RES   | &lt;19:2&gt;  | MBZ,RAZ | 0    | Reserved                 |</div>
-<div class="line">+-------+---------+---------+------+--------------------------+</div>
-<div class="line">| SG    | &lt;1&gt;     | RW      | 0    | Scatter-gather           |</div>
-<div class="line">+-------+---------+---------+------+--------------------------+</div>
-<div class="line">| ENA   | &lt;0&gt;     | RW      | 0    | Enable                   |</div>
-<div class="line">+-------+---------+---------+------+--------------------------+</div>
-</div><!-- fragment --><p>Window Space Mask Register (WSM0, WSM1, WSM2, WSM3 - RW)</p>
-<div class="fragment"><div class="line">+-------+---------+---------+------+--------------------------+</div>
-<div class="line">| Field | Bits    | Type    | Init | Description              |</div>
-<div class="line">+-------+---------+---------+------+--------------------------+</div>
-<div class="line">| RES   | &lt;63:32&gt; | MBZ,RAZ | 0    | Reserved                 |</div>
-<div class="line">+-------+---------+---------+------+--------------------------+</div>
-<div class="line">| AM    | &lt;31:20&gt; | RW      | 0    | Address mask             |</div>
-<div class="line">+-------+---------+---------+------+--------------------------+</div>
-<div class="line">| RES   | &lt;19:0&gt;  | MBZ,RAZ | 0    | Reserved                 |</div>
-<div class="line">+-------+---------+---------+------+--------------------------+</div>
-</div><!-- fragment --><p>Translated Base Address Register (TBAn - RW)</p>
-<div class="fragment"><div class="line">+-------+---------+---------+------+--------------------------+</div>
-<div class="line">| Field | Bits    | Type    | Init | Description              |</div>
-<div class="line">+-------+---------+---------+------+--------------------------+</div>
-<div class="line">| RES   | &lt;63:35&gt; | MBZ,RAZ | 0    | Reserved                 |</div>
-<div class="line">+-------+---------+---------+------+--------------------------+</div>
-<div class="line">| ADDR  | &lt;34:10&gt; | RW      | 0    | Translated base address  |</div>
-<div class="line">|       |         |         |      | (<span class="keywordflow">if</span> DAC enable = 1, bits |</div>
-<div class="line">|       |         |         |      | &lt;34:22&gt; are the PT Origin|</div>
-<div class="line">|       |         |         |      | address &lt;34:22&gt; and bits |</div>
-<div class="line">|       |         |         |      | &lt;21:10&gt; are ignored)     |</div>
-<div class="line">+-------+---------+---------+------+--------------------------+</div>
-<div class="line">| RES   | &lt;9:0&gt;   | MBZ,RAZ | 0    | Reserved                 |</div>
-<div class="line">+-------+---------+---------+------+--------------------------+</div>
-<div class="line">\encode</div>
-<div class="line"> </div>
-<div class="line">Pchip Control Register (PCTL - RW)</div>
-<div class="line"> </div>
-<div class="line">\code</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| Field   | Bits    | Type    | Init | Description                         |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| RES     | &lt;63:48&gt; | MBZ,RAZ | 0    | Reserved.                           |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| PID     | &lt;47:46&gt; | RO      | 1)   | Pchip ID.                           |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| RPP     | &lt;45&gt;    | RO      | 2)   | Remote Pchip present.               |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| PTEVRFY | &lt;44&gt;    | RW      |      | PTE <a class="code hl_namespace" href="../../dc/d00/a00640.html">verify</a> for DMA read.            |</div>
-<div class="line">|         |         |         |      |   Val Description                   |</div>
-<div class="line">|         |         |         |      |   0   If TLB miss, then make DMA    |</div>
-<div class="line">|         |         |         |      |       read request as soon as possi-|</div>
-<div class="line">|         |         |         |      |       ble and discard data if PTE   |</div>
-<div class="line">|         |         |         |      |       was not valid - could cause   |</div>
-<div class="line">|         |         |         |      |       Cchip nonexistent mem. error. |</div>
-<div class="line">|         |         |         |      |   1   If TLB miss, then delay read  |</div>
-<div class="line">|         |         |         |      |       request until PTE is verified |</div>
-<div class="line">|         |         |         |      |       as valid - no request if not  |</div>
-<div class="line">|         |         |         |      |       valid.                        |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| FDWDIS  | &lt;43&gt;    | RW      |      | Fast DMA read cache block wrap      |</div>
-<div class="line">|         |         |         |      | request disable.                    |</div>
-<div class="line">|         |         |         |      |   Val Description                   |</div>
-<div class="line">|         |         |         |      |   0   Normal operation.             |</div>
-<div class="line">|         |         |         |      |   1   Reserved for testing purposes |</div>
-<div class="line">|         |         |         |      |       only.                         |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| FDSDIS  | &lt;42&gt;    | RW      |      | Fast DMA start and SGTE request     |</div>
-<div class="line">|         |         |         |      | disable.                            |</div>
-<div class="line">|         |         |         |      |   Val Description                   |</div>
-<div class="line">|         |         |         |      |   0   Normal operation.             |</div>
-<div class="line">|         |         |         |      |   1   Reserved for testing purposes |</div>
-<div class="line">|         |         |         |      |       only.                         |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| PCLKX   | &lt;41:40&gt; | RO      | 3)   | PCI clock frequency multiplier      |</div>
-<div class="line">|         |         |         |      |   Val Multiplier                    |</div>
-<div class="line">|         |         |         |      |   0   x6                            |</div>
-<div class="line">|         |         |         |      |   1   x4                            |</div>
-<div class="line">|         |         |         |      |   2   x5                            |</div>
-<div class="line">|         |         |         |      |   3   Reserved                      |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| PTPMAX  | &lt;39:36&gt; | RW      | 2    | Maximum PTP requests to Cchip from  |</div>
-<div class="line">|         |         |         |      | both Pchips until returned on       |</div>
-<div class="line">|         |         |         |      | CAPbus, modulo 16 (minimum = 2)     |</div>
-<div class="line">|         |         |         |      | (use 4 for pass 1 Cchip and Dchip). |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| CRQMAX  | &lt;35:32&gt; | RW      | 1    | Maximum requests to Cchip from both |</div>
-<div class="line">|         |         |         |      | Pchips until Ack, modulo 16 (use 4  |</div>
-<div class="line">|         |         |         |      | for Cchip). (Use 3 or less for      |</div>
-<div class="line">|         |         |         |      | Typhoon because there is one less   |</div>
-<div class="line">|         |         |         |      | skid buffer in the C4 chip.)        |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| REV     | &lt;31:24&gt; | RO      | 0    | In conjunction with the state of    |</div>
-<div class="line">|         |         |         |      | PMONCTL&lt;0&gt;, this field indicates    |</div>
-<div class="line">|         |         |         |      | the revision of the Pchip.          |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| CDQMAX  | &lt;23:20&gt; | RW      | 1    | Maximum data transfers to Dchips    |</div>
-<div class="line">|         |         |         |      | from both Pchips until Ack, modulo  |</div>
-<div class="line">|         |         |         |      | 16 (use 4 for Dchip). Must be same  |</div>
-<div class="line">|         |         |         |      | as Cchip CSR CSC&lt;FPQPMAX&gt;.          |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| PADM    | &lt;19&gt;    | RW      | 4)   | PADbus mode.                        |</div>
-<div class="line">|         |         |         |      |   Val Mode                          |</div>
-<div class="line">|         |         |         |      |   0   8-nibble, 8-check bit mode    |</div>
-<div class="line">|         |         |         |      |   1   4-byte, 4-check bit mode      |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| ECCEN   | &lt;18&gt;    | RW      | 0    | ECC enable for DMA and SGTE access. |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| RES     | &lt;17:16&gt; | MBZ,RAZ | 0    | Reserved.                           |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| PPRI    | &lt;15&gt;    |         | 0    | Arbiter prio group for the Pchip.   |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| PRIGRP  | &lt;14:8&gt;  | RW      | 0    | Arbiter prio group; one bit per PCI |</div>
-<div class="line">|         |         |         |      | slot with bits &lt;14:8&gt; corresponding |</div>
-<div class="line">|         |         |         |      | to input b_req_l&lt;6:0&gt;.              |</div>
-<div class="line">|         |         |         |      |   Val Group                         |</div>
-<div class="line">|         |         |         |      |   0   Low-priority group            |</div>
-<div class="line">|         |         |         |      |   1   High-priority group           |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| ARBENA  | &lt;7&gt;     | RW      | 0    | Internal arbiter enable.            |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| MWIN    | &lt;6&gt;     | RW      | 0    | Monster window enable.              |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| HOLE    | &lt;5&gt;     | RW      | 0    | 512KB-to-1MB window hole enable.    |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| TGTLAT  | &lt;4&gt;     | RW      | 0    | Target latency timers enable.       |</div>
-<div class="line">|         |         |         |      |   Val Mode                          |</div>
-<div class="line">|         |         |         |      |   0   Retry/disconnect after 128    |</div>
-<div class="line">|         |         |         |      |       PCI clocks without data.      |</div>
-<div class="line">|         |         |         |      |   1   Retry initial request after   |</div>
-<div class="line">|         |         |         |      |       32 PCI clocks without data;   |</div>
-<div class="line">|         |         |         |      |       disconnect subsequent trans-  |</div>
-<div class="line">|         |         |         |      |       fers after 8 PCI clocks       |</div>
-<div class="line">|         |         |         |      |       without data.                 |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| CHAINDIS| &lt;3&gt;     | RW      | 0    | Disable chaining.                   |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| THDIS   | &lt;2&gt;     | RW      | 0    | Disable antithrash mechan. <span class="keywordflow">for</span> TLB. |</div>
-<div class="line">|         |         |         |      |   Val Mode                          |</div>
-<div class="line">|         |         |         |      |   0   Normal operation              |</div>
-<div class="line">|         |         |         |      |   1   Testing purposes only         |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| FBTB    | &lt;1&gt;     | RW      | 0    | Fast back-to-back enable.           |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| FDSC    | &lt;0&gt;     | RW      | 0    | Fast discard enable.                |</div>
-<div class="line">|         |         |         |      |   Val Mode                          |</div>
-<div class="line">|         |         |         |      |   0   Discard data <span class="keywordflow">if</span> no retry      |</div>
-<div class="line">|         |         |         |      |       after 215 PCI clocks.         |</div>
-<div class="line">|         |         |         |      |   1   Discard data <span class="keywordflow">if</span> no retry      |</div>
-<div class="line">|         |         |         |      |       after 210 PCI clocks.         |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line"> </div>
-<div class="line">1) This field is initialized from the PID pins.</div>
-<div class="line">2) This field is initialized from the assertion of CREQRMT_L pin at system reset.</div>
-<div class="line">3) This field is initialized from the PCI i_pclkdiv&lt;1:0&gt; pins.</div>
-<div class="line">4) This field is initialized from a decode of the b_cap&lt;1:0&gt; pins.</div>
-<div class="ttc" id="aa00640_html"><div class="ttname"><a href="../../dc/d00/a00640.html">verify</a></div><div class="ttdef"><b>Definition</b> <a href="../../d1/d00/a01928_source.html#l00001">verify.py:1</a></div></div>
-</div><!-- fragment --><p>Pchip Error Register (PERROR - RW)</p>
-<p>If any of bits &lt;11:0&gt; are set, then this entire register is frozen and the Pchip output signal b_error is asserted. Only bit &lt;0&gt; can be set after that. All other values will be held until all of bits &lt;11:0&gt; are clear. When an error is detected and one of bits &lt;11:0&gt; becomes set, the associated information is captured in bits &lt;63:16&gt; of this register. After the information is captured, the INV bit is cleared, but the information is not valid and should not be used if INV is set.</p>
-<p>In rare circumstances involving more than one error, INV may remain set because the Pchip cannot correctly capture the SYN, CMD, or ADDR field.</p>
-<p>Furthermore, if software reads PERROR in a polling loop, or reads PERROR before the Pchip’s error signal is reflected in the Cchip’s DRIR CSR, the INV bit may also be set.</p>
-<p>To avoid the latter condition, read PERROR only after receiving an IRQ0 interrupt, then read the Cchip DIR CSR to determine that this Pchip has detected an error.</p>
-<div class="fragment"><div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| Field   | Bits    | Type    | Init | Description                         |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| SYN     | &lt;63:56&gt; | RO      | 0    | errors ECC syndrome <span class="keywordflow">if</span> CRE or UECC. |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| CMD     | &lt;55:52&gt; | RO      | 0    | PCI command of transaction when     |</div>
-<div class="line">|         |         |         |      | error detected <span class="keywordflow">if</span> not CRE and not   |</div>
-<div class="line">|         |         |         |      | UECC. If CRE or UECC, then:         |</div>
-<div class="line">|         |         |         |      |   Val    Command                    |</div>
-<div class="line">|         |         |         |      |   0000   DMA read                   |</div>
-<div class="line">|         |         |         |      |   0001   DMA RMW                    |</div>
-<div class="line">|         |         |         |      |   0011   SGTE read                  |</div>
-<div class="line">|         |         |         |      |   Others Reserved                   |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| INV     | &lt;51&gt;    | RO Rev1 | 0    | Info Not Valid - only meaningful    |</div>
-<div class="line">|         |         | RAZ Rev0|      | when one of bits &lt;11:0&gt; is set.     |</div>
-<div class="line">|         |         |         |      | Indicates validity of &lt;SYN&gt;, &lt;CMD&gt;, |</div>
-<div class="line">|         |         |         |      | and &lt;ADDR&gt; fields.                  |</div>
-<div class="line">|         |         |         |      |   Val Mode                          |</div>
-<div class="line">|         |         |         |      |   0   Info fields are valid.        |</div>
-<div class="line">|         |         |         |      |   1   Info fields are not valid.    |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| ADDR    | &lt;50:16&gt; | RO      | 0    | If CRE or UECC, then ADDR&lt;50:19&gt; =  |</div>
-<div class="line">|         |         |         |      | system address &lt;34:3&gt; of erroneous  |</div>
-<div class="line">|         |         |         |      | quadword and ADDR&lt;18:16&gt; = 0.       |</div>
-<div class="line">|         |         |         |      | If not CRE and not UECC, then       |</div>
-<div class="line">|         |         |         |      | ADDR&lt;50:48&gt; = 0; ADDR&lt;47:18&gt; = star-|</div>
-<div class="line">|         |         |         |      | ting PCI address &lt;31:2&gt; of trans-   |</div>
-<div class="line">|         |         |         |      | action when error was detected;     |</div>
-<div class="line">|         |         |         |      | ADDR&lt;17:16&gt; = 00 --&gt; not a DAC      |</div>
-<div class="line">|         |         |         |      |                      operation;     |</div>
-<div class="line">|         |         |         |      | ADDR&lt;17:16&gt; = 01 --&gt; via DAC SG     |</div>
-<div class="line">|         |         |         |      |                      Window 3;      |</div>
-<div class="line">|         |         |         |      | ADDR&lt;17&gt; = 1 --&gt; via Monster Window |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| RES     | &lt;15:12&gt; | MBZ,RAZ | 0    | Reserved.                           |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| CRE     | &lt;11&gt;    | <a class="code hl_define" href="../../dd/d00/a00320.html#aa9732a31f97de6fe2211561a3847e7fc">R</a>,W1C   | 0    | Correctable ECC error.              |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| UECC    | &lt;10&gt;    | <a class="code hl_define" href="../../dd/d00/a00320.html#aa9732a31f97de6fe2211561a3847e7fc">R</a>,W1C   | 0    | Uncorrectable ECC error.            |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| RES     | &lt;9&gt;     | MBZ,RAZ | 0    | Reserved.                           |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| NDS     | &lt;8&gt;     | <a class="code hl_define" href="../../dd/d00/a00320.html#aa9732a31f97de6fe2211561a3847e7fc">R</a>,W1C   | 0    | No b_devsel_l as PCI master.        |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| RDPE    | &lt;7&gt;     | <a class="code hl_define" href="../../dd/d00/a00320.html#aa9732a31f97de6fe2211561a3847e7fc">R</a>,W1C   | 0    | PCI read data parity error as PCI   |</div>
-<div class="line">|         |         |         |      | master.                             |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| TA      | &lt;6&gt;     | <a class="code hl_define" href="../../dd/d00/a00320.html#aa9732a31f97de6fe2211561a3847e7fc">R</a>,W1C   | 0    | Target abort as PCI master.         |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| APE     | &lt;5&gt;     | <a class="code hl_define" href="../../dd/d00/a00320.html#aa9732a31f97de6fe2211561a3847e7fc">R</a>,W1C   | 0    | Address parity error detected as    |</div>
-<div class="line">|         |         |         |      | potential PCI target.               |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| SGE     | &lt;4&gt;     | <a class="code hl_define" href="../../dd/d00/a00320.html#aa9732a31f97de6fe2211561a3847e7fc">R</a>,W1C   | 0    | Scatter-gather had invalid page     |</div>
-<div class="line">|         |         |         |      | table entry.                        |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| DCRTO   | &lt;3&gt;     | <a class="code hl_define" href="../../dd/d00/a00320.html#aa9732a31f97de6fe2211561a3847e7fc">R</a>,W1C   | 0    | Delayed completion retry timeout as |</div>
-<div class="line">|         |         |         |      | PCI target.                         |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| PERR    | &lt;2&gt;     | <a class="code hl_define" href="../../dd/d00/a00320.html#aa9732a31f97de6fe2211561a3847e7fc">R</a>,W1C   | 0    | b_perr_l sampled asserted.          |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| SERR    | &lt;1&gt;     | <a class="code hl_define" href="../../dd/d00/a00320.html#aa9732a31f97de6fe2211561a3847e7fc">R</a>,W1C   | 0    | b_serr_l sampled asserted.          |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| LOST    | &lt;0&gt;     | <a class="code hl_define" href="../../dd/d00/a00320.html#aa9732a31f97de6fe2211561a3847e7fc">R</a>,W1C   | 0    | Lost an error because it was detec- |</div>
-<div class="line">|         |         |         |      | ted after <span class="keyword">this</span> <span class="keyword">register</span> was frozen, |</div>
-<div class="line">|         |         |         |      | or <span class="keywordflow">while</span> in the process of clearing |</div>
-<div class="line">|         |         |         |      | <span class="keyword">this</span> <span class="keyword">register</span>.                      |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="ttc" id="aa00320_html_aa9732a31f97de6fe2211561a3847e7fc"><div class="ttname"><a href="../../dd/d00/a00320.html#aa9732a31f97de6fe2211561a3847e7fc">R</a></div><div class="ttdeci">#define R(x)</div></div>
-</div><!-- fragment --><p>Pchip Error Mask Register (PERRMASK - RW)</p>
-<p>If any of the MASK bits have the value 0, they prevent the setting of the corresponding bit in the PERROR register, regardless of the detection of errors or writing to PERRSET.</p>
-<p>The default is for all errors to be disabled.</p>
-<p>Beside masking the reporting of errors in PERROR, certain bits of PERRMASK have the following additional effects:</p><ul>
-<li>If PERRMASK&lt;RDPE&gt; = 0, the Pchip ignores read data parity as the PCI master.</li>
-<li>If PERRMASK&lt;PERR&gt; = 0, the Pchip ignores write data parity as the PCI target.</li>
-<li>If PERRMASK&lt;APE&gt; = 0, the Pchip ignores address parity.</li>
-</ul>
-<div class="fragment"><div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| Field   | Bits    | Type    | Init | Description                         |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| RES     | &lt;63:12&gt; | MBZ,RAZ | 0    | Reserved                            |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-<div class="line">| MASK    | &lt;11:0&gt;  | RW      | 0    | PERROR <span class="keyword">register</span> bit enables         |</div>
-<div class="line">+---------+---------+---------+------+-------------------------------------+</div>
-</div><!-- fragment --><p>Pchip Master Latency Register (PLAT - RW)</p>
-<p>Bits &lt;15:8&gt; are the master latency timer.</p>
-<p>Translation Buffer Invalidate Virtual Register (TLBIV - WO)</p>
-<p>A write to this register invalidates all scatter-gather TLB entries that correspond to PCI addresses whose bits &lt;31:16&gt; and bit 39 match the value written in bits &lt;19:4&gt; and 27 respectively. This invalidates up to eight PTEs at a time, which are the number that can be defined in one 21264 cache block (64 bytes). Because a single TLB PCI tag covers four entries, at most two tags are actually invalidated. PTE bits &lt;22:4&gt; correspond to system address bits &lt;34:16&gt; - where PCI&lt;34:32&gt; must be zeros for scatter- gather window hits - in generating the resulting system address, providing 8-page (8KB) granularity.</p>
-<p>Translation Buffer Invalidate All Register (TLBIA - WO)</p>
-<p>A write to this register invalidates the scatter-gather TLB. The value written is ignored. </p>
+<p class="definition">Definition at line <a class="el" href="../../d4/d00/a00617_source.html#l00347">347</a> of file <a class="el" href="../../d4/d00/a00617_source.html">System.cpp</a>.</p>
 
-<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00896">896</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System_tsunami.cpp</a>.</p>
-
-<p class="reference">Referenced by <a class="el" href="../../dc/d00/a00620_source.html#l00899">CSystem::latch_pchip_error()</a>, <a class="el" href="../../dc/d00/a00620_source.html#l00930">CSystem::pchip_csr_read()</a>, <a class="el" href="../../dc/d00/a00620_source.html#l00994">CSystem::pchip_csr_write()</a>, and <a class="el" href="../../dc/d00/a00620_source.html#l01426">CSystem::update_pchip_error_irqs()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="../../d5/d00/a00140_source.html#l02949">CAlphaCPU::execute()</a>, <a class="el" href="../../d5/d00/a00140_source.html#l01004">handle_debug_string()</a>, and <a class="el" href="../../d4/d00/a00617_source.html#l00977">CSystem::SingleStep()</a>.</p>
 
 </div>
 </div>
-<a id="aaeedbf686ab4c87440391c19d4a87024" name="aaeedbf686ab4c87440391c19d4a87024"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aaeedbf686ab4c87440391c19d4a87024">&#9670;&#160;</a></span>pchip_error_info</h2>
+<a id="aafe688c41067fa06cca88b7b1281ec2f" name="aafe688c41067fa06cca88b7b1281ec2f"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aafe688c41067fa06cca88b7b1281ec2f">&#9670;&#160;</a></span>theSystem</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -637,19 +719,19 @@ Variables</h2></td></tr>
   <td class="mlabels-left">
       <table class="memname">
         <tr>
-          <td class="memname">const <a class="el" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a> pchip_error_info = <a class="el" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xffffffffffff0000)</td>
+          <td class="memname"><a class="el" href="../../d4/d00/a01817.html">CSystem</a>* theSystem</td>
         </tr>
       </table>
   </td>
   <td class="mlabels-right">
-<span class="mlabels"><span class="mlabel static">static</span></span>  </td>
+<span class="mlabels"><span class="mlabel extern">extern</span></span>  </td>
   </tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00620_source.html#l00897">897</a> of file <a class="el" href="../../dc/d00/a00620_source.html">System_tsunami.cpp</a>.</p>
+<p class="definition">Definition at line <a class="el" href="../../d4/d00/a00617_source.html#l02119">2119</a> of file <a class="el" href="../../d4/d00/a00617_source.html">System.cpp</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="../../dc/d00/a00620_source.html#l00899">CSystem::latch_pchip_error()</a>, and <a class="el" href="../../dc/d00/a00620_source.html#l00930">CSystem::pchip_csr_read()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="../../d1/d00/a00407_source.html#l00911">activate_selection()</a>, <a class="el" href="../../d4/d00/a00617_source.html#l00382">CSystem::CSystem()</a>, <a class="el" href="../../d9/d00/a00398_source.html#l01330">sdl_event_dispatcher::dispatch()</a>, <a class="el" href="../../d1/d00/a00077_source.html#l00816">CConfigurator::initialize()</a>, <a class="el" href="../../d9/d00/a00257_source.html#l01767">CTraceEngine::list_all()</a>, <a class="el" href="../../d7/d00/a00002_source.html#l00305">main()</a>, <a class="el" href="../../d9/d00/a00257_source.html#l00888">CTraceEngine::parse()</a>, <a class="el" href="../../d7/d00/a00002_source.html#l00540">run_emulator()</a>, and <a class="el" href="../../d9/d00/a00257_source.html#l00791">CTraceEngine::run_script()</a>.</p>
 
 </div>
 </div>
@@ -666,7 +748,7 @@ Variables</h2></td></tr>
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
-    <li class="navelem"><a href="../../dir_e8522150b400a43ebfdbd1fed060b8e2.html">system</a></li><li class="navelem"><a href="../../dc/d00/a00620.html">System_tsunami.cpp</a></li>
+    <li class="navelem"><a href="../../dir_e8522150b400a43ebfdbd1fed060b8e2.html">system</a></li><li class="navelem"><a href="../../dc/d00/a00620.html">System.h</a></li>
     <li class="footer">Generated by <a href="https://www.doxygen.org/index.html"><img class="footer" src="../../doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.18.0 </li>
   </ul>
 </div>

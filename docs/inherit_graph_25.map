@@ -1,3 +1,5 @@
 <map id="Graphical Class Hierarchy" name="Graphical Class Hierarchy">
-<area shape="rect" id="Node000000" href="$d4/d00/a01418.html" title="VGA mode information for GUI." alt="" coords="5,5,123,32"/>
+<area shape="rect" id="Node000000" href="$d2/d00/a01433.html" title="Abstract base class for GUI implementations." alt="" coords="5,5,79,32"/>
+<area shape="rect" id="Node000001" href="$d9/d00/a01469.html" title="GUI implementation using SDL3." alt="" coords="127,5,224,32"/>
+<area shape="poly" id="edge1_Node000000_Node000001" title=" " alt="" coords="94,16,129,18,123,19,94,21"/>
 </map>

@@ -1,18 +1,11 @@
-<map id="io/Serial.h" name="io/Serial.h">
-<area shape="rect" id="Node000001" title="Contains the definitions for the emulated Serial Port devices." alt="" coords="332,5,411,32"/>
-<area shape="rect" id="Node000002" href="$d6/d00/a00287.html" title="Contains definitions for the base class for devices that connect to the chipset." alt="" coords="66,80,239,107"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="331,34,206,77,204,72,335,31"/>
-<area shape="rect" id="Node000004" title=" " alt="" coords="150,229,203,256"/>
-<area shape="poly" id="edge7_Node000001_Node000004" title=" " alt="" coords="355,31,329,55,304,82,288,108,279,132,270,156,253,183,233,204,210,223,207,218,229,200,249,180,266,153,274,130,283,106,300,78,325,51,351,34"/>
-<area shape="rect" id="Node000006" href="$df/d00/a00509.html" title="Contains TCP/IP declarations used by the serial port emulator and lock&#45;step code." alt="" coords="314,80,428,107"/>
-<area shape="poly" id="edge5_Node000001_Node000006" title=" " alt="" coords="373,30,374,66,369,63,370,35"/>
-<area shape="rect" id="Node000007" title=" " alt="" coords="453,80,513,107"/>
-<area shape="poly" id="edge6_Node000001_Node000007" title=" " alt="" coords="391,30,454,71,448,71,390,35"/>
-<area shape="rect" id="Node000008" title=" " alt="" coords="537,80,594,107"/>
-<area shape="poly" id="edge8_Node000001_Node000008" title=" " alt="" coords="405,30,525,75,520,77,405,35"/>
+<map id="io/Port80.h" name="io/Port80.h">
+<area shape="rect" id="Node000001" title="Contains the definitions for the emulated Port 80 device." alt="" coords="98,5,183,32"/>
+<area shape="rect" id="Node000002" href="$d6/d00/a00293.html" title="Contains definitions for the base class for devices that connect to the chipset." alt="" coords="54,80,227,107"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="141,30,143,65,138,64,140,35"/>
 <area shape="rect" id="Node000003" href="$da/d00/a00080.html" title="Contains the definitions for the configuration file interpreter." alt="" coords="5,155,148,181"/>
-<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="137,109,102,146,99,142,141,105"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="128,109,100,145,96,141,131,105"/>
 <area shape="rect" id="Node000005" title=" " alt="" coords="172,155,240,181"/>
-<area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="163,105,190,142,185,142,161,110"/>
-<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="95,179,149,219,144,221,93,184"/>
+<area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="153,105,187,143,182,143,151,110"/>
+<area shape="rect" id="Node000004" title=" " alt="" coords="50,229,103,256"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="78,180,79,214,74,213,75,184"/>
 </map>

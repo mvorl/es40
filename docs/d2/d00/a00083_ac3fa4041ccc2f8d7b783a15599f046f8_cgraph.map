@@ -1,7 +1,7 @@
 <map id="edit_gui_sdl_mouse" name="edit_gui_sdl_mouse">
 <area shape="rect" id="Node000001" title=" " alt="" coords="5,199,142,225"/>
 <area shape="poly" id="edge1_Node000001_Node000001" title=" " alt="" coords="42,199,37,190,41,180,53,174,74,172,95,175,108,182,103,184,93,180,73,177,55,179,45,184,42,189,47,198"/>
-<area shape="rect" id="Node000002" href="$df/d00/a00874.html#a36498889497191fbc49ebf533c0d3d36" title=" " alt="" coords="190,57,318,100"/>
+<area shape="rect" id="Node000002" href="$d3/d00/a00869.html#a36498889497191fbc49ebf533c0d3d36" title=" " alt="" coords="190,57,318,100"/>
 <area shape="poly" id="edge2_Node000001_Node000002" title=" " alt="" coords="86,197,130,156,188,110,197,106,193,110,191,114,134,160,91,200"/>
 <area shape="rect" id="Node000003" href="$d2/d00/a00083.html#a895c27ab9942c1ca55e92a2fb4771851" title="Display a form of &#39;num_entries&#39; form &#39;entry&#39;s in a centered window with a &#39;title&#39;." alt="" coords="211,148,296,175"/>
 <area shape="poly" id="edge4_Node000001_Node000003" title=" " alt="" coords="123,196,198,175,194,179,125,200"/>

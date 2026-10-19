@@ -1,0 +1,20 @@
+<map id="io/Serial.h" name="io/Serial.h">
+<area shape="rect" id="Node000001" title="Contains the definitions for the emulated Serial Port devices." alt="" coords="388,5,467,32"/>
+<area shape="rect" id="Node000002" href="$d6/d00/a00293.html" title="Contains definitions for the base class for devices that connect to the chipset." alt="" coords="66,80,239,107"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="385,32,216,78,215,73,389,29"/>
+<area shape="rect" id="Node000004" title=" " alt="" coords="150,229,203,256"/>
+<area shape="poly" id="edge8_Node000001_Node000004" title=" " alt="" coords="385,33,345,53,304,82,286,106,277,130,270,155,253,183,233,204,210,223,207,218,229,200,249,180,265,153,272,128,281,104,300,78,342,48,389,30"/>
+<area shape="rect" id="Node000006" href="$dc/d00/a00515.html" title="Contains TCP/IP declarations used by the serial port emulator and lock&#45;step code." alt="" coords="314,80,428,107"/>
+<area shape="poly" id="edge5_Node000001_Node000006" title=" " alt="" coords="420,31,392,70,388,66,415,34"/>
+<area shape="rect" id="Node000007" title=" " alt="" coords="453,80,513,107"/>
+<area shape="poly" id="edge6_Node000001_Node000007" title=" " alt="" coords="438,30,467,68,462,67,436,35"/>
+<area shape="rect" id="Node000008" title=" " alt="" coords="537,80,594,107"/>
+<area shape="poly" id="edge7_Node000001_Node000008" title=" " alt="" coords="452,30,531,72,525,73,451,35"/>
+<area shape="rect" id="Node000009" title=" " alt="" coords="618,80,676,107"/>
+<area shape="poly" id="edge9_Node000001_Node000009" title=" " alt="" coords="466,30,607,77,601,78,465,35"/>
+<area shape="rect" id="Node000003" href="$da/d00/a00080.html" title="Contains the definitions for the configuration file interpreter." alt="" coords="5,155,148,181"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="137,109,102,146,99,142,141,105"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="172,155,240,181"/>
+<area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="163,105,190,142,185,142,161,110"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="95,179,149,219,144,221,93,184"/>
+</map>

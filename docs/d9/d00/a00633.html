@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.18.0"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ES40: Bug List</title>
+<title>ES40: Ev68HWLoad Namespace Reference</title>
 <link href="../../tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="../../dynsections.js"></script>
 <script type="text/javascript" src="../../codefolding.js"></script>
@@ -26,7 +26,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">ES40<span id="projectnumber">&#160;0.17+</span>
+   <div id="projectname">ES40<span id="projectnumber">&#160;0.92.2</span>
    </div>
   </td>
  </tr>
@@ -108,34 +108,79 @@ document.addEventListener('DOMContentLoaded',() => { initNavTree('d9/d00/a00633.
 </div>
 </div>
 
-<div><div class="header">
-  <div class="headertitle"><div class="title">Bug List </div></div>
+<div class="header">
+  <div class="headertitle"><div class="title">Ev68HWLoad Namespace Reference</div></div>
 </div><!--header-->
 <div class="contents">
-<div class="textblock"><dl class="reflist">
-<dt>Global <a class="el" href="../../df/d00/a00874.html#a8578e9f96703a5ee2af39ed8a05f3592">CConfigurator::CConfigurator</a>  (class <a class="el" href="../../df/d00/a00874.html">CConfigurator</a> *parent, char *name, char *value, char *text, size_t textlen)</dt>
-<dd><a class="anchor" id="_bug000001"></a>This needs to be more robust! As it is now, this code was more or less "hacked together" in a few minutes. Also, more comments should be provided to make it more readable.  </dd>
-<dt>Global <a class="el" href="../../df/d00/a00874.html#a74a22766d8493315ae08c871bb6aeac8">CConfigurator::~CConfigurator</a>  (void)</dt>
-<dd><a class="anchor" id="_bug000002"></a>This does nothing now; it should:<ul>
-<li>if we are a top-level component (System or GUI) delete the component (which will delete the components children).</li>
-<li>delete our children.</li>
-<li>free memory we allocated for values.</li>
-</ul>
-</dd>
-<dt>File <a class="el" href="../../d7/d00/a00182.html">cpu_defs.h</a>  </dt>
-<dd><a class="anchor" id="_bug000003"></a>Fix unaligned access traps.  </dd>
-<dt>Class <a class="el" href="../../d5/d00/a01738.html">CSym53C810</a>  </dt>
-<dd><a class="anchor" id="_bug000004"></a>Exception below ASTDEL during OpenVMS boot when booting from SCSI. </dd>
-<dt>Class <a class="el" href="../../d9/d00/a01754.html">CSym53C895</a>  </dt>
-<dd><a class="anchor" id="_bug000005"></a>PROCGONE bugcheck during OpenVMS boot, probably because proper option ROM is missing.</dd>
-</dl>
-</div></div><!-- contents -->
-</div><!-- PageDoc -->
+<table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 id="header-func-members" class="groupheader"><a id="func-members" name="func-members"></a>
+Functions</h2></td></tr>
+<tr class="memitem:a6ef575390ccf121a4fc439aeb84c9443" id="r_a6ef575390ccf121a4fc439aeb84c9443"><td class="memItemLeft">constexpr <a class="el" href="../../d1/d00/a00945.html">AlphaHWLoadDescriptor</a>&#160;</td><td class="memItemRight"><a class="el" href="#a6ef575390ccf121a4fc439aeb84c9443">decode</a> (std::uint32_t instruction)</td></tr>
+</table>
+<a name="doc-func-members" id="doc-func-members"></a><h2 id="header-doc-func-members" class="groupheader">Function Documentation</h2>
+<a id="a6ef575390ccf121a4fc439aeb84c9443" name="a6ef575390ccf121a4fc439aeb84c9443"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a6ef575390ccf121a4fc439aeb84c9443">&#9670;&#160;</a></span>decode()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname"><a class="el" href="../../d1/d00/a00945.html">AlphaHWLoadDescriptor</a> Ev68HWLoad::decode </td>
+          <td>(</td>
+          <td class="paramtype">std::uint32_t</td>          <td class="paramname"><span class="paramname"><em>instruction</em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel constexpr">constexpr</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../dc/d00/a00218_source.html#l00034">34</a> of file <a class="el" href="../../dc/d00/a00218_source.html">Ev68HWLoad.h</a>.</p>
+
+<p class="reference">References <a class="el" href="../../d6/d00/a00158_source.html#l00043">AlphaHWLoadDescriptor::address</a>, <a class="el" href="../../d6/d00/a00158_source.html#l00047">AlphaHWLoadDescriptor::alternate</a>, <a class="el" href="../../d6/d00/a00158_source.html#l00050">AlphaHWLoadDescriptor::compilable</a>, <a class="el" href="../../dc/d00/a00218_source.html#l00034">decode()</a>, <a class="el" href="../../d6/d00/a00158_source.html#l00051">AlphaHWLoadDescriptor::discard_safe</a>, <a class="el" href="../../d6/d00/a00158_source.html#l00045">AlphaHWLoadDescriptor::displacement</a>, <a class="el" href="../../d6/d00/a00158_source.html#l00049">AlphaHWLoadDescriptor::locked</a>, <a class="el" href="../../d6/d00/a00158_source.html#l00035">Physical</a>, <a class="el" href="../../d6/d00/a00158_source.html#l00044">AlphaHWLoadDescriptor::size_bits</a>, <a class="el" href="../../d6/d00/a00158_source.html#l00036">Virtual</a>, <a class="el" href="../../d6/d00/a00158_source.html#l00046">AlphaHWLoadDescriptor::vpte</a>, and <a class="el" href="../../d6/d00/a00158_source.html#l00048">AlphaHWLoadDescriptor::write_check</a>.</p>
+
+<p class="reference">Referenced by <a class="el" href="../../dc/d00/a00218_source.html#l00034">decode()</a>.</p>
+<div class="dynheader">
+Here is the call graph for this function:</div>
+<div class="dyncontent">
+<div class="center"><img src="../../d9/d00/a00633_a6ef575390ccf121a4fc439aeb84c9443_cgraph.png" border="0" usemap="#ad9/d00/a00633_a6ef575390ccf121a4fc439aeb84c9443_cgraph" loading="lazy" alt=""/></div>
+<map name="ad9/d00/a00633_a6ef575390ccf121a4fc439aeb84c9443_cgraph" id="ad9/d00/a00633_a6ef575390ccf121a4fc439aeb84c9443_cgraph">
+<area shape="rect" title=" " alt="" coords="5,29,158,56"/>
+<area shape="poly" title=" " alt="" coords="55,28,50,21,54,11,64,5,82,3,100,5,111,14,106,14,98,10,81,8,66,10,58,14,56,20,60,29"/>
+</map>
+</div>
+<div class="dynheader">
+Here is the caller graph for this function:</div>
+<div class="dyncontent">
+<div class="center"><img src="../../d9/d00/a00633_a6ef575390ccf121a4fc439aeb84c9443_icgraph.png" border="0" usemap="#ad9/d00/a00633_a6ef575390ccf121a4fc439aeb84c9443_icgraph" loading="lazy" alt=""/></div>
+<map name="ad9/d00/a00633_a6ef575390ccf121a4fc439aeb84c9443_icgraph" id="ad9/d00/a00633_a6ef575390ccf121a4fc439aeb84c9443_icgraph">
+<area shape="rect" title=" " alt="" coords="5,29,158,56"/>
+<area shape="poly" title=" " alt="" coords="106,14,98,10,81,8,66,10,58,14,56,20,60,29,55,28,50,21,54,11,64,5,82,3,100,5,111,14"/>
+</map>
+</div>
+
+</div>
+</div>
+</div><!-- contents -->
 </div><!-- doc-content -->
+<div id="page-nav" class="page-nav-panel">
+<div id="page-nav-resize-handle"></div>
+<div id="page-nav-tree">
+<div id="page-nav-contents">
+</div><!-- page-nav-contents -->
+</div><!-- page-nav-tree -->
+</div><!-- page-nav -->
 </div><!-- container -->
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
+    <li class="navelem"><a href="../../d9/d00/a00633.html">Ev68HWLoad</a></li>
     <li class="footer">Generated by <a href="https://www.doxygen.org/index.html"><img class="footer" src="../../doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.18.0 </li>
   </ul>
 </div>

@@ -1,15 +1,19 @@
 var a00305 =
 [
-    [ "CCirrus", "db/d00/a01126.html", "db/d00/a01126" ],
-    [ "CCirrus::SCirrus_state", "d0/d00/a01130.html", "d0/d00/a01130" ],
-    [ "CCirrus::SCirrus_state::SCirrus_attr", "dd/d00/a01134.html", "dd/d00/a01134" ],
-    [ "CCirrus::SCirrus_state::SCirrus_attr::SCirrus_mode", "d0/d00/a01138.html", "d0/d00/a01138" ],
-    [ "CCirrus::SCirrus_state::SCirrus_misc", "d3/d00/a01142.html", "d3/d00/a01142" ],
-    [ "CCirrus::SCirrus_state::SCirrus_seq", "de/d00/a01146.html", "de/d00/a01146" ],
-    [ "CCirrus::SCirrus_state::SCirus_pel", "d2/d00/a01150.html", "d2/d00/a01150" ],
-    [ "CCirrus::SCirrus_state::SCirus_pel::SCirrus_peldata", "d5/d00/a01154.html", "d5/d00/a01154" ],
-    [ "CCirrus::SCirrus_state::SCirrus_gfx", "df/d00/a01158.html", "df/d00/a01158" ],
-    [ "CCirrus::SCirrus_state::SCirrus_crtc", "d4/d00/a01162.html", "d4/d00/a01162" ],
-    [ "CRTC_MAX", "d3/d00/a00305.html#a9ae3b205bdd7735006ad1ba5127471d5", null ],
-    [ "VIDEO_RAM_SIZE", "d3/d00/a00305.html#a9f9112adf1ebe5eb60e5a73f7f2a954a", null ]
+    [ "endian_16", "d3/d00/a00305.html#a056a9c9215d6af557101d08125b6680b", null ],
+    [ "endian_32", "d3/d00/a00305.html#a9dbf60e4a321b6a070aa6be105d6a7b4", null ],
+    [ "endian_64", "d3/d00/a00305.html#a29575aa850cc34cb06a727c9177aa31c", null ],
+    [ "endian_8", "d3/d00/a00305.html#a72fb55d3c7b08fe2d8779c59b33cc880", null ],
+    [ "ES40_LITTLE_ENDIAN", "d3/d00/a00305.html#aa8bba16650486a9abc2767345a902df5", null ],
+    [ "swap_16", "d3/d00/a00305.html#ab2242ecb8ffd8b5fb6a1647a5b1c9f2a", null ],
+    [ "swap_32", "d3/d00/a00305.html#a27db9edfbbf64257d43d610d109cf3b9", null ],
+    [ "swap_64", "d3/d00/a00305.html#a95b2ddeb37caec6b711909814343cc9b", null ],
+    [ "swap_8", "d3/d00/a00305.html#acdddca9641fa0f7b677049e76411ae70", null ],
+    [ "endian_bits", "d3/d00/a00305.html#afb78eaf762a0da6c2255bb3429d95e7b", null ],
+    [ "get_be16", "d3/d00/a00305.html#a98fbd186160b3cf0c2ef4726d0f33255", null ],
+    [ "get_be32", "d3/d00/a00305.html#a2ca864743a05158f3d2f17ee582cb5c7", null ],
+    [ "get_be64", "d3/d00/a00305.html#adb50a751c412a7ab386483a20d577ba8", null ],
+    [ "put_be16", "d3/d00/a00305.html#a3fcae6fa902cd866f100e222c59ee90d", null ],
+    [ "put_be32", "d3/d00/a00305.html#a9b62b5c7f2bb5966cdcc05b7ef765295", null ],
+    [ "put_be64", "d3/d00/a00305.html#a0971e9e397ba42c7b56920165cc34e6f", null ]
 ];

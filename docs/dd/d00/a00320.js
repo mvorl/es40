@@ -1,20 +1,9 @@
 var a00320 =
 [
-    [ "R", "dd/d00/a00320.html#aa9732a31f97de6fe2211561a3847e7fc", null ],
-    [ "fixed_integer", "dd/d00/a00320.html#a4ccf653e66cad67cfd63b75e421d5665", null ],
-    [ "get32", "dd/d00/a00320.html#aa61b133450b7d0ed4a617c12d868fa90", null ],
-    [ "get64", "dd/d00/a00320.html#af5f173750d09164b5a74a3284d56813f", null ],
-    [ "getbool", "dd/d00/a00320.html#af2924410fa11dba14e75e6c4ef0f18f0", null ],
-    [ "host_tag", "dd/d00/a00320.html#ac79055c7fac45906e3f34e4ac5d60944", null ],
-    [ "put32", "dd/d00/a00320.html#a7a321446d48b99c110183b1740a9fd91", null ],
-    [ "put64", "dd/d00/a00320.html#a3be482507e43587a31de2891aacaa1b7", null ],
-    [ "require", "dd/d00/a00320.html#a20ed6a4a33f4470e0889e97889e34f0e", null ],
-    [ "signed32", "dd/d00/a00320.html#ad456e610ef36121394b6c38424538dfe", null ],
-    [ "signed64", "dd/d00/a00320.html#a870d72c69ed817604bb107e572409fc3", null ],
-    [ "swap32", "dd/d00/a00320.html#a2f32611fcb5d9160c4bd4b6f2f1c2fa9", null ],
-    [ "sx", "dd/d00/a00320.html#af9b6fae98cfd5e9df4a1147e9fc816f1", null ],
-    [ "valid_width", "dd/d00/a00320.html#af7e5766d72e74ee41dbec906425dc60b", null ],
-    [ "vertex_bits", "dd/d00/a00320.html#a9c5be4ade326ee108e60b5d875235876", null ],
-    [ "vertex_float", "dd/d00/a00320.html#a8c37bec3c3064485f6ec0b5f5df1766d", null ],
-    [ "width_mask", "dd/d00/a00320.html#a655eab783240720a34d14cf1025dcb45", null ]
+    [ "IBM8514_LINE_LENGTH", "dd/d00/a00320.html#abdf7cbc985e7785854cf598f27d58a3a", null ],
+    [ "coord12", "dd/d00/a00320.html#a99d2abef5aad8074da1924c2621eb0f9", null ],
+    [ "pixtrans_lane_u32", "dd/d00/a00320.html#a859d0d29271a523afc6ac7aba130ccfc", null ],
+    [ "pixtrans_set_endian", "dd/d00/a00320.html#a01ab3a7344cea77f9fee8f40121a7f39", null ],
+    [ "wait_xfer_bytes", "dd/d00/a00320.html#a537fc8af3f71eec680aac55443a4620c", null ],
+    [ "IBM8514A", "dd/d00/a00320.html#a06c4da2d02c895d70726a95758a960b9", null ]
 ];

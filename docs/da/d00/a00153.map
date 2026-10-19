@@ -1,14 +1,14 @@
 <map id="CPU/AlphaCPU_vaxfloat.cpp" name="CPU/AlphaCPU_vaxfloat.cpp">
 <area shape="rect" id="Node000001" title="Contains VAX floating point code for the Alpha CPU." alt="" coords="2599,5,2794,32"/>
-<area shape="rect" id="Node000002" href="$d5/d00/a00518.html" title="Standard includes." alt="" coords="2660,80,2733,107"/>
+<area shape="rect" id="Node000002" href="$d9/d00/a00524.html" title="Standard includes." alt="" coords="2660,80,2733,107"/>
 <area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="2698,31,2699,66,2695,63,2695,35"/>
 <area shape="rect" id="Node000033" href="$d7/d00/a00143.html" title="Contains the definitions for the emulated DecChip 21264CB EV68 Alpha processor." alt="" coords="1040,155,1134,181"/>
 <area shape="poly" id="edge49_Node000001_Node000033" title=" " alt="" coords="2598,31,1151,164,1150,158,2600,26"/>
-<area shape="rect" id="Node000055" href="$db/d00/a00179.html" title="Contains debugging macros used by AlphaCPU.cpp." alt="" coords="2757,80,2852,107"/>
-<area shape="poly" id="edge85_Node000001_Node000055" title=" " alt="" coords="2716,30,2776,71,2770,70,2715,35"/>
+<area shape="rect" id="Node000057" href="$d7/d00/a00182.html" title="Contains debugging macros used by AlphaCPU.cpp." alt="" coords="2757,80,2852,107"/>
+<area shape="poly" id="edge85_Node000001_Node000057" title=" " alt="" coords="2716,30,2776,71,2770,70,2715,35"/>
 <area shape="rect" id="Node000003" href="$d7/d00/a00131.html" title=" " alt="" coords="2958,155,3067,181"/>
 <area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="2733,101,2745,104,2945,152,2940,151,2744,109,2733,107"/>
-<area shape="rect" id="Node000004" href="$d9/d00/a00257.html" title="Contains the datatype definitions for use with Microsoft Visual C++ and Linux." alt="" coords="2463,379,2552,405"/>
+<area shape="rect" id="Node000004" href="$df/d00/a00263.html" title="Contains the datatype definitions for use with Microsoft Visual C++ and Linux." alt="" coords="2463,379,2552,405"/>
 <area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="2711,105,2730,126,2744,154,2762,204,2772,247,2772,268,2768,288,2759,310,2744,332,2732,343,2716,352,2671,367,2568,386,2567,381,2669,362,2713,347,2729,338,2740,329,2754,307,2763,287,2767,267,2767,248,2757,206,2740,156,2725,129,2709,109"/>
 <area shape="rect" id="Node000005" title=" " alt="" coords="2238,379,2305,405"/>
 <area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="2703,105,2718,148,2729,208,2731,241,2727,274,2718,305,2700,333,2680,343,2644,353,2540,369,2320,390,2320,385,2540,364,2643,348,2678,338,2696,329,2713,303,2722,273,2725,241,2724,209,2713,149,2700,109"/>
@@ -24,9 +24,9 @@
 <area shape="poly" id="edge31_Node000002_Node000025" title=" " alt="" coords="2657,94,2512,97,2285,103,2016,121,1877,137,1741,157,1674,172,1608,190,1498,226,1496,221,1606,185,1673,167,1740,152,1876,131,2015,116,2285,97,2512,91,2662,94"/>
 <area shape="rect" id="Node000027" href="$d4/d00/a00035.html" title=" " alt="" coords="1799,155,1914,181"/>
 <area shape="poly" id="edge37_Node000002_Node000027" title=" " alt="" coords="2657,98,1929,163,1929,158,2663,97"/>
-<area shape="rect" id="Node000029" href="$db/d00/a00296.html" title="Contains macro&#39;s and prototypes for debugging." alt="" coords="3091,155,3193,181"/>
+<area shape="rect" id="Node000029" href="$d0/d00/a00302.html" title="Contains macro&#39;s and prototypes for debugging." alt="" coords="3091,155,3193,181"/>
 <area shape="poly" id="edge45_Node000002_Node000029" title=" " alt="" coords="2733,102,2745,104,2836,120,2909,129,3078,154,3073,154,2908,135,2835,125,2744,109,2733,107"/>
-<area shape="rect" id="Node000031" href="$df/d00/a00299.html" title="Contains byte&#45;order conversion helpers." alt="" coords="3217,155,3323,181"/>
+<area shape="rect" id="Node000031" href="$d3/d00/a00305.html" title="Contains byte&#45;order conversion helpers." alt="" coords="3217,155,3323,181"/>
 <area shape="poly" id="edge47_Node000002_Node000031" title=" " alt="" coords="2733,102,2745,104,2871,122,2971,130,3073,137,3205,154,3199,154,3072,143,2971,136,2871,128,2744,109,2733,107"/>
 <area shape="rect" id="Node000007" title=" " alt="" coords="2811,229,2889,256"/>
 <area shape="poly" id="edge6_Node000006_Node000007" title=" " alt="" coords="2871,180,2860,217,2857,212,2867,184"/>
@@ -88,13 +88,13 @@
 <area shape="poly" id="edge50_Node000033_Node000016" title=" " alt="" coords="1135,167,1212,171,1311,181,1420,199,1528,227,1598,258,1656,296,1651,295,1595,263,1526,232,1419,204,1310,186,1211,177,1135,173"/>
 <area shape="rect" id="Node000034" href="$d6/d00/a00026.html" title=" " alt="" coords="1201,229,1360,256"/>
 <area shape="poly" id="edge52_Node000033_Node000034" title=" " alt="" coords="1121,179,1235,223,1230,223,1121,185"/>
-<area shape="rect" id="Node000036" href="$d6/d00/a00233.html" title=" " alt="" coords="509,229,604,256"/>
+<area shape="rect" id="Node000036" href="$d0/d00/a00239.html" title=" " alt="" coords="509,229,604,256"/>
 <area shape="poly" id="edge57_Node000033_Node000036" title=" " alt="" coords="1037,177,620,235,619,230,1042,175"/>
-<area shape="rect" id="Node000038" href="$d6/d00/a00287.html" title="Contains definitions for the base class for devices that connect to the chipset." alt="" coords="887,304,1061,331"/>
+<area shape="rect" id="Node000038" href="$d6/d00/a00293.html" title="Contains definitions for the base class for devices that connect to the chipset." alt="" coords="887,304,1061,331"/>
 <area shape="poly" id="edge60_Node000033_Node000038" title=" " alt="" coords="1084,180,1065,218,1039,258,1002,296,999,291,1035,254,1061,215,1079,183"/>
-<area shape="rect" id="Node000040" href="$d7/d00/a00614.html" title="Contains the definitions for the emulated Typhoon Chipset devices." alt="" coords="900,229,1024,256"/>
+<area shape="rect" id="Node000040" href="$dc/d00/a00620.html" title="Contains the definitions for the emulated Typhoon Chipset devices." alt="" coords="900,229,1024,256"/>
 <area shape="poly" id="edge64_Node000033_Node000040" title=" " alt="" coords="1068,181,998,224,996,219,1063,183"/>
-<area shape="rect" id="Node000045" href="$d7/d00/a00182.html" title="Contains some macro definitions and some inline functions for the Alpha CPU." alt="" coords="790,229,875,256"/>
+<area shape="rect" id="Node000045" href="$de/d00/a00185.html" title="Contains some macro definitions and some inline functions for the Alpha CPU." alt="" coords="790,229,875,256"/>
 <area shape="poly" id="edge79_Node000033_Node000045" title=" " alt="" coords="1040,183,891,228,889,223,1045,181"/>
 <area shape="rect" id="Node000046" href="$d9/d00/a00146.html" title=" " alt="" coords="123,229,254,256"/>
 <area shape="poly" id="edge80_Node000033_Node000046" title=" " alt="" coords="1039,176,269,238,269,232,1040,171"/>
@@ -115,9 +115,9 @@
 <area shape="poly" id="edge72_Node000040_Node000016" title=" " alt="" coords="1025,245,1331,268,1503,284,1640,304,1635,304,1502,289,1331,273,1025,251"/>
 <area shape="poly" id="edge74_Node000040_Node000019" title=" " alt="" coords="943,256,910,280,877,306,848,337,823,368,820,364,844,334,873,302,907,275,938,258"/>
 <area shape="poly" id="edge65_Node000040_Node000038" title=" " alt="" coords="966,254,972,290,967,287,962,259"/>
-<area shape="rect" id="Node000041" href="$d7/d00/a00254.html" title="Contains the definitions for the CPU tracing engine." alt="" coords="1085,304,1223,331"/>
+<area shape="rect" id="Node000041" href="$dd/d00/a00260.html" title="Contains the definitions for the CPU tracing engine." alt="" coords="1085,304,1223,331"/>
 <area shape="poly" id="edge66_Node000040_Node000041" title=" " alt="" coords="996,254,1109,298,1104,298,995,259"/>
-<area shape="rect" id="Node000042" href="$d4/d00/a00608.html" title=" " alt="" coords="685,304,762,331"/>
+<area shape="rect" id="Node000042" href="$d7/d00/a00614.html" title=" " alt="" coords="685,304,762,331"/>
 <area shape="poly" id="edge68_Node000040_Node000042" title=" " alt="" coords="923,256,778,302,776,297,918,257"/>
 <area shape="rect" id="Node000043" title=" " alt="" coords="556,379,613,405"/>
 <area shape="poly" id="edge78_Node000040_Node000043" title=" " alt="" coords="897,255,888,259,808,263,704,265,652,269,605,276,567,288,541,306,535,320,538,335,548,351,561,368,556,367,543,354,533,337,530,319,537,302,565,283,604,271,651,263,703,260,807,257,887,253,902,254"/>
@@ -128,10 +128,10 @@
 <area shape="poly" id="edge69_Node000042_Node000035" title=" " alt="" coords="724,329,721,365,717,361,720,333"/>
 <area shape="poly" id="edge70_Node000042_Node000043" title=" " alt="" coords="702,330,623,374,622,369,697,332"/>
 <area shape="poly" id="edge81_Node000046_Node000035" title=" " alt="" coords="121,256,74,268,32,284,18,294,10,304,9,316,17,329,30,337,53,344,121,356,211,363,312,368,507,373,625,376,673,384,668,384,624,381,507,378,312,373,210,369,120,361,51,349,28,342,13,333,4,317,5,302,14,290,30,279,73,263,124,252"/>
-<area shape="rect" id="Node000047" href="$d1/d00/a00230.html" title=" " alt="" coords="145,304,232,331"/>
+<area shape="rect" id="Node000047" href="$d7/d00/a00236.html" title=" " alt="" coords="145,304,232,331"/>
 <area shape="poly" id="edge82_Node000046_Node000047" title=" " alt="" coords="190,254,191,289,186,288,188,259"/>
-<area shape="rect" id="Node000049" href="$dd/d00/a00221.html" title=" " alt="" coords="255,304,341,331"/>
+<area shape="rect" id="Node000049" href="$d9/d00/a00227.html" title=" " alt="" coords="255,304,341,331"/>
 <area shape="poly" id="edge83_Node000046_Node000049" title=" " alt="" coords="208,254,269,295,264,296,207,259"/>
-<area shape="rect" id="Node000051" href="$d9/d00/a00227.html" title=" " alt="" coords="27,304,121,331"/>
+<area shape="rect" id="Node000051" href="$d6/d00/a00233.html" title=" " alt="" coords="27,304,121,331"/>
 <area shape="poly" id="edge84_Node000046_Node000051" title=" " alt="" coords="167,259,109,297,105,293,170,254"/>
 </map>

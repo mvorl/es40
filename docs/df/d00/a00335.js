@@ -1,6 +1,6 @@
 var a00335 =
 [
-    [ "CRadeon7500", "d7/d00/a01246.html", "d7/d00/a01246" ],
-    [ "CRadeon7500::PCIConfig", "d4/d00/a01250.html", "d4/d00/a01250" ],
-    [ "CRadeon7500::OptionROM", "dc/d00/a01254.html", "dc/d00/a01254" ]
+    [ "CPowerStorm3xx", "dc/d00/a01237.html", "dc/d00/a01237" ],
+    [ "CPowerStorm3xx::PCIConfig", "d3/d00/a01241.html", "d3/d00/a01241" ],
+    [ "CPowerStorm3xx::OptionROM", "d1/d00/a01245.html", "d1/d00/a01245" ]
 ];

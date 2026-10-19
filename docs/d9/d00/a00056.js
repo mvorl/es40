@@ -1,9 +1,9 @@
 var a00056 =
 [
-    [ "CAliM1543C_ide", "de/d00/a00798.html", "de/d00/a00798" ],
-    [ "CAliM1543C_ide::SAliM1543C_ideState", "d5/d00/a00802.html", "d5/d00/a00802" ],
-    [ "CAliM1543C_ide::SAliM1543C_ideState::SDriveState", "d0/d00/a00806.html", "d0/d00/a00806" ],
-    [ "CAliM1543C_ide::SAliM1543C_ideState::SControllerState", "d6/d00/a00822.html", "d6/d00/a00822" ],
+    [ "CAliM1543C_ide", "d4/d00/a00793.html", "d4/d00/a00793" ],
+    [ "CAliM1543C_ide::SAliM1543C_ideState", "da/d00/a00797.html", "da/d00/a00797" ],
+    [ "CAliM1543C_ide::SAliM1543C_ideState::SDriveState", "d7/d00/a00801.html", "d7/d00/a00801" ],
+    [ "CAliM1543C_ide::SAliM1543C_ideState::SControllerState", "dc/d00/a00817.html", "dc/d00/a00817" ],
     [ "BAR_BUSMASTER", "d9/d00/a00056.html#a24661b183bc9975005f4c6b6b6aae94f", null ],
     [ "BAR_PRI_COMMAND", "d9/d00/a00056.html#a9f3529498e7468191539f1e117bd130d", null ],
     [ "BAR_PRI_CONTROL", "d9/d00/a00056.html#ae5fbeb486ea17fc3e0edd0ca268b5f92", null ],

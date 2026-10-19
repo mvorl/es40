@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.18.0"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ES40: network/NetworkPcap.h Source File</title>
+<title>ES40: network/NetworkBackend.h Source File</title>
 <link href="../../tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="../../dynsections.js"></script>
 <script type="text/javascript" src="../../codefolding.js"></script>
@@ -26,7 +26,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">ES40<span id="projectnumber">&#160;0.17+</span>
+   <div id="projectname">ES40<span id="projectnumber">&#160;0.92.2</span>
    </div>
   </td>
  </tr>
@@ -109,151 +109,86 @@ document.addEventListener('DOMContentLoaded',() => { initNavTree('d0/d00/a00470_
 </div>
 
 <div class="header">
-  <div class="headertitle"><div class="title">NetworkPcap.h</div></div>
+  <div class="headertitle"><div class="title">NetworkBackend.h</div></div>
 </div><!--header-->
 <div class="contents">
 <a href="../../d0/d00/a00470.html">Go to the documentation of this file.</a><div class="fragment"><div class="line"><a id="l00001" name="l00001"></a><span class="lineno">    1</span><span class="comment">/* ES40 Emulator.</span></div>
-<div class="line"><a id="l00002" name="l00002"></a><span class="lineno">    2</span><span class="comment"> * Copyright (C) 2026 by Jan-Benedict Glaw</span></div>
-<div class="line"><a id="l00003" name="l00003"></a><span class="lineno">    3</span><span class="comment"> *</span></div>
-<div class="line"><a id="l00004" name="l00004"></a><span class="lineno">    4</span><span class="comment"> * WWW    : https://github.com/ES40-Emu/es40</span></div>
+<div class="line"><a id="l00002" name="l00002"></a><span class="lineno">    2</span><span class="comment"> * Copyright (C) 2007-2008 by the ES40 Emulator Project</span></div>
+<div class="line"><a id="l00003" name="l00003"></a><span class="lineno">    3</span><span class="comment"> * Copyright (C) 2020 Tomáš Glozar</span></div>
+<div class="line"><a id="l00004" name="l00004"></a><span class="lineno">    4</span><span class="comment"> * Copyright (C) 2026 by Jan-Benedict Glaw</span></div>
 <div class="line"><a id="l00005" name="l00005"></a><span class="lineno">    5</span><span class="comment"> *</span></div>
-<div class="line"><a id="l00006" name="l00006"></a><span class="lineno">    6</span><span class="comment"> * This program is free software; you can redistribute it and/or</span></div>
-<div class="line"><a id="l00007" name="l00007"></a><span class="lineno">    7</span><span class="comment"> * modify it under the terms of the GNU General Public License</span></div>
-<div class="line"><a id="l00008" name="l00008"></a><span class="lineno">    8</span><span class="comment"> * as published by the Free Software Foundation; either version 2</span></div>
-<div class="line"><a id="l00009" name="l00009"></a><span class="lineno">    9</span><span class="comment"> * of the License, or (at your option) any later version.</span></div>
-<div class="line"><a id="l00010" name="l00010"></a><span class="lineno">   10</span><span class="comment"> *</span></div>
-<div class="line"><a id="l00011" name="l00011"></a><span class="lineno">   11</span><span class="comment"> * This program is distributed in the hope that it will be useful,</span></div>
-<div class="line"><a id="l00012" name="l00012"></a><span class="lineno">   12</span><span class="comment"> * but WITHOUT ANY WARRANTY; without even the implied warranty of</span></div>
-<div class="line"><a id="l00013" name="l00013"></a><span class="lineno">   13</span><span class="comment"> * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the</span></div>
-<div class="line"><a id="l00014" name="l00014"></a><span class="lineno">   14</span><span class="comment"> * GNU General Public License for more details.</span></div>
-<div class="line"><a id="l00015" name="l00015"></a><span class="lineno">   15</span><span class="comment"> *</span></div>
-<div class="line"><a id="l00016" name="l00016"></a><span class="lineno">   16</span><span class="comment"> * You should have received a copy of the GNU General Public License</span></div>
-<div class="line"><a id="l00017" name="l00017"></a><span class="lineno">   17</span><span class="comment"> * along with this program; if not, write to the Free Software</span></div>
-<div class="line"><a id="l00018" name="l00018"></a><span class="lineno">   18</span><span class="comment"> * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.</span></div>
-<div class="line"><a id="l00019" name="l00019"></a><span class="lineno">   19</span><span class="comment"> *</span></div>
-<div class="line"><a id="l00020" name="l00020"></a><span class="lineno">   20</span><span class="comment"> * Although this is not required, the author would appreciate being notified of,</span></div>
-<div class="line"><a id="l00021" name="l00021"></a><span class="lineno">   21</span><span class="comment"> * and receiving any modifications you may make to the source code that might serve</span></div>
-<div class="line"><a id="l00022" name="l00022"></a><span class="lineno">   22</span><span class="comment"> * the general public.</span></div>
-<div class="line"><a id="l00023" name="l00023"></a><span class="lineno">   23</span><span class="comment"> *</span></div>
-<div class="line"><a id="l00024" name="l00024"></a><span class="lineno">   24</span><span class="comment"> */</span></div>
-<div class="line"><a id="l00025" name="l00025"></a><span class="lineno">   25</span><span class="preprocessor">#ifndef INCLUDED_NETWORK_PCAP_H_</span></div>
-<div class="line"><a id="l00026" name="l00026"></a><span class="lineno">   26</span><span class="preprocessor">#define INCLUDED_NETWORK_PCAP_H_</span></div>
-<div class="line"><a id="l00027" name="l00027"></a><span class="lineno">   27</span> </div>
-<div class="line"><a id="l00028" name="l00028"></a><span class="lineno">   28</span><span class="preprocessor">#include &quot;<a class="code" href="../../d2/d00/a00464.html">NetworkBackend.h</a>&quot;</span></div>
-<div class="line"><a id="l00029" name="l00029"></a><span class="lineno">   29</span> </div>
-<div class="line"><a id="l00030" name="l00030"></a><span class="lineno">   30</span><span class="preprocessor">#if defined(WIN32)</span></div>
-<div class="line"><a id="l00031" name="l00031"></a><span class="lineno">   31</span><span class="preprocessor">#define HAVE_REMOTE</span></div>
-<div class="line"><a id="l00032" name="l00032"></a><span class="lineno">   32</span><span class="preprocessor">#include &lt;winsock.h&gt;</span></div>
-<div class="line"><a id="l00033" name="l00033"></a><span class="lineno">   33</span><span class="preprocessor">#else</span></div>
-<div class="line"><a id="l00034" name="l00034"></a><span class="lineno">   34</span><span class="preprocessor">#include &lt;pcap.h&gt;</span></div>
-<div class="line"><a id="l00035" name="l00035"></a><span class="lineno">   35</span><span class="preprocessor">#endif</span></div>
-<div class="line"><a id="l00036" name="l00036"></a><span class="lineno">   36</span> </div>
-<div class="line"><a id="l00037" name="l00037"></a><span class="lineno">   37</span><span class="preprocessor">#if defined(WIN32)</span></div>
-<div class="line"><a id="l00038" name="l00038"></a><span class="lineno">   38</span><span class="keyword">typedef</span> <span class="keywordtype">int</span>          bpf_int32;</div>
-<div class="line"><a id="l00039" name="l00039"></a><span class="lineno">   39</span><span class="keyword">typedef</span> <span class="keywordtype">unsigned</span> <span class="keywordtype">int</span> bpf_u_int32;</div>
-<div class="line"><a id="l00040" name="l00040"></a><span class="lineno">   40</span> </div>
-<div class="line"><a id="l00041" name="l00041"></a><span class="lineno">   41</span><span class="comment">/*</span></div>
-<div class="line"><a id="l00042" name="l00042"></a><span class="lineno">   42</span><span class="comment"> * The instruction data structure.</span></div>
-<div class="line"><a id="l00043" name="l00043"></a><span class="lineno">   43</span><span class="comment"> */</span></div>
-<div class="line"><a id="l00044" name="l00044"></a><span class="lineno">   44</span><span class="keyword">struct </span>bpf_insn {</div>
-<div class="line"><a id="l00045" name="l00045"></a><span class="lineno">   45</span>        <span class="keywordtype">unsigned</span> <span class="keywordtype">short</span> code;</div>
-<div class="line"><a id="l00046" name="l00046"></a><span class="lineno">   46</span>        <span class="keywordtype">unsigned</span> <span class="keywordtype">char</span>  jt;</div>
-<div class="line"><a id="l00047" name="l00047"></a><span class="lineno">   47</span>        <span class="keywordtype">unsigned</span> <span class="keywordtype">char</span>  jf;</div>
-<div class="line"><a id="l00048" name="l00048"></a><span class="lineno">   48</span>        bpf_u_int32    k;</div>
-<div class="line"><a id="l00049" name="l00049"></a><span class="lineno">   49</span>};</div>
-<div class="line"><a id="l00050" name="l00050"></a><span class="lineno">   50</span> </div>
-<div class="line"><a id="l00051" name="l00051"></a><span class="lineno">   51</span><span class="comment">/*</span></div>
-<div class="line"><a id="l00052" name="l00052"></a><span class="lineno">   52</span><span class="comment"> * Structure for &quot;pcap_compile()&quot;, &quot;pcap_setfilter()&quot;, etc..</span></div>
-<div class="line"><a id="l00053" name="l00053"></a><span class="lineno">   53</span><span class="comment"> */</span></div>
-<div class="line"><a id="l00054" name="l00054"></a><span class="lineno">   54</span><span class="keyword">struct </span>bpf_program {</div>
-<div class="line"><a id="l00055" name="l00055"></a><span class="lineno">   55</span>        <span class="keywordtype">unsigned</span> <span class="keywordtype">int</span>     bf_len;</div>
-<div class="line"><a id="l00056" name="l00056"></a><span class="lineno">   56</span>        <span class="keyword">struct </span>bpf_insn* bf_insns;</div>
-<div class="line"><a id="l00057" name="l00057"></a><span class="lineno">   57</span>};</div>
-<div class="line"><a id="l00058" name="l00058"></a><span class="lineno">   58</span> </div>
-<div class="line"><a id="l00059" name="l00059"></a><span class="lineno">   59</span><span class="keyword">typedef</span> <span class="keyword">struct </span>pcap_if pcap_if_t;</div>
-<div class="line"><a id="l00060" name="l00060"></a><span class="lineno">   60</span> </div>
-<div class="line"><a id="l00061" name="l00061"></a><span class="lineno">   61</span><span class="preprocessor">#define PCAP_ERRBUF_SIZE 256</span></div>
-<div class="line"><a id="l00062" name="l00062"></a><span class="lineno">   62</span> </div>
-<div class="line"><a id="l00063" name="l00063"></a><span class="lineno">   63</span><span class="keyword">struct </span>pcap_pkthdr {</div>
-<div class="line"><a id="l00064" name="l00064"></a><span class="lineno">   64</span>        <span class="keyword">struct </span>timeval ts;</div>
-<div class="line"><a id="l00065" name="l00065"></a><span class="lineno">   65</span>        bpf_u_int32    caplen;</div>
-<div class="line"><a id="l00066" name="l00066"></a><span class="lineno">   66</span>        bpf_u_int32    len;</div>
-<div class="line"><a id="l00067" name="l00067"></a><span class="lineno">   67</span>};</div>
-<div class="line"><a id="l00068" name="l00068"></a><span class="lineno">   68</span> </div>
-<div class="line"><a id="l00069" name="l00069"></a><span class="lineno">   69</span><span class="keyword">struct </span>pcap_if {</div>
-<div class="line"><a id="l00070" name="l00070"></a><span class="lineno">   70</span>        <span class="keyword">struct </span>pcap_if* next;</div>
-<div class="line"><a id="l00071" name="l00071"></a><span class="lineno">   71</span>        <span class="keywordtype">char</span>*           name;</div>
-<div class="line"><a id="l00072" name="l00072"></a><span class="lineno">   72</span>        <span class="keywordtype">char</span>*           description;</div>
-<div class="line"><a id="l00073" name="l00073"></a><span class="lineno">   73</span>        <span class="keywordtype">void</span>*           addresses;</div>
-<div class="line"><a id="l00074" name="l00074"></a><span class="lineno">   74</span>        bpf_u_int32     flags;</div>
-<div class="line"><a id="l00075" name="l00075"></a><span class="lineno">   75</span>};</div>
-<div class="line"><a id="l00076" name="l00076"></a><span class="lineno">   76</span> </div>
-<div class="line"><a id="l00077" name="l00077"></a><span class="lineno">   77</span><span class="keyword">struct </span>pcap_send_queue {</div>
-<div class="line"><a id="l00078" name="l00078"></a><span class="lineno">   78</span>        <span class="keywordtype">unsigned</span> <span class="keywordtype">int</span> maxlen; <span class="comment">/* Maximum size of the queue, in bytes. This</span></div>
-<div class="line"><a id="l00079" name="l00079"></a><span class="lineno">   79</span><span class="comment">                                variable contains the size of the buffer field.  */</span></div>
-<div class="line"><a id="l00080" name="l00080"></a><span class="lineno">   80</span>        <span class="keywordtype">unsigned</span> <span class="keywordtype">int</span> len;    <span class="comment">/* Current size of the queue, in bytes.  */</span></div>
-<div class="line"><a id="l00081" name="l00081"></a><span class="lineno">   81</span>        <span class="keywordtype">char</span> *buffer;        <span class="comment">/* Buffer containing the packets to be sent.  */</span></div>
-<div class="line"><a id="l00082" name="l00082"></a><span class="lineno">   82</span>};</div>
-<div class="line"><a id="l00083" name="l00083"></a><span class="lineno">   83</span> </div>
-<div class="line"><a id="l00084" name="l00084"></a><span class="lineno">   84</span><span class="keyword">typedef</span> <span class="keyword">struct </span>pcap_send_queue pcap_send_queue;</div>
-<div class="line"><a id="l00085" name="l00085"></a><span class="lineno">   85</span> </div>
-<div class="line"><a id="l00086" name="l00086"></a><span class="lineno">   86</span><span class="keyword">typedef</span> void (*pcap_handler)(<span class="keywordtype">unsigned</span> <span class="keywordtype">char</span> *<a class="code hl_variable" href="../../db/d00/a00641.html#afb58b923d888b342d218446f16804902">user</a>, <span class="keyword">const</span> <span class="keyword">struct </span>pcap_pkthdr *h, <span class="keyword">const</span> <span class="keywordtype">unsigned</span> <span class="keywordtype">char</span> *bytes);</div>
-<div class="line"><a id="l00087" name="l00087"></a><span class="lineno">   87</span> </div>
-<div class="line"><a id="l00088" name="l00088"></a><span class="lineno">   88</span><span class="keyword">typedef</span> <span class="keyword">struct </span>pcap pcap_t;</div>
-<div class="line"><a id="l00089" name="l00089"></a><span class="lineno">   89</span><span class="keyword">typedef</span> <span class="keyword">struct </span>pcap_dumper pcap_dumper_t;</div>
-<div class="line"><a id="l00090" name="l00090"></a><span class="lineno">   90</span><span class="keyword">typedef</span> <span class="keyword">struct </span>pcap_if pcap_if_t;</div>
-<div class="line"><a id="l00091" name="l00091"></a><span class="lineno">   91</span><span class="keyword">typedef</span> <span class="keyword">struct </span>pcap_addr pcap_addr_t;</div>
-<div class="line"><a id="l00092" name="l00092"></a><span class="lineno">   92</span><span class="preprocessor">#endif</span></div>
-<div class="line"><a id="l00093" name="l00093"></a><span class="lineno">   93</span></div>
-<div class="foldopen" id="foldopen00101" data-start="{" data-end="};">
-<div class="line"><a id="l00101" name="l00101"></a><span class="lineno"><a class="line" href="../../d1/d00/a01578.html">  101</a></span><span class="keyword">class </span><a class="code hl_function" href="../../d1/d00/a01578.html#a9e927a32f0fc996e71cc628303fe80f2">CNetworkPcap</a> : <span class="keyword">public</span> <a class="code hl_class" href="../../d9/d00/a01574.html">CNetworkBackend</a> {</div>
-<div class="line"><a id="l00102" name="l00102"></a><span class="lineno">  102</span><span class="keyword">public</span>:</div>
-<div class="line"><a id="l00103" name="l00103"></a><span class="lineno">  103</span>        <a class="code hl_function" href="../../d1/d00/a01578.html#a9e927a32f0fc996e71cc628303fe80f2">CNetworkPcap</a>();</div>
-<div class="line"><a id="l00104" name="l00104"></a><span class="lineno">  104</span>        <span class="keyword">virtual</span> <a class="code hl_function" href="../../d1/d00/a01578.html#a9e927a32f0fc996e71cc628303fe80f2">~CNetworkPcap</a>();</div>
-<div class="line"><a id="l00105" name="l00105"></a><span class="lineno">  105</span> </div>
-<div class="line"><a id="l00106" name="l00106"></a><span class="lineno">  106</span>        <span class="keyword">virtual</span> <span class="keywordtype">bool</span> <a class="code hl_function" href="../../d1/d00/a01578.html#a0fd2da71d97b01f483d41fd7e37fb91d">init</a>(<span class="keyword">const</span> <span class="keywordtype">char</span> *devid_string, <a class="code hl_class" href="../../df/d00/a00874.html">CConfigurator</a> *cfg);</div>
-<div class="line"><a id="l00107" name="l00107"></a><span class="lineno">  107</span>        <span class="keyword">virtual</span> <span class="keywordtype">int</span>  <a class="code hl_function" href="../../d1/d00/a01578.html#ae0c18c0919eb9cdcaf35ffd5be341072">send</a>(<span class="keyword">const</span> <a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a> *data, <span class="keywordtype">int</span> len);</div>
-<div class="line"><a id="l00108" name="l00108"></a><span class="lineno">  108</span>        <span class="keyword">virtual</span> <span class="keywordtype">int</span>  <a class="code hl_function" href="../../d1/d00/a01578.html#a8b8dd82acc3be5e2706322b49ee02970">receive</a>(<span class="keyword">const</span> <a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a> **data, <span class="keywordtype">int</span> *len);</div>
-<div class="line"><a id="l00109" name="l00109"></a><span class="lineno">  109</span>        <span class="keyword">virtual</span> <span class="keywordtype">void</span> <a class="code hl_function" href="../../d1/d00/a01578.html#a56b7553321c773ecd281d96c92e05b33">set_filter</a>(<a class="code hl_typedef" href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a> mac_list[][6], <span class="keywordtype">int</span> num_macs,</div>
-<div class="line"><a id="l00110" name="l00110"></a><span class="lineno">  110</span>                                <span class="keywordtype">bool</span> promiscuous, <span class="keywordtype">bool</span> receive_all,</div>
-<div class="line"><a id="l00111" name="l00111"></a><span class="lineno">  111</span>                                <span class="keywordtype">bool</span> pass_multicast, <span class="keywordtype">bool</span> inverse);</div>
-<div class="line"><a id="l00112" name="l00112"></a><span class="lineno">  112</span>        <span class="keyword">virtual</span> <span class="keywordtype">void</span> <a class="code hl_function" href="../../d1/d00/a01578.html#a6311938576899a89713130b3af73d416">close</a>();</div>
-<div class="line"><a id="l00113" name="l00113"></a><span class="lineno">  113</span> </div>
-<div class="line"><a id="l00114" name="l00114"></a><span class="lineno">  114</span><span class="keyword">private</span>:</div>
-<div class="line"><a id="l00115" name="l00115"></a><span class="lineno"><a class="line" href="../../d1/d00/a01578.html#a20bba90dcb46834abfa37398fd4c1b36">  115</a></span>        pcap_t*             <a class="code hl_variable" href="../../d1/d00/a01578.html#a20bba90dcb46834abfa37398fd4c1b36">fp</a>;</div>
-<div class="line"><a id="l00116" name="l00116"></a><span class="lineno"><a class="line" href="../../d1/d00/a01578.html#aa00a8bb1bbf7981945c285a57462b460">  116</a></span>        <span class="keyword">struct </span>bpf_program  <a class="code hl_variable" href="../../d1/d00/a01578.html#aa00a8bb1bbf7981945c285a57462b460">fcode</a>;</div>
-<div class="line"><a id="l00117" name="l00117"></a><span class="lineno"><a class="line" href="../../d1/d00/a01578.html#a07cf9a93e2d21f905760056acd074728">  117</a></span>        <span class="keywordtype">bool</span>                <a class="code hl_variable" href="../../d1/d00/a01578.html#a07cf9a93e2d21f905760056acd074728">opened</a>;</div>
-<div class="line"><a id="l00118" name="l00118"></a><span class="lineno"><a class="line" href="../../d1/d00/a01578.html#a7c7e874ddbb7f8ea2bb6999d32ff5283">  118</a></span>        <span class="keywordtype">int</span>                 <a class="code hl_variable" href="../../d1/d00/a01578.html#a7c7e874ddbb7f8ea2bb6999d32ff5283">linktype</a>;      <span class="comment">/* pcap DLT_* of the open adapter */</span></div>
-<div class="line"><a id="l00119" name="l00119"></a><span class="lineno"><a class="line" href="../../d1/d00/a01578.html#af48899f3e494822203a47a04f6144e41">  119</a></span>        <span class="keywordtype">bool</span>                <a class="code hl_variable" href="../../d1/d00/a01578.html#af48899f3e494822203a47a04f6144e41">filter_active</a>; <span class="comment">/* fcode holds a compiled program */</span></div>
-<div class="line"><a id="l00120" name="l00120"></a><span class="lineno"><a class="line" href="../../d1/d00/a01578.html#a366f8baba8f3a1d0fafe3176aa2b6651">  120</a></span>        <span class="keywordtype">bool</span>                <a class="code hl_variable" href="../../d1/d00/a01578.html#a366f8baba8f3a1d0fafe3176aa2b6651">nonether_filter_warned</a>; <span class="comment">/* said filtering is off */</span></div>
-<div class="line"><a id="l00121" name="l00121"></a><span class="lineno">  121</span>};</div>
+<div class="line"><a id="l00006" name="l00006"></a><span class="lineno">    6</span><span class="comment"> * WWW    : https://github.com/ES40-Emu/es40</span></div>
+<div class="line"><a id="l00007" name="l00007"></a><span class="lineno">    7</span><span class="comment"> *</span></div>
+<div class="line"><a id="l00008" name="l00008"></a><span class="lineno">    8</span><span class="comment"> * This program is free software; you can redistribute it and/or</span></div>
+<div class="line"><a id="l00009" name="l00009"></a><span class="lineno">    9</span><span class="comment"> * modify it under the terms of the GNU General Public License</span></div>
+<div class="line"><a id="l00010" name="l00010"></a><span class="lineno">   10</span><span class="comment"> * as published by the Free Software Foundation; either version 2</span></div>
+<div class="line"><a id="l00011" name="l00011"></a><span class="lineno">   11</span><span class="comment"> * of the License, or (at your option) any later version.</span></div>
+<div class="line"><a id="l00012" name="l00012"></a><span class="lineno">   12</span><span class="comment"> *</span></div>
+<div class="line"><a id="l00013" name="l00013"></a><span class="lineno">   13</span><span class="comment"> * This program is distributed in the hope that it will be useful,</span></div>
+<div class="line"><a id="l00014" name="l00014"></a><span class="lineno">   14</span><span class="comment"> * but WITHOUT ANY WARRANTY; without even the implied warranty of</span></div>
+<div class="line"><a id="l00015" name="l00015"></a><span class="lineno">   15</span><span class="comment"> * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the</span></div>
+<div class="line"><a id="l00016" name="l00016"></a><span class="lineno">   16</span><span class="comment"> * GNU General Public License for more details.</span></div>
+<div class="line"><a id="l00017" name="l00017"></a><span class="lineno">   17</span><span class="comment"> *</span></div>
+<div class="line"><a id="l00018" name="l00018"></a><span class="lineno">   18</span><span class="comment"> * You should have received a copy of the GNU General Public License</span></div>
+<div class="line"><a id="l00019" name="l00019"></a><span class="lineno">   19</span><span class="comment"> * along with this program; if not, write to the Free Software</span></div>
+<div class="line"><a id="l00020" name="l00020"></a><span class="lineno">   20</span><span class="comment"> * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.</span></div>
+<div class="line"><a id="l00021" name="l00021"></a><span class="lineno">   21</span><span class="comment"> *</span></div>
+<div class="line"><a id="l00022" name="l00022"></a><span class="lineno">   22</span><span class="comment"> * Although this is not required, the author would appreciate being notified of,</span></div>
+<div class="line"><a id="l00023" name="l00023"></a><span class="lineno">   23</span><span class="comment"> * and receiving any modifications you may make to the source code that might serve</span></div>
+<div class="line"><a id="l00024" name="l00024"></a><span class="lineno">   24</span><span class="comment"> * the general public.</span></div>
+<div class="line"><a id="l00025" name="l00025"></a><span class="lineno">   25</span><span class="comment"> *</span></div>
+<div class="line"><a id="l00026" name="l00026"></a><span class="lineno">   26</span><span class="comment"> */</span></div>
+<div class="line"><a id="l00027" name="l00027"></a><span class="lineno">   27</span></div>
+<div class="line"><a id="l00039" name="l00039"></a><span class="lineno">   39</span><span class="preprocessor">#if !defined(INCLUDED_NETWORK_BACKEND_H_)</span></div>
+<div class="line"><a id="l00040" name="l00040"></a><span class="lineno">   40</span><span class="preprocessor">#define INCLUDED_NETWORK_BACKEND_H_</span></div>
+<div class="line"><a id="l00041" name="l00041"></a><span class="lineno">   41</span> </div>
+<div class="line"><a id="l00042" name="l00042"></a><span class="lineno">   42</span><span class="preprocessor">#include &quot;<a class="code" href="../../d9/d00/a00524.html">../StdAfx.h</a>&quot;</span></div>
+<div class="line"><a id="l00043" name="l00043"></a><span class="lineno">   43</span> </div>
+<div class="line"><a id="l00044" name="l00044"></a><span class="lineno">   44</span><span class="keyword">class </span><a class="code hl_class" href="../../d3/d00/a00869.html">CConfigurator</a>;</div>
+<div class="line"><a id="l00045" name="l00045"></a><span class="lineno">   45</span></div>
+<div class="foldopen" id="foldopen00049" data-start="{" data-end="};">
+<div class="line"><a id="l00049" name="l00049"></a><span class="lineno"><a class="line" href="../../da/d00/a01581.html">   49</a></span><span class="keyword">class </span><a class="code hl_class" href="../../da/d00/a01581.html">CNetworkBackend</a> {</div>
+<div class="line"><a id="l00050" name="l00050"></a><span class="lineno">   50</span><span class="keyword">public</span>:</div>
+<div class="line"><a id="l00051" name="l00051"></a><span class="lineno"><a class="line" href="../../da/d00/a01581.html#ae65d737323ac82d2d6528c03520b2c01">   51</a></span>        <span class="keyword">virtual</span> <a class="code hl_function" href="../../da/d00/a01581.html#ae65d737323ac82d2d6528c03520b2c01">~CNetworkBackend</a>() {}</div>
+<div class="line"><a id="l00052" name="l00052"></a><span class="lineno">   52</span></div>
+<div class="line"><a id="l00058" name="l00058"></a><span class="lineno"><a class="line" href="../../da/d00/a01581.html#a92c3bd10ca76d54258245e34e2ba3a6e">   58</a></span>        <span class="keyword">virtual</span> <span class="keywordtype">bool</span> <a class="code hl_function" href="../../da/d00/a01581.html#a92c3bd10ca76d54258245e34e2ba3a6e">init</a>(<span class="keyword">const</span> <span class="keywordtype">char</span> *devid_string, <a class="code hl_class" href="../../d3/d00/a00869.html">CConfigurator</a> *cfg) = 0;</div>
+<div class="line"><a id="l00059" name="l00059"></a><span class="lineno">   59</span></div>
+<div class="line"><a id="l00063" name="l00063"></a><span class="lineno"><a class="line" href="../../da/d00/a01581.html#a40e730286a4b4f3907fb5e8a3eaed9d8">   63</a></span>        <span class="keyword">virtual</span> <span class="keywordtype">int</span> <a class="code hl_function" href="../../da/d00/a01581.html#a40e730286a4b4f3907fb5e8a3eaed9d8">send</a>(<span class="keyword">const</span> <a class="code hl_typedef" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a> *data, <span class="keywordtype">int</span> len) = 0;</div>
+<div class="line"><a id="l00064" name="l00064"></a><span class="lineno">   64</span></div>
+<div class="line"><a id="l00073" name="l00073"></a><span class="lineno"><a class="line" href="../../da/d00/a01581.html#a0ce555ce359edad1d5abac2844a2cdce">   73</a></span>        <span class="keyword">virtual</span> <span class="keywordtype">int</span> <a class="code hl_function" href="../../da/d00/a01581.html#a0ce555ce359edad1d5abac2844a2cdce">receive</a>(<span class="keyword">const</span> <a class="code hl_typedef" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a> **data, <span class="keywordtype">int</span> *len) = 0;</div>
+<div class="line"><a id="l00074" name="l00074"></a><span class="lineno">   74</span></div>
+<div class="line"><a id="l00091" name="l00091"></a><span class="lineno"><a class="line" href="../../da/d00/a01581.html#a0760a05c327089c4979ceeeea8cba5e1">   91</a></span>        <span class="keyword">virtual</span> <span class="keywordtype">void</span> <a class="code hl_function" href="../../da/d00/a01581.html#a0760a05c327089c4979ceeeea8cba5e1">set_filter</a>(<a class="code hl_typedef" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a> mac_list[][6], <span class="keywordtype">int</span> num_macs, <span class="keywordtype">bool</span> promiscuous,</div>
+<div class="line"><a id="l00092" name="l00092"></a><span class="lineno">   92</span>                                <span class="keywordtype">bool</span> receive_all, <span class="keywordtype">bool</span> pass_multicast,</div>
+<div class="line"><a id="l00093" name="l00093"></a><span class="lineno">   93</span>                                <span class="keywordtype">bool</span> inverse) = 0;</div>
+<div class="line"><a id="l00094" name="l00094"></a><span class="lineno">   94</span></div>
+<div class="line"><a id="l00099" name="l00099"></a><span class="lineno"><a class="line" href="../../da/d00/a01581.html#aedb70d22f7d19255a373294bbeb59fe0">   99</a></span>        <span class="keyword">virtual</span> <span class="keywordtype">int</span> <a class="code hl_function" href="../../da/d00/a01581.html#aedb70d22f7d19255a373294bbeb59fe0">get_wait_fd</a>() { <span class="keywordflow">return</span> -1; }</div>
+<div class="line"><a id="l00100" name="l00100"></a><span class="lineno">  100</span></div>
+<div class="line"><a id="l00105" name="l00105"></a><span class="lineno"><a class="line" href="../../da/d00/a01581.html#ad4850049e1f9a98911e5b65f96b79afd">  105</a></span>        <span class="keyword">virtual</span> <span class="keywordtype">void</span> <a class="code hl_function" href="../../da/d00/a01581.html#ad4850049e1f9a98911e5b65f96b79afd">close</a>() = 0;</div>
+<div class="line"><a id="l00106" name="l00106"></a><span class="lineno">  106</span>};</div>
 </div>
-<div class="line"><a id="l00122" name="l00122"></a><span class="lineno">  122</span> </div>
-<div class="line"><a id="l00123" name="l00123"></a><span class="lineno">  123</span><span class="preprocessor">#endif </span><span class="comment">/* INCLUDED_NETWORK_PCAP_H_  */</span><span class="preprocessor"></span></div>
-<div class="ttc" id="aa00257_html_a987e4d6cf789cb59dbb390728271e4d6"><div class="ttname"><a href="../../d9/d00/a00257.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a></div><div class="ttdeci">uint8_t u8</div><div class="ttdef"><b>Definition</b> <a href="../../d9/d00/a00257_source.html#l00123">datatypes.h:123</a></div></div>
-<div class="ttc" id="aa00464_html"><div class="ttname"><a href="../../d2/d00/a00464.html">NetworkBackend.h</a></div><div class="ttdoc">Abstract interface separating the emulated DEC 21143 NIC from the host networking method used to get ...</div></div>
-<div class="ttc" id="aa00641_html_afb58b923d888b342d218446f16804902"><div class="ttname"><a href="../../db/d00/a00641.html#afb58b923d888b342d218446f16804902">shutdown_openvms.user</a></div><div class="ttdeci">user</div><div class="ttdef"><b>Definition</b> <a href="../../da/d00/a00629_source.html#l00081">shutdown_openvms.py:81</a></div></div>
-<div class="ttc" id="aa00874_html"><div class="ttname"><a href="../../df/d00/a00874.html">CConfigurator</a></div><div class="ttdef"><b>Definition</b> <a href="../../da/d00/a00080_source.html#l00133">Configurator.h:134</a></div></div>
-<div class="ttc" id="aa01574_html"><div class="ttname"><a href="../../d9/d00/a01574.html">CNetworkBackend</a></div><div class="ttdoc">Abstract network backend interface.</div><div class="ttdef"><b>Definition</b> <a href="../../d2/d00/a00464_source.html#l00049">NetworkBackend.h:49</a></div></div>
-<div class="ttc" id="aa01578_html_a07cf9a93e2d21f905760056acd074728"><div class="ttname"><a href="../../d1/d00/a01578.html#a07cf9a93e2d21f905760056acd074728">CNetworkPcap::opened</a></div><div class="ttdeci">bool opened</div><div class="ttdef"><b>Definition</b> <a href="#l00117">NetworkPcap.h:117</a></div></div>
-<div class="ttc" id="aa01578_html_a0fd2da71d97b01f483d41fd7e37fb91d"><div class="ttname"><a href="../../d1/d00/a01578.html#a0fd2da71d97b01f483d41fd7e37fb91d">CNetworkPcap::init</a></div><div class="ttdeci">virtual bool init(const char *devid_string, CConfigurator *cfg)</div><div class="ttdoc">Initialize the backend from configuration.</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00467_source.html#l00135">NetworkPcap.cpp:135</a></div></div>
-<div class="ttc" id="aa01578_html_a20bba90dcb46834abfa37398fd4c1b36"><div class="ttname"><a href="../../d1/d00/a01578.html#a20bba90dcb46834abfa37398fd4c1b36">CNetworkPcap::fp</a></div><div class="ttdeci">pcap_t * fp</div><div class="ttdef"><b>Definition</b> <a href="#l00115">NetworkPcap.h:115</a></div></div>
-<div class="ttc" id="aa01578_html_a366f8baba8f3a1d0fafe3176aa2b6651"><div class="ttname"><a href="../../d1/d00/a01578.html#a366f8baba8f3a1d0fafe3176aa2b6651">CNetworkPcap::nonether_filter_warned</a></div><div class="ttdeci">bool nonether_filter_warned</div><div class="ttdef"><b>Definition</b> <a href="#l00120">NetworkPcap.h:120</a></div></div>
-<div class="ttc" id="aa01578_html_a56b7553321c773ecd281d96c92e05b33"><div class="ttname"><a href="../../d1/d00/a01578.html#a56b7553321c773ecd281d96c92e05b33">CNetworkPcap::set_filter</a></div><div class="ttdeci">virtual void set_filter(u8 mac_list[][6], int num_macs, bool promiscuous, bool receive_all, bool pass_multicast, bool inverse)</div><div class="ttdoc">Set up MAC-based receive filtering, mirroring the emulated NIC&#39;s CSR6 bits:</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00467_source.html#l00315">NetworkPcap.cpp:315</a></div></div>
-<div class="ttc" id="aa01578_html_a6311938576899a89713130b3af73d416"><div class="ttname"><a href="../../d1/d00/a01578.html#a6311938576899a89713130b3af73d416">CNetworkPcap::close</a></div><div class="ttdeci">virtual void close()</div><div class="ttdoc">Close the backend and release any resources (file descriptors, library handles, created interfaces,...</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00467_source.html#l00420">NetworkPcap.cpp:420</a></div></div>
-<div class="ttc" id="aa01578_html_a7c7e874ddbb7f8ea2bb6999d32ff5283"><div class="ttname"><a href="../../d1/d00/a01578.html#a7c7e874ddbb7f8ea2bb6999d32ff5283">CNetworkPcap::linktype</a></div><div class="ttdeci">int linktype</div><div class="ttdef"><b>Definition</b> <a href="#l00118">NetworkPcap.h:118</a></div></div>
-<div class="ttc" id="aa01578_html_a8b8dd82acc3be5e2706322b49ee02970"><div class="ttname"><a href="../../d1/d00/a01578.html#a8b8dd82acc3be5e2706322b49ee02970">CNetworkPcap::receive</a></div><div class="ttdeci">virtual int receive(const u8 **data, int *len)</div><div class="ttdoc">Receive a packet from the host network (non-blocking).</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00467_source.html#l00298">NetworkPcap.cpp:298</a></div></div>
-<div class="ttc" id="aa01578_html_a9e927a32f0fc996e71cc628303fe80f2"><div class="ttname"><a href="../../d1/d00/a01578.html#a9e927a32f0fc996e71cc628303fe80f2">CNetworkPcap::CNetworkPcap</a></div><div class="ttdeci">CNetworkPcap()</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00467_source.html#l00067">NetworkPcap.cpp:67</a></div></div>
-<div class="ttc" id="aa01578_html_aa00a8bb1bbf7981945c285a57462b460"><div class="ttname"><a href="../../d1/d00/a01578.html#aa00a8bb1bbf7981945c285a57462b460">CNetworkPcap::fcode</a></div><div class="ttdeci">struct bpf_program fcode</div><div class="ttdef"><b>Definition</b> <a href="#l00116">NetworkPcap.h:116</a></div></div>
-<div class="ttc" id="aa01578_html_ae0c18c0919eb9cdcaf35ffd5be341072"><div class="ttname"><a href="../../d1/d00/a01578.html#ae0c18c0919eb9cdcaf35ffd5be341072">CNetworkPcap::send</a></div><div class="ttdeci">virtual int send(const u8 *data, int len)</div><div class="ttdoc">Send a packet to the host network.</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00467_source.html#l00287">NetworkPcap.cpp:287</a></div></div>
-<div class="ttc" id="aa01578_html_af48899f3e494822203a47a04f6144e41"><div class="ttname"><a href="../../d1/d00/a01578.html#af48899f3e494822203a47a04f6144e41">CNetworkPcap::filter_active</a></div><div class="ttdeci">bool filter_active</div><div class="ttdef"><b>Definition</b> <a href="#l00119">NetworkPcap.h:119</a></div></div>
+<div class="line"><a id="l00107" name="l00107"></a><span class="lineno">  107</span></div>
+<div class="line"><a id="l00114" name="l00114"></a><span class="lineno">  114</span><a class="code hl_class" href="../../da/d00/a01581.html">CNetworkBackend</a> *<a class="code hl_function" href="../../d7/d00/a00467.html#a3984ff2d007eb1a72ae9293d4dd290c9">create_network_backend</a>(<span class="keyword">const</span> <span class="keywordtype">char</span> *devid_string, <a class="code hl_class" href="../../d3/d00/a00869.html">CConfigurator</a> *cfg);</div>
+<div class="line"><a id="l00115" name="l00115"></a><span class="lineno">  115</span> </div>
+<div class="line"><a id="l00116" name="l00116"></a><span class="lineno">  116</span><span class="preprocessor">#endif </span><span class="comment">/* !defined(INCLUDED_NETWORK_BACKEND_H_)  */</span><span class="preprocessor"></span></div>
+<div class="ttc" id="aa00263_html_a987e4d6cf789cb59dbb390728271e4d6"><div class="ttname"><a href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a></div><div class="ttdeci">uint8_t u8</div><div class="ttdef"><b>Definition</b> <a href="../../df/d00/a00263_source.html#l00123">datatypes.h:123</a></div></div>
+<div class="ttc" id="aa00467_html_a3984ff2d007eb1a72ae9293d4dd290c9"><div class="ttname"><a href="../../d7/d00/a00467.html#a3984ff2d007eb1a72ae9293d4dd290c9">create_network_backend</a></div><div class="ttdeci">CNetworkBackend * create_network_backend(const char *devid_string, CConfigurator *cfg)</div><div class="ttdoc">Factory: create the network backend selected by the &quot;type&quot; configuration value (&quot;pcap&quot;,...</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00467_source.html#l00051">NetworkBackend.cpp:51</a></div></div>
+<div class="ttc" id="aa00524_html"><div class="ttname"><a href="../../d9/d00/a00524.html">StdAfx.h</a></div><div class="ttdoc">Standard includes.</div></div>
+<div class="ttc" id="aa00869_html"><div class="ttname"><a href="../../d3/d00/a00869.html">CConfigurator</a></div><div class="ttdef"><b>Definition</b> <a href="../../da/d00/a00080_source.html#l00133">Configurator.h:134</a></div></div>
+<div class="ttc" id="aa01581_html"><div class="ttname"><a href="../../da/d00/a01581.html">CNetworkBackend</a></div><div class="ttdoc">Abstract network backend interface.</div><div class="ttdef"><b>Definition</b> <a href="#l00049">NetworkBackend.h:49</a></div></div>
+<div class="ttc" id="aa01581_html_a0760a05c327089c4979ceeeea8cba5e1"><div class="ttname"><a href="../../da/d00/a01581.html#a0760a05c327089c4979ceeeea8cba5e1">CNetworkBackend::set_filter</a></div><div class="ttdeci">virtual void set_filter(u8 mac_list[][6], int num_macs, bool promiscuous, bool receive_all, bool pass_multicast, bool inverse)=0</div><div class="ttdoc">Set up MAC-based receive filtering, mirroring the emulated NIC&#39;s CSR6 bits:</div></div>
+<div class="ttc" id="aa01581_html_a0ce555ce359edad1d5abac2844a2cdce"><div class="ttname"><a href="../../da/d00/a01581.html#a0ce555ce359edad1d5abac2844a2cdce">CNetworkBackend::receive</a></div><div class="ttdeci">virtual int receive(const u8 **data, int *len)=0</div><div class="ttdoc">Receive a packet from the host network (non-blocking).</div></div>
+<div class="ttc" id="aa01581_html_a40e730286a4b4f3907fb5e8a3eaed9d8"><div class="ttname"><a href="../../da/d00/a01581.html#a40e730286a4b4f3907fb5e8a3eaed9d8">CNetworkBackend::send</a></div><div class="ttdeci">virtual int send(const u8 *data, int len)=0</div><div class="ttdoc">Send a packet to the host network.</div></div>
+<div class="ttc" id="aa01581_html_a92c3bd10ca76d54258245e34e2ba3a6e"><div class="ttname"><a href="../../da/d00/a01581.html#a92c3bd10ca76d54258245e34e2ba3a6e">CNetworkBackend::init</a></div><div class="ttdeci">virtual bool init(const char *devid_string, CConfigurator *cfg)=0</div><div class="ttdoc">Initialize the backend from configuration.</div></div>
+<div class="ttc" id="aa01581_html_ad4850049e1f9a98911e5b65f96b79afd"><div class="ttname"><a href="../../da/d00/a01581.html#ad4850049e1f9a98911e5b65f96b79afd">CNetworkBackend::close</a></div><div class="ttdeci">virtual void close()=0</div><div class="ttdoc">Close the backend and release any resources (file descriptors, library handles, created interfaces,...</div></div>
+<div class="ttc" id="aa01581_html_ae65d737323ac82d2d6528c03520b2c01"><div class="ttname"><a href="../../da/d00/a01581.html#ae65d737323ac82d2d6528c03520b2c01">CNetworkBackend::~CNetworkBackend</a></div><div class="ttdeci">virtual ~CNetworkBackend()</div><div class="ttdef"><b>Definition</b> <a href="#l00051">NetworkBackend.h:51</a></div></div>
+<div class="ttc" id="aa01581_html_aedb70d22f7d19255a373294bbeb59fe0"><div class="ttname"><a href="../../da/d00/a01581.html#aedb70d22f7d19255a373294bbeb59fe0">CNetworkBackend::get_wait_fd</a></div><div class="ttdeci">virtual int get_wait_fd()</div><div class="ttdoc">A descriptor that becomes readable when a packet is waiting, or -1 if the backend has no pollable han...</div><div class="ttdef"><b>Definition</b> <a href="#l00099">NetworkBackend.h:99</a></div></div>
 </div><!-- fragment --></div><!-- contents -->
 </div><!-- doc-content -->
 </div><!-- container -->
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
-    <li class="navelem"><a href="../../dir_c901c14b65aa229498a52b725b3d4a2c.html">network</a></li><li class="navelem"><a href="../../d0/d00/a00470.html">NetworkPcap.h</a></li>
+    <li class="navelem"><a href="../../dir_c901c14b65aa229498a52b725b3d4a2c.html">network</a></li><li class="navelem"><a href="../../d0/d00/a00470.html">NetworkBackend.h</a></li>
     <li class="footer">Generated by <a href="https://www.doxygen.org/index.html"><img class="footer" src="../../doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.18.0 </li>
   </ul>
 </div>

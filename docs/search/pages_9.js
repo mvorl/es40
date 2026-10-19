@@ -1,5 +1,5 @@
 var searchData=
 [
-  ['linux_0',['Linux',['../dc/d00/a01918.html#linux',1,'Linux'],['../de/d00/a01919.html#unix',1,'UNIX, BSD and Linux']]],
-  ['list_1',['List',['../d9/d00/a00633.html',1,'Bug List'],['../d4/d00/a00632.html',1,'Todo List']]]
+  ['linux_0',['Linux',['../d6/d00/a01925.html#linux',1,'Linux'],['../d2/d00/a01926.html#unix',1,'UNIX, BSD and Linux']]],
+  ['list_1',['List',['../dc/d00/a00630.html',1,'Bug List'],['../da/d00/a00629.html',1,'Todo List']]]
 ];

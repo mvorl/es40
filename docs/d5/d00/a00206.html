@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.18.0"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ES40: CPU/cpu_pal.h File Reference</title>
+<title>ES40: CPU/cpu_mvi.h File Reference</title>
 <link href="../../tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="../../dynsections.js"></script>
 <script type="text/javascript" src="../../codefolding.js"></script>
@@ -26,7 +26,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">ES40<span id="projectnumber">&#160;0.17+</span>
+   <div id="projectname">ES40<span id="projectnumber">&#160;0.92.2</span>
    </div>
   </td>
  </tr>
@@ -109,18 +109,18 @@ document.addEventListener('DOMContentLoaded',() => { initNavTree('d5/d00/a00206.
 </div>
 
 <div class="header">
-  <div class="headertitle"><div class="title">cpu_pal.h File Reference</div></div>
+  <div class="headertitle"><div class="title">cpu_mvi.h File Reference</div></div>
 </div><!--header-->
 <div class="contents">
 
-<p>Contains code macros for the processor PALmode instructions.  
+<p>Contains code macros for the processor MVI (multimedia) instructions.  
 <a href="#details">More...</a></p>
 <div class="textblock"><div class="dynheader">
 This graph shows which files directly or indirectly include this file:</div>
 <div class="dyncontent">
-<div class="center"><img src="../../dc/d00/a00208.png" border="0" usemap="#a_c_p_u_2cpu__pal_8hdep" loading="lazy" alt=""/></div>
-<map name="a_c_p_u_2cpu__pal_8hdep" id="a_c_p_u_2cpu__pal_8hdep">
-<area shape="rect" title="Contains code macros for the processor PALmode instructions." alt="" coords="21,5,131,32"/>
+<div class="center"><img src="../../dc/d00/a00208.png" border="0" usemap="#a_c_p_u_2cpu__mvi_8hdep" loading="lazy" alt=""/></div>
+<map name="a_c_p_u_2cpu__mvi_8hdep" id="a_c_p_u_2cpu__mvi_8hdep">
+<area shape="rect" title="Contains code macros for the processor MVI (multimedia) instructions." alt="" coords="19,5,133,32"/>
 <area shape="rect" href="../../d5/d00/a00140.html" title="Contains the code for the emulated DecChip 21264CB EV68 Alpha processor." alt="" coords="5,80,147,107"/>
 <area shape="poly" title=" " alt="" coords="78,46,79,80,73,79,74,50"/>
 </map>
@@ -130,257 +130,327 @@ This graph shows which files directly or indirectly include this file:</div>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 id="header-define-members" class="groupheader"><a id="define-members" name="define-members"></a>
 Macros</h2></td></tr>
-<tr class="memitem:a63424986d034c055c7fa2ce2ec4ccee3" id="r_a63424986d034c055c7fa2ce2ec4ccee3"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a63424986d034c055c7fa2ce2ec4ccee3">DO_HW_MFPR</a>&#160;&#160;&#160;state.r[<a class="el" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] = read_ipr(function);</td></tr>
-<tr class="memitem:a7cc9a5a8927d10c3b99ff386f4122de8" id="r_a7cc9a5a8927d10c3b99ff386f4122de8"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a7cc9a5a8927d10c3b99ff386f4122de8">DO_HW_MTPR</a>&#160;&#160;&#160;write_ipr(function, state.r[<a class="el" href="../../d7/d00/a00182.html#afc0e94c6f29d79352470dfd56076e09f">REG_2</a>], <a class="el" href="../../d6/d00/a00161.html#ab8366be706d87922abd430dd2ca35e90adf608edb53fcc79c12759cdbdf58d9db">AlphaIPRWriteContext::Interpreter</a>);</td></tr>
-<tr class="memitem:ab419c1e6cc4997b8b1c5e70776dd95ea" id="r_ab419c1e6cc4997b8b1c5e70776dd95ea"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#ab419c1e6cc4997b8b1c5e70776dd95ea">DO_HW_RET</a></td></tr>
-<tr class="memitem:abd0b56ca5396b7b92637d902950fe025" id="r_abd0b56ca5396b7b92637d902950fe025"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#abd0b56ca5396b7b92637d902950fe025">DO_HW_LD</a></td></tr>
-<tr class="memitem:a41aaf5a161f59edf22d88343c803fac3" id="r_a41aaf5a161f59edf22d88343c803fac3"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a41aaf5a161f59edf22d88343c803fac3">DO_HW_LDL</a>&#160;&#160;&#160;<a class="el" href="#abd0b56ca5396b7b92637d902950fe025">DO_HW_LD</a></td></tr>
-<tr class="memitem:a1598675c4277fd941cd62f5abcb83352" id="r_a1598675c4277fd941cd62f5abcb83352"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a1598675c4277fd941cd62f5abcb83352">DO_HW_LDQ</a>&#160;&#160;&#160;<a class="el" href="#abd0b56ca5396b7b92637d902950fe025">DO_HW_LD</a></td></tr>
-<tr class="memitem:aef54823c2658de763890af0c6e5cb133" id="r_aef54823c2658de763890af0c6e5cb133"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#aef54823c2658de763890af0c6e5cb133">DO_HW_STL</a></td></tr>
-<tr class="memitem:a0b0b30254f90a750e277f77a5ceea836" id="r_a0b0b30254f90a750e277f77a5ceea836"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a0b0b30254f90a750e277f77a5ceea836">DO_HW_STQ</a></td></tr>
+<tr class="memitem:a6432509156cd51e185bbc21f9cbdaf4e" id="r_a6432509156cd51e185bbc21f9cbdaf4e"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a6432509156cd51e185bbc21f9cbdaf4e">DO_MINUB8</a></td></tr>
+<tr class="memitem:a2c9e62b89eb71b821ef6d5411dd34529" id="r_a2c9e62b89eb71b821ef6d5411dd34529"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a2c9e62b89eb71b821ef6d5411dd34529">DO_MINSB8</a></td></tr>
+<tr class="memitem:a317cacadeb3c94327915dbb4ddcc06e3" id="r_a317cacadeb3c94327915dbb4ddcc06e3"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a317cacadeb3c94327915dbb4ddcc06e3">DO_MINUW4</a></td></tr>
+<tr class="memitem:afce2f88488e73f281d60aef43837d57c" id="r_afce2f88488e73f281d60aef43837d57c"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#afce2f88488e73f281d60aef43837d57c">DO_MINSW4</a></td></tr>
+<tr class="memitem:a546caab3f15351968453945c27bfc1ed" id="r_a546caab3f15351968453945c27bfc1ed"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a546caab3f15351968453945c27bfc1ed">DO_MAXUB8</a></td></tr>
+<tr class="memitem:a53cdf51eeede94b611e086ca08fa4784" id="r_a53cdf51eeede94b611e086ca08fa4784"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a53cdf51eeede94b611e086ca08fa4784">DO_MAXSB8</a></td></tr>
+<tr class="memitem:a1a0152c6e5210ff0e64a06dd7fb5d45f" id="r_a1a0152c6e5210ff0e64a06dd7fb5d45f"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a1a0152c6e5210ff0e64a06dd7fb5d45f">DO_MAXUW4</a></td></tr>
+<tr class="memitem:a1691c03fdaa254a75dab12b6c0f10360" id="r_a1691c03fdaa254a75dab12b6c0f10360"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a1691c03fdaa254a75dab12b6c0f10360">DO_MAXSW4</a></td></tr>
+<tr class="memitem:abb333b5297dcc36dcc2489dccdc429a6" id="r_abb333b5297dcc36dcc2489dccdc429a6"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#abb333b5297dcc36dcc2489dccdc429a6">DO_PERR</a></td></tr>
+<tr class="memitem:a23937b8f2ba1e2daf97a2da1bf1e18ed" id="r_a23937b8f2ba1e2daf97a2da1bf1e18ed"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a23937b8f2ba1e2daf97a2da1bf1e18ed">DO_PKLB</a>&#160;&#160;&#160;do { <a class="el" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a> t = <a class="el" href="../../de/d00/a00185.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a>; state.r[<a class="el" href="../../de/d00/a00185.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = (t &amp; <a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x00000000000000ff)) | ((t &amp; <a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x000000ff00000000)) &gt;&gt; 24); } while (0)</td></tr>
+<tr class="memitem:a30eb22fd29d01e33400156bc716141ea" id="r_a30eb22fd29d01e33400156bc716141ea"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a30eb22fd29d01e33400156bc716141ea">DO_PKWB</a></td></tr>
+<tr class="memitem:a2139262211b09b3346e58353211f8046" id="r_a2139262211b09b3346e58353211f8046"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a2139262211b09b3346e58353211f8046">DO_UNPKBL</a>&#160;&#160;&#160;do { <a class="el" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a> t = <a class="el" href="../../de/d00/a00185.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a>; state.r[<a class="el" href="../../de/d00/a00185.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = (t &amp; <a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x000000ff)) | ((t &amp; <a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x0000ff00)) &lt;&lt; 24); } while (0)</td></tr>
+<tr class="memitem:afbda612d4359b3d48c15348a59f4fbce" id="r_afbda612d4359b3d48c15348a59f4fbce"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#afbda612d4359b3d48c15348a59f4fbce">DO_UNPKBW</a></td></tr>
 </table>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>Contains code macros for the processor PALmode instructions. </p>
-<p>Based on HRM.</p>
+<div class="textblock"><p>Contains code macros for the processor MVI (multimedia) instructions. </p>
 <p>$Id$</p>
-<p>X-1.15 Camiel Vanderhoeven 14-MAR-2008</p><ol type="1">
+<p>X-1.4 Camiel Vanderhoeven 14-MAR-2008</p><ol type="1">
 <li>More meaningful exceptions replace throwing (int) 1.</li>
 <li>U64 macro replaces X64 macro.</li>
 </ol>
-<p>X-1.14 Camiel Vanderhoeven 05-MAR-2008 Multi-threading version.</p>
-<p>X-1.13 Camiel Vanderhoeven 30-JAN-2008 Always use set_pc or add_pc to change the program counter.</p>
-<p>X-1.12 Camiel Vanderhoeven 30-JAN-2008 Remember number of instructions left in current memory page, so that the translation-buffer doens't need to be consulted on every instruction fetch when the Icache is disabled.</p>
-<p>X-1.11 Camiel Vanderhoeven 25-JAN-2008 Trap on unalogned memory access. The previous implementation where unaligned accesses were silently allowed could go wrong when page boundaries are crossed.</p>
-<p>X-1.10 Camiel Vanderhoeven 18-JAN-2008 Replaced sext_64 inlines with sext_u64_&lt;bits&gt; inlines for performance reasons (thanks to David Hittner for spotting this!);</p>
-<p>X-1.9 Camiel Vanderhoeven 2-DEC-2007 Changed the way translation buffers work, the way interrupts work.</p>
-<p>X-1.8 Camiel Vanderhoeven 12-NOV-2007 Fix Software Interrupt behaviour.</p>
-<p>X-1.7 Camiel Vanderhoeven 30-OCT-2007 IPR 0x2d identified as M_FIX (Mbox fixed behaviour)</p>
-<p>X-1.6 Camiel Vanderhoeven 11-APR-2007 Moved all data that should be saved to a state file to a structure "state".</p>
-<p>X-1.5 Camiel Vanderhoeven 30-MAR-2007 Added old changelog comments.</p>
-<p>X-1.4 Camiel Vanderhoeven 8-MAR-2007 Different argument list for CTranslationBuffer methods, and for va_form function.</p>
-<p>X-1.3 Camiel Vanderhoeven 3-MAR-2007 Put 0x2d in HW_MTPR to get rid of error messages about this unknown IPR. WE STILL NEED TO FIND OUT WHAT THIS REGISTER DOES.</p>
-<p>X-1.2 Camiel Vanderhoeven 22-FEB-2007 Got rid of calls to get_asn.</p>
-<p>X-1.1 Camiel Vanderhoeven 18-FEB-2007 File created. Contains code previously found in <a class="el" href="../../d7/d00/a00143.html" title="Contains the definitions for the emulated DecChip 21264CB EV68 Alpha processor.">AlphaCPU.h</a> </p>
+<p>X-1.3 Camiel Vanderhoeven 11-APR-2007 Moved all data that should be saved to a state file to a structure "state".</p>
+<p>X-1.2 Camiel Vanderhoeven 30-MAR-2007 Added old changelog comments.</p>
+<p>X-1.1 Camiel Vanderhoeven 18-FEB-2007 File created. Contains code previously found in <a class="el" href="../../d7/d00/a00143.html" title="Contains the definitions for the emulated DecChip 21264CB EV68 Alpha processor.">AlphaCPU.h</a></p>
+<dl class="section author"><dt>Author</dt><dd>Camiel Vanderhoeven </dd></dl>
 
-<p class="definition">Definition in file <a class="el" href="../../d5/d00/a00206_source.html">cpu_pal.h</a>.</p>
+<p class="definition">Definition in file <a class="el" href="../../d5/d00/a00206_source.html">cpu_mvi.h</a>.</p>
 </div><a name="doc-define-members" id="doc-define-members"></a><h2 id="header-doc-define-members" class="groupheader">Macro Definition Documentation</h2>
-<a id="abd0b56ca5396b7b92637d902950fe025" name="abd0b56ca5396b7b92637d902950fe025"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#abd0b56ca5396b7b92637d902950fe025">&#9670;&#160;</a></span>DO_HW_LD</h2>
+<a id="a53cdf51eeede94b611e086ca08fa4784" name="a53cdf51eeede94b611e086ca08fa4784"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a53cdf51eeede94b611e086ca08fa4784">&#9670;&#160;</a></span>DO_MAXSB8</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">#define DO_HW_LD</td>
+          <td class="memname">#define DO_MAXSB8</td>
         </tr>
       </table>
 </div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">  <span class="keywordflow">do</span> {                                                          \</div>
-<div class="line">  if (!<a class="code hl_function" href="../../d6/d00/a00158.html#a443860ab83551bf77dad9bf4efcaa6b7">alpha_hw_load_valid</a>(hw_load)) { <a class="code hl_define" href="../../db/d00/a00179.html#adbb58d71d6ce0c75fd320e8f97da799e">UNKNOWN2</a>; }                             \</div>
-<div class="line">  <span class="keyword">const</span> <a class="code hl_typedef" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a> hw_address = state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#afc0e94c6f29d79352470dfd56076e09f">REG_2</a>] + (<a class="code hl_typedef" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a>)hw_load.displacement;           \</div>
-<div class="line">  if (hw_load.address == <a class="code hl_enumvalue" href="../../d6/d00/a00158.html#aa3ad26f561afb9009c452480177375e7a615e6f9baca5553d44683a098d342b70">AlphaHWLoadAddress::Virtual</a>) {                        \</div>
-<div class="line">    <span class="keyword">const</span> <span class="keywordtype">int</span> hw_flags = <a class="code hl_define" href="../../d7/d00/a00182.html#abffe9e5de3ddab85a21af380bf0531eb">ACCESS_READ</a> | (hw_load.vpte ? <a class="code hl_define" href="../../d7/d00/a00182.html#a6b11cfc191737a3107b9d196e178601c">VPTE</a> : 0)               \</div>
-<div class="line">      | (hw_load.alternate ? <a class="code hl_define" href="../../d7/d00/a00182.html#a9d8a33b1a8b82b9913a0ba70438d45be">ALT</a> : 0) | (hw_load.write_check ? <a class="code hl_define" href="../../d7/d00/a00182.html#a7e46e9bd2d820b34f985a358715dc1d4">WRCHK</a> : 0);     \</div>
-<div class="line">    if (hw_flags == <a class="code hl_define" href="../../d7/d00/a00182.html#abffe9e5de3ddab85a21af380bf0531eb">ACCESS_READ</a>) {                                             \</div>
-<div class="line">      DATA_PHYS_NT(hw_address, <a class="code hl_define" href="../../d7/d00/a00182.html#abffe9e5de3ddab85a21af380bf0531eb">ACCESS_READ</a>);                                   \</div>
-<div class="line">    } <span class="keywordflow">else</span> <span class="keywordflow">if</span> (virt2phys(hw_address, &amp;phys_address, hw_flags, <span class="keyword">nullptr</span>, ins)) { \</div>
-<div class="line">      ES40_EXECUTE_END();                                                      \</div>
-<div class="line">    }                                                                          \</div>
-<div class="line">  } <span class="keywordflow">else</span> {                                                                     \</div>
-<div class="line">    phys_address = hw_address;                                                 \</div>
-<div class="line">  }                                                                            \</div>
-<div class="line">      \</div>
-<div class="line">  state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] = <a class="code hl_define" href="../../d7/d00/a00182.html#ae5d5c18c7d707307561719025240114f">READ_PHYS_NT</a>(hw_load.size_bits);                            \</div>
-<div class="line">  if (hw_load.size_bits == 32)                                                 \</div>
-<div class="line">    state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] = <a class="code hl_function" href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a>(state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>]);                              \</div>
-<div class="line">  if (hw_load.locked)                                                          \</div>
-<div class="line">    cSystem-&gt;cpu_lock(state.iProcNum, phys_address, state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>]);           \</div>
+<b>Value:</b><div class="fragment"><div class="line">  <span class="keywordflow">do</span> { \</div>
+<div class="line">  temp_64 = 0; temp_64_1 = state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>]; temp_64_2 = <a class="code hl_define" href="../../de/d00/a00185.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a>; \</div>
+<div class="line">  for (i = 0; i &lt; 64; i += 8) { \</div>
+<div class="line">    <a class="code hl_typedef" href="../../df/d00/a00263.html#a6107abbafe492024afa341df26a61709">s8</a> a = (<a class="code hl_typedef" href="../../df/d00/a00263.html#a6107abbafe492024afa341df26a61709">s8</a>)((temp_64_1 &gt;&gt; i) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#a594bc985342666d88c0c87ce02b92bc5">X64_BYTE</a>), b = (<a class="code hl_typedef" href="../../df/d00/a00263.html#a6107abbafe492024afa341df26a61709">s8</a>)((temp_64_2 &gt;&gt; i) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#a594bc985342666d88c0c87ce02b92bc5">X64_BYTE</a>); \</div>
+<div class="line">    temp_64 |= (<a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a>)((a &gt; b ? (<a class="code hl_typedef" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>)a : (<a class="code hl_typedef" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>)b)) &lt;&lt; i; \</div>
+<div class="line">  } \</div>
+<div class="line">  state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = temp_64; \</div>
 <div class="line">} <span class="keywordflow">while</span> (0)</div>
-<div class="ttc" id="aa00158_html_a443860ab83551bf77dad9bf4efcaa6b7"><div class="ttname"><a href="../../d6/d00/a00158.html#a443860ab83551bf77dad9bf4efcaa6b7">alpha_hw_load_valid</a></div><div class="ttdeci">constexpr bool alpha_hw_load_valid(const AlphaHWLoadDescriptor &amp;load)</div><div class="ttdef"><b>Definition</b> <a href="../../d6/d00/a00158_source.html#l00054">AlphaHWLoad.h:54</a></div></div>
-<div class="ttc" id="aa00158_html_aa3ad26f561afb9009c452480177375e7a615e6f9baca5553d44683a098d342b70"><div class="ttname"><a href="../../d6/d00/a00158.html#aa3ad26f561afb9009c452480177375e7a615e6f9baca5553d44683a098d342b70">AlphaHWLoadAddress::Virtual</a></div><div class="ttdeci">@ Virtual</div><div class="ttdef"><b>Definition</b> <a href="../../d6/d00/a00158_source.html#l00036">AlphaHWLoad.h:36</a></div></div>
-<div class="ttc" id="aa00179_html_adbb58d71d6ce0c75fd320e8f97da799e"><div class="ttname"><a href="../../db/d00/a00179.html#adbb58d71d6ce0c75fd320e8f97da799e">UNKNOWN2</a></div><div class="ttdeci">#define UNKNOWN2</div><div class="ttdef"><b>Definition</b> <a href="../../db/d00/a00179_source.html#l00336">cpu_debug.h:336</a></div></div>
-<div class="ttc" id="aa00182_html_a3cc7326bd3140cc269e686fc46179a21"><div class="ttname"><a href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a></div><div class="ttdeci">#define REG_1</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00839">cpu_defs.h:839</a></div></div>
-<div class="ttc" id="aa00182_html_a6b11cfc191737a3107b9d196e178601c"><div class="ttname"><a href="../../d7/d00/a00182.html#a6b11cfc191737a3107b9d196e178601c">VPTE</a></div><div class="ttdeci">#define VPTE</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00858">cpu_defs.h:858</a></div></div>
-<div class="ttc" id="aa00182_html_a7e46e9bd2d820b34f985a358715dc1d4"><div class="ttname"><a href="../../d7/d00/a00182.html#a7e46e9bd2d820b34f985a358715dc1d4">WRCHK</a></div><div class="ttdeci">#define WRCHK</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00861">cpu_defs.h:861</a></div></div>
-<div class="ttc" id="aa00182_html_a9d8a33b1a8b82b9913a0ba70438d45be"><div class="ttname"><a href="../../d7/d00/a00182.html#a9d8a33b1a8b82b9913a0ba70438d45be">ALT</a></div><div class="ttdeci">#define ALT</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00860">cpu_defs.h:860</a></div></div>
-<div class="ttc" id="aa00182_html_abffe9e5de3ddab85a21af380bf0531eb"><div class="ttname"><a href="../../d7/d00/a00182.html#abffe9e5de3ddab85a21af380bf0531eb">ACCESS_READ</a></div><div class="ttdeci">#define ACCESS_READ</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00853">cpu_defs.h:853</a></div></div>
-<div class="ttc" id="aa00182_html_ae5d5c18c7d707307561719025240114f"><div class="ttname"><a href="../../d7/d00/a00182.html#ae5d5c18c7d707307561719025240114f">READ_PHYS_NT</a></div><div class="ttdeci">#define READ_PHYS_NT(size)</div><div class="ttdoc">NO-TRAP (NT) variants of read action.</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00814">cpu_defs.h:814</a></div></div>
-<div class="ttc" id="aa00182_html_afc0e94c6f29d79352470dfd56076e09f"><div class="ttname"><a href="../../d7/d00/a00182.html#afc0e94c6f29d79352470dfd56076e09f">REG_2</a></div><div class="ttdeci">#define REG_2</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00840">cpu_defs.h:840</a></div></div>
-<div class="ttc" id="aa00257_html_a1af9f95651e921615e75917a6dd1b574"><div class="ttname"><a href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a></div><div class="ttdeci">uint64_t u64</div><div class="ttdef"><b>Definition</b> <a href="../../d9/d00/a00257_source.html#l00126">datatypes.h:126</a></div></div>
-<div class="ttc" id="aa00257_html_ab6397ea9cae4b1b067118eacffc71ab7"><div class="ttname"><a href="../../d9/d00/a00257.html#ab6397ea9cae4b1b067118eacffc71ab7">sext_u64_32</a></div><div class="ttdeci">u64 sext_u64_32(u64 a)</div><div class="ttdoc">Sign-extend a 32-bit value to 64 bits.</div><div class="ttdef"><b>Definition</b> <a href="../../d9/d00/a00257_source.html#l00226">datatypes.h:226</a></div></div>
+<div class="ttc" id="aa00185_html_a100362a825d9eb8f8cc30179894bcdc3"><div class="ttname"><a href="../../de/d00/a00185.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a></div><div class="ttdeci">#define V_2</div><div class="ttdef"><b>Definition</b> <a href="../../de/d00/a00185_source.html#l00849">cpu_defs.h:849</a></div></div>
+<div class="ttc" id="aa00185_html_a14e5d5a6641dfac1ed51225a7b87bc92"><div class="ttname"><a href="../../de/d00/a00185.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a></div><div class="ttdeci">#define REG_3</div><div class="ttdef"><b>Definition</b> <a href="../../de/d00/a00185_source.html#l00841">cpu_defs.h:841</a></div></div>
+<div class="ttc" id="aa00185_html_a3cc7326bd3140cc269e686fc46179a21"><div class="ttname"><a href="../../de/d00/a00185.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a></div><div class="ttdeci">#define REG_1</div><div class="ttdef"><b>Definition</b> <a href="../../de/d00/a00185_source.html#l00839">cpu_defs.h:839</a></div></div>
+<div class="ttc" id="aa00185_html_a594bc985342666d88c0c87ce02b92bc5"><div class="ttname"><a href="../../de/d00/a00185.html#a594bc985342666d88c0c87ce02b92bc5">X64_BYTE</a></div><div class="ttdeci">#define X64_BYTE</div><div class="ttdef"><b>Definition</b> <a href="../../de/d00/a00185_source.html#l00352">cpu_defs.h:352</a></div></div>
+<div class="ttc" id="aa00263_html_a1af9f95651e921615e75917a6dd1b574"><div class="ttname"><a href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a></div><div class="ttdeci">uint64_t u64</div><div class="ttdef"><b>Definition</b> <a href="../../df/d00/a00263_source.html#l00126">datatypes.h:126</a></div></div>
+<div class="ttc" id="aa00263_html_a6107abbafe492024afa341df26a61709"><div class="ttname"><a href="../../df/d00/a00263.html#a6107abbafe492024afa341df26a61709">s8</a></div><div class="ttdeci">int8_t s8</div><div class="ttdef"><b>Definition</b> <a href="../../df/d00/a00263_source.html#l00128">datatypes.h:128</a></div></div>
+<div class="ttc" id="aa00263_html_a987e4d6cf789cb59dbb390728271e4d6"><div class="ttname"><a href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a></div><div class="ttdeci">uint8_t u8</div><div class="ttdef"><b>Definition</b> <a href="../../df/d00/a00263_source.html#l00123">datatypes.h:123</a></div></div>
 </div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00103">103</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_pal.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00194">194</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_mvi.h</a>.</p>
 
 </div>
 </div>
-<a id="a41aaf5a161f59edf22d88343c803fac3" name="a41aaf5a161f59edf22d88343c803fac3"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a41aaf5a161f59edf22d88343c803fac3">&#9670;&#160;</a></span>DO_HW_LDL</h2>
+<a id="a1691c03fdaa254a75dab12b6c0f10360" name="a1691c03fdaa254a75dab12b6c0f10360"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a1691c03fdaa254a75dab12b6c0f10360">&#9670;&#160;</a></span>DO_MAXSW4</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">#define DO_HW_LDL&#160;&#160;&#160;<a class="el" href="#abd0b56ca5396b7b92637d902950fe025">DO_HW_LD</a></td>
+          <td class="memname">#define DO_MAXSW4</td>
         </tr>
       </table>
 </div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00125">125</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_pal.h</a>.</p>
-
-</div>
-</div>
-<a id="a1598675c4277fd941cd62f5abcb83352" name="a1598675c4277fd941cd62f5abcb83352"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a1598675c4277fd941cd62f5abcb83352">&#9670;&#160;</a></span>DO_HW_LDQ</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_HW_LDQ&#160;&#160;&#160;<a class="el" href="#abd0b56ca5396b7b92637d902950fe025">DO_HW_LD</a></td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00126">126</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_pal.h</a>.</p>
-
-</div>
-</div>
-<a id="a63424986d034c055c7fa2ce2ec4ccee3" name="a63424986d034c055c7fa2ce2ec4ccee3"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a63424986d034c055c7fa2ce2ec4ccee3">&#9670;&#160;</a></span>DO_HW_MFPR</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_HW_MFPR&#160;&#160;&#160;state.r[<a class="el" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] = read_ipr(function);</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00089">89</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_pal.h</a>.</p>
-
-</div>
-</div>
-<a id="a7cc9a5a8927d10c3b99ff386f4122de8" name="a7cc9a5a8927d10c3b99ff386f4122de8"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a7cc9a5a8927d10c3b99ff386f4122de8">&#9670;&#160;</a></span>DO_HW_MTPR</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_HW_MTPR&#160;&#160;&#160;write_ipr(function, state.r[<a class="el" href="../../d7/d00/a00182.html#afc0e94c6f29d79352470dfd56076e09f">REG_2</a>], <a class="el" href="../../d6/d00/a00161.html#ab8366be706d87922abd430dd2ca35e90adf608edb53fcc79c12759cdbdf58d9db">AlphaIPRWriteContext::Interpreter</a>);</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00091">91</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_pal.h</a>.</p>
-
-</div>
-</div>
-<a id="ab419c1e6cc4997b8b1c5e70776dd95ea" name="ab419c1e6cc4997b8b1c5e70776dd95ea"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ab419c1e6cc4997b8b1c5e70776dd95ea">&#9670;&#160;</a></span>DO_HW_RET</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_HW_RET</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line">  <span class="keywordflow">do</span> {                                                               \</div>
-<div class="line">  <a class="code hl_typedef" href="../../d9/d00/a00257.html#a1af9f95651e921615e75917a6dd1b574">u64</a> target = state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#afc0e94c6f29d79352470dfd56076e09f">REG_2</a>] &amp; <a class="code hl_define" href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">~U64</a>(0x2);                                            \</div>
-<div class="line">  set_pc(target);                                                                     \</div>
-<div class="line">} <span class="keywordflow">while</span>(0)</div>
-<div class="ttc" id="aa00257_html_a87a27db8f6877dc5bbc36ec833e88c58"><div class="ttname"><a href="../../d9/d00/a00257.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a></div><div class="ttdeci">#define U64(a)</div><div class="ttdef"><b>Definition</b> <a href="../../d9/d00/a00257_source.html#l00119">datatypes.h:119</a></div></div>
+<b>Value:</b><div class="fragment"><div class="line">  <span class="keywordflow">do</span> { \</div>
+<div class="line">  temp_64 = 0; temp_64_1 = state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>]; temp_64_2 = <a class="code hl_define" href="../../de/d00/a00185.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a>; \</div>
+<div class="line">  for (i = 0; i &lt; 64; i += 16) { \</div>
+<div class="line">    <a class="code hl_typedef" href="../../df/d00/a00263.html#a38965495c67998cf330d16c6ae30ced5">s16</a> a = (<a class="code hl_typedef" href="../../df/d00/a00263.html#a38965495c67998cf330d16c6ae30ced5">s16</a>)((temp_64_1 &gt;&gt; i) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#a2f250a4a71ca7a2a86cbb9c3796bf223">X64_WORD</a>), b = (<a class="code hl_typedef" href="../../df/d00/a00263.html#a38965495c67998cf330d16c6ae30ced5">s16</a>)((temp_64_2 &gt;&gt; i) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#a2f250a4a71ca7a2a86cbb9c3796bf223">X64_WORD</a>); \</div>
+<div class="line">    temp_64 |= (<a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a>)((a &gt; b ? (<a class="code hl_typedef" href="../../df/d00/a00263.html#a6dbf9516e516c901604625282c174aa4">u16</a>)a : (<a class="code hl_typedef" href="../../df/d00/a00263.html#a6dbf9516e516c901604625282c174aa4">u16</a>)b)) &lt;&lt; i; \</div>
+<div class="line">  } \</div>
+<div class="line">  state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = temp_64; \</div>
+<div class="line">} <span class="keywordflow">while</span> (0)</div>
+<div class="ttc" id="aa00185_html_a2f250a4a71ca7a2a86cbb9c3796bf223"><div class="ttname"><a href="../../de/d00/a00185.html#a2f250a4a71ca7a2a86cbb9c3796bf223">X64_WORD</a></div><div class="ttdeci">#define X64_WORD</div><div class="ttdef"><b>Definition</b> <a href="../../de/d00/a00185_source.html#l00353">cpu_defs.h:353</a></div></div>
+<div class="ttc" id="aa00263_html_a38965495c67998cf330d16c6ae30ced5"><div class="ttname"><a href="../../df/d00/a00263.html#a38965495c67998cf330d16c6ae30ced5">s16</a></div><div class="ttdeci">int16_t s16</div><div class="ttdef"><b>Definition</b> <a href="../../df/d00/a00263_source.html#l00129">datatypes.h:129</a></div></div>
+<div class="ttc" id="aa00263_html_a6dbf9516e516c901604625282c174aa4"><div class="ttname"><a href="../../df/d00/a00263.html#a6dbf9516e516c901604625282c174aa4">u16</a></div><div class="ttdeci">uint16_t u16</div><div class="ttdef"><b>Definition</b> <a href="../../df/d00/a00263_source.html#l00124">datatypes.h:124</a></div></div>
 </div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00096">96</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_pal.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00240">240</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_mvi.h</a>.</p>
 
 </div>
 </div>
-<a id="aef54823c2658de763890af0c6e5cb133" name="aef54823c2658de763890af0c6e5cb133"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aef54823c2658de763890af0c6e5cb133">&#9670;&#160;</a></span>DO_HW_STL</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define DO_HW_STL</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line"><span class="keywordflow">switch</span>(function)                                          \</div>
-<div class="line">{                                                                           \</div>
-<div class="line"><span class="keywordflow">case</span> 0:                                               \</div>
-<div class="line">  phys_address = state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#afc0e94c6f29d79352470dfd56076e09f">REG_2</a>] + <a class="code hl_define" href="../../d7/d00/a00182.html#a8e14c82fc965f3df2f51e6e2e9912fc0">DISP_12</a>;                                  \</div>
-<div class="line">  WRITE_PHYS_NT(state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>], 32);                                        \</div>
-<div class="line">  <span class="keywordflow">break</span>;                                                                    \</div>
-<div class="line">                                                                         \</div>
-<div class="line"><span class="keywordflow">case</span> 2:                                   \</div>
-<div class="line">  phys_address = state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#afc0e94c6f29d79352470dfd56076e09f">REG_2</a>] + <a class="code hl_define" href="../../d7/d00/a00182.html#a8e14c82fc965f3df2f51e6e2e9912fc0">DISP_12</a>;                                  \</div>
-<div class="line">  state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] = cSystem-&gt;cpu_stx_c(state.iProcNum, phys_address, 32,     \</div>
-<div class="line">                                      state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>], dram_ptr, dram_size, <span class="keyword">this</span>); \</div>
-<div class="line">  <span class="keywordflow">break</span>;                                                                    \</div>
-<div class="line">                                                                         \</div>
-<div class="line"><span class="keywordflow">case</span> 4:                                          \</div>
-<div class="line">  DATA_PHYS_NT(state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#afc0e94c6f29d79352470dfd56076e09f">REG_2</a>] + <a class="code hl_define" href="../../d7/d00/a00182.html#a8e14c82fc965f3df2f51e6e2e9912fc0">DISP_12</a>, <a class="code hl_define" href="../../d7/d00/a00182.html#a5f71164bcd05179ee7dcf8fbe8f27bff">ACCESS_WRITE</a>);                     \</div>
-<div class="line">  WRITE_PHYS_NT(state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>], 32);                                        \</div>
-<div class="line">  <span class="keywordflow">break</span>;                                                                    \</div>
-<div class="line">                                                                         \</div>
-<div class="line"><span class="keywordflow">case</span> 12:       \</div>
-<div class="line">  DATA_PHYS_NT(state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#afc0e94c6f29d79352470dfd56076e09f">REG_2</a>] + <a class="code hl_define" href="../../d7/d00/a00182.html#a8e14c82fc965f3df2f51e6e2e9912fc0">DISP_12</a>, <a class="code hl_define" href="../../d7/d00/a00182.html#a5f71164bcd05179ee7dcf8fbe8f27bff">ACCESS_WRITE</a> | <a class="code hl_define" href="../../d7/d00/a00182.html#a9d8a33b1a8b82b9913a0ba70438d45be">ALT</a>);               \</div>
-<div class="line">  WRITE_PHYS_NT(state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>], 32);                                        \</div>
-<div class="line">  <span class="keywordflow">break</span>;                                                                    \</div>
-<div class="line">                                                                         \</div>
-<div class="line"><span class="keywordflow">default</span>:                                                                    \</div>
-<div class="line">  <a class="code hl_define" href="../../db/d00/a00179.html#adbb58d71d6ce0c75fd320e8f97da799e">UNKNOWN2</a>;                                                                 \</div>
-<div class="line">}</div>
-<div class="ttc" id="aa00182_html_a5f71164bcd05179ee7dcf8fbe8f27bff"><div class="ttname"><a href="../../d7/d00/a00182.html#a5f71164bcd05179ee7dcf8fbe8f27bff">ACCESS_WRITE</a></div><div class="ttdeci">#define ACCESS_WRITE</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00854">cpu_defs.h:854</a></div></div>
-<div class="ttc" id="aa00182_html_a8e14c82fc965f3df2f51e6e2e9912fc0"><div class="ttname"><a href="../../d7/d00/a00182.html#a8e14c82fc965f3df2f51e6e2e9912fc0">DISP_12</a></div><div class="ttdeci">#define DISP_12</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00182_source.html#l00579">cpu_defs.h:579</a></div></div>
-</div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00128">128</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_pal.h</a>.</p>
-
-</div>
-</div>
-<a id="a0b0b30254f90a750e277f77a5ceea836" name="a0b0b30254f90a750e277f77a5ceea836"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a0b0b30254f90a750e277f77a5ceea836">&#9670;&#160;</a></span>DO_HW_STQ</h2>
+<a id="a546caab3f15351968453945c27bfc1ed" name="a546caab3f15351968453945c27bfc1ed"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a546caab3f15351968453945c27bfc1ed">&#9670;&#160;</a></span>DO_MAXUB8</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">#define DO_HW_STQ</td>
+          <td class="memname">#define DO_MAXUB8</td>
         </tr>
       </table>
 </div><div class="memdoc">
-<b>Value:</b><div class="fragment"><div class="line"><span class="keywordflow">switch</span>(function)                                           \</div>
-<div class="line">{                                                                            \</div>
-<div class="line"><span class="keywordflow">case</span> 1:                                                \</div>
-<div class="line">  phys_address = state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#afc0e94c6f29d79352470dfd56076e09f">REG_2</a>] + <a class="code hl_define" href="../../d7/d00/a00182.html#a8e14c82fc965f3df2f51e6e2e9912fc0">DISP_12</a>;                                   \</div>
-<div class="line">  WRITE_PHYS_NT(state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>], 64);                                         \</div>
-<div class="line">  <span class="keywordflow">break</span>;                                                                     \</div>
-<div class="line">                                                                          \</div>
-<div class="line"><span class="keywordflow">case</span> 3:                                    \</div>
-<div class="line">  phys_address = state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#afc0e94c6f29d79352470dfd56076e09f">REG_2</a>] + <a class="code hl_define" href="../../d7/d00/a00182.html#a8e14c82fc965f3df2f51e6e2e9912fc0">DISP_12</a>;                                   \</div>
-<div class="line">  state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>] = cSystem-&gt;cpu_stx_c(state.iProcNum, phys_address, 64,      \</div>
-<div class="line">                                      state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>], dram_ptr, dram_size, <span class="keyword">this</span>); \</div>
-<div class="line">  <span class="keywordflow">break</span>;                                                                     \</div>
-<div class="line">                                                                          \</div>
-<div class="line"><span class="keywordflow">case</span> 5:                                               \</div>
-<div class="line">  DATA_PHYS_NT(state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#afc0e94c6f29d79352470dfd56076e09f">REG_2</a>] + <a class="code hl_define" href="../../d7/d00/a00182.html#a8e14c82fc965f3df2f51e6e2e9912fc0">DISP_12</a>, <a class="code hl_define" href="../../d7/d00/a00182.html#a5f71164bcd05179ee7dcf8fbe8f27bff">ACCESS_WRITE</a>);                     \</div>
-<div class="line">  WRITE_PHYS_NT(state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>], 64);                                        \</div>
-<div class="line">  <span class="keywordflow">break</span>;                                                                    \</div>
-<div class="line">                                                                         \</div>
-<div class="line"><span class="keywordflow">case</span> 13:        \</div>
-<div class="line">  DATA_PHYS_NT(state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#afc0e94c6f29d79352470dfd56076e09f">REG_2</a>] + <a class="code hl_define" href="../../d7/d00/a00182.html#a8e14c82fc965f3df2f51e6e2e9912fc0">DISP_12</a>, <a class="code hl_define" href="../../d7/d00/a00182.html#a5f71164bcd05179ee7dcf8fbe8f27bff">ACCESS_WRITE</a> | <a class="code hl_define" href="../../d7/d00/a00182.html#a9d8a33b1a8b82b9913a0ba70438d45be">ALT</a>);               \</div>
-<div class="line">  WRITE_PHYS_NT(state.r[<a class="code hl_define" href="../../d7/d00/a00182.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>], 64);                                        \</div>
-<div class="line">  <span class="keywordflow">break</span>;                                                                    \</div>
-<div class="line">                                                                          \</div>
-<div class="line"><span class="keywordflow">default</span>:                                                                     \</div>
-<div class="line">  <a class="code hl_define" href="../../db/d00/a00179.html#adbb58d71d6ce0c75fd320e8f97da799e">UNKNOWN2</a>;                                                                  \</div>
-<div class="line">}</div>
+<b>Value:</b><div class="fragment"><div class="line">  <span class="keywordflow">do</span> { \</div>
+<div class="line">  temp_64 = 0; temp_64_1 = state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>]; temp_64_2 = <a class="code hl_define" href="../../de/d00/a00185.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a>; \</div>
+<div class="line">  for (i = 0; i &lt; 64; i += 8) { \</div>
+<div class="line">    <a class="code hl_typedef" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a> a = (<a class="code hl_typedef" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>)((temp_64_1 &gt;&gt; i) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#a594bc985342666d88c0c87ce02b92bc5">X64_BYTE</a>), b = (<a class="code hl_typedef" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>)((temp_64_2 &gt;&gt; i) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#a594bc985342666d88c0c87ce02b92bc5">X64_BYTE</a>); \</div>
+<div class="line">    temp_64 |= ((<a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a>)(a &gt; b ? a : b) &lt;&lt; i); \</div>
+<div class="line">  } \</div>
+<div class="line">  state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = temp_64; \</div>
+<div class="line">} <span class="keywordflow">while</span> (0)</div>
 </div><!-- fragment -->
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00158">158</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_pal.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00168">168</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_mvi.h</a>.</p>
+
+</div>
+</div>
+<a id="a1a0152c6e5210ff0e64a06dd7fb5d45f" name="a1a0152c6e5210ff0e64a06dd7fb5d45f"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a1a0152c6e5210ff0e64a06dd7fb5d45f">&#9670;&#160;</a></span>DO_MAXUW4</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_MAXUW4</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<b>Value:</b><div class="fragment"><div class="line">  <span class="keywordflow">do</span> { \</div>
+<div class="line">  temp_64 = 0; temp_64_1 = state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>]; temp_64_2 = <a class="code hl_define" href="../../de/d00/a00185.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a>; \</div>
+<div class="line">  for (i = 0; i &lt; 64; i += 16) { \</div>
+<div class="line">    <a class="code hl_typedef" href="../../df/d00/a00263.html#a6dbf9516e516c901604625282c174aa4">u16</a> a = (<a class="code hl_typedef" href="../../df/d00/a00263.html#a6dbf9516e516c901604625282c174aa4">u16</a>)((temp_64_1 &gt;&gt; i) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#a2f250a4a71ca7a2a86cbb9c3796bf223">X64_WORD</a>), b = (<a class="code hl_typedef" href="../../df/d00/a00263.html#a6dbf9516e516c901604625282c174aa4">u16</a>)((temp_64_2 &gt;&gt; i) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#a2f250a4a71ca7a2a86cbb9c3796bf223">X64_WORD</a>); \</div>
+<div class="line">    temp_64 |= (<a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a>)(a &gt; b ? a : b) &lt;&lt; i; \</div>
+<div class="line">  } \</div>
+<div class="line">  state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = temp_64; \</div>
+<div class="line">} <span class="keywordflow">while</span> (0)</div>
+</div><!-- fragment -->
+<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00222">222</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_mvi.h</a>.</p>
+
+</div>
+</div>
+<a id="a2c9e62b89eb71b821ef6d5411dd34529" name="a2c9e62b89eb71b821ef6d5411dd34529"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a2c9e62b89eb71b821ef6d5411dd34529">&#9670;&#160;</a></span>DO_MINSB8</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_MINSB8</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<b>Value:</b><div class="fragment"><div class="line">  <span class="keywordflow">do</span> { \</div>
+<div class="line">  temp_64 = 0; temp_64_1 = state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>]; temp_64_2 = <a class="code hl_define" href="../../de/d00/a00185.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a>; \</div>
+<div class="line">  for (i = 0; i &lt; 64; i += 8) { \</div>
+<div class="line">    <a class="code hl_typedef" href="../../df/d00/a00263.html#a6107abbafe492024afa341df26a61709">s8</a> a = (<a class="code hl_typedef" href="../../df/d00/a00263.html#a6107abbafe492024afa341df26a61709">s8</a>)((temp_64_1 &gt;&gt; i) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#a594bc985342666d88c0c87ce02b92bc5">X64_BYTE</a>), b = (<a class="code hl_typedef" href="../../df/d00/a00263.html#a6107abbafe492024afa341df26a61709">s8</a>)((temp_64_2 &gt;&gt; i) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#a594bc985342666d88c0c87ce02b92bc5">X64_BYTE</a>); \</div>
+<div class="line">    temp_64 |= (<a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a>)((a &lt; b ? (<a class="code hl_typedef" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>)a : (<a class="code hl_typedef" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>)b)) &lt;&lt; i; \</div>
+<div class="line">  } \</div>
+<div class="line">  state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = temp_64; \</div>
+<div class="line">} <span class="keywordflow">while</span> (0)</div>
+</div><!-- fragment -->
+<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00104">104</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_mvi.h</a>.</p>
+
+</div>
+</div>
+<a id="afce2f88488e73f281d60aef43837d57c" name="afce2f88488e73f281d60aef43837d57c"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#afce2f88488e73f281d60aef43837d57c">&#9670;&#160;</a></span>DO_MINSW4</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_MINSW4</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<b>Value:</b><div class="fragment"><div class="line">  <span class="keywordflow">do</span> { \</div>
+<div class="line">  temp_64 = 0; temp_64_1 = state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>]; temp_64_2 = <a class="code hl_define" href="../../de/d00/a00185.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a>; \</div>
+<div class="line">  for (i = 0; i &lt; 64; i += 16) { \</div>
+<div class="line">    <a class="code hl_typedef" href="../../df/d00/a00263.html#a38965495c67998cf330d16c6ae30ced5">s16</a> a = (<a class="code hl_typedef" href="../../df/d00/a00263.html#a38965495c67998cf330d16c6ae30ced5">s16</a>)((temp_64_1 &gt;&gt; i) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#a2f250a4a71ca7a2a86cbb9c3796bf223">X64_WORD</a>), b = (<a class="code hl_typedef" href="../../df/d00/a00263.html#a38965495c67998cf330d16c6ae30ced5">s16</a>)((temp_64_2 &gt;&gt; i) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#a2f250a4a71ca7a2a86cbb9c3796bf223">X64_WORD</a>); \</div>
+<div class="line">    temp_64 |= (<a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a>)((a &lt; b ? (<a class="code hl_typedef" href="../../df/d00/a00263.html#a6dbf9516e516c901604625282c174aa4">u16</a>)a : (<a class="code hl_typedef" href="../../df/d00/a00263.html#a6dbf9516e516c901604625282c174aa4">u16</a>)b)) &lt;&lt; i; \</div>
+<div class="line">  } \</div>
+<div class="line">  state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = temp_64; \</div>
+<div class="line">} <span class="keywordflow">while</span> (0)</div>
+</div><!-- fragment -->
+<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00150">150</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_mvi.h</a>.</p>
+
+</div>
+</div>
+<a id="a6432509156cd51e185bbc21f9cbdaf4e" name="a6432509156cd51e185bbc21f9cbdaf4e"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a6432509156cd51e185bbc21f9cbdaf4e">&#9670;&#160;</a></span>DO_MINUB8</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_MINUB8</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<b>Value:</b><div class="fragment"><div class="line">  <span class="keywordflow">do</span> { \</div>
+<div class="line">  temp_64 = 0; temp_64_1 = state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>]; temp_64_2 = <a class="code hl_define" href="../../de/d00/a00185.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a>; \</div>
+<div class="line">  for (i = 0; i &lt; 64; i += 8) { \</div>
+<div class="line">    <a class="code hl_typedef" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a> a = (<a class="code hl_typedef" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>)((temp_64_1 &gt;&gt; i) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#a594bc985342666d88c0c87ce02b92bc5">X64_BYTE</a>), b = (<a class="code hl_typedef" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>)((temp_64_2 &gt;&gt; i) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#a594bc985342666d88c0c87ce02b92bc5">X64_BYTE</a>); \</div>
+<div class="line">    temp_64 |= ((<a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a>)(a &lt; b ? a : b) &lt;&lt; i); \</div>
+<div class="line">  } \</div>
+<div class="line">  state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = temp_64; \</div>
+<div class="line">} <span class="keywordflow">while</span> (0)</div>
+</div><!-- fragment -->
+<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00078">78</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_mvi.h</a>.</p>
+
+</div>
+</div>
+<a id="a317cacadeb3c94327915dbb4ddcc06e3" name="a317cacadeb3c94327915dbb4ddcc06e3"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a317cacadeb3c94327915dbb4ddcc06e3">&#9670;&#160;</a></span>DO_MINUW4</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_MINUW4</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<b>Value:</b><div class="fragment"><div class="line">  <span class="keywordflow">do</span> { \</div>
+<div class="line">  temp_64 = 0; temp_64_1 = state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>]; temp_64_2 = <a class="code hl_define" href="../../de/d00/a00185.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a>; \</div>
+<div class="line">  for (i = 0; i &lt; 64; i += 16) { \</div>
+<div class="line">    <a class="code hl_typedef" href="../../df/d00/a00263.html#a6dbf9516e516c901604625282c174aa4">u16</a> a = (<a class="code hl_typedef" href="../../df/d00/a00263.html#a6dbf9516e516c901604625282c174aa4">u16</a>)((temp_64_1 &gt;&gt; i) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#a2f250a4a71ca7a2a86cbb9c3796bf223">X64_WORD</a>), b = (<a class="code hl_typedef" href="../../df/d00/a00263.html#a6dbf9516e516c901604625282c174aa4">u16</a>)((temp_64_2 &gt;&gt; i) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#a2f250a4a71ca7a2a86cbb9c3796bf223">X64_WORD</a>); \</div>
+<div class="line">    temp_64 |= ((<a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a>)(a &lt; b ? a : b) &lt;&lt; i); \</div>
+<div class="line">  } \</div>
+<div class="line">  state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = temp_64; \</div>
+<div class="line">} <span class="keywordflow">while</span> (0)</div>
+</div><!-- fragment -->
+<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00132">132</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_mvi.h</a>.</p>
+
+</div>
+</div>
+<a id="abb333b5297dcc36dcc2489dccdc429a6" name="abb333b5297dcc36dcc2489dccdc429a6"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#abb333b5297dcc36dcc2489dccdc429a6">&#9670;&#160;</a></span>DO_PERR</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_PERR</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<b>Value:</b><div class="fragment"><div class="line">  <span class="keywordflow">do</span> { \</div>
+<div class="line">  temp_64 = 0; temp_64_1 = state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a3cc7326bd3140cc269e686fc46179a21">REG_1</a>]; temp_64_2 = <a class="code hl_define" href="../../de/d00/a00185.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a>; \</div>
+<div class="line">  for (i = 0; i &lt; 64; i += 8) { \</div>
+<div class="line">    <a class="code hl_typedef" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a> a = (<a class="code hl_typedef" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>)((temp_64_1 &gt;&gt; i) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#a594bc985342666d88c0c87ce02b92bc5">X64_BYTE</a>); \</div>
+<div class="line">    <a class="code hl_typedef" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a> b = (<a class="code hl_typedef" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a>)((temp_64_2 &gt;&gt; i) &amp; <a class="code hl_define" href="../../de/d00/a00185.html#a594bc985342666d88c0c87ce02b92bc5">X64_BYTE</a>); \</div>
+<div class="line">    temp_64 += (a &gt; b) ? (a - b) : (b - a); \</div>
+<div class="line">  } \</div>
+<div class="line">  state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = temp_64; \</div>
+<div class="line">} <span class="keywordflow">while</span> (0)</div>
+</div><!-- fragment -->
+<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00258">258</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_mvi.h</a>.</p>
+
+</div>
+</div>
+<a id="a23937b8f2ba1e2daf97a2da1bf1e18ed" name="a23937b8f2ba1e2daf97a2da1bf1e18ed"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a23937b8f2ba1e2daf97a2da1bf1e18ed">&#9670;&#160;</a></span>DO_PKLB</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_PKLB&#160;&#160;&#160;do { <a class="el" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a> t = <a class="el" href="../../de/d00/a00185.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a>; state.r[<a class="el" href="../../de/d00/a00185.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = (t &amp; <a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x00000000000000ff)) | ((t &amp; <a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x000000ff00000000)) &gt;&gt; 24); } while (0)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00277">277</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_mvi.h</a>.</p>
+
+</div>
+</div>
+<a id="a30eb22fd29d01e33400156bc716141ea" name="a30eb22fd29d01e33400156bc716141ea"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a30eb22fd29d01e33400156bc716141ea">&#9670;&#160;</a></span>DO_PKWB</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_PKWB</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<b>Value:</b><div class="fragment"><div class="line"><span class="keywordflow">do</span> { <a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a> t = <a class="code hl_define" href="../../de/d00/a00185.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a>; state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = (t &amp; <a class="code hl_define" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x00000000000000ff)) | \</div>
+<div class="line">((t &amp; <a class="code hl_define" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x0000000000ff0000)) &gt;&gt; 8) | ((t &amp; <a class="code hl_define" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x000000ff00000000)) &gt;&gt; 16) | ((t &amp; <a class="code hl_define" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x00ff000000000000)) &gt;&gt; 24); } <span class="keywordflow">while</span> (0)</div>
+<div class="ttc" id="aa00263_html_a87a27db8f6877dc5bbc36ec833e88c58"><div class="ttname"><a href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a></div><div class="ttdeci">#define U64(a)</div><div class="ttdef"><b>Definition</b> <a href="../../df/d00/a00263_source.html#l00119">datatypes.h:119</a></div></div>
+</div><!-- fragment -->
+<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00288">288</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_mvi.h</a>.</p>
+
+</div>
+</div>
+<a id="a2139262211b09b3346e58353211f8046" name="a2139262211b09b3346e58353211f8046"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a2139262211b09b3346e58353211f8046">&#9670;&#160;</a></span>DO_UNPKBL</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_UNPKBL&#160;&#160;&#160;do { <a class="el" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a> t = <a class="el" href="../../de/d00/a00185.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a>; state.r[<a class="el" href="../../de/d00/a00185.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = (t &amp; <a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x000000ff)) | ((t &amp; <a class="el" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x0000ff00)) &lt;&lt; 24); } while (0)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00300">300</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_mvi.h</a>.</p>
+
+</div>
+</div>
+<a id="afbda612d4359b3d48c15348a59f4fbce" name="afbda612d4359b3d48c15348a59f4fbce"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#afbda612d4359b3d48c15348a59f4fbce">&#9670;&#160;</a></span>DO_UNPKBW</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define DO_UNPKBW</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<b>Value:</b><div class="fragment"><div class="line"><span class="keywordflow">do</span> { <a class="code hl_typedef" href="../../df/d00/a00263.html#a1af9f95651e921615e75917a6dd1b574">u64</a> t = <a class="code hl_define" href="../../de/d00/a00185.html#a100362a825d9eb8f8cc30179894bcdc3">V_2</a>; state.r[<a class="code hl_define" href="../../de/d00/a00185.html#a14e5d5a6641dfac1ed51225a7b87bc92">REG_3</a>] = (t &amp; <a class="code hl_define" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x000000ff)) | ((t &amp; <a class="code hl_define" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x0000ff00)) &lt;&lt; 8) | \</div>
+<div class="line">((t &amp; <a class="code hl_define" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0x00ff0000)) &lt;&lt; 16) | ((t &amp; <a class="code hl_define" href="../../df/d00/a00263.html#a87a27db8f6877dc5bbc36ec833e88c58">U64</a>(0xff000000)) &lt;&lt; 24); } <span class="keywordflow">while</span> (0)</div>
+</div><!-- fragment -->
+<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00206_source.html#l00311">311</a> of file <a class="el" href="../../d5/d00/a00206_source.html">cpu_mvi.h</a>.</p>
 
 </div>
 </div>
@@ -397,7 +467,7 @@ Macros</h2></td></tr>
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
-    <li class="navelem"><a href="../../dir_3e504b0d3bcf24da5cd743a5b933950b.html">CPU</a></li><li class="navelem"><a href="../../d5/d00/a00206.html">cpu_pal.h</a></li>
+    <li class="navelem"><a href="../../dir_3e504b0d3bcf24da5cd743a5b933950b.html">CPU</a></li><li class="navelem"><a href="../../d5/d00/a00206.html">cpu_mvi.h</a></li>
     <li class="footer">Generated by <a href="https://www.doxygen.org/index.html"><img class="footer" src="../../doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.18.0 </li>
   </ul>
 </div>

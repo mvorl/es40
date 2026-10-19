@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.18.0"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ES40: gui/gui_x11.cpp File Reference</title>
+<title>ES40: gui/gui_win32.cpp File Reference</title>
 <link href="../../tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="../../dynsections.js"></script>
 <script type="text/javascript" src="../../codefolding.js"></script>
@@ -26,7 +26,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">ES40<span id="projectnumber">&#160;0.17+</span>
+   <div id="projectname">ES40<span id="projectnumber">&#160;0.92.2</span>
    </div>
   </td>
  </tr>
@@ -109,24 +109,24 @@ document.addEventListener('DOMContentLoaded',() => { initNavTree('d5/d00/a00374.
 </div>
 
 <div class="header">
-  <div class="headertitle"><div class="title">gui_x11.cpp File Reference</div></div>
+  <div class="headertitle"><div class="title">gui_win32.cpp File Reference</div></div>
 </div><!--header-->
 <div class="contents">
 
-<p>X-Windows GUI implementation.  
+<p>Win32 GUI implementation.  
 <a href="#details">More...</a></p>
-<div class="textblock"><code>#include &quot;<a class="el" href="../../d5/d00/a00518_source.html">../StdAfx.h</a>&quot;</code><br />
+<div class="textblock"><code>#include &quot;<a class="el" href="../../d9/d00/a00524_source.html">../StdAfx.h</a>&quot;</code><br />
 </div><div class="textblock"><div class="dynheader">
-Include dependency graph for gui_x11.cpp:</div>
+Include dependency graph for gui_win32.cpp:</div>
 <div class="dyncontent">
-<div class="center"><img src="../../dd/d00/a00375.png" border="0" usemap="#agui_2gui__x11_8cpp" loading="lazy" alt=""/></div>
-<map name="agui_2gui__x11_8cpp" id="agui_2gui__x11_8cpp">
-<area shape="rect" title="X&#45;Windows GUI implementation." alt="" coords="618,5,729,32"/>
-<area shape="rect" href="../../d5/d00/a00518.html" title="Standard includes." alt="" coords="631,80,716,107"/>
+<div class="center"><img src="../../dd/d00/a00375.png" border="0" usemap="#agui_2gui__win32_8cpp" loading="lazy" alt=""/></div>
+<map name="agui_2gui__win32_8cpp" id="agui_2gui__win32_8cpp">
+<area shape="rect" title="Win32 GUI implementation." alt="" coords="611,5,736,32"/>
+<area shape="rect" href="../../d9/d00/a00524.html" title="Standard includes." alt="" coords="631,80,716,107"/>
 <area shape="poly" title=" " alt="" coords="675,30,676,66,671,63,672,35"/>
 <area shape="rect" href="../../d7/d00/a00131.html" title=" " alt="" coords="220,155,329,181"/>
 <area shape="poly" title=" " alt="" coords="629,104,345,157,344,151,633,101"/>
-<area shape="rect" href="../../d9/d00/a00257.html" title="Contains the datatype definitions for use with Microsoft Visual C++ and Linux." alt="" coords="354,155,443,181"/>
+<area shape="rect" href="../../df/d00/a00263.html" title="Contains the datatype definitions for use with Microsoft Visual C++ and Linux." alt="" coords="354,155,443,181"/>
 <area shape="poly" title=" " alt="" coords="629,107,459,154,458,148,634,105"/>
 <area shape="rect" title=" " alt="" coords="468,155,535,181"/>
 <area shape="poly" title=" " alt="" coords="646,106,546,151,544,146,641,108"/>
@@ -142,9 +142,9 @@ Include dependency graph for gui_x11.cpp:</div>
 <area shape="poly" title=" " alt="" coords="667,106,636,146,616,166,592,184,540,210,486,227,485,222,538,205,589,179,612,162,633,142,662,109"/>
 <area shape="rect" href="../../d4/d00/a00035.html" title=" " alt="" coords="711,155,825,181"/>
 <area shape="poly" title=" " alt="" coords="690,105,742,145,737,145,689,110"/>
-<area shape="rect" href="../../db/d00/a00296.html" title="Contains macro&#39;s and prototypes for debugging." alt="" coords="1130,155,1232,181"/>
+<area shape="rect" href="../../d0/d00/a00302.html" title="Contains macro&#39;s and prototypes for debugging." alt="" coords="1130,155,1232,181"/>
 <area shape="poly" title=" " alt="" coords="716,97,1112,152,1117,155,1112,155,1112,157,716,103"/>
-<area shape="rect" href="../../df/d00/a00299.html" title="Contains byte&#45;order conversion helpers." alt="" coords="1257,155,1362,181"/>
+<area shape="rect" href="../../d3/d00/a00305.html" title="Contains byte&#45;order conversion helpers." alt="" coords="1257,155,1362,181"/>
 <area shape="poly" title=" " alt="" coords="716,95,937,116,1244,154,1239,155,936,121,716,101"/>
 <area shape="rect" title=" " alt="" coords="5,304,83,331"/>
 <area shape="poly" title=" " alt="" coords="179,259,87,300,85,295,176,254"/>
@@ -205,57 +205,18 @@ Include dependency graph for gui_x11.cpp:</div>
 </div>
 </div>
 <p><a href="../../d5/d00/a00374_source.html">Go to the source code of this file.</a></p>
-<table class="memberdecls">
-<tr class="heading"><td colspan="2"><h2 id="header-define-members" class="groupheader"><a id="define-members" name="define-members"></a>
-Macros</h2></td></tr>
-<tr class="memitem:af6e2bd30784640d359f15b81ce78b6eb" id="r_af6e2bd30784640d359f15b81ce78b6eb"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#af6e2bd30784640d359f15b81ce78b6eb">XK_PUBLISHING</a></td></tr>
-<tr class="memitem:a971a90193631c512c821caa0c4034d95" id="r_a971a90193631c512c821caa0c4034d95"><td class="memItemLeft">#define&#160;</td><td class="memItemRight"><a class="el" href="#a971a90193631c512c821caa0c4034d95">XK_TECHNICAL</a></td></tr>
-</table>
 <a name="details" id="details"></a><h2 id="header-details" class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>X-Windows GUI implementation. </p>
-<p>Allows use of gfx without SDL on Linux.</p>
+<div class="textblock"><p>Win32 GUI implementation. </p>
+<p>Allows use of gfx without SDL on WIndows</p>
 <p>$Id$</p>
-<p>X-1.5 Camiel Vanderhoeven 26-MAR-2008 Fix compiler warnings.</p>
-<p>X-1.4 Pepito Grillo 15-MAR-2008 Fixed FAILURE macro</p>
-<p>X-1.3 Camiel Vanderhoeven 14-MAR-2008 Formatting</p>
-<p>X-1.2 Camiel Vanderhoeven 12-FEB-2008 Moved keyboard code into it's own class (<a class="el" href="../../d6/d00/a01494.html" title="Emulated keyboard controller, keyboard and mouse.">CKeyboard</a>)</p>
-<p>X-1.1 Camiel Vanderhoeven 20-JAN-2008 Initial version for ES40 emulator. </p>
+<p>X-1.5 Camiel Vanderhoeven 05-MAR-2008 Multi-threading version.</p>
+<p>X-1.4 Camiel Vanderhoeven 12-FEB-2008 Moved keyboard code into it's own class (<a class="el" href="../../db/d00/a01501.html" title="Emulated keyboard controller, keyboard and mouse.">CKeyboard</a>)</p>
+<p>X-1.3 Camiel Vanderhoeven 22-JAN-2008 Commented out mousewheel-code, doesn't work with older win32 versions.</p>
+<p>X-1.2 Camiel Vanderhoeven 19-JAN-2008 Changed window title.</p>
+<p>X-1.1 Camiel Vanderhoeven 19-JAN-2008 Initial version for ES40 emulator. </p>
 
-<p class="definition">Definition in file <a class="el" href="../../d5/d00/a00374_source.html">gui_x11.cpp</a>.</p>
-</div><a name="doc-define-members" id="doc-define-members"></a><h2 id="header-doc-define-members" class="groupheader">Macro Definition Documentation</h2>
-<a id="af6e2bd30784640d359f15b81ce78b6eb" name="af6e2bd30784640d359f15b81ce78b6eb"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#af6e2bd30784640d359f15b81ce78b6eb">&#9670;&#160;</a></span>XK_PUBLISHING</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define XK_PUBLISHING</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00374_source.html#l00054">54</a> of file <a class="el" href="../../d5/d00/a00374_source.html">gui_x11.cpp</a>.</p>
-
-</div>
-</div>
-<a id="a971a90193631c512c821caa0c4034d95" name="a971a90193631c512c821caa0c4034d95"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a971a90193631c512c821caa0c4034d95">&#9670;&#160;</a></span>XK_TECHNICAL</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define XK_TECHNICAL</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p class="definition">Definition at line <a class="el" href="../../d5/d00/a00374_source.html#l00055">55</a> of file <a class="el" href="../../d5/d00/a00374_source.html">gui_x11.cpp</a>.</p>
-
-</div>
-</div>
-</div><!-- contents -->
+<p class="definition">Definition in file <a class="el" href="../../d5/d00/a00374_source.html">gui_win32.cpp</a>.</p>
+</div></div><!-- contents -->
 </div><!-- doc-content -->
 <div id="page-nav" class="page-nav-panel">
 <div id="page-nav-resize-handle"></div>
@@ -268,7 +229,7 @@ Macros</h2></td></tr>
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
-    <li class="navelem"><a href="../../dir_11bc0974ce736ce9a6fadebbeb7a8314.html">gui</a></li><li class="navelem"><a href="../../d5/d00/a00374.html">gui_x11.cpp</a></li>
+    <li class="navelem"><a href="../../dir_11bc0974ce736ce9a6fadebbeb7a8314.html">gui</a></li><li class="navelem"><a href="../../d5/d00/a00374.html">gui_win32.cpp</a></li>
     <li class="footer">Generated by <a href="https://www.doxygen.org/index.html"><img class="footer" src="../../doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.18.0 </li>
   </ul>
 </div>

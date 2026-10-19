@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.18.0"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ES40: Visual Studio/x64/Release JIT/shutdown_openvms.py File Reference</title>
+<title>ES40: Todo List</title>
 <link href="../../tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="../../dynsections.js"></script>
 <script type="text/javascript" src="../../codefolding.js"></script>
@@ -26,7 +26,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">ES40<span id="projectnumber">&#160;0.17+</span>
+   <div id="projectname">ES40<span id="projectnumber">&#160;0.92.2</span>
    </div>
   </td>
  </tr>
@@ -108,49 +108,35 @@ document.addEventListener('DOMContentLoaded',() => { initNavTree('da/d00/a00629.
 </div>
 </div>
 
-<div class="header">
-  <div class="headertitle"><div class="title">shutdown_openvms.py File Reference</div></div>
+<div><div class="header">
+  <div class="headertitle"><div class="title">Todo List </div></div>
 </div><!--header-->
 <div class="contents">
-
-<p><a href="../../da/d00/a00629_source.html">Go to the source code of this file.</a></p>
-<table class="memberdecls">
-<tr class="heading"><td colspan="2"><h2 id="header-namespaces" class="groupheader"><a id="namespaces" name="namespaces"></a>
-Namespaces</h2></td></tr>
-<tr class="memitem:shutdown_5Fopenvms" id="r_shutdown_5Fopenvms"><td class="memItemLeft">namespace &#160;</td><td class="memItemRight"><a class="el" href="../../db/d00/a00641.html">shutdown_openvms</a></td></tr>
-</table><table class="memberdecls">
-<tr class="heading"><td colspan="2"><h2 id="header-func-members" class="groupheader"><a id="func-members" name="func-members"></a>
-Functions</h2></td></tr>
-<tr class="memitem:a78ce668db7a5a12ccb8915e34245ac3d" id="r_a78ce668db7a5a12ccb8915e34245ac3d"><td class="memItemLeft">&#160;</td><td class="memItemRight"><a class="el" href="../../db/d00/a00641.html#a78ce668db7a5a12ccb8915e34245ac3d">shutdown_openvms.ingest</a> (data)</td></tr>
-<tr class="memitem:abd0874362c0bdbd54ad66d019e8d1b2f" id="r_abd0874362c0bdbd54ad66d019e8d1b2f"><td class="memItemLeft">&#160;</td><td class="memItemRight"><a class="el" href="../../db/d00/a00641.html#abd0874362c0bdbd54ad66d019e8d1b2f">shutdown_openvms.wait_for</a> (pattern, timeout, start=0)</td></tr>
-<tr class="memitem:a1e98d1878412bdedd8d3ff2cf3930c33" id="r_a1e98d1878412bdedd8d3ff2cf3930c33"><td class="memItemLeft">&#160;</td><td class="memItemRight"><a class="el" href="../../db/d00/a00641.html#a1e98d1878412bdedd8d3ff2cf3930c33">shutdown_openvms.send_line</a> (line, slow=False)</td></tr>
-</table><table class="memberdecls">
-<tr class="heading"><td colspan="2"><h2 id="header-var-members" class="groupheader"><a id="var-members" name="var-members"></a>
-Variables</h2></td></tr>
-<tr class="memitem:a6e44d34ed353cebf7e7a1327ebd15df3" id="r_a6e44d34ed353cebf7e7a1327ebd15df3"><td class="memItemLeft">&#160;</td><td class="memItemRight"><a class="el" href="../../db/d00/a00641.html#a6e44d34ed353cebf7e7a1327ebd15df3">shutdown_openvms.sock</a> = socket.create_connection((&quot;127.0.0.1&quot;, 21264), timeout=10)</td></tr>
-<tr class="memitem:a4c8f4fd464e7baa13c8ad82198495bca" id="r_a4c8f4fd464e7baa13c8ad82198495bca"><td class="memItemLeft">str&#160;</td><td class="memItemRight"><a class="el" href="../../db/d00/a00641.html#a4c8f4fd464e7baa13c8ad82198495bca">shutdown_openvms.text</a> = &quot;&quot;</td></tr>
-<tr class="memitem:a52ca4f07eaec2b248e59ad996ee69ea6" id="r_a52ca4f07eaec2b248e59ad996ee69ea6"><td class="memItemLeft">&#160;</td><td class="memItemRight"><a class="el" href="../../db/d00/a00641.html#a52ca4f07eaec2b248e59ad996ee69ea6">shutdown_openvms.mark</a> = len(<a class="el" href="../../db/d00/a00641.html#a4c8f4fd464e7baa13c8ad82198495bca">text</a>)</td></tr>
-<tr class="memitem:aa00dd8bf1e629770f17e982fd137dadd" id="r_aa00dd8bf1e629770f17e982fd137dadd"><td class="memItemLeft">&#160;</td><td class="memItemRight"><a class="el" href="../../db/d00/a00641.html#aa00dd8bf1e629770f17e982fd137dadd">shutdown_openvms.prompt</a> = <a class="el" href="../../db/d00/a00641.html#abd0874362c0bdbd54ad66d019e8d1b2f">wait_for</a>(r&quot;P00&gt;&gt;&gt;\s*$|(?:^|[\r\n])[^\r\n]*\$\s*$&quot;, 20, mark)</td></tr>
-<tr class="memitem:afb58b923d888b342d218446f16804902" id="r_afb58b923d888b342d218446f16804902"><td class="memItemLeft">&#160;</td><td class="memItemRight"><a class="el" href="../../db/d00/a00641.html#afb58b923d888b342d218446f16804902">shutdown_openvms.user</a> = <a class="el" href="../../db/d00/a00641.html#abd0874362c0bdbd54ad66d019e8d1b2f">wait_for</a>(r&quot;P00&gt;&gt;&gt;\s*$|Username:\s*$|(?:^|[\r\n])[^\r\n]*\$\s*$&quot;, 30, mark)</td></tr>
-<tr class="memitem:a2ec193cf79a2af15ce981ff5a29755d3" id="r_a2ec193cf79a2af15ce981ff5a29755d3"><td class="memItemLeft">&#160;</td><td class="memItemRight"><a class="el" href="../../db/d00/a00641.html#a2ec193cf79a2af15ce981ff5a29755d3">shutdown_openvms.slow</a></td></tr>
-<tr class="memitem:a37b062eaed342bcff049b113e4ecb555" id="r_a37b062eaed342bcff049b113e4ecb555"><td class="memItemLeft">&#160;</td><td class="memItemRight"><a class="el" href="../../db/d00/a00641.html#a37b062eaed342bcff049b113e4ecb555">shutdown_openvms.stop</a> = <a class="el" href="../../db/d00/a00641.html#abd0874362c0bdbd54ad66d019e8d1b2f">wait_for</a>(r&quot;P00&gt;&gt;&gt;\s*$|BUGCHECK|BUGCHK|PANIC&quot;, 300, <a class="el" href="../../db/d00/a00641.html#a52ca4f07eaec2b248e59ad996ee69ea6">mark</a>)</td></tr>
-<tr class="memitem:af1d2f4db11976acfaadfa3f7ea99f7c7" id="r_af1d2f4db11976acfaadfa3f7ea99f7c7"><td class="memItemLeft">str&#160;</td><td class="memItemRight"><a class="el" href="../../db/d00/a00641.html#af1d2f4db11976acfaadfa3f7ea99f7c7">shutdown_openvms.shutdown_text</a> = <a class="el" href="../../db/d00/a00641.html#a4c8f4fd464e7baa13c8ad82198495bca">text</a>[<a class="el" href="../../db/d00/a00641.html#a52ca4f07eaec2b248e59ad996ee69ea6">mark</a> : stop.end()]</td></tr>
-<tr class="memitem:a36c0b59ea4aba43ec64157562c8f49c0" id="r_a36c0b59ea4aba43ec64157562c8f49c0"><td class="memItemLeft">&#160;</td><td class="memItemRight"><a class="el" href="../../db/d00/a00641.html#a36c0b59ea4aba43ec64157562c8f49c0">shutdown_openvms.encoding</a></td></tr>
-</table>
-</div><!-- contents -->
+<div class="textblock"><dl class="reflist">
+<dt>Class <a class="el" href="../../d1/d00/a00829.html">CAliM1543C_usb</a>  </dt>
+<dd><a class="anchor" id="_todo000001"></a>This device is just a stub. Not functional yet. </dd>
+<dt>Global <a class="el" href="../../d3/d00/a01613.html#a426e10f6af92fae37732288bf84a7259">CDisk::scsi_xfer_done_me</a>  (int bus)</dt>
+<dd><a class="anchor" id="_todo000004"></a>Handle disconnect/reconnect properly.  </dd>
+<dt>Global <a class="el" href="../../d1/d00/a00837.html#a31355be34d5e3c1dcd78240959c2a24a">CDMA::do_dma</a>  ()</dt>
+<dd><a class="anchor" id="_todo000002"></a>I'm not sure what would actually trigger this, so its mostly just a placeholder.  </dd>
+<dt>Global <a class="el" href="../../d0/d00/a01745.html#ab8fecc9683848600b067fc8176658e53">CSym53C810::write_b_scntl1</a>  (<a class="el" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a> value)</dt>
+<dd><a class="anchor" id="_todo000005"></a>: Implement real reset of the SCSI bus.  </dd>
+<dt>Global <a class="el" href="../../db/d00/a01761.html#a11359df93d5f6aa6a69f5390ed8efc77">CSym53C895::write_b_scntl1</a>  (<a class="el" href="../../df/d00/a00263.html#a987e4d6cf789cb59dbb390728271e4d6">u8</a> value)</dt>
+<dd><a class="anchor" id="_todo000006"></a>: Implement real reset of the SCSI bus.  </dd>
+<dt>Global <a class="el" href="../../d4/d00/a01817.html#a290f605edaae856e7f9680b5876512d8">CSystem::PCI_Phys</a>  (int pcibus, <a class="el" href="../../df/d00/a00263.html#a70c1fcc1a4e96af8f6580f708657cd41">u32</a> address)</dt>
+<dd><p class="startdd"><a class="anchor" id="_todo000007"></a>The documentation mentions a PTP bit set for a window, but the register descriptions don't show a PTP bit in one of the three registers (WSBA, WSM and TBA). So, for now, we can only do peer-to-peer through a scatter-gather PTE.</p>
+<p class="enddd"><a class="anchor" id="_todo000008"></a>Dual-Acces-Cycle (DAC) access from the PCI bus is not supported. If a device is ever added that uses this, we should probably support it.  </p>
+</dd>
+<dt>File <a class="el" href="../../d8/d00/a01932.html">vga.h</a>  </dt>
+<dd><a class="anchor" id="_todo000003"></a>Split this out for the different VGA cards.</dd>
+</dl>
+</div></div><!-- contents -->
+</div><!-- PageDoc -->
 </div><!-- doc-content -->
-<div id="page-nav" class="page-nav-panel">
-<div id="page-nav-resize-handle"></div>
-<div id="page-nav-tree">
-<div id="page-nav-contents">
-</div><!-- page-nav-contents -->
-</div><!-- page-nav-tree -->
-</div><!-- page-nav -->
 </div><!-- container -->
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
-    <li class="navelem"><a href="../../dir_6e3e2bcb85b3ed9f5da375e58c17e419.html">Visual Studio</a></li><li class="navelem"><a href="../../dir_cc1b2fda142fd52da7205b8f16ac04b2.html">x64</a></li><li class="navelem"><a href="../../dir_7a991aac0df79a3218db2b0cb7908b23.html">Release JIT</a></li><li class="navelem"><a href="../../da/d00/a00629.html">shutdown_openvms.py</a></li>
     <li class="footer">Generated by <a href="https://www.doxygen.org/index.html"><img class="footer" src="../../doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.18.0 </li>
   </ul>
 </div>

@@ -1,10 +1,10 @@
 var a00143 =
 [
-    [ "CAlphaCPU", "d8/d00/a00926.html", "d8/d00/a00926" ],
-    [ "CAlphaCPU::SDataPageCache", "d7/d00/a00930.html", "d7/d00/a00930" ],
-    [ "CAlphaCPU::SCPU_state", "d0/d00/a00934.html", "d0/d00/a00934" ],
-    [ "CAlphaCPU::SCPU_state::SICache", "d5/d00/a00938.html", "d5/d00/a00938" ],
-    [ "CAlphaCPU::SCPU_state::STBEntry", "df/d00/a00942.html", "df/d00/a00942" ],
+    [ "CAlphaCPU", "dd/d00/a00921.html", "dd/d00/a00921" ],
+    [ "CAlphaCPU::SDataPageCache", "dc/d00/a00925.html", "dc/d00/a00925" ],
+    [ "CAlphaCPU::SCPU_state", "dc/d00/a00929.html", "dc/d00/a00929" ],
+    [ "CAlphaCPU::SCPU_state::SICache", "d0/d00/a00933.html", "d0/d00/a00933" ],
+    [ "CAlphaCPU::SCPU_state::STBEntry", "de/d00/a00937.html", "de/d00/a00937" ],
     [ "ICACHE_BYTE_MASK", "d7/d00/a00143.html#acb33e5e89b4cfe9c09aa1a8015768043", null ],
     [ "ICACHE_ENTRIES", "d7/d00/a00143.html#a48aec1885d896469a79a8f5ee3747e5a", null ],
     [ "ICACHE_INDEX_MASK", "d7/d00/a00143.html#a709663a49dd9bf79447281428be2db64", null ],

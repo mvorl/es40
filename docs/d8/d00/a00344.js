@@ -1,19 +1,17 @@
 var a00344 =
 [
-    [ "alias", "d8/d00/a00344.html#ac0747ceabb4eb02457a630d8011c797e", null ],
-    [ "bytes_per_pixel", "d8/d00/a00344.html#a93b927b03e7b7675197002c05e01b370", null ],
-    [ "compare_supported", "d8/d00/a00344.html#a3452797267a17de7aa038293a739af0f", null ],
-    [ "crc32", "d8/d00/a00344.html#acec54efce69c9cf3deec5b5eaa6142fe", null ],
-    [ "field_mask", "d8/d00/a00344.html#a748e2e5984e40356a777804942754060", null ],
-    [ "get32", "d8/d00/a00344.html#a5d7bbf75c1054673c42cc2af329b08f9", null ],
-    [ "hex", "d8/d00/a00344.html#a2c10e9be6915c887024cbcb0c17e7f6f", null ],
-    [ "mono_bit", "d8/d00/a00344.html#a1cdebb40e9f9e0bb5ba9e498842dfd28", null ],
-    [ "put32", "d8/d00/a00344.html#a774a38398423b2119155121c8cabbd20", null ],
-    [ "rop_uses", "d8/d00/a00344.html#a59416d0cf67d5d0b6b83c65bf53b5159", null ],
-    [ "scissor_edge", "d8/d00/a00344.html#aed9ae640cddf0e07d08763580c120313", null ],
-    [ "shadow_allowed", "d8/d00/a00344.html#aba7a6e6c44795fcda80987607f6c381c", null ],
-    [ "source_rejected", "d8/d00/a00344.html#a7495350177232d768900acb45177cc18", null ],
-    [ "stream32", "d8/d00/a00344.html#a3af77bf7e53c45e7198215ad21ba65ef", null ],
-    [ "stream32", "d8/d00/a00344.html#acecddc38ebe5ce59a33534221c2819dd", null ],
-    [ "valid_access", "d8/d00/a00344.html#af9a73a277113999d318a9cafcb908916", null ]
+    [ "block_pattern_layout", "d8/d00/a00344.html#afb256efd72cdae6043c799ac0364ea5b", null ],
+    [ "crc32", "d8/d00/a00344.html#a5a6d84344421b01ef49c2ba596df4f51", null ],
+    [ "dma_board_update", "d8/d00/a00344.html#aec9518fe1fc8f0b9f4b9dfaf034d188d", null ],
+    [ "flat_vertex_register", "d8/d00/a00344.html#a32c84a53d8e48590bbce9328169561bb", null ],
+    [ "get32", "d8/d00/a00344.html#aac621ee1f1d2161eae7440dba39a604b", null ],
+    [ "integer_vertex_color_register", "d8/d00/a00344.html#a7df5e1c662c82f6bed9287c8d46caebe", null ],
+    [ "integer_vertex_register", "d8/d00/a00344.html#a51d1d9bcc84fb9d39dafb3bec0fc0a6d", null ],
+    [ "put32", "d8/d00/a00344.html#a215350a465910796cbd4c44060f66856", null ],
+    [ "realimage_repeat_fraction", "d8/d00/a00344.html#a5846a13383d210c2fa58a8593acda2b3", null ],
+    [ "valid_width", "d8/d00/a00344.html#abce886dbd3eb7ebdc6175bdd0a6a947f", null ],
+    [ "vertex_register", "d8/d00/a00344.html#acea70135caeea34c8f196f123a42dd0a", null ],
+    [ "width_mask", "d8/d00/a00344.html#ad32b76e68f842e1bfbbbbfb9bb8f550d", null ],
+    [ "zero_context_register", "d8/d00/a00344.html#a9bf47d903f51e98e36d9a9128d39a8e4", null ],
+    [ "FixedPayload", "d8/d00/a00344.html#a135cf04d00845327f83b3b93110c1580", null ]
 ];

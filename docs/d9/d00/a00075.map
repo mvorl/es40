@@ -1,6 +1,6 @@
 <map id="chipset/DMA.h" name="chipset/DMA.h">
 <area shape="rect" id="Node000001" title="Contains the definitions for the emulated DMA controller." alt="" coords="86,5,195,32"/>
-<area shape="rect" id="Node000002" href="$d6/d00/a00287.html" title="Contains definitions for the base class for devices that connect to the chipset." alt="" coords="54,80,227,107"/>
+<area shape="rect" id="Node000002" href="$d6/d00/a00293.html" title="Contains definitions for the base class for devices that connect to the chipset." alt="" coords="54,80,227,107"/>
 <area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="141,30,143,65,138,64,140,35"/>
 <area shape="rect" id="Node000003" href="$da/d00/a00080.html" title="Contains the definitions for the configuration file interpreter." alt="" coords="5,155,148,181"/>
 <area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="128,109,100,145,96,141,131,105"/>

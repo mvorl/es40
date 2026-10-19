@@ -26,13 +26,13 @@ var searchData=
   ['c_5ftsunami_23',['c_tsunami',['../da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a6a06a51666a0f4f1faac9f6ad6dfedc4',1,'Configurator.h']]],
   ['c_5fwin32_24',['c_win32',['../da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a0ac42c5cbf5c2d7b82c2ca2b8126c117',1,'Configurator.h']]],
   ['c_5fx11_25',['c_x11',['../da/d00/a00080.html#a89f25b52ad6e937437ba0b4585d05d78a9b0d390668d361bcb43d441704548ae6',1,'Configurator.h']]],
-  ['cga_5fmode_26',['CGA_MODE',['../d6/d00/a01366.html#aada057ebe2e9cf5124aa25a763792c85a864678eac25b02b83d60f1bae93cb56a',1,'CVGA']]],
-  ['changeimage_27',['ChangeImage',['../d0/d00/a00542.html#a3a5b88e93995fcb72b420a657325d117a2c161a1721e72d68d96bcf322210a5da',1,'DiskFile.h']]],
-  ['claimant_28',['Claimant',['../df/d00/a01810.html#a4c99645e9406c389b794a1b7fad447c6a4f7a92a41ba9e41e13718ad81571c2ba',1,'CSystem']]],
-  ['compiled_29',['Compiled',['../d6/d00/a00161.html#ab8366be706d87922abd430dd2ca35e90a4ead4fdae2e4938c155e1db52aa1546d',1,'AlphaIPR.h']]],
-  ['copy_30',['Copy',['../d4/d00/a01298.html#a9fe5de39b6d78220675531184cde0f5ca5fb63579fc981698f97d55bfecb213ea',1,'CRealImage2100::StartOperation']]],
-  ['copyalignment_31',['CopyAlignment',['../d4/d00/a01298.html#a36eb4b93667f05184f643bcd1264b114a1001c8cfd2eccf4d813e5c649c69486e',1,'CRealImage2100::StartOperation']]],
-  ['copysource_32',['CopySource',['../d4/d00/a01298.html#a36eb4b93667f05184f643bcd1264b114aecadd2bfc4f324796b72c8d1e4511a9d',1,'CRealImage2100::StartOperation']]],
-  ['createblankfloppy_33',['CreateBlankFloppy',['../d0/d00/a00542.html#a3a5b88e93995fcb72b420a657325d117a94db933e734bfb5c12a1bd43525bcb86',1,'DiskFile.h']]],
-  ['crtc_5freg_34',['CRTC_REG',['../d6/d00/a01366.html#a78e0eff34cdb1862fcf994dc81279700a96634b7f2417de9524f7ebc8cf25955f',1,'CVGA']]]
+  ['cga_5fmode_26',['CGA_MODE',['../d7/d00/a01373.html#aada057ebe2e9cf5124aa25a763792c85a864678eac25b02b83d60f1bae93cb56a',1,'CVGA']]],
+  ['changeimage_27',['ChangeImage',['../dd/d00/a00548.html#a3a5b88e93995fcb72b420a657325d117a2c161a1721e72d68d96bcf322210a5da',1,'DiskFile.h']]],
+  ['claimant_28',['Claimant',['../d4/d00/a01817.html#a4c99645e9406c389b794a1b7fad447c6a4f7a92a41ba9e41e13718ad81571c2ba',1,'CSystem']]],
+  ['compiled_29',['Compiled',['../db/d00/a00164.html#ab8366be706d87922abd430dd2ca35e90a4ead4fdae2e4938c155e1db52aa1546d',1,'AlphaIPR.h']]],
+  ['copy_30',['Copy',['../dc/d00/a01305.html#a9fe5de39b6d78220675531184cde0f5ca5fb63579fc981698f97d55bfecb213ea',1,'CRealImage2100::StartOperation']]],
+  ['copyalignment_31',['CopyAlignment',['../dc/d00/a01305.html#a36eb4b93667f05184f643bcd1264b114a1001c8cfd2eccf4d813e5c649c69486e',1,'CRealImage2100::StartOperation']]],
+  ['copysource_32',['CopySource',['../dc/d00/a01305.html#a36eb4b93667f05184f643bcd1264b114aecadd2bfc4f324796b72c8d1e4511a9d',1,'CRealImage2100::StartOperation']]],
+  ['createblankfloppy_33',['CreateBlankFloppy',['../dd/d00/a00548.html#a3a5b88e93995fcb72b420a657325d117a94db933e734bfb5c12a1bd43525bcb86',1,'DiskFile.h']]],
+  ['crtc_5freg_34',['CRTC_REG',['../d7/d00/a01373.html#a78e0eff34cdb1862fcf994dc81279700a96634b7f2417de9524f7ebc8cf25955f',1,'CVGA']]]
 ];

@@ -1,7 +1,5 @@
-<map id="CPU/diag_rpcc.h" name="CPU/diag_rpcc.h">
-<area shape="rect" id="Node000001" title=" " alt="" coords="97,5,218,32"/>
+<map id="CPU/cpu_vax.h" name="CPU/cpu_vax.h">
+<area shape="rect" id="Node000001" title="Contains code macros for the processor VAX compatibility instructions." alt="" coords="19,5,133,32"/>
 <area shape="rect" id="Node000002" href="$d5/d00/a00140.html" title="Contains the code for the emulated DecChip 21264CB EV68 Alpha processor." alt="" coords="5,80,147,107"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="135,42,92,82,88,77,129,43"/>
-<area shape="rect" id="Node000003" href="$dc/d00/a00278.html" title="Contains the code for the PCI device class." alt="" coords="170,80,310,107"/>
-<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="184,40,228,80,223,80,182,45"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="78,46,79,80,73,79,74,50"/>
 </map>

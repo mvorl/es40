@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.18.0"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ES40: storage/DiskDevice.h Source File</title>
+<title>ES40: storage/DiskController.h Source File</title>
 <link href="../../tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="../../dynsections.js"></script>
 <script type="text/javascript" src="../../codefolding.js"></script>
@@ -26,7 +26,7 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">ES40<span id="projectnumber">&#160;0.17+</span>
+   <div id="projectname">ES40<span id="projectnumber">&#160;0.92.2</span>
    </div>
   </td>
  </tr>
@@ -109,11 +109,11 @@ document.addEventListener('DOMContentLoaded',() => { initNavTree('d4/d00/a00536_
 </div>
 
 <div class="header">
-  <div class="headertitle"><div class="title">DiskDevice.h</div></div>
+  <div class="headertitle"><div class="title">DiskController.h</div></div>
 </div><!--header-->
 <div class="contents">
 <a href="../../d4/d00/a00536.html">Go to the documentation of this file.</a><div class="fragment"><div class="line"><a id="l00001" name="l00001"></a><span class="lineno">    1</span><span class="comment">/* ES40 Emulator.</span></div>
-<div class="line"><a id="l00002" name="l00002"></a><span class="lineno">    2</span><span class="comment"> * Copyright (C) 2007 by the ES40 Emulator Project</span></div>
+<div class="line"><a id="l00002" name="l00002"></a><span class="lineno">    2</span><span class="comment"> * Copyright (C) 2007-2008 by the ES40 Emulator Project</span></div>
 <div class="line"><a id="l00003" name="l00003"></a><span class="lineno">    3</span><span class="comment"> *</span></div>
 <div class="line"><a id="l00004" name="l00004"></a><span class="lineno">    4</span><span class="comment"> * WWW    : https://github.com/ES40-Emu/es40</span></div>
 <div class="line"><a id="l00005" name="l00005"></a><span class="lineno">    5</span><span class="comment"> *</span></div>
@@ -137,59 +137,40 @@ document.addEventListener('DOMContentLoaded',() => { initNavTree('d4/d00/a00536_
 <div class="line"><a id="l00023" name="l00023"></a><span class="lineno">   23</span><span class="comment"> *</span></div>
 <div class="line"><a id="l00024" name="l00024"></a><span class="lineno">   24</span><span class="comment"> */</span></div>
 <div class="line"><a id="l00025" name="l00025"></a><span class="lineno">   25</span></div>
-<div class="line"><a id="l00041" name="l00041"></a><span class="lineno">   41</span><span class="preprocessor">#if !defined(__DISKDEV_H__)</span></div>
-<div class="line"><a id="l00042" name="l00042"></a><span class="lineno">   42</span><span class="preprocessor">#define __DISKDEV_H__</span></div>
-<div class="line"><a id="l00043" name="l00043"></a><span class="lineno">   43</span> </div>
-<div class="line"><a id="l00044" name="l00044"></a><span class="lineno">   44</span><span class="preprocessor">#include &quot;<a class="code" href="../../d9/d00/a00524.html">Disk.h</a>&quot;</span></div>
-<div class="line"><a id="l00045" name="l00045"></a><span class="lineno">   45</span></div>
-<div class="foldopen" id="foldopen00049" data-start="{" data-end="};">
-<div class="line"><a id="l00049" name="l00049"></a><span class="lineno"><a class="line" href="../../d9/d00/a01650.html">   49</a></span><span class="keyword">class </span><a class="code hl_function" href="../../d9/d00/a01650.html#a19df4830f0de587d4755c3cdca7ed244">CDiskDevice</a> : <span class="keyword">public</span> <a class="code hl_function" href="../../d3/d00/a01606.html#a7a88c28aecc8f32c65b3d70d8ceb1962">CDisk</a></div>
-<div class="line"><a id="l00050" name="l00050"></a><span class="lineno">   50</span>{</div>
-<div class="line"><a id="l00051" name="l00051"></a><span class="lineno">   51</span><span class="keyword">public</span>:</div>
-<div class="line"><a id="l00052" name="l00052"></a><span class="lineno">   52</span>  <a class="code hl_function" href="../../d9/d00/a01650.html#a19df4830f0de587d4755c3cdca7ed244">CDiskDevice</a>(<a class="code hl_class" href="../../df/d00/a00874.html">CConfigurator</a>* cfg, <a class="code hl_class" href="../../df/d00/a01810.html">CSystem</a>* sys, <a class="code hl_class" href="../../df/d00/a01646.html">CDiskController</a>* c,</div>
-<div class="line"><a id="l00053" name="l00053"></a><span class="lineno">   53</span>    <span class="keywordtype">int</span> idebus, <span class="keywordtype">int</span> idedev);</div>
-<div class="line"><a id="l00054" name="l00054"></a><span class="lineno">   54</span>  <span class="keyword">virtual</span>         <a class="code hl_function" href="../../d9/d00/a01650.html#a19df4830f0de587d4755c3cdca7ed244">~CDiskDevice</a>(<span class="keywordtype">void</span>);</div>
-<div class="line"><a id="l00055" name="l00055"></a><span class="lineno">   55</span> </div>
-<div class="line"><a id="l00056" name="l00056"></a><span class="lineno">   56</span>  <span class="keyword">virtual</span> <span class="keywordtype">bool</span>    <a class="code hl_function" href="../../d9/d00/a01650.html#a0d50b6146fcf15ee104bba829e3d3d23">seek_byte</a>(off_t_large <span class="keywordtype">byte</span>);</div>
-<div class="line"><a id="l00057" name="l00057"></a><span class="lineno">   57</span>  <span class="keyword">virtual</span> <span class="keywordtype">size_t</span>  <a class="code hl_function" href="../../d9/d00/a01650.html#a9cc44f9dc7f48eec5b4a4429b36a3e51">read_bytes</a>(<span class="keywordtype">void</span>* dest, <span class="keywordtype">size_t</span> bytes);</div>
-<div class="line"><a id="l00058" name="l00058"></a><span class="lineno">   58</span>  <span class="keyword">virtual</span> <span class="keywordtype">size_t</span>  <a class="code hl_function" href="../../d9/d00/a01650.html#adaadf9e185ae84c9daac1c633ac366aa">write_bytes</a>(<span class="keywordtype">void</span>* src, <span class="keywordtype">size_t</span> bytes);</div>
-<div class="line"><a id="l00059" name="l00059"></a><span class="lineno">   59</span>  <span class="keyword">virtual</span> <span class="keywordtype">void</span>    <a class="code hl_function" href="../../d9/d00/a01650.html#ab56ce97539c443b53abef7b044e6e9de">flush</a>();</div>
-<div class="line"><a id="l00060" name="l00060"></a><span class="lineno">   60</span>  <span class="keyword">virtual</span> <span class="keywordtype">void</span>    <a class="code hl_function" href="../../d9/d00/a01650.html#a4f0ced91961d3b85f341c5080724b89f">prepare_snapshot</a>() <span class="keyword">override</span>;</div>
-<div class="line"><a id="l00061" name="l00061"></a><span class="lineno">   61</span>  <span class="keyword">virtual</span> std::string <a class="code hl_function" href="../../d9/d00/a01650.html#a24ba035651303f19589e1aef61872164">snapshot_identity</a>() <span class="keyword">const override</span>;</div>
-<div class="line"><a id="l00062" name="l00062"></a><span class="lineno">   62</span><span class="keyword">protected</span>:</div>
-<div class="line"><a id="l00063" name="l00063"></a><span class="lineno">   63</span><span class="preprocessor">#if defined(_WIN32)</span></div>
-<div class="line"><a id="l00064" name="l00064"></a><span class="lineno">   64</span>  HANDLE  <a class="code hl_variable" href="../../d9/d00/a01650.html#ad42b7eeb87e04bc3e30394489ad81f0b">handle</a>;</div>
-<div class="line"><a id="l00065" name="l00065"></a><span class="lineno">   65</span>  <span class="keywordtype">char</span>* buffer = <span class="keyword">nullptr</span>;</div>
-<div class="line"><a id="l00066" name="l00066"></a><span class="lineno">   66</span>  <span class="keywordtype">size_t</span>  buffer_size = 0;</div>
-<div class="line"><a id="l00067" name="l00067"></a><span class="lineno">   67</span>  <span class="keywordtype">size_t</span>  dev_block_size;</div>
-<div class="line"><a id="l00068" name="l00068"></a><span class="lineno">   68</span><span class="preprocessor">#else</span></div>
-<div class="line"><a id="l00069" name="l00069"></a><span class="lineno"><a class="line" href="../../d9/d00/a01650.html#ad42b7eeb87e04bc3e30394489ad81f0b">   69</a></span>  FILE* <a class="code hl_variable" href="../../d9/d00/a01650.html#ad42b7eeb87e04bc3e30394489ad81f0b">handle</a>;</div>
-<div class="line"><a id="l00070" name="l00070"></a><span class="lineno">   70</span><span class="preprocessor">#endif</span></div>
-<div class="line"><a id="l00071" name="l00071"></a><span class="lineno"><a class="line" href="../../d9/d00/a01650.html#a8499a50a1965406011dde40c44e82615">   71</a></span>  <span class="keywordtype">char</span>* <a class="code hl_variable" href="../../d9/d00/a01650.html#a8499a50a1965406011dde40c44e82615">filename</a>;</div>
-<div class="line"><a id="l00072" name="l00072"></a><span class="lineno">   72</span>};</div>
+<div class="line"><a id="l00048" name="l00048"></a><span class="lineno">   48</span><span class="preprocessor">#if !defined(__DISKCONTROLLER_H__)</span></div>
+<div class="line"><a id="l00049" name="l00049"></a><span class="lineno">   49</span><span class="preprocessor">#define __DISKCONTROLLER_H__</span></div>
+<div class="line"><a id="l00050" name="l00050"></a><span class="lineno">   50</span></div>
+<div class="foldopen" id="foldopen00054" data-start="{" data-end="};">
+<div class="line"><a id="l00054" name="l00054"></a><span class="lineno"><a class="line" href="../../d1/d00/a01653.html">   54</a></span><span class="keyword">class </span><a class="code hl_function" href="../../d1/d00/a01653.html#a1398c117af66c357023503d50c5d11bb">CDiskController</a></div>
+<div class="line"><a id="l00055" name="l00055"></a><span class="lineno">   55</span>{</div>
+<div class="line"><a id="l00056" name="l00056"></a><span class="lineno">   56</span><span class="keyword">public</span>:</div>
+<div class="line"><a id="l00057" name="l00057"></a><span class="lineno">   57</span>  <a class="code hl_function" href="../../d1/d00/a01653.html#a1398c117af66c357023503d50c5d11bb">CDiskController</a>(<span class="keywordtype">int</span> num_busses, <span class="keywordtype">int</span> num_devs);</div>
+<div class="line"><a id="l00058" name="l00058"></a><span class="lineno">   58</span>  <a class="code hl_function" href="../../d1/d00/a01653.html#a1398c117af66c357023503d50c5d11bb">~CDiskController</a>(<span class="keywordtype">void</span>);</div>
+<div class="line"><a id="l00059" name="l00059"></a><span class="lineno">   59</span> </div>
+<div class="line"><a id="l00060" name="l00060"></a><span class="lineno">   60</span>  <span class="keyword">virtual</span> <span class="keywordtype">void</span>  <a class="code hl_function" href="../../d1/d00/a01653.html#a7f9321bb332e6815a3923c9d4a6188cd">register_disk</a>(<span class="keyword">class</span> <a class="code hl_class" href="../../d3/d00/a01613.html">CDisk</a>* dsk, <span class="keywordtype">int</span> bus, <span class="keywordtype">int</span> dev);</div>
+<div class="line"><a id="l00061" name="l00061"></a><span class="lineno">   61</span>  <span class="keyword">class </span><a class="code hl_class" href="../../d3/d00/a01613.html">CDisk</a>* <a class="code hl_function" href="../../d1/d00/a01653.html#a555f2a1c8ddcbd2474fd5d9ad9c61653">get_disk</a>(<span class="keywordtype">int</span> bus, <span class="keywordtype">int</span> dev);</div>
+<div class="line"><a id="l00062" name="l00062"></a><span class="lineno">   62</span><span class="keyword">private</span>:</div>
+<div class="line"><a id="l00063" name="l00063"></a><span class="lineno"><a class="line" href="../../d1/d00/a01653.html#a306c9cb261aac7505a1a64fd816423c5">   63</a></span>  <span class="keywordtype">int</span>             <a class="code hl_variable" href="../../d1/d00/a01653.html#a306c9cb261aac7505a1a64fd816423c5">num_bus</a>;</div>
+<div class="line"><a id="l00064" name="l00064"></a><span class="lineno"><a class="line" href="../../d1/d00/a01653.html#a65bc3406df2e4f9fc125f50fce75f766">   64</a></span>  <span class="keywordtype">int</span>             <a class="code hl_variable" href="../../d1/d00/a01653.html#a65bc3406df2e4f9fc125f50fce75f766">num_dev</a>;</div>
+<div class="line"><a id="l00065" name="l00065"></a><span class="lineno">   65</span> </div>
+<div class="line"><a id="l00066" name="l00066"></a><span class="lineno"><a class="line" href="../../d1/d00/a01653.html#ae74709d865eeaeaf386fd8ea3c373072">   66</a></span>  <span class="keyword">class </span><a class="code hl_class" href="../../d3/d00/a01613.html">CDisk</a>** <a class="code hl_variable" href="../../d1/d00/a01653.html#ae74709d865eeaeaf386fd8ea3c373072">disks</a>;</div>
+<div class="line"><a id="l00067" name="l00067"></a><span class="lineno">   67</span>};</div>
 </div>
-<div class="line"><a id="l00073" name="l00073"></a><span class="lineno">   73</span><span class="preprocessor">#endif </span></div>
-<div class="ttc" id="aa00524_html"><div class="ttname"><a href="../../d9/d00/a00524.html">Disk.h</a></div><div class="ttdoc">Contains definitions for the disk base class.</div></div>
-<div class="ttc" id="aa00874_html"><div class="ttname"><a href="../../df/d00/a00874.html">CConfigurator</a></div><div class="ttdef"><b>Definition</b> <a href="../../da/d00/a00080_source.html#l00133">Configurator.h:134</a></div></div>
-<div class="ttc" id="aa01606_html_a7a88c28aecc8f32c65b3d70d8ceb1962"><div class="ttname"><a href="../../d3/d00/a01606.html#a7a88c28aecc8f32c65b3d70d8ceb1962">CDisk::CDisk</a></div><div class="ttdeci">CDisk(CConfigurator *cfg, CSystem *sys, CDiskController *c, int idebus, int idedev)</div><div class="ttdoc">Constructor.</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00521_source.html#l00146">Disk.cpp:146</a></div></div>
-<div class="ttc" id="aa01646_html"><div class="ttname"><a href="../../df/d00/a01646.html">CDiskController</a></div><div class="ttdoc">Abstract base class for disk controllers (uses CDisk&#39;s).</div><div class="ttdef"><b>Definition</b> <a href="../../da/d00/a00530_source.html#l00054">DiskController.h:55</a></div></div>
-<div class="ttc" id="aa01650_html_a0d50b6146fcf15ee104bba829e3d3d23"><div class="ttname"><a href="../../d9/d00/a01650.html#a0d50b6146fcf15ee104bba829e3d3d23">CDiskDevice::seek_byte</a></div><div class="ttdeci">virtual bool seek_byte(off_t_large byte)</div><div class="ttdef"><b>Definition</b> <a href="../../db/d00/a00533_source.html#l00185">DiskDevice.cpp:185</a></div></div>
-<div class="ttc" id="aa01650_html_a19df4830f0de587d4755c3cdca7ed244"><div class="ttname"><a href="../../d9/d00/a01650.html#a19df4830f0de587d4755c3cdca7ed244">CDiskDevice::CDiskDevice</a></div><div class="ttdeci">CDiskDevice(CConfigurator *cfg, CSystem *sys, CDiskController *c, int idebus, int idedev)</div><div class="ttdef"><b>Definition</b> <a href="../../db/d00/a00533_source.html#l00064">DiskDevice.cpp:64</a></div></div>
-<div class="ttc" id="aa01650_html_a24ba035651303f19589e1aef61872164"><div class="ttname"><a href="../../d9/d00/a01650.html#a24ba035651303f19589e1aef61872164">CDiskDevice::snapshot_identity</a></div><div class="ttdeci">virtual std::string snapshot_identity() const override</div><div class="ttdef"><b>Definition</b> <a href="../../db/d00/a00533_source.html#l00361">DiskDevice.cpp:361</a></div></div>
-<div class="ttc" id="aa01650_html_a4f0ced91961d3b85f341c5080724b89f"><div class="ttname"><a href="../../d9/d00/a01650.html#a4f0ced91961d3b85f341c5080724b89f">CDiskDevice::prepare_snapshot</a></div><div class="ttdeci">virtual void prepare_snapshot() override</div><div class="ttdef"><b>Definition</b> <a href="../../db/d00/a00533_source.html#l00356">DiskDevice.cpp:356</a></div></div>
-<div class="ttc" id="aa01650_html_a8499a50a1965406011dde40c44e82615"><div class="ttname"><a href="../../d9/d00/a01650.html#a8499a50a1965406011dde40c44e82615">CDiskDevice::filename</a></div><div class="ttdeci">char * filename</div><div class="ttdef"><b>Definition</b> <a href="#l00071">DiskDevice.h:71</a></div></div>
-<div class="ttc" id="aa01650_html_a9cc44f9dc7f48eec5b4a4429b36a3e51"><div class="ttname"><a href="../../d9/d00/a01650.html#a9cc44f9dc7f48eec5b4a4429b36a3e51">CDiskDevice::read_bytes</a></div><div class="ttdeci">virtual size_t read_bytes(void *dest, size_t bytes)</div><div class="ttdef"><b>Definition</b> <a href="../../db/d00/a00533_source.html#l00201">DiskDevice.cpp:201</a></div></div>
-<div class="ttc" id="aa01650_html_ab56ce97539c443b53abef7b044e6e9de"><div class="ttname"><a href="../../d9/d00/a01650.html#ab56ce97539c443b53abef7b044e6e9de">CDiskDevice::flush</a></div><div class="ttdeci">virtual void flush()</div><div class="ttdef"><b>Definition</b> <a href="../../db/d00/a00533_source.html#l00341">DiskDevice.cpp:341</a></div></div>
-<div class="ttc" id="aa01650_html_ad42b7eeb87e04bc3e30394489ad81f0b"><div class="ttname"><a href="../../d9/d00/a01650.html#ad42b7eeb87e04bc3e30394489ad81f0b">CDiskDevice::handle</a></div><div class="ttdeci">FILE * handle</div><div class="ttdef"><b>Definition</b> <a href="#l00069">DiskDevice.h:69</a></div></div>
-<div class="ttc" id="aa01650_html_adaadf9e185ae84c9daac1c633ac366aa"><div class="ttname"><a href="../../d9/d00/a01650.html#adaadf9e185ae84c9daac1c633ac366aa">CDiskDevice::write_bytes</a></div><div class="ttdeci">virtual size_t write_bytes(void *src, size_t bytes)</div><div class="ttdef"><b>Definition</b> <a href="../../db/d00/a00533_source.html#l00250">DiskDevice.cpp:250</a></div></div>
-<div class="ttc" id="aa01810_html"><div class="ttname"><a href="../../df/d00/a01810.html">CSystem</a></div><div class="ttdoc">Emulated Typhoon 21272 chipset.</div><div class="ttdef"><b>Definition</b> <a href="../../d7/d00/a00614_source.html#l00236">System.h:237</a></div></div>
+<div class="line"><a id="l00068" name="l00068"></a><span class="lineno">   68</span><span class="preprocessor">#endif </span></div>
+<div class="ttc" id="aa01613_html"><div class="ttname"><a href="../../d3/d00/a01613.html">CDisk</a></div><div class="ttdoc">Abstract base class for disks (connects to a CDiskController).</div><div class="ttdef"><b>Definition</b> <a href="../../da/d00/a00530_source.html#l00093">Disk.h:94</a></div></div>
+<div class="ttc" id="aa01653_html_a1398c117af66c357023503d50c5d11bb"><div class="ttname"><a href="../../d1/d00/a01653.html#a1398c117af66c357023503d50c5d11bb">CDiskController::CDiskController</a></div><div class="ttdeci">CDiskController(int num_busses, int num_devs)</div><div class="ttdef"><b>Definition</b> <a href="../../db/d00/a00533_source.html#l00080">DiskController.cpp:80</a></div></div>
+<div class="ttc" id="aa01653_html_a306c9cb261aac7505a1a64fd816423c5"><div class="ttname"><a href="../../d1/d00/a01653.html#a306c9cb261aac7505a1a64fd816423c5">CDiskController::num_bus</a></div><div class="ttdeci">int num_bus</div><div class="ttdef"><b>Definition</b> <a href="#l00063">DiskController.h:63</a></div></div>
+<div class="ttc" id="aa01653_html_a555f2a1c8ddcbd2474fd5d9ad9c61653"><div class="ttname"><a href="../../d1/d00/a01653.html#a555f2a1c8ddcbd2474fd5d9ad9c61653">CDiskController::get_disk</a></div><div class="ttdeci">class CDisk * get_disk(int bus, int dev)</div><div class="ttdef"><b>Definition</b> <a href="../../db/d00/a00533_source.html#l00103">DiskController.cpp:103</a></div></div>
+<div class="ttc" id="aa01653_html_a65bc3406df2e4f9fc125f50fce75f766"><div class="ttname"><a href="../../d1/d00/a01653.html#a65bc3406df2e4f9fc125f50fce75f766">CDiskController::num_dev</a></div><div class="ttdeci">int num_dev</div><div class="ttdef"><b>Definition</b> <a href="#l00064">DiskController.h:64</a></div></div>
+<div class="ttc" id="aa01653_html_a7f9321bb332e6815a3923c9d4a6188cd"><div class="ttname"><a href="../../d1/d00/a01653.html#a7f9321bb332e6815a3923c9d4a6188cd">CDiskController::register_disk</a></div><div class="ttdeci">virtual void register_disk(class CDisk *dsk, int bus, int dev)</div><div class="ttdef"><b>Definition</b> <a href="../../db/d00/a00533_source.html#l00093">DiskController.cpp:93</a></div></div>
+<div class="ttc" id="aa01653_html_ae74709d865eeaeaf386fd8ea3c373072"><div class="ttname"><a href="../../d1/d00/a01653.html#ae74709d865eeaeaf386fd8ea3c373072">CDiskController::disks</a></div><div class="ttdeci">class CDisk ** disks</div><div class="ttdef"><b>Definition</b> <a href="#l00066">DiskController.h:66</a></div></div>
 </div><!-- fragment --></div><!-- contents -->
 </div><!-- doc-content -->
 </div><!-- container -->
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
-    <li class="navelem"><a href="../../dir_70f20ecf11358dff00a0daf546d3147e.html">storage</a></li><li class="navelem"><a href="../../d4/d00/a00536.html">DiskDevice.h</a></li>
+    <li class="navelem"><a href="../../dir_70f20ecf11358dff00a0daf546d3147e.html">storage</a></li><li class="navelem"><a href="../../d4/d00/a00536.html">DiskController.h</a></li>
     <li class="footer">Generated by <a href="https://www.doxygen.org/index.html"><img class="footer" src="../../doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.18.0 </li>
   </ul>
 </div>

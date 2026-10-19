@@ -1,8 +1,11 @@
 var a00383 =
 [
-    [ "DECLARE_PLUGIN_INIT_FINI_FOR_MODULE", "da/d00/a00383.html#af4d16a6a0d89862ac4e4f2f151d6cec1", null ],
-    [ "PLUG_load_plugin", "da/d00/a00383.html#a3229ec1bb7d262485f5dad3652cc4a22", null ],
-    [ "PLUG_unload_plugin", "da/d00/a00383.html#a191307fb8f917c2744a1db9612bba6dd", null ],
-    [ "libsdl_LTX_plugin_fini", "da/d00/a00383.html#a49debd4cf7efa7b8293b70f8366f2b6c", null ],
-    [ "libsdl_LTX_plugin_init", "da/d00/a00383.html#a8256e45104a21ca374ffdafd6d5e1ecc", null ]
+    [ "get_next_keymap_line", "da/d00/a00383.html#a74727fe29eb5775e126503c25257f0d5", null ],
+    [ "get_next_word", "da/d00/a00383.html#a8e3f3ed3640193ffe72f197d557c4866", null ],
+    [ "init_parse", "da/d00/a00383.html#a1290229bb991e9ed1a26a46030585e05", null ],
+    [ "init_parse_line", "da/d00/a00383.html#af8d6a35e21af2b5bdbb8789a222c9893", null ],
+    [ "bx_key_symbol", "da/d00/a00383.html#a0bd6c265b58e14450173f6d941d28f24", null ],
+    [ "bx_keymap", "da/d00/a00383.html#a22fa2cedc0d2a8c49e35953f581847ab", null ],
+    [ "lineCount", "da/d00/a00383.html#addc99401340ecb10778277e17c36c77d", null ],
+    [ "lineptr", "da/d00/a00383.html#a13fe685f1aff8f1cd7917076e8c09bb9", null ]
 ];

@@ -1,0 +1,100 @@
+<map id="CVGA" name="CVGA">
+<area shape="rect" id="Node000001" title="Abstract base class for PCI VGA cards." alt="" coords="1341,99,1400,125"/>
+<area shape="rect" id="Node000002" href="$d8/d00/a01113.html" title="Abstract base class for devices on the PCI&#45;bus." alt="" coords="1045,176,1141,203"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="1155,183,1230,172,1308,150,1331,138,1350,127,1355,124,1334,142,1310,154,1231,177,1157,188"/>
+<area shape="rect" id="Node000003" href="$dd/d00/a01121.html" title="Abstract base class for devices that connect to the Typhoon chipset." alt="" coords="676,245,820,272"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="832,239,1047,197,1043,200,834,244"/>
+<area shape="rect" id="Node000015" href="$dd/d00/a00921.html" title="Emulated CPU." alt="" coords="1046,517,1140,544"/>
+<area shape="poly" id="edge17_Node000015_Node000003" title=" " alt="" coords="775,280,822,321,877,363,908,380,935,389,961,400,987,424,998,443,999,462,1001,479,1011,496,1028,508,1049,520,1043,520,1025,513,1007,499,996,480,994,462,992,445,983,427,958,405,933,394,906,384,874,368,819,325,775,286"/>
+<area shape="rect" id="Node000004" href="$d4/d00/a01817.html" title="Emulated Typhoon 21272 chipset." alt="" coords="1333,433,1409,460"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="1365,417,1360,387,1350,351,1333,317,1307,290,1270,273,1218,261,1155,253,1086,249,942,250,821,256,819,251,942,244,1086,244,1156,248,1219,255,1272,268,1310,286,1337,314,1355,349,1365,386,1370,419"/>
+<area shape="rect" id="Node000005" href="$d6/d00/a01829.html" title=" " alt="" coords="1594,433,1809,460"/>
+<area shape="poly" id="edge5_Node000005_Node000004" title=" " alt="" coords="1424,444,1596,446,1591,447,1425,449"/>
+<area shape="poly" id="edge4_Node000004_Node000005" title=" " alt="" coords="1630,464,1538,480,1485,481,1432,475,1399,463,1399,458,1434,469,1485,475,1538,475,1636,463"/>
+<area shape="poly" id="edge6_Node000005_Node000005" title=" " alt="" coords="1665,416,1678,409,1702,407,1724,409,1738,415,1742,425,1735,435,1732,431,1736,424,1734,419,1723,414,1702,412,1679,414,1667,421"/>
+<area shape="rect" id="Node000006" href="$d7/d00/a01805.html" title=" " alt="" coords="1052,307,1134,333"/>
+<area shape="poly" id="edge7_Node000004_Node000006" title=" " alt="" coords="1149,313,1187,313,1229,318,1271,328,1310,347,1331,366,1348,389,1368,434,1363,432,1343,392,1328,370,1307,352,1269,333,1228,323,1187,318,1150,318"/>
+<area shape="rect" id="Node000007" href="$d4/d00/a01797.html" title=" " alt="" coords="1060,357,1126,384"/>
+<area shape="poly" id="edge8_Node000004_Node000007" title=" " alt="" coords="1141,369,1222,378,1266,387,1310,402,1335,415,1357,433,1352,433,1332,420,1308,406,1265,393,1221,383,1142,374"/>
+<area shape="rect" id="Node000008" href="$df/d00/a01825.html" title=" " alt="" coords="1009,459,1177,485"/>
+<area shape="poly" id="edge9_Node000004_Node000008" title=" " alt="" coords="1191,471,1250,468,1308,461,1335,458,1330,460,1309,467,1250,473,1193,476"/>
+<area shape="rect" id="Node000009" href="$d7/d00/a01837.html" title="The state structure contains all elements that need to be saved to the statefile." alt="" coords="1017,864,1169,891"/>
+<area shape="poly" id="edge10_Node000004_Node000009" title=" " alt="" coords="1118,851,1208,754,1260,688,1306,617,1327,574,1344,529,1365,462,1368,458,1349,531,1332,576,1311,620,1264,691,1212,757,1121,855"/>
+<area shape="rect" id="Node000010" href="$d2/d00/a01841.html" title="TIGbus state data." alt="" coords="672,789,824,832"/>
+<area shape="poly" id="edge11_Node000009_Node000010" title=" " alt="" coords="840,820,986,845,1048,863,1043,863,985,851,840,825"/>
+<area shape="rect" id="Node000011" href="$da/d00/a01845.html" title="CCHIP state data." alt="" coords="672,856,824,899"/>
+<area shape="poly" id="edge12_Node000009_Node000011" title=" " alt="" coords="840,875,1019,877,1014,878,840,880"/>
+<area shape="rect" id="Node000012" href="$db/d00/a01849.html" title="DCHIP state data." alt="" coords="672,923,824,965"/>
+<area shape="poly" id="edge13_Node000009_Node000012" title=" " alt="" coords="840,929,985,904,1043,892,1048,891,986,909,840,935"/>
+<area shape="rect" id="Node000013" href="$db/d00/a01853.html" title="PCHIP state data." alt="" coords="672,989,824,1032"/>
+<area shape="poly" id="edge14_Node000009_Node000013" title=" " alt="" coords="839,996,912,980,984,954,1036,922,1075,892,1080,890,1039,926,986,958,913,985,840,1001"/>
+<area shape="rect" id="Node000014" href="$de/d00/a01857.html" title=" " alt="" coords="1020,568,1166,595"/>
+<area shape="poly" id="edge15_Node000004_Node000014" title=" " alt="" coords="1181,587,1246,581,1278,572,1307,556,1329,535,1346,509,1365,462,1368,459,1351,511,1334,539,1310,561,1280,576,1247,586,1182,593"/>
+<area shape="poly" id="edge16_Node000004_Node000015" title=" " alt="" coords="1154,530,1230,523,1270,514,1307,500,1336,481,1357,462,1361,459,1339,485,1310,505,1271,519,1231,528,1156,535"/>
+<area shape="rect" id="Node000016" href="$dc/d00/a00765.html" title=" " alt="" coords="705,416,791,443"/>
+<area shape="poly" id="edge18_Node000015_Node000016" title=" " alt="" coords="806,422,849,422,895,427,943,439,987,459,996,468,1000,478,1004,487,1011,495,1049,518,1043,518,1008,499,999,489,995,480,992,471,984,464,941,444,894,432,848,427,807,427"/>
+<area shape="rect" id="Node000017" href="$d6/d00/a00941.html" title=" " alt="" coords="688,467,808,493"/>
+<area shape="poly" id="edge19_Node000015_Node000017" title=" " alt="" coords="824,483,986,503,1049,518,1043,519,985,508,825,488"/>
+<area shape="rect" id="Node000018" href="$d7/d00/a01005.html" title=" " alt="" coords="362,412,476,439"/>
+<area shape="poly" id="edge20_Node000017_Node000018" title=" " alt="" coords="491,432,621,452,690,467,685,468,621,457,492,437"/>
+<area shape="rect" id="Node000019" href="$da/d00/a00993.html" title=" " alt="" coords="10,357,178,384"/>
+<area shape="poly" id="edge21_Node000018_Node000019" title=" " alt="" coords="192,380,308,397,364,410,359,413,307,403,194,385"/>
+<area shape="rect" id="Node000020" href="$d0/d00/a00997.html" title=" " alt="" coords="28,412,160,439"/>
+<area shape="poly" id="edge22_Node000018_Node000020" title=" " alt="" coords="175,423,364,423,360,427,177,428"/>
+<area shape="rect" id="Node000021" href="$df/d00/a01001.html" title=" " alt="" coords="5,467,183,493"/>
+<area shape="poly" id="edge23_Node000018_Node000021" title=" " alt="" coords="197,468,307,452,374,437,370,441,308,457,200,473"/>
+<area shape="rect" id="Node000022" href="$d3/d00/a00965.html" title=" " alt="" coords="347,468,492,495"/>
+<area shape="poly" id="edge24_Node000017_Node000022" title=" " alt="" coords="506,478,690,479,685,482,508,484"/>
+<area shape="rect" id="Node000023" href="$da/d00/a00961.html" title=" " alt="" coords="10,521,178,548"/>
+<area shape="poly" id="edge25_Node000022_Node000023" title=" " alt="" coords="192,547,251,545,279,540,306,531,318,520,330,507,364,493,360,497,333,511,322,524,309,536,281,545,251,550,195,552"/>
+<area shape="rect" id="Node000024" href="$d7/d00/a00969.html" title=" " alt="" coords="348,521,490,548"/>
+<area shape="poly" id="edge26_Node000017_Node000024" title=" " alt="" coords="505,524,621,508,693,493,689,495,621,513,507,529"/>
+<area shape="rect" id="Node000025" href="$d5/d00/a00977.html" title=" " alt="" coords="357,576,482,603"/>
+<area shape="poly" id="edge27_Node000017_Node000025" title=" " alt="" coords="496,589,560,579,591,568,619,551,628,541,631,529,634,516,643,503,664,491,690,485,685,487,666,496,647,507,638,518,636,530,633,543,623,555,594,572,562,584,498,594"/>
+<area shape="rect" id="Node000026" href="$d3/d00/a00973.html" title=" " alt="" coords="50,576,138,603"/>
+<area shape="poly" id="edge28_Node000025_Node000026" title=" " alt="" coords="153,587,359,587,355,591,154,592"/>
+<area shape="rect" id="Node000027" href="$d4/d00/a00989.html" title=" " alt="" coords="334,631,504,657"/>
+<area shape="poly" id="edge29_Node000017_Node000027" title=" " alt="" coords="519,650,573,640,598,630,619,614,629,602,633,589,631,562,629,533,633,518,643,503,664,489,690,482,685,485,666,494,647,507,638,520,634,533,636,561,638,590,634,604,623,618,600,634,575,645,521,655"/>
+<area shape="rect" id="Node000028" href="$dd/d00/a00981.html" title=" " alt="" coords="29,685,159,712"/>
+<area shape="poly" id="edge30_Node000027_Node000028" title=" " alt="" coords="174,689,307,671,374,656,369,659,308,676,176,694"/>
+<area shape="rect" id="Node000029" href="$da/d00/a00985.html" title=" " alt="" coords="27,631,161,657"/>
+<area shape="poly" id="edge31_Node000027_Node000029" title=" " alt="" coords="176,641,336,642,332,646,178,647"/>
+<area shape="rect" id="Node000030" href="$df/d00/a00949.html" title=" " alt="" coords="349,683,490,709"/>
+<area shape="poly" id="edge32_Node000017_Node000030" title=" " alt="" coords="500,709,533,709,564,705,594,695,619,678,634,658,639,638,637,617,632,595,627,572,625,550,629,526,643,504,663,488,690,481,685,484,666,493,647,507,634,528,630,550,632,572,637,594,642,616,644,638,639,661,623,682,596,700,565,710,533,715,502,714"/>
+<area shape="rect" id="Node000031" href="$d1/d00/a00945.html" title=" " alt="" coords="11,740,177,767"/>
+<area shape="poly" id="edge33_Node000030_Node000031" title=" " alt="" coords="191,735,307,715,350,708,346,711,308,720,193,740"/>
+<area shape="rect" id="Node000032" href="$d1/d00/a00957.html" title=" " alt="" coords="347,329,492,356"/>
+<area shape="poly" id="edge34_Node000017_Node000032" title=" " alt="" coords="488,358,567,383,600,396,623,410,632,421,635,433,639,443,647,453,666,464,690,473,685,474,664,469,643,457,634,446,630,434,627,424,619,414,597,401,565,388,489,363"/>
+<area shape="rect" id="Node000033" href="$d5/d00/a00953.html" title=" " alt="" coords="10,303,178,329"/>
+<area shape="poly" id="edge35_Node000032_Node000033" title=" " alt="" coords="192,322,349,335,345,339,195,327"/>
+<area shape="rect" id="Node000034" href="$d6/d00/a00781.html" title=" " alt="" coords="712,517,784,544"/>
+<area shape="poly" id="edge36_Node000015_Node000034" title=" " alt="" coords="799,528,1049,530,1044,532,800,533"/>
+<area shape="rect" id="Node000035" href="$d2/d00/a00777.html" title=" " alt="" coords="700,572,797,599"/>
+<area shape="poly" id="edge37_Node000015_Node000035" title=" " alt="" coords="811,579,894,571,985,557,1050,544,1045,545,986,563,895,576,813,584"/>
+<area shape="rect" id="Node000036" href="$d5/d00/a00749.html" title=" " alt="" coords="685,627,811,653"/>
+<area shape="poly" id="edge38_Node000015_Node000036" title=" " alt="" coords="826,644,866,642,907,636,947,623,984,603,992,593,995,581,998,567,1007,554,1026,543,1048,537,1044,539,1028,547,1011,558,1003,569,1000,582,997,595,987,607,949,628,908,641,866,647,827,649"/>
+<area shape="rect" id="Node000037" href="$dc/d00/a00925.html" title=" " alt="" coords="645,681,851,708"/>
+<area shape="poly" id="edge39_Node000015_Node000037" title=" " alt="" coords="839,707,878,707,916,702,952,691,984,670,994,657,998,644,996,616,993,585,997,570,1007,554,1025,541,1048,535,1043,537,1027,546,1011,558,1002,572,999,586,1001,615,1003,645,999,660,987,674,954,695,917,708,878,713,840,712"/>
+<area shape="rect" id="Node000038" href="$dc/d00/a00929.html" title="The state structure contains all elements that need to be saved to the statefile." alt="" coords="660,739,836,765"/>
+<area shape="poly" id="edge40_Node000015_Node000038" title=" " alt="" coords="815,766,858,771,903,770,946,760,966,750,983,737,999,716,1004,695,1003,673,997,651,992,627,989,603,993,579,1007,554,1025,541,1048,534,1043,536,1027,545,1011,558,998,580,994,603,997,626,1003,649,1008,672,1010,696,1004,719,987,741,969,755,948,765,904,775,858,776,816,771"/>
+<area shape="rect" id="Node000039" href="$d0/d00/a00933.html" title="Instruction cache entry." alt="" coords="332,733,507,776"/>
+<area shape="poly" id="edge41_Node000038_Node000039" title=" " alt="" coords="522,751,663,752,658,754,523,756"/>
+<area shape="rect" id="Node000040" href="$de/d00/a00937.html" title="Translation Buffer Entry." alt="" coords="332,800,507,843"/>
+<area shape="poly" id="edge42_Node000038_Node000040" title=" " alt="" coords="522,800,620,780,695,765,690,767,622,785,523,805"/>
+<area shape="rect" id="Node000041" href="$d3/d00/a00869.html" title=" " alt="" coords="368,245,470,272"/>
+<area shape="poly" id="edge46_Node000003_Node000041" title=" " alt="" coords="485,256,678,257,674,260,487,261"/>
+<area shape="poly" id="edge43_Node000004_Node000041" title=" " alt="" coords="485,273,717,330,1010,393,1191,422,1335,442,1330,443,1190,427,1009,399,715,336,486,278"/>
+<area shape="poly" id="edge44_Node000041_Node000041" title=" " alt="" coords="390,228,400,221,419,219,437,221,448,227,451,237,447,246,442,244,446,236,444,231,435,226,419,224,402,226,394,232"/>
+<area shape="rect" id="Node000042" href="$d9/d00/a00873.html" title=" " alt="" coords="24,236,164,279"/>
+<area shape="poly" id="edge45_Node000041_Node000042" title=" " alt="" coords="178,255,370,257,366,260,181,260"/>
+<area shape="rect" id="Node000043" href="$d6/d00/a01117.html" title="The PCI state structure contains all elements that need to be saved to the statefile." alt="" coords="662,168,834,195"/>
+<area shape="poly" id="edge47_Node000002_Node000043" title=" " alt="" coords="848,181,1047,187,1042,189,850,186"/>
+<area shape="rect" id="Node000044" href="$d8/d00/a01069.html" title=" " alt="" coords="1040,16,1146,43"/>
+<area shape="poly" id="edge48_Node000001_Node000044" title=" " alt="" coords="1160,30,1234,41,1273,51,1310,64,1336,79,1358,98,1353,98,1333,84,1308,69,1271,56,1233,46,1161,35"/>
+<area shape="rect" id="Node000045" href="$de/d00/a01061.html" title=" " alt="" coords="711,16,785,43"/>
+<area shape="poly" id="edge49_Node000044_Node000045" title=" " alt="" coords="800,27,1042,28,1038,31,801,32"/>
+<area shape="rect" id="Node000046" href="$d0/d00/a01065.html" title=" " alt="" coords="1043,71,1143,97"/>
+<area shape="poly" id="edge50_Node000001_Node000046" title=" " alt="" coords="1157,88,1343,108,1338,110,1159,93"/>
+<area shape="rect" id="Node000047" href="$d3/d00/a01377.html" title=" " alt="" coords="1043,125,1143,152"/>
+<area shape="poly" id="edge51_Node000001_Node000047" title=" " alt="" coords="1157,142,1231,143,1308,135,1345,125,1340,127,1309,140,1231,148,1159,147"/>
+</map>

@@ -1,9 +1,0 @@
-<map id="emu/attotime.h" name="emu/attotime.h">
-<area shape="rect" id="Node000001" title="Support functions for working with attotime data." alt="" coords="117,5,226,32"/>
-<area shape="rect" id="Node000002" href="$db/d00/a00353.html" title=" " alt="" coords="103,80,240,107"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="173,46,174,81,169,79,170,50"/>
-<area shape="rect" id="Node000003" href="$d1/d00/a00077.html" title="Contains the code for the configuration file interpreter." alt="" coords="5,155,162,181"/>
-<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="147,116,100,156,97,152,142,117"/>
-<area shape="rect" id="Node000004" href="$db/d00/a00350.html" title=" " alt="" coords="185,155,336,181"/>
-<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="200,114,248,154,243,154,198,119"/>
-</map>

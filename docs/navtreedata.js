@@ -26,64 +26,63 @@ var NAVTREE =
 [
   [ "ES40", "index.html", [
     [ "ES40 Emulator Documentation", "index.html", "index" ],
-    [ "IEEE floating point arithmetic", "df/d00/a01915.html", [
-      [ "IEEE Floating-point formats", "df/d00/a01915.html#IEEE_fmt", [
-        [ "S-Floating", "df/d00/a01915.html#IEEE_S", null ],
-        [ "T-Floating", "df/d00/a01915.html#IEEE_T", null ]
+    [ "IEEE floating point arithmetic", "dd/d00/a01922.html", [
+      [ "IEEE Floating-point formats", "dd/d00/a01922.html#IEEE_fmt", [
+        [ "S-Floating", "dd/d00/a01922.html#IEEE_S", null ],
+        [ "T-Floating", "dd/d00/a01922.html#IEEE_T", null ]
       ] ]
     ] ],
-    [ "Frequently Asked Questions", "d0/d00/a01916.html", [
-      [ "A. Compilation", "d0/d00/a01916.html#a", [
-        [ "A1. SDL not found", "d0/d00/a01916.html#a1", null ],
-        [ "A2. SDL not available", "d0/d00/a01916.html#a2", null ],
-        [ "A3. PCAP not found", "d0/d00/a01916.html#a3", null ],
-        [ "A4. PCAP not available", "d0/d00/a01916.html#a4", null ],
-        [ "A5. Endianess issues", "d0/d00/a01916.html#a5", null ]
+    [ "Frequently Asked Questions", "d9/d00/a01923.html", [
+      [ "A. Compilation", "d9/d00/a01923.html#a", [
+        [ "A1. SDL not found", "d9/d00/a01923.html#a1", null ],
+        [ "A2. SDL not available", "d9/d00/a01923.html#a2", null ],
+        [ "A3. PCAP not found", "d9/d00/a01923.html#a3", null ],
+        [ "A4. PCAP not available", "d9/d00/a01923.html#a4", null ],
+        [ "A5. Endianess issues", "d9/d00/a01923.html#a5", null ]
       ] ],
-      [ "B. Configuration", "d0/d00/a01916.html#b", [
-        [ "B1. Which VGA card?", "d0/d00/a01916.html#b1", null ]
+      [ "B. Configuration", "d9/d00/a01923.html#b", [
+        [ "B1. Which VGA card?", "d9/d00/a01923.html#b1", null ]
       ] ]
     ] ],
-    [ "Consulted Documentation", "d2/d00/a01917.html", null ],
-    [ "Guest OS Notes", "dc/d00/a01918.html", [
-      [ "DEC/Compaq/HP OS-es", "dc/d00/a01918.html#hp", null ],
-      [ "OpenVMS", "dc/d00/a01918.html#vms", [
-        [ "Tru64 Unix", "dc/d00/a01918.html#tru64", null ]
+    [ "Consulted Documentation", "d0/d00/a01924.html", null ],
+    [ "Guest OS Notes", "d6/d00/a01925.html", [
+      [ "DEC/Compaq/HP OS-es", "d6/d00/a01925.html#hp", null ],
+      [ "OpenVMS", "d6/d00/a01925.html#vms", [
+        [ "Tru64 Unix", "d6/d00/a01925.html#tru64", null ]
       ] ],
-      [ "Free OS'es", "dc/d00/a01918.html#free", [
-        [ "FreeBSD", "dc/d00/a01918.html#fbsd", null ],
-        [ "NetBSD", "dc/d00/a01918.html#nbsd", null ],
-        [ "OpenBSD", "dc/d00/a01918.html#obsd", null ],
-        [ "Linux", "dc/d00/a01918.html#linux", null ]
+      [ "Free OS'es", "d6/d00/a01925.html#free", [
+        [ "FreeBSD", "d6/d00/a01925.html#fbsd", null ],
+        [ "NetBSD", "d6/d00/a01925.html#nbsd", null ],
+        [ "OpenBSD", "d6/d00/a01925.html#obsd", null ],
+        [ "Linux", "d6/d00/a01925.html#linux", null ]
       ] ],
-      [ "SRM", "dc/d00/a01918.html#srm", null ]
+      [ "SRM", "d6/d00/a01925.html#srm", null ]
     ] ],
-    [ "Building and Installation Guide", "de/d00/a01919.html", [
-      [ "UNIX, BSD and Linux", "de/d00/a01919.html#unix", [
-        [ "Prerequisites", "de/d00/a01919.html#unix_pr", null ],
-        [ "Building and Installation", "de/d00/a01919.html#unix_bi", null ],
-        [ "Prerequisites", "de/d00/a01919.html#vms_pr", null ],
-        [ "Building", "de/d00/a01919.html#vms_b", null ]
+    [ "Building and Installation Guide", "d2/d00/a01926.html", [
+      [ "UNIX, BSD and Linux", "d2/d00/a01926.html#unix", [
+        [ "Prerequisites", "d2/d00/a01926.html#unix_pr", null ],
+        [ "Building and Installation", "d2/d00/a01926.html#unix_bi", null ],
+        [ "Prerequisites", "d2/d00/a01926.html#vms_pr", null ],
+        [ "Building", "d2/d00/a01926.html#vms_b", null ]
       ] ],
-      [ "Microsoft Windows", "de/d00/a01919.html#win", [
-        [ "Prerequisites", "de/d00/a01919.html#win_pr", null ],
-        [ "Building", "de/d00/a01919.html#win_b", null ]
+      [ "Microsoft Windows", "d2/d00/a01926.html#win", [
+        [ "Prerequisites", "d2/d00/a01926.html#win_pr", null ],
+        [ "Building", "d2/d00/a01926.html#win_b", null ]
       ] ]
     ] ],
-    [ "Developer's Guide", "d6/d00/a01920.html", [
-      [ "Devices", "d6/d00/a01920.html#d_dev", [
-        [ "Threading", "d6/d00/a01920.html#d_dev_thr", null ]
+    [ "Developer's Guide", "da/d00/a01927.html", [
+      [ "Devices", "da/d00/a01927.html#d_dev", [
+        [ "Threading", "da/d00/a01927.html#d_dev_thr", null ]
       ] ]
     ] ],
-    [ "Todo List", "d4/d00/a00632.html", null ],
-    [ "Bug List", "d9/d00/a00633.html", null ],
+    [ "Todo List", "da/d00/a00629.html", null ],
+    [ "Bug List", "dc/d00/a00630.html", null ],
     [ "Topics", "topics.html", "topics" ],
     [ "Namespaces", "namespaces.html", [
       [ "Namespace List", "namespaces.html", "namespaces_dup" ],
       [ "Namespace Members", "namespacemembers.html", [
         [ "All", "namespacemembers.html", null ],
-        [ "Functions", "namespacemembers_func.html", null ],
-        [ "Variables", "namespacemembers_vars.html", null ]
+        [ "Functions", "namespacemembers_func.html", null ]
       ] ]
     ] ],
     [ "Data Structures", "annotated.html", [
@@ -118,45 +117,44 @@ var NAVTREE =
 var NAVTREEINDEX =
 [
 "annotated.html",
-"d0/d00/a00443.html#a449e1e3db97a96405e8c8d456cc8e722",
-"d0/d00/a00443.html#a8e375ffc593c48d5e0a1c1a2d97ee0bd",
-"d0/d00/a00443.html#ade3398b7a6ac7a6deeaf7075513940b0",
-"d0/d00/a00934.html#a7941d38642675a40b84bfcaa590a3c1f",
-"d0/d00/a01734.html#ab3560a65b97169fbe371780fe2dda801",
-"d1/d00/a01110.html#adc21d29998286f667bf08af9f7355d76",
-"d2/d00/a00137.html#ab6cd6d1c63c1e26ea2d4537b77148354",
-"d3/d00/a00215_source.html",
-"d3/d00/a01598.html#aef2d23bda0ab6df4b476b185da4248b0",
-"d4/d00/a00392.html#aae67517088432ae8cd0de57d5373a48c",
-"d4/d00/a01334.html#ab622bcdbf07726c14df39496c56815e2",
-"d5/d00/a00878.html",
-"d5/d00/a01322.html#af3475a016a1a0b281fb8eb40fa455177",
-"d5/d00/a01738.html",
-"d6/d00/a01114.html#afb194782fb727322d081f0ceb30b71cb",
-"d7/d00/a00173.html#a1f4e71922d944d0c2165bd8cd2897940",
-"d7/d00/a00182.html#af7fe3030783d36c253fefe0241c4e594",
-"d7/d00/a01246.html#a0ffc4615d2aeca60f3b08ba0f216cecf",
-"d8/d00/a00581.html#a24e84dcc2cf1f57fd1b5e92180b98244",
-"d8/d00/a00926.html#a1ea30c46370860ee2b61c3ae771a494b",
-"d8/d00/a01370.html#a60bf41acad5ea12203f74291b79559b4",
-"d9/d00/a00272_source.html",
-"d9/d00/a01662.html#a3221084a74d734278e981f4d920c0490",
-"da/d00/a00650.html#a8ab131d0dffa741d8708549b045bf6da",
-"da/d00/a01258.html#a605d6371428af6d370a22eb2007150ab",
-"da/d00/a01526.html#aff5444dd7e6a9ddc43cbce0e959edf7a",
-"db/d00/a01126.html#ab98124a14196aa97445ca3e8b5e16f36",
-"dc/d00/a00194.html#a94b495ce2b14d9beb81c54f5923e4852",
-"dc/d00/a00620.html",
-"dc/d00/a01190.html#aa77d9368760262010ada854f48cae39e",
-"dc/d00/a01510.html",
-"dd/d00/a00365.html#ae6eea31b2679eb230d431bf559955467",
-"dd/d00/a01682.html#a90e4b202e9b84340e33420192964a24d",
-"de/d00/a00440.html#a5fbb5f671d6a7182845dd895858133f1",
-"de/d00/a00587.html#a8f0da79214e17adc208e1c804b3ffe74",
-"de/d00/a01462.html#a22ab6ced5c7a916d943ea6439aae2a4e",
-"df/d00/a00686.html#a91797b24d7b754fd3c06f935592e5af3",
-"df/d00/a01810.html#ae0520248b128a06d9e17248d20a468ad",
-"namespacemembers.html"
+"d0/d00/a01745.html#aa2590e25944d9dd3237856b059675e5b",
+"d1/d00/a00837.html#a4e5af89f428a32b3115159d0ab69b546",
+"d2/d00/a00083.html#a59382a0a174cca0696c0eef14e258db1",
+"d2/d00/a00593.html#a674a53bde0fd40b8f3f1005bc117632b",
+"d2/d00/a01433.html#adae554dd8ddf4814d4e256df18212ee2",
+"d3/d00/a00155.html#ab0c60c4dc04a840c3cd4826a1cf057d8",
+"d3/d00/a00446.html#acab211507151280b64bed0a2d1e77692",
+"d3/d00/a01189.html#a6bd1f61edeb7ecdb2a4ae6835ff40ff4",
+"d3/d00/a01613.html#adfa15a89d008ce9fbb8fdd3dc686ed94",
+"d4/d00/a00503.html#a48f9395342c895af883b0223cc6c1d26",
+"d4/d00/a00793.html#a18b6e147bafbc42d51fc18651aa6a9b5",
+"d4/d00/a01197.html#aad9d29a8d02be641950c987a9696f965",
+"d4/d00/a01817.html#a4c99645e9406c389b794a1b7fad447c6",
+"d5/d00/a00602.html#a872e87bc655edce06e62807ebaab70da",
+"d6/d00/a00287.html#ab02d6b6f7dccc114b5bf887dd00f18a9",
+"d6/d00/a00781.html#a8429d91477b8f26edffd40b06733e769",
+"d7/d00/a00182.html#ac5c7bc8ea0ac6b09a8fa5d9de79c5335",
+"d7/d00/a01885.html#a1bbfca7c35adaeb924472cc3ba9f3b9a",
+"d8/d00/a01113.html#aee979f345ab28fb9c72908ff0c68e2c2",
+"d9/d00/a00449.html#a0a752dcf9321a73e2b938946d4ed7bc8",
+"d9/d00/a00449.html#a5d135f14bbf78c638354eac97c530b03",
+"d9/d00/a00449.html#aa3a18ff1a9907bbb1ac372407af5de41",
+"d9/d00/a00449.html#af60bd797882af62193aafc497ab84858",
+"d9/d00/a01469.html#a241dd2bbaeb54197938d2475954cf9f5",
+"da/d00/a00317_source.html",
+"da/d00/a01265.html#aa983b437900d97beca45fb7a58f53c9d",
+"db/d00/a00350.html#af9a73a277113999d318a9cafcb908916",
+"db/d00/a01761.html#a5f86139fbd9e49cb87e70e3db73deb33",
+"dc/d00/a00925.html#a35839398e47de4db3be1d68b0bd51082",
+"dc/d00/a01237.html#aea26caa5e10ef81f7898503e5fe052b3",
+"dd/d00/a00260.html#aec440ea495e89a5b3c1c6020761c31d7",
+"dd/d00/a00921.html#a98b2f24f08c26737ab307a5cc334ac42",
+"de/d00/a00134.html#aec6fcb673ff035718c238c8c9d544c47",
+"de/d00/a00197.html#aa7897ea4313b8a59ffca2593e28efa27",
+"de/d00/a00587.html#aee8ce867ecf4af0139560f07124d9872",
+"de/d00/a01349.html#ab265e7d21ed6ebd2a2a80a5a1458ffda",
+"df/d00/a01329.html#a30fa6b7db5976916efbd7456d6647ddd",
+"dir_11bc0974ce736ce9a6fadebbeb7a8314.html"
 ];
 
 const SYNCONMSG = 'click to disable panel synchronization';
