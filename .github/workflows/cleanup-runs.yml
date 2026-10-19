@@ -1,0 +1,81 @@
+name: Clean up workflow runs
+
+on:
+  workflow_run:
+    workflows: ["**", "!Clean up workflow runs"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+concurrency:
+  group: workflow-run-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Keep four Build runs and this cleanup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prune completed workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPLETED_RUN_ID: ${{ github.event.workflow_run.id || 0 }}
+          COMPLETED_WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id || 0 }}
+          COMPLETED_RUN_NUMBER: ${{ github.event.workflow_run.run_number || 0 }}
+        run: |
+          set -euo pipefail
+
+          keep=4
+          build_workflow_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml" --jq .id)"
+          # Collect the full history before deleting anything, so pagination is stable.
+          runs_json="$(gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100")"
+
+          # Count a newly completed Build even if the list API has not caught up.
+          plan_json="$(printf '%s' "$runs_json" | jq -c \
+            --argjson keep "$keep" \
+            --argjson build_workflow_id "$build_workflow_id" \
+            --argjson cleanup_id "$GITHUB_RUN_ID" \
+            --argjson completed_id "$COMPLETED_RUN_ID" \
+            --argjson completed_workflow_id "$COMPLETED_WORKFLOW_ID" \
+            --argjson completed_number "$COMPLETED_RUN_NUMBER" '
+              [.[].workflow_runs[]] | unique_by(.id) as $listed
+              | ([$listed[] | select(.workflow_id == $build_workflow_id and .status == "completed")]
+                 + (if $completed_workflow_id == $build_workflow_id and $completed_id > 0
+                       and (any($listed[]; .id == $completed_id) | not)
+                    then [{id: $completed_id, run_number: $completed_number}]
+                    else [] end)
+                 | sort_by(.run_number) | reverse | .[:$keep] | map(.id)) as $keep_ids
+              | {
+                  keep: $keep_ids,
+                  delete: [$listed[]
+                    | select(.status == "completed" and .id != $cleanup_id)
+                    | .id as $id
+                    | select(($keep_ids | index($id)) == null)
+                    | .id]
+                }
+            ')"
+
+          printf '%s' "$plan_json" | jq -r '"Keeping completed Build runs: \(.keep | join(", "))"'
+          old_run_ids="$(printf '%s' "$plan_json" | jq -r '.delete[]')"
+
+          deleted=0
+          failed=0
+          while IFS= read -r run_id; do
+            [ -n "$run_id" ] || continue
+            echo "Deleting completed workflow run $run_id"
+            if gh run delete "$run_id" --repo "$GITHUB_REPOSITORY"; then
+              deleted=$((deleted+1))
+            else
+              failed=$((failed+1))
+              echo "::warning::Could not delete workflow run $run_id"
+            fi
+          done <<< "$old_run_ids"
+
+          echo "Deleted $deleted completed workflow run(s); failed $failed."
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::Some completed workflow runs could not be removed."
+            exit 1
+          fi

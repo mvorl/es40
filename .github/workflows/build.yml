@@ -941,38 +941,3 @@ jobs:
           name: macos-x86_64-Release JIT
           path: ${{ runner.temp }}/macos-x86_64-Release JIT/
           if-no-files-found: error
-
-  cleanup-runs:
-    name: Delete runs older than the previous 4
-    runs-on: ubuntu-latest
-    needs: [linux-build, windows-build, macos-build, macos-x86_64-jit-build]
-    # Run even when builds fail, but only once per push (skip pull_request duplicates).
-    if: ${{ always() && github.event_name == 'push' }}
-    # Housekeeping only: a pruning hiccup must not mark the build run as failed.
-    continue-on-error: true
-    permissions:
-      actions: write
-    steps:
-      - name: Prune old workflow runs
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          keep=4
-          runs_json="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow build.yml --limit 1000 --json databaseId,status)"
-
-          deleted=0
-          skipped=0
-          # Keep the newest $keep runs; delete older ones. Non-completed runs cannot
-          # be deleted, so they are skipped until a later run prunes them.
-          for run_id in $(printf '%s' "$runs_json" | jq -r --argjson keep "$keep" '.[$keep:][] | select(.status == "completed") | .databaseId'); do
-            if gh run delete "$run_id" --repo "$GITHUB_REPOSITORY"; then
-              deleted=$((deleted+1))
-            else
-              skipped=$((skipped+1))
-              echo "Could not delete run $run_id; skipping"
-            fi
-          done
-
-          echo "Deleted $deleted old workflow run(s); skipped $skipped."
