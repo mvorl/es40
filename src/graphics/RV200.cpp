@@ -97,6 +97,34 @@ static bool shadow_allowed(uint32_t a)
 		a == 0x288 || a == 0x2d0;
 }
 
+// Configuration latches used by the RV200 ROM. These set board-level drive
+// strengths, DRAM timings and bus timeouts; the synchronous functional model
+// does not simulate analog signalling or elapsed DRAM/bus cycles.
+static bool configuration_latch(uint32_t a)
+{
+	switch (a)
+	{
+	case CRV200::BUS_CNTL1:
+	case CRV200::RBBM_CNTL:
+	case CRV200::TEST_DEBUG_MUX:
+	case CRV200::MEM_CNTL:
+	case CRV200::MEM_TIMING_CNTL:
+	case CRV200::MC_AGP_LOCATION:
+	case CRV200::MEM_INIT_LAT_TIMER:
+	case CRV200::PAD_CTLR_STRENGTH:
+	case CRV200::AGP_CNTL:
+	case CRV200::MEM_IO_CNTL_A0:
+	case CRV200::MEM_IO_CNTL_A1:
+	case CRV200::MC_DEBUG:
+	case CRV200::MEM_IO_OE_CNTL:
+	case CRV200::TMDS_PLL_CNTL:
+	case CRV200::DAC_MACRO_CNTL:
+		return true;
+	default:
+		return false;
+	}
+}
+
 // CLR_CMP_CNTL source equality suppresses matching pixels (XAA keying).
 // Deliberately bounded to source comparison: no destination/3D combination.
 static bool compare_supported(uint32_t control)
@@ -236,6 +264,8 @@ bool CRV200::indexed_target(uint32_t lane, uint32_t& target)
 
 uint32_t CRV200::read32(uint32_t a)
 {
+	if (a == MC_IND_DATA)
+		return m_mc[r(MC_IND_INDEX) & 31];
 	if (a == CLOCK_CNTL_DATA)
 	{
 		const uint32_t i = r(CLOCK_CNTL_INDEX) & 63, v = m_pll[i];
@@ -274,8 +304,10 @@ uint32_t CRV200::read32(uint32_t a)
 	// DRAM timing.
 	if (a == MC_STATUS)
 		return 7u;
+	if (a == DAC_CNTL)
+		return (r(a) & ~0xf0u) | dac_comparators(false);
 	if (a == DAC_CNTL2)
-		return r(a) & ~DAC2_CMP_OUTPUT_MASK;
+		return (r(a) & ~DAC2_CMP_OUTPUT_MASK) | dac_comparators(true);
 	if (a == TV_DAC_CNTL)
 		return r(a) & ~((1u << 5) | (7u << 29));
 	if (a == FP_GEN_CNTL || a == FP2_GEN_CNTL)
@@ -295,7 +327,7 @@ uint32_t CRV200::read32(uint32_t a)
 		return (scanline(a == CRTC2_VLINE_CRNT_VLINE) & 0x7ff) << 16;
 	if (a == CRTC_CRNT_FRAME || a == CRTC2_CRNT_FRAME)
 		return a == CRTC2_CRNT_FRAME ? m_frame2 : m_frame;
-	if (a == DSTCACHE_CTLSTAT)
+	if (a == DSTCACHE_CTLSTAT || a == RB2D_DSTCACHE_CTLSTAT)
 		return busy() ? 0x80000000u : 0;
 	// The CP never consumes commands in this model.
 	if (a == CP_RB_RPTR)
@@ -315,9 +347,97 @@ uint32_t CRV200::read32(uint32_t a)
 	return r(a);
 }
 
+uint32_t CRV200::dac_comparators(bool secondary) const
+{
+	const uint32_t control = r(secondary ? DAC_CNTL2 : DAC_CNTL);
+	const uint32_t force = r(DAC_EXT_CNTL);
+	if (!(control & (secondary ? 0x80u : 8u)) ||
+		!(force & (secondary ? 2u : 32u)))
+		return 0;
+	// PS/2 range: 0.7 V full-scale with a 75-ohm monitor attached, twice
+	// that voltage on the unterminated secondary connector. The comparator
+	// reference is 0.440 V and its result is high below that reference.
+	// Only the forced-level test is modeled; active-video samples are not.
+	if ((r(DAC_CNTL) & 3u) != 2u)
+		return 0;
+	const uint32_t data = (force >> 8) & 1023, selection = (force >> 6) & 3;
+	uint32_t result = 0;
+	for (unsigned channel = 0; channel < 3; ++channel)
+	{
+		const uint32_t level = selection == 3 || selection == channel ? data : 0;
+		if (level * (secondary ? 1400u : 700u) < 440u * 1023u)
+			result |= 1u << channel;
+	}
+	if (result == 7)
+		result |= 8;
+	return result << (secondary ? 8 : 4);
+}
+
 void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 {
 	const uint32_t old = r(a), v = (old & ~lanes) | (val & lanes);
+	if ((a >= BIOS_SCRATCH0 && a <= BIOS_SCRATCH7) || configuration_latch(a))
+	{
+		r(a) = v;
+		return;
+	}
+	if (a == MC_IND_INDEX)
+	{
+		r(a) = v & 0x11fu;
+		return;
+	}
+	if (a == MC_IND_DATA)
+	{
+		if (r(MC_IND_INDEX) & 0x100)
+		{
+			uint32_t& mc = m_mc[r(MC_IND_INDEX) & 31];
+			mc = (mc & ~lanes) | (val & lanes);
+		}
+		return;
+	}
+	if (a == MEM_SDRAM_MODE_REG)
+	{
+		// MEM_CFG_TYPE is a read-only board strap. Mode-register programming
+		// completes synchronously, so MC_STATUS continues to report ready.
+		r(a) = (v & ~(1u << 30)) | (old & (1u << 30));
+		return;
+	}
+	if (a == DISPLAY_BASE_ADDR)
+	{
+		r(a) = v & 0xffc00000u;
+		return;
+	}
+	if (a == DISP_MISC_CNTL)
+	{
+		r(a) = v;
+		return;
+	}
+	if (a == DISP_TEST_DEBUG_CNTL && !(v & 0x33fu))
+	{
+		// Underflow flags are read-only/W1C. A synchronous framebuffer has
+		// no fetch underflows; retain the subpicture priority control only.
+		r(a) = v & (1u << 28);
+		return;
+	}
+	if ((a == OV0_SCALE_CNTL && !(v & 0x40000000u)) ||
+		((a == FP_HORZ_STRETCH || a == FP_VERT_STRETCH) &&
+		 !(v & (1u << 25))) ||
+		(a == LVDS_GEN_CNTL && !(v & 0x80u)) ||
+		(a == TV_MASTER_CNTL && !(v & 0x80000000u)) ||
+		(a == OV0_FLAG_CNTL && !(r(OV0_SCALE_CNTL) & 0x40000000u)) ||
+		(a == TV_PRE_DAC_MUX_CNTL && !(r(TV_MASTER_CNTL) & 0x80000000u)) ||
+		(a == SEPROM_CNTL1 && !(v & 0xffffu)) ||
+		// FCP0_SRC_GND: the capture clock input is tied low.
+		(a == FCP_CNTL && v == 4) ||
+		((a == CAP0_TRIG_CNTL || a == VIPH_CONTROL || a == 0x94 ||
+		  a == CRTC_MORE_CNTL || a == OVR_WID_LEFT_RIGHT ||
+		  a == OVR_WID_TOP_BOTTOM) && v == 0))
+	{
+		// Observed reset/disabled states. Active capture, VIP, scaler, TV,
+		// RMX, LVDS, EEPROM transactions and nonzero borders remain unsupported.
+		r(a) = v;
+		return;
+	}
 	if (a >= 0xf00 && a < 0x1000)
 	{
 		note("read-only PCI configuration mirror write " + hex(a));
@@ -345,7 +465,7 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 	if (a == DAC_CNTL)
 	{
 		// The board's VGA frontend consumes DAC_8BIT_EN; other fields are stored.
-		r(a) = v;
+		r(a) = v & ~0xf0u;
 		return;
 	}
 	if (a == DAC_CNTL2 || a == TV_DAC_CNTL ||
@@ -443,15 +563,17 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 		return;
 	}
 	// Immediate flush of software-backed memory.
-	if (a == DSTCACHE_CTLSTAT)
+	if (a == DSTCACHE_CTLSTAT || a == RB2D_DSTCACHE_CTLSTAT)
 	{
-		r(a) = v & ~5u;
+		r(a) = v & ~0x8000000fu;
 		return;
 	}
 	if (a == MM_INDEX || a == MC_FB_LOCATION || a == SURFACE_CNTL ||
 		a == BUS_CNTL || a == HOST_PATH_CNTL || a == CRTC_H_TOTAL_DISP ||
 		a == CRTC_V_TOTAL_DISP || a == CRTC_GEN_CNTL || a == CRTC_EXT_CNTL ||
 		a == CRTC_OFFSET || a == CRTC_OFFSET_CNTL || a == CRTC_PITCH ||
+		a == CRTC_H_SYNC_STRT_WID || a == CRTC_V_SYNC_STRT_WID ||
+		a == DAC_EXT_CNTL || a == OVR_CLR ||
 		a == CRTC2_H_TOTAL_DISP || a == CRTC2_H_SYNC_STRT_WID ||
 		a == CRTC2_V_TOTAL_DISP || a == CRTC2_V_SYNC_STRT_WID ||
 		a == CRTC2_OFFSET || a == CRTC2_OFFSET_CNTL || a == CRTC2_PITCH ||
@@ -743,7 +865,10 @@ void CRV200::draw(uint32_t w, uint32_t h)
 	const uint32_t source = (r(DP_MIX) >> 8) & 7, brush = (type >> 8) & 15;
 	if (!bpp)
 	{
-		fail("unsupported pixel format");
+		fail("unsupported pixel format " + hex(type & 15) +
+			" (DP_DATATYPE=" + hex(type) + ", rectangle=" +
+			hex(w) + "x" + hex(h) + ", DST_PITCH_OFFSET=" +
+			hex(r(DST_PITCH_OFFSET)) + ")");
 		return;
 	}
 	if ((g & (1u << 27)) || !compare_supported(r(CLR_CMP_CNTL)))
@@ -918,7 +1043,8 @@ void CRV200::draw_line(uint32_t start, uint32_t end)
 	const bool uses_p = rop_uses(op, 2);
 	if (!bpp)
 	{
-		fail("unsupported pixel format");
+		fail("unsupported pixel format " + hex(type & 15) +
+			" (DP_DATATYPE=" + hex(type) + ", line)");
 		return;
 	}
 	if ((g & (1u << 27)) || r(CLR_CMP_CNTL))
@@ -1098,6 +1224,8 @@ CRV200::Frame CRV200::scanout(std::string* error) const
 		return Frame{};
 	};
 	const unsigned controller = display_controller();
+	if (r(DISP_MISC_CNTL) & (controller ? 0x9000u : 0x11u))
+		return reject("display pixel pipeline held in reset");
 	const uint32_t gen = r(controller ? CRTC2_GEN_CNTL : CRTC_GEN_CNTL);
 	const bool blank = controller
 		? (gen & (CRTC2_DISPLAY_DIS | (1u << 26) | (3u << 28) | 0x70u))
@@ -1118,8 +1246,10 @@ CRV200::Frame CRV200::scanout(std::string* error) const
 	const uint32_t w = (((htotal >> 16) & 0x1ff) + 1) * 8,
 				   h = vertical_display(controller);
 	const uint32_t pitch =
-		(r(controller ? CRTC2_PITCH : CRTC_PITCH) & 0x7ff) * 8 * bpp,
-				   base = r(controller ? CRTC2_OFFSET : CRTC_OFFSET) & ~7u;
+		(r(controller ? CRTC2_PITCH : CRTC_PITCH) & 0x7ff) * 8 * bpp;
+	const uint64_t base =
+		uint64_t(controller ? 0 : r(DISPLAY_BASE_ADDR)) +
+		(r(controller ? CRTC2_OFFSET : CRTC_OFFSET) & ~7u);
 	if (!bpp || w > 4096 || h > 4096 || uint64_t(w) * bpp > pitch)
 		return reject("unsupported/invalid display format or pitch");
 	size_t first = 0, last = 0;
@@ -1193,7 +1323,8 @@ void CRV200::composite_cursor(Frame& f) const
 	{
 		size_t line = 0;
 		if (!translate(
-				uint64_t(r(CUR_OFFSET)) + uint64_t(row) * stride, stride, line))
+				uint64_t(r(DISPLAY_BASE_ADDR)) + r(CUR_OFFSET) +
+					uint64_t(row) * stride, stride, line))
 			return;
 		for (uint32_t col = xoff; col < 64 && px + col - xoff < f.width; ++col)
 		{
@@ -1255,6 +1386,7 @@ void CRV200::reset(bool clear_vram)
 	// PCI configuration belongs to the board wrapper and is NOT reset here.
 	m_regs.fill(0);
 	m_pll.fill(0);
+	m_mc.fill(0);
 	m_warned.fill(false);
 	m_aperture_warned = false;
 	m_fault.clear();
@@ -1379,6 +1511,8 @@ void CRV200::SaveState(std::ostream& out) const
 		put32(b, v);
 	for (const uint32_t v : m_pll)
 		put32(b, v);
+	for (const uint32_t v : m_mc)
+		put32(b, v);
 	for (const uint32_t v : m_palette)
 		put32(b, v);
 	for (const uint32_t v : m_palette2)
@@ -1425,7 +1559,7 @@ void CRV200::SaveState(std::ostream& out) const
 		put32(b, uint32_t(v >> 32));
 	}
 	b.insert(b.end(), m_vram.begin(), m_vram.end());
-	out.write("RV2SNP02", 8);
+	out.write("RV2SNP03", 8);
 	stream32(out, uint32_t(b.size()));
 	stream32(out, crc32(b));
 	out.write(
@@ -1438,7 +1572,8 @@ void CRV200::RestoreState(std::istream& in)
 {
 	char magic[8]{};
 	in.read(magic, 8);
-	const bool version2 = !std::memcmp(magic, "RV2SNP02", 8);
+	const bool version3 = !std::memcmp(magic, "RV2SNP03", 8);
+	const bool version2 = version3 || !std::memcmp(magic, "RV2SNP02", 8);
 	if (!in || (!version2 && std::memcmp(magic, "RV2SNP01", 8)))
 		throw std::runtime_error("RV200 snapshot format mismatch");
 	const uint32_t len = stream32(in), crc = stream32(in);
@@ -1457,6 +1592,9 @@ void CRV200::RestoreState(std::istream& in)
 		v = get32(b, i);
 	for (auto& v : tmp.m_pll)
 		v = get32(b, i);
+	if (version3)
+		for (auto& v : tmp.m_mc)
+			v = get32(b, i);
 	for (auto& v : tmp.m_palette)
 		v = get32(b, i);
 	if (version2)
@@ -1530,6 +1668,7 @@ void CRV200::RestoreState(std::istream& in)
 	// Commit only after all checks. Preserve the host's callbacks.
 	m_regs = tmp.m_regs;
 	m_pll = tmp.m_pll;
+	m_mc = tmp.m_mc;
 	m_palette = tmp.m_palette;
 	m_palette2 = tmp.m_palette2;
 	m_pending = tmp.m_pending;
