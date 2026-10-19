@@ -1304,39 +1304,20 @@ void CAlphaCPU::jit_run(int budget)
 			m_spin_ic = _ic;
 		}
 
-		// Resolve the block's physical start side-effect-free (FAKE = no fault, no TB fill) so
-		// execute() stays the sole I-stream fetcher; covers superpage/KSEG (no TB entry). phys
-		// validates a compiled block vs the live translation -- virtual+ASN keying misses remaps.
-		u64  start_phys = 0;
-		bool start_asm = false;
-		bool have_phys = true;
-		if (start_virt & 1)            // PALmode: physically addressed, always ASM
-		{
-			start_phys = start_virt & ~U64(1);
-			start_asm = true;
-		}
-		else
-		{
-			// Fast path: icache hit-probe reads phys straight from the line, read-only (no fill,
-			// no fault) -- get_icache's hit geometry minus the side effects. Covers warm code.
-			const int ici = (int)(((start_virt & ~U64(3)) >> 11) & (ICACHE_ENTRIES - 1));
-			if (icache_hit(ici, start_virt))
-			{
-				start_phys = state.icache[ici].p_address + (start_virt & ICACHE_BYTE_MASK);
-				start_asm = state.icache[ici].asm_bit;
-			}
-			// Slow path: superpage/KSEG + cold pages (FAKE = no side effect; miss -> interpret).
-			else if (virt2phys(start_virt, &start_phys, ACCESS_EXEC | FAKE, &start_asm, 0) != 0)
-				have_phys = false;
-		}
+		// Observe the family's mapping without fetching or faulting. The legacy JIT
+		// still uses the physical identity to validate its DRAM-backed compiled blocks.
+		const auto source = probe_instruction_source(start_virt);
+		const u64 start_phys = source.physical;
+		const bool start_asm = source.asm_global;
+		const bool have_phys = source.valid;
 
-		// Side-effect-free exec virt -> live physical (icache probe, else FAKE virt2phys). Re-resolves a trace
-		// segment's live mapping without a TB fill / fault; mirrors the dispatch-top resolution above.
+		// Trace segments are native addresses. Preserve their existing alignment
+		// while using the same family probe as the dispatcher.
 		auto live_exec_phys = [&](u64 v, u64* op) -> bool {
-			v &= ~U64(3);   // strip the PALmode tag bit / align -- the physical is page-determined
-			const int li = (int)((v >> 11) & (ICACHE_ENTRIES - 1));
-			if (icache_hit(li, v)) { *op = state.icache[li].p_address + (v & ICACHE_BYTE_MASK); return true; }
-			bool ad; return virt2phys(v, op, ACCESS_EXEC | FAKE, &ad, 0) == 0;
+			const auto mapping = probe_instruction_source(v & ~U64(3));
+			if (!mapping.valid) return false;
+			*op = mapping.physical;
+			return true;
 		};
 
 		// Trace tier: gated lookup BEFORE the block cache. In non-debug release a hot trace runs
@@ -1457,6 +1438,7 @@ void CAlphaCPU::jit_run(int budget)
 				// containing calls close (the common real-world hot-loop shape).
 				static constexpr bool TraceLinkFusion = true;
 				for (CJitEngine::JitBlock* cur = b; nb < CJitEngine::kMaxTraceSegs; ) {
+				  // Legacy backend source view, gated by supports_legacy_jit at CPU init.
 				  const u32* aw = (const u32*)((const u8*)dram_ptr + cur->phys);
 				  const u32 lop = aw[cur->prefix_len - 1]; const u32 lopc = lop >> 26;
 				  u64 spc = 0;
@@ -1564,6 +1546,8 @@ void CAlphaCPU::jit_run(int budget)
 			u64 bnd_r[CJitEngine::kMaxTraceSegs][64];     // GPRs incl. PALshadow bank
 			u64 bnd_f[CJitEngine::kMaxTraceSegs][64];     // FP file
 			u64 bnd_ipr[CJitEngine::kMaxTraceSegs][27];   // cap_iprs set
+			// Legacy backend candidate bytes; peek_cached_instruction supplies the
+			// family's current cached override before classifying a reference step.
 			const u32* vw = (const u32*)((const u8*)dram_ptr + b->phys);
 			u32 verify_words[16] = {};   // actual reference instructions for mismatch diagnostics
 			u32 vn = 0;   // loads recorded for replay
@@ -1588,15 +1572,7 @@ void CAlphaCPU::jit_run(int budget)
 				// DRAM word, or a cached HW_ST can disappear from the reference store log.
 				// This is a read-only peek: a miss is still fetched/translated by execute().
 				u32 ins = vw[k];
-				if (state.pc == seq_next_pc && seq_remaining > 0 && seq_cm == state.cm)
-					ins = endian_32(seq_line_ptr[seq_offset]);
-				else if (icache_enabled)
-				{
-					const int li = (int)((state.pc >> 11) & (ICACHE_ENTRIES - 1));
-					const auto& line = state.icache[li];
-					if (icache_hit(li, state.pc))
-						ins = endian_32(line.data[(state.pc >> 2) & ICACHE_INDEX_MASK]);
-				}
+				peek_cached_instruction(&ins);
 				if (n_interp + k < 16) verify_words[n_interp + k] = ins;
 				const u32 opc = ins >> 26;
 				const int lra = (ins >> 21) & 0x1F;
@@ -1767,7 +1743,7 @@ void CAlphaCPU::jit_run(int budget)
 				{
 					if (state.pc != interp_pc) {
 						m_jit_vmismatch = true;
-						// Dump the JIT's source (DRAM at b->phys, vw[]) vs the icache (what the
+						// Legacy EV68 diagnostic: dump the JIT's source (DRAM at b->phys, vw[]) vs the icache (what the
 						// interpreter actually fetches), word by word. If the middle words differ
 						// the icache holds a stale/different version the JIT never compiled.
 						const int icl = (int)((start_virt >> 11) & (ICACHE_ENTRIES - 1));
@@ -2028,32 +2004,8 @@ void CAlphaCPU::jit_run(int budget)
 #ifdef JIT_STATS
 		cc_last_sync += std::chrono::nanoseconds(m_jit->note_exec(0, n, 0, jit_rdtsc() - _interp_t0));   // don't bill the stats-print stall to the wall-clock RPCC
 #endif
-		// Stale icache line for this span
-		bool src_stale = false;
-		if (icache_enabled && have_phys)
-		{
-			const u64 vs = start_virt & ~U64(3);
-			const u64 ve = vs + 4 * (u64)n;
-			for (u64 v = vs & ~U64(0x7ff); v < ve; v += 0x800)
-			{
-				const int li = (int)((v >> 11) & (ICACHE_ENTRIES - 1));
-				const auto& L = state.icache[li];
-				if (L.valid && (L.asn == state.asn || L.asm_bit)
-					&& L.address == ((v | (start_virt & 1)) & ICACHE_MATCH_MASK))
-				{
-					const u64 lo = (v > vs) ? v : vs;
-					const u64 hi = (v + 0x800 < ve) ? v + 0x800 : ve;
-					const u64 poff = L.p_address + (lo - v);
-					if (poff + (hi - lo) <= dram_size
-						&& memcmp((const uint8_t*)dram_ptr + poff,
-							(const uint8_t*)L.data + (lo - v), (size_t)(hi - lo)))
-					{
-						src_stale = true;
-						break;
-					}
-				}
-			}
-		}
+		// Cached instructions may still differ from the legacy JIT's backing bytes.
+		const bool src_stale = have_phys && !instruction_source_matches(start_virt, n);
 
 		// Record only translatable block starts (a translation miss left have_phys false).
 		if (have_phys && !src_stale && state.pc != expected)
@@ -2842,8 +2794,8 @@ void* CAlphaCPU::jit_indirect(CAlphaCPU* cpu, u64 target, void* link_cache)
 void* CAlphaCPU::jit_indirect_impl(CAlphaCPU* cpu, u64 target, void* link_cache)
 {
 	cpu->m_jit->note_jmp_attempt();
-	// PAL reset entry: never chain in - match dispatch/interp
-	if (target == (cpu->state.pal_base | 1))
+	// Family entry preparation must not be bypassed by an indirect chain.
+	if (!cpu->instruction_source_can_chain(target))
 		return nullptr;
 	CJitEngine::JitBlock* b = cpu->m_jit->lookup(target, (u32)cpu->state.asn,
 		(target & 1) && cpu->state.sde);
@@ -2862,22 +2814,12 @@ void* CAlphaCPU::jit_indirect_impl(CAlphaCPU* cpu, u64 target, void* link_cache)
 		// risk. lookup selected the body whose register-bank mapping matches the live SDE state.
 		return hit(b->jit_body);
 	}
-	// Native target: validate the live physical every time (a single-page ITB invalidate no
-	// longer bumps the epoch). Icache probe first, else a side-effect-free translation that
-	// also covers superpage targets.
+	// Native target: validate the live mapping every time (a single-page ITB
+	// invalidate no longer bumps the epoch), without fetching or delivering faults.
 	const u64 gen = cpu->m_jit->vgen();
-	const u64 v = target & ~U64(3);
-	const int li = (int)((v >> 11) & (ICACHE_ENTRIES - 1));
-	u64 live;
-	if (cpu->icache_hit(li, v))
-		live = cpu->state.icache[li].p_address + (v & ICACHE_BYTE_MASK);
-	else
-	{
-		bool ad;
-		if (cpu->virt2phys(v, &live, ACCESS_EXEC | FAKE, &ad, 0) != 0)
-			return nullptr;                                     // ITB miss: let the dispatcher fault it in
-	}
-	if (live != b->phys)
+	const auto mapping = cpu->probe_instruction_source(target & ~U64(3));
+	if (!mapping.valid) return nullptr;   // let the dispatcher fault it in
+	if (mapping.physical != b->phys)
 	{
 		// Caught a stale block: the page was remapped without flushing the JIT cache. Bail so the
 		// dispatcher re-records/recompiles. Rate-limited log -- this firing confirms the stale chain.

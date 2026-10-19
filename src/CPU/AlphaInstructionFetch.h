@@ -31,6 +31,15 @@
 
 class CAlphaCPU;
 
+// Observed instruction mapping; a failed probe has valid == false.
+// Physical addresses currently identify sources for the legacy DRAM-backed JIT.
+struct AlphaInstructionMapping
+{
+  std::uint64_t physical = 0;
+  bool asm_global = false;
+  bool valid = false;
+};
+
 // Family fetch behavior, copied with the immutable CPU profile.
 struct AlphaInstructionFetchPolicy
 {
@@ -43,6 +52,25 @@ struct AlphaInstructionFetchPolicy
   // Optional entry preparation before the JIT probes or dispatches a block.
   // fetch() owns the equivalent preparation for interpreted execution.
   void (*prepare_dispatch)(CAlphaCPU& cpu) = nullptr;
+
+  // Observational JIT hooks: no instruction fetch, cache/TB fill, fault or bus read.
+  // Missing hooks cannot resolve a source, override a word, approve a span or chain.
+  // probe consumes the supplied PC without imposing shared alignment rules.
+  // It may update translation lookup hints, but cannot deliver a guest fault.
+  AlphaInstructionMapping (*probe)(CAlphaCPU& cpu, std::uint64_t pc) = nullptr;
+
+  // Peek the current instruction's cached word without consuming its cursor.
+  // False means no cached override: leave the caller's legacy source word intact.
+  bool (*peek_cached)(const CAlphaCPU& cpu, std::uint32_t* instruction) = nullptr;
+
+  // Can the legacy JIT record this interpreted span from its backing source?
+  // Detect cached instructions that differ from the current backing bytes.
+  bool (*matches_interpreted)(const CAlphaCPU& cpu, std::uint64_t start_pc,
+                              std::uint32_t count) = nullptr;
+
+  // Reject targets that need dispatcher preparation before entering compiled code.
+  // Called before lookup; a PAL target need not subsequently probe a translation.
+  bool (*can_chain)(const CAlphaCPU& cpu, std::uint64_t target) = nullptr;
 };
 
 #endif

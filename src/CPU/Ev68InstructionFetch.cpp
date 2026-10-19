@@ -37,6 +37,84 @@ void Ev68InstructionFetch::prepare_dispatch(CAlphaCPU& cpu)
     cpu.flush_icache();
 }
 
+AlphaInstructionMapping Ev68InstructionFetch::probe(CAlphaCPU& cpu, u64 pc)
+{
+  AlphaInstructionMapping mapping;
+  if (pc & 1)
+  {
+    // PAL instruction addresses are physical; retain the dispatcher's alignment.
+    mapping.physical = pc & ~U64(1);
+    mapping.asm_global = true;
+  }
+  else
+  {
+    const int line = (int)(((pc & ~U64(3)) >> 11) & (ICACHE_ENTRIES - 1));
+    if (cpu.icache_hit(line, pc))
+    {
+      mapping.physical = cpu.state.icache[line].p_address + (pc & ICACHE_BYTE_MASK);
+      mapping.asm_global = cpu.state.icache[line].asm_bit;
+    }
+    else if (cpu.virt2phys(pc, &mapping.physical, ACCESS_EXEC | FAKE,
+                           &mapping.asm_global, 0) != 0)
+      return mapping;
+  }
+  mapping.valid = true;
+  return mapping;
+}
+
+bool Ev68InstructionFetch::peek_cached(const CAlphaCPU& cpu, u32* instruction)
+{
+  if (cpu.state.pc == cpu.seq_next_pc && cpu.seq_remaining > 0 && cpu.seq_cm == cpu.state.cm)
+  {
+    *instruction = endian_32(cpu.seq_line_ptr[cpu.seq_offset]);
+    return true;
+  }
+  if (cpu.icache_enabled)
+  {
+    const int line = (int)((cpu.state.pc >> 11) & (ICACHE_ENTRIES - 1));
+    if (cpu.icache_hit(line, cpu.state.pc))
+    {
+      *instruction = endian_32(cpu.state.icache[line].data[(cpu.state.pc >> 2) & ICACHE_INDEX_MASK]);
+      return true;
+    }
+  }
+  return false;
+}
+
+bool Ev68InstructionFetch::matches_interpreted(const CAlphaCPU& cpu, u64 start_pc, u32 count)
+{
+  if (cpu.icache_enabled)
+  {
+    const u64 vs = start_pc & ~U64(3);
+    const u64 ve = vs + 4 * (u64)count;
+    for (u64 v = vs & ~U64(0x7ff); v < ve; v += 0x800)
+    {
+      const int li = (int)((v >> 11) & (ICACHE_ENTRIES - 1));
+      const auto& line = cpu.state.icache[li];
+      // Compare cached bytes even if the current mode has no cached permission.
+      // This deliberately differs from the execution/peek hit predicate.
+      if (line.valid && (line.asn == cpu.state.asn || line.asm_bit)
+        && line.address == ((v | (start_pc & 1)) & ICACHE_MATCH_MASK))
+      {
+        const u64 lo = (v > vs) ? v : vs;
+        const u64 hi = (v + 0x800 < ve) ? v + 0x800 : ve;
+        const u64 poff = line.p_address + (lo - v);
+        if (poff + (hi - lo) <= cpu.dram_size
+          && memcmp((const uint8_t*)cpu.dram_ptr + poff,
+                    (const uint8_t*)line.data + (lo - v), (size_t)(hi - lo)))
+          return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool Ev68InstructionFetch::can_chain(const CAlphaCPU& cpu, u64 target)
+{
+  // Reset entry must return through the dispatcher so prepare_dispatch can flush.
+  return target != (cpu.state.pal_base | 1);
+}
+
 int Ev68InstructionFetch::fetch(CAlphaCPU& cpu, u32* instruction)
 {
   if (cpu.state.pc == cpu.seq_next_pc && cpu.seq_remaining > 0 && cpu.seq_cm == cpu.state.cm)

@@ -350,6 +350,10 @@ private:
   void service_interval_timer(std::chrono::steady_clock::time_point now);
 
   int             fetch_instruction(u32* instruction);
+  AlphaInstructionMapping probe_instruction_source(u64 pc);
+  bool            peek_cached_instruction(u32* instruction) const;
+  bool            instruction_source_matches(u64 start_pc, u32 count) const;
+  bool            instruction_source_can_chain(u64 target) const;
   bool            icache_line_matches(int i, u64 address) const;
   bool            icache_hit(int i, u64 address) const;
   int             FindTBEntry(u64 virt, int flags);
@@ -939,7 +943,7 @@ inline void CAlphaCPU::set_PAL_BASE(u64 pb)
 #endif
 }
 
-// Legacy EV68 cache probes used by the current JIT instruction-source path.
+// EV68 cache predicates used by the family fetch and source-observation policy.
 inline bool CAlphaCPU::icache_line_matches(int i, u64 address) const
 {
   const auto& line = state.icache[i];
@@ -957,6 +961,30 @@ inline int CAlphaCPU::fetch_instruction(u32* instruction)
 {
   return m_profile.instruction_fetch.fetch
     ? m_profile.instruction_fetch.fetch(*this, instruction) : 1;
+}
+
+inline AlphaInstructionMapping CAlphaCPU::probe_instruction_source(u64 pc)
+{
+  return m_profile.instruction_fetch.probe
+    ? m_profile.instruction_fetch.probe(*this, pc) : AlphaInstructionMapping{};
+}
+
+inline bool CAlphaCPU::peek_cached_instruction(u32* instruction) const
+{
+  return m_profile.instruction_fetch.peek_cached
+    && m_profile.instruction_fetch.peek_cached(*this, instruction);
+}
+
+inline bool CAlphaCPU::instruction_source_matches(u64 start_pc, u32 count) const
+{
+  return m_profile.instruction_fetch.matches_interpreted
+    && m_profile.instruction_fetch.matches_interpreted(*this, start_pc, count);
+}
+
+inline bool CAlphaCPU::instruction_source_can_chain(u64 target) const
+{
+  return m_profile.instruction_fetch.can_chain
+    && m_profile.instruction_fetch.can_chain(*this, target);
 }
 
 
