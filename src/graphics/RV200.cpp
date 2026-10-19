@@ -98,8 +98,8 @@ static bool shadow_allowed(uint32_t a)
 }
 
 // Configuration latches used by the RV200 ROM. These set board-level drive
-// strengths, DRAM timings and bus timeouts; the synchronous functional model
-// does not simulate analog signalling or elapsed DRAM/bus cycles.
+// strengths, DRAM timings, bus timeouts and the empty TV output's clocks.
+// The synchronous model does not simulate analog signalling or clock cycles.
 static bool configuration_latch(uint32_t a)
 {
 	switch (a)
@@ -119,10 +119,33 @@ static bool configuration_latch(uint32_t a)
 	case CRV200::MEM_IO_OE_CNTL:
 	case CRV200::TMDS_PLL_CNTL:
 	case CRV200::DAC_MACRO_CNTL:
+	case CRV200::TV_MASTER_CNTL:
 		return true;
 	default:
 		return false;
 	}
+}
+
+// RV200 uses DAC_CNTL2 for CRTC selection. DISP_OUTPUT_CNTL selects the
+// subsequent merger/RMX/transform path, unlike R200/R300's CRTC mux here.
+// The hit RMX path is a bypass while both stretch enables are clear.
+static bool dac_route_supported(uint32_t output, uint32_t horz, uint32_t vert)
+{
+	const uint32_t source = output & 3u;
+	return source == 0 ||
+		(source == 2 && !(output & (1u << 8)) &&
+		 !((horz | vert) & (1u << 25)));
+}
+
+// Only forced-level load detection has reached the TV DAC. Inactive guns
+// have no input to evaluate; each active gun must select FORCE_DAC_DATA.
+static bool tv_dac_forced(uint32_t mux)
+{
+	for (unsigned channel = 0; channel < 3; ++channel)
+		if ((mux & (1u << channel)) &&
+			((mux >> (4 + 4 * channel)) & 7u) != 6)
+			return false;
+	return true;
 }
 
 // CLR_CMP_CNTL source equality suppresses matching pixels (XAA keying).
@@ -412,6 +435,20 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 		r(a) = v;
 		return;
 	}
+	if (a == DISP_PWR_MAN)
+	{
+		// DPMS gates connector sync, not internal timing or rendering to VRAM.
+		// D-state transition policies are retained; PCI power transitions have
+		// not been exercised by this board's guest driver.
+		r(a) = v;
+		return;
+	}
+	if (a == DISP_OUTPUT_CNTL &&
+		dac_route_supported(v, r(FP_HORZ_STRETCH), r(FP_VERT_STRETCH)))
+	{
+		r(a) = v;
+		return;
+	}
 	if (a == DISP_TEST_DEBUG_CNTL && !(v & 0x33fu))
 	{
 		// Underflow flags are read-only/W1C. A synchronous framebuffer has
@@ -423,9 +460,9 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 		((a == FP_HORZ_STRETCH || a == FP_VERT_STRETCH) &&
 		 !(v & (1u << 25))) ||
 		(a == LVDS_GEN_CNTL && !(v & 0x80u)) ||
-		(a == TV_MASTER_CNTL && !(v & 0x80000000u)) ||
 		(a == OV0_FLAG_CNTL && !(r(OV0_SCALE_CNTL) & 0x40000000u)) ||
-		(a == TV_PRE_DAC_MUX_CNTL && !(r(TV_MASTER_CNTL) & 0x80000000u)) ||
+		(a == TV_PRE_DAC_MUX_CNTL &&
+		 (!(r(TV_MASTER_CNTL) & 0x80000000u) || tv_dac_forced(v))) ||
 		(a == SEPROM_CNTL1 && !(v & 0xffffu)) ||
 		// FCP0_SRC_GND: the capture clock input is tied low.
 		(a == FCP_CNTL && v == 4) ||
@@ -433,8 +470,10 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 		  a == CRTC_MORE_CNTL || a == OVR_WID_LEFT_RIGHT ||
 		  a == OVR_WID_TOP_BOTTOM) && v == 0))
 	{
-		// Observed reset/disabled states. Active capture, VIP, scaler, TV,
-		// RMX, LVDS, EEPROM transactions and nonzero borders remain unsupported.
+		// Observed reset/disabled states and forced TV-DAC load probes. The TV
+		// connector is empty; enabling its clock or forcing its DAC cannot
+		// drive the primary CRT or create a monitor load. Video through the TV
+		// mux, active capture/VIP/scaler/RMX/LVDS and EEPROM commands still warn.
 		r(a) = v;
 		return;
 	}
@@ -867,7 +906,7 @@ void CRV200::draw(uint32_t w, uint32_t h)
 	{
 		fail("unsupported pixel format " + hex(type & 15) +
 			" (DP_DATATYPE=" + hex(type) + ", rectangle=" +
-			hex(w) + "x" + hex(h) + ", DST_PITCH_OFFSET=" +
+			std::to_string(w) + "x" + std::to_string(h) + ", DST_PITCH_OFFSET=" +
 			hex(r(DST_PITCH_OFFSET)) + ")");
 		return;
 	}
@@ -1216,6 +1255,14 @@ void CRV200::advance_scanlines(uint32_t lines)
 	update_irq();
 }
 
+bool CRV200::display_output_enabled() const
+{
+	return !(r(DISP_PWR_MAN) & 0x300u) &&
+		!(r(DISP_MISC_CNTL) & (display_controller() ? 0x9000u : 0x11u)) &&
+		dac_route_supported(r(DISP_OUTPUT_CNTL),
+			r(FP_HORZ_STRETCH), r(FP_VERT_STRETCH));
+}
+
 CRV200::Frame CRV200::scanout(std::string* error) const
 {
 	auto reject = [error](const char* why) {
@@ -1226,6 +1273,8 @@ CRV200::Frame CRV200::scanout(std::string* error) const
 	const unsigned controller = display_controller();
 	if (r(DISP_MISC_CNTL) & (controller ? 0x9000u : 0x11u))
 		return reject("display pixel pipeline held in reset");
+	if (!display_output_enabled())
+		return reject("display output powered down or unsupported DAC route");
 	const uint32_t gen = r(controller ? CRTC2_GEN_CNTL : CRTC_GEN_CNTL);
 	const bool blank = controller
 		? (gen & (CRTC2_DISPLAY_DIS | (1u << 26) | (3u << 28) | 0x70u))

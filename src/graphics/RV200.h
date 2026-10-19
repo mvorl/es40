@@ -105,7 +105,8 @@ public:
     TV_DAC_CNTL = 0x088c, FCP_CNTL = 0x0910,
     CAP0_TRIG_CNTL = 0x0950, SURFACE_CNTL = 0x0b00,
     VIPH_CONTROL = 0x0c40, DISP_MISC_CNTL = 0x0d00,
-    DAC_MACRO_CNTL = 0x0d04, DISP_TEST_DEBUG_CNTL = 0x0d10,
+    DAC_MACRO_CNTL = 0x0d04, DISP_PWR_MAN = 0x0d08,
+    DISP_TEST_DEBUG_CNTL = 0x0d10,
     DISP_OUTPUT_CNTL = 0x0d64, RBBM_STATUS = 0x0e40,
     DST_OFFSET = 0x1404,
     DST_PITCH = 0x1408, DST_X = 0x141c, DST_Y = 0x1420, SRC_X = 0x1414,
@@ -235,6 +236,10 @@ public:
   {
     return display_controller() || (r(CRTC_GEN_CNTL) & CRTC_EXT_DISP_EN);
   }
+
+  // Output power/routing applies to the primary connector in VGA and native
+  // modes. It does not stop the internal CRTC counters or the drawing engine.
+  bool display_output_enabled() const;
 
   uint32_t vertical_total(unsigned controller = 0) const
   {

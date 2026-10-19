@@ -719,7 +719,7 @@ CRV200::Frame CRadeon7500::render_frame()
 {
 	std::lock_guard<std::recursive_mutex> guard(
 		cSystem->get_device_bus_mutex());
-	if (m_pause.load())
+	if (m_pause.load() || !m_rv200.display_output_enabled())
 		return {};
 	// The primary DAC may select CRTC2 even while CRTC1 is in VGA mode.
 	if (m_rv200.native_display())
