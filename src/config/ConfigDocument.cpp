@@ -221,7 +221,16 @@ struct TemporaryFile
         for (int i = 0; i < 100; ++i)
         {
             path = target; path += ".tmp-" + std::to_string(random());
+#ifdef _WIN32
             file = open_file(path, "wbx");
+#else
+            const int descriptor = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
+            if (descriptor >= 0)
+            {
+                file = fdopen(descriptor, "wb");
+                if (!file) { close(descriptor); std::error_code ignored; fs::remove(path, ignored); }
+            }
+#endif
             if (file) return;
             if (errno != EEXIST) break;
         }
@@ -361,7 +370,10 @@ struct ConfigDocument::Impl
                     // The emulator initializes top-level devices in file order.
                     auto system = std::find_if(entry.entries.begin(), entry.entries.end(), [](const Entry& e) { return e.block && e.name.value == "sys0"; });
                     if (system != entry.entries.end())
-                    { patches.push_back({system->name.begin, system->name.begin, serialize(child, padding)}); continue; }
+                    {
+                        const size_t position = system->name.begin - indent(system->name.begin).size();
+                        patches.push_back({position, position, serialize(child, padding)}); continue;
+                    }
                 }
                 added += serialize(child, padding);
             }

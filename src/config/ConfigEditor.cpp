@@ -169,20 +169,20 @@ FormValues_t show_form(const char *title, FormEntry_t entry[], FormValues_t pres
         if (!valid) continue;
         auto values = (FormValues_t)calloc(count, sizeof(char *));
         for (int i = 0; i < count; ++i) values[i] = strdup(fields[i].value.c_str());
+        changed_fields.assign(count, false);
+        for (int i = 0; i < count; ++i)
+        {
+            bool same = initial[i].value == values[i];
+            if (initial[i].type == EditorField::Type::Integer || initial[i].type == EditorField::Type::Number)
+                same = strtod(initial[i].value.c_str(), nullptr) == strtod(values[i], nullptr);
+            if (initial[i].type == EditorField::Type::Choice)
+                same = !strcasecmp(initial[i].value.c_str(), values[i]);
+            changed_fields[i] = !same;
+        }
         try
         {
             if (!check || check(entry, count, values))
             {
-                changed_fields.assign(count, false);
-                for (int i = 0; i < count; ++i)
-                {
-                    bool same = initial[i].value == values[i];
-                    if (initial[i].type == EditorField::Type::Integer || initial[i].type == EditorField::Type::Number)
-                        same = strtod(initial[i].value.c_str(), nullptr) == strtod(values[i], nullptr);
-                    if (initial[i].type == EditorField::Type::Choice)
-                        same = !strcasecmp(initial[i].value.c_str(), values[i]);
-                    changed_fields[i] = !same;
-                }
                 return values;
             }
         }
@@ -313,8 +313,16 @@ void write_configuration(const char *filename)
     }
     auto destination = output_snapshot ? *output_snapshot : read_config_file(filename, true);
     // Saving back to the loaded file must also detect changes made while editing.
-    if (input_snapshot && input_snapshot->path == destination.path)
-        destination = *input_snapshot;
+    if (input_snapshot)
+    {
+        std::error_code ignored;
+        if (input_snapshot->path == destination.path ||
+            (destination.exists && std::filesystem::equivalent(input_snapshot->path, destination.path, ignored)))
+        {
+            destination.exists = input_snapshot->exists;
+            destination.text = input_snapshot->text;
+        }
+    }
     save_config_file(destination, text);
 }
 
@@ -1329,8 +1337,12 @@ void edit_tsunami(const char *title)
         set_form_value(sys0, idx, "memory.bits", i2s(memory_size2bits(values[idx])).c_str());
 
         for (int i = 0; i < num_entries; ++i)
-            if (entry[i].name != NULL && (strcmp(entry[i].name, "time") || strcmp(values[i], "")))
-                set_form_value(sys0, i, entry[i].name, values[i]);
+            if (entry[i].name != NULL)
+            {
+                if (!strcmp(entry[i].name, "time") && !values[i][0])
+                { if (changed_fields[i]) sys0->remove_value((char *)entry[i].name); }
+                else set_form_value(sys0, i, entry[i].name, values[i]);
+            }
 
         // Clean up
         for (int i = 0; i < num_entries; ++i)
