@@ -307,7 +307,7 @@ private:
   // Host-data uploads latch their command state, including across snapshots.
   struct Pending
   {
-    bool active = false;
+    bool active = false, packed = false;
     uint32_t width = 0, height = 0, word = 0, words_per_row = 0;
     int32_t x = 0, y = 0, dx = 1, dy = 1;
     uint32_t base = 0, pitch = 0, bpp = 0, mask = 0;
@@ -331,6 +331,7 @@ private:
   struct CPPacket
   {
     uint32_t header = 0, remaining = 0, reg = 0;
+    std::vector<uint32_t> body; // Bounded by the 14-bit packet count.
   };
   std::array<CPPacket, 2> m_cp_packet{};
   std::array<std::array<uint32_t, 2>, 256> m_cp_microcode{};
@@ -366,7 +367,8 @@ private:
   bool cp_memory(uint64_t address, uint32_t& value, bool write,
     unsigned swap);
   bool cp_writeback();
-  void draw(uint32_t width, uint32_t height);
+  void cp_hostdata(const std::vector<uint32_t>& body);
+  void draw(uint32_t width, uint32_t height, bool positive_host = false);
   void draw_line(uint32_t start, uint32_t end);
   void host_word(uint32_t value, bool last);
   bool translate(uint64_t gpu, size_t bytes, size_t& index) const;

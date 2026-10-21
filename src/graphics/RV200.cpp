@@ -1059,7 +1059,7 @@ bool CRV200::clipped(int32_t x, int32_t y, uint32_t tl, uint32_t br) const
 		x >= scissor_edge(br) || y >= scissor_edge(br >> 16);
 }
 
-void CRV200::draw(uint32_t w, uint32_t h)
+void CRV200::draw(uint32_t w, uint32_t h, bool positive_host)
 {
 	const bool clear_candidate = m_inferred_clear_armed;
 	m_inferred_clear_armed = false;
@@ -1161,8 +1161,8 @@ void CRV200::draw(uint32_t w, uint32_t h)
 				  y = engine_coordinate(r(DST_Y_X) >> 16);
 	const int32_t sx = engine_coordinate(r(SRC_Y_X)),
 				  sy = engine_coordinate(r(SRC_Y_X) >> 16);
-	const int32_t xd = (r(DP_CNTL) & 1) ? 1 : -1,
-				  yd = (r(DP_CNTL) & 2) ? 1 : -1;
+	const int32_t xd = positive_host || (r(DP_CNTL) & 1) ? 1 : -1,
+				  yd = positive_host || (r(DP_CNTL) & 2) ? 1 : -1;
 	const uint32_t tl = r(SC_TOP_LEFT), br = r(SC_BOTTOM_RIGHT),
 				   mask = r(DP_WRITE_MSK), p = r(DP_BRUSH_FRGD_CLR);
 	const uint32_t brush_x = r(BRUSH_Y_X) & 7,
@@ -1207,6 +1207,7 @@ void CRV200::draw(uint32_t w, uint32_t h)
 		Pending& q = m_pending;
 		q = Pending{};
 		q.active = true;
+		q.packed = true;
 		q.width = w;
 		q.height = h;
 		q.words_per_row = mono ? (w + 31) / 32 : (w * bpp + 3) / 4;
@@ -1381,16 +1382,24 @@ void CRV200::host_word(uint32_t value, bool last)
 	auto& p = m_pending;
 	const bool mono = p.source_format < 2;
 	const uint32_t pixels_per_word = mono ? 32u : 4u / p.bpp;
-	const uint32_t row = p.word / p.words_per_row,
-				   col = (p.word % p.words_per_row) * pixels_per_word;
-	if (last && p.word + 1 != p.words_per_row * p.height)
+	// Source 3 is a continuous pixel/bit stream.
+	const uint32_t total_words = p.packed
+		? (p.width * p.height + pixels_per_word - 1) / pixels_per_word
+		: p.words_per_row * p.height;
+	if (last && p.word + 1 != total_words)
 	{
 		fail("premature HOST_DATA_LAST");
 		return;
 	}
-	for (uint32_t n = 0; n < pixels_per_word && col + n < p.width; n++)
+	for (uint32_t n = 0; n < pixels_per_word; n++)
 	{
-		const int32_t x = p.x + p.dx * int32_t(col + n),
+		const uint32_t pixel = p.word * pixels_per_word + n;
+		const uint32_t row = p.packed ? pixel / p.width : p.word / p.words_per_row;
+		const uint32_t col = p.packed ? pixel % p.width :
+			(p.word % p.words_per_row) * pixels_per_word + n;
+		if (row >= p.height || col >= p.width)
+			continue;
+		const int32_t x = p.x + p.dx * int32_t(col),
 					  y = p.y + p.dy * int32_t(row);
 		size_t idx = 0;
 		if (clipped(x, y, p.sc_tl, p.sc_br))
@@ -1419,7 +1428,7 @@ void CRV200::host_word(uint32_t value, bool last)
 			(rop3(uint8_t(p.rop), p.pattern, source, d) & p.mask) |
 				(d & ~p.mask));
 	}
-	if (++p.word == p.words_per_row * p.height)
+	if (++p.word == total_words)
 		p.active = false;
 }
 
@@ -1916,10 +1925,14 @@ void CRV200::run_cp()
 		{
 			packet.header = word;
 			const unsigned kind = word >> 30;
-			if (kind == 0 || (kind == 3 && ((word >> 8) & 255) == 0x10))
+			if (kind == 0 || (kind == 3 &&
+				(((word >> 8) & 255) == 0x10 || ((word >> 8) & 255) == 0x94)))
 			{
 				packet.remaining = ((word >> 16) & 0x3fff) + 1;
 				packet.reg = (word & 0x1fff) * 4;
+				packet.body.clear();
+				if (kind == 3 && ((word >> 8) & 255) == 0x94)
+					packet.body.reserve(packet.remaining);
 			}
 			else if (kind != 2)
 				fail("unsupported CP packet " + hex(word));
@@ -1934,6 +1947,15 @@ void CRV200::run_cp()
 					packet.reg += 4;
 				write32(target, word, 0xffffffffu);
 			}
+			else if (((packet.header >> 8) & 255) == 0x94)
+			{
+				packet.body.push_back(word);
+				if (!packet.remaining)
+				{
+					cp_hostdata(packet.body);
+					packet.body.clear();
+				}
+			}
 		}
 		if (!stream && !halted() && block <= 22 &&
 			m_cp_since_update >= (2u << block) && !cp_writeback())
@@ -1944,6 +1966,110 @@ void CRV200::run_cp()
 		r(CP_RB_RPTR) == r(CP_RB_WPTR))
 		cp_writeback();
 	m_cp_running = false;
+}
+
+// HOSTDATA_BLT (0x94)
+void CRV200::cp_hostdata(const std::vector<uint32_t>& body)
+{
+	if (body.empty() || m_pending.active)
+	{
+		fail("CP HOSTDATA_BLT missing settings or host upload already pending");
+		return;
+	}
+	size_t cursor = 0;
+	const uint32_t gui = body[cursor++];
+	std::vector<std::pair<uint32_t, uint32_t>> settings;
+	settings.emplace_back(DP_GUI_MASTER_CNTL, gui);
+	const auto take = [&](uint32_t target) {
+		if (cursor == body.size())
+			return false;
+		settings.emplace_back(target, body[cursor++]);
+		return true;
+	};
+	bool valid = (!(gui & GMC_SRC_PITCH) || take(SRC_PITCH_OFFSET)) &&
+		(!(gui & GMC_DST_PITCH) || take(DST_PITCH_OFFSET)) &&
+		(!(gui & GMC_SRC_CLIP) || take(SRC_SC_BOTTOM_RIGHT)) &&
+		(!(gui & GMC_DST_CLIP) || (take(SC_TOP_LEFT) && take(SC_BOTTOM_RIGHT)));
+	if (valid)
+	{
+		switch ((gui >> 4) & 15)
+		{
+		case 0:
+			valid = take(DP_BRUSH_BKGD_CLR) && take(DP_BRUSH_FRGD_CLR) &&
+				take(BRUSH_DATA0) && take(BRUSH_DATA1);
+			break;
+		case 1:
+			valid = take(DP_BRUSH_FRGD_CLR) && take(BRUSH_DATA0) && take(BRUSH_DATA1);
+			break;
+		case 13:
+			valid = take(DP_BRUSH_FRGD_CLR);
+			break;
+		case 15:
+			break;
+		default:
+			fail("unsupported CP HOSTDATA_BLT brush setup " + hex((gui >> 4) & 15));
+			return;
+		}
+	}
+	valid = valid && (!(gui & 0x80000000u) || take(BRUSH_Y_X)) &&
+		take(DP_SRC_FRGD_CLR) && take(DP_SRC_BKGD_CLR);
+	if (!valid || cursor == body.size())
+	{
+		fail("truncated CP HOSTDATA_BLT setup or missing bitmap");
+		return;
+	}
+	const unsigned format = (gui >> 8) & 15, source = (gui >> 12) & 3;
+	const uint32_t bpp = bytes_per_pixel(format);
+	const bool mono = source < 2;
+	if (!bpp || source == 2 || (!mono && bpp == 3) ||
+		((gui >> 24) & 7) != 3)
+	{
+		fail("unsupported CP HOSTDATA_BLT datatype or transport " + hex(gui));
+		return;
+	}
+	struct Bitmap
+	{
+		uint32_t origin, extent, words;
+		size_t data;
+	};
+	std::vector<Bitmap> bitmaps;
+	while (cursor < body.size())
+	{
+		if (body.size() - cursor < 3)
+		{
+			fail("truncated CP HOSTDATA_BLT bitmap header");
+			return;
+		}
+		const uint32_t origin = body[cursor++], extent = body[cursor++];
+		const uint32_t words = body[cursor++] & 0x3fffu;
+		const uint32_t width = extent & 0x3fff, height = (extent >> 16) & 0x3fff;
+		const uint64_t bits = uint64_t(width) * height * (mono ? 1u : 8 * bpp);
+		if (words != (bits + 31) / 32 || words > body.size() - cursor)
+		{
+			fail("CP HOSTDATA_BLT bitmap length disagrees with geometry or packet");
+			return;
+		}
+		bitmaps.push_back({origin, extent, words, cursor});
+		cursor += words;
+	}
+	for (const auto& setting : settings)
+		write32(setting.first, setting.second, 0xffffffffu);
+	for (const auto& bitmap : bitmaps)
+	{
+		if (halted())
+			return;
+		write32(DST_Y_X, bitmap.origin, 0xffffffffu);
+		r(DST_HEIGHT_WIDTH) = bitmap.extent;
+		// Packet geometry specifies a top-left origin. 
+		draw(bitmap.extent & 0x3fff, (bitmap.extent >> 16) & 0x3fff, true);
+		for (uint32_t n = 0; n < bitmap.words && !halted(); ++n)
+			host_word(body[bitmap.data + n], n + 1 == bitmap.words);
+		if (!halted() && m_pending.active)
+		{
+			fail("CP HOSTDATA_BLT left an incomplete host upload");
+			return;
+		}
+	}
 }
 
 // Snapshots
@@ -2010,6 +2136,9 @@ void CRV200::SaveState(std::ostream& out) const
 		put32(b, packet.header);
 		put32(b, packet.remaining);
 		put32(b, packet.reg);
+		put32(b, uint32_t(packet.body.size()));
+		for (const uint32_t word : packet.body)
+			put32(b, word);
 	}
 	for (const auto& entry : m_cp_microcode)
 	{
@@ -2057,6 +2186,7 @@ void CRV200::SaveState(std::ostream& out) const
 		  p.compare_color,
 		  p.compare_mask})
 		put32(b, v);
+	put32(b, p.packed ? 1u : 0u);
 	// Preserve the fault, not host callbacks.
 	put32(b, uint32_t(m_fault.size()));
 	b.insert(b.end(), m_fault.begin(), m_fault.end());
@@ -2068,7 +2198,7 @@ void CRV200::SaveState(std::ostream& out) const
 		put32(b, uint32_t(v >> 32));
 	}
 	b.insert(b.end(), m_vram.begin(), m_vram.end());
-	out.write("RV2SNP05", 8);
+	out.write("RV2SNP06", 8);
 	stream32(out, uint32_t(b.size()));
 	stream32(out, crc32(b));
 	out.write(
@@ -2081,14 +2211,15 @@ void CRV200::RestoreState(std::istream& in)
 {
 	char magic[8]{};
 	in.read(magic, 8);
-	const bool version5 = !std::memcmp(magic, "RV2SNP05", 8);
+	const bool version6 = !std::memcmp(magic, "RV2SNP06", 8);
+	const bool version5 = version6 || !std::memcmp(magic, "RV2SNP05", 8);
 	const bool version4 = version5 || !std::memcmp(magic, "RV2SNP04", 8);
 	const bool version3 = version4 || !std::memcmp(magic, "RV2SNP03", 8);
 	const bool version2 = version3 || !std::memcmp(magic, "RV2SNP02", 8);
 	if (!in || (!version2 && std::memcmp(magic, "RV2SNP01", 8)))
 		throw std::runtime_error("RV200 snapshot format mismatch");
 	const uint32_t len = stream32(in), crc = stream32(in);
-	if (len < m_options.vram_bytes || len > m_options.vram_bytes + 65536u)
+	if (len < m_options.vram_bytes || len > m_options.vram_bytes + (version6 ? 262144u : 65536u))
 		throw std::runtime_error("RV200 snapshot size outside bounds");
 	std::vector<uint8_t> b(len);
 	in.read(reinterpret_cast<char*>(b.data()), std::streamsize(len));
@@ -2121,9 +2252,22 @@ void CRV200::RestoreState(std::istream& in)
 			const unsigned kind = packet.header >> 30;
 			if (packet.remaining > ((packet.header >> 16) & 0x3fff) + 1 ||
 				(packet.remaining && kind != 0 &&
-				 !(kind == 3 && ((packet.header >> 8) & 255) == 0x10)) ||
+				 !(kind == 3 && (((packet.header >> 8) & 255) == 0x10 ||
+				   (version6 && ((packet.header >> 8) & 255) == 0x94)))) ||
 				(packet.reg & 3) || packet.reg > 0x20000u)
 				throw std::runtime_error("Invalid RV200 snapshot CP packet");
+			if (version6)
+			{
+				const uint32_t words = get32(b, i);
+				const bool hostdata = kind == 3 && ((packet.header >> 8) & 255) == 0x94;
+				const uint32_t expected = hostdata && packet.remaining ?
+					((packet.header >> 16) & 0x3fff) + 1 - packet.remaining : 0;
+				if (words != expected || words > 16384 || words > (b.size() - i) / 4)
+					throw std::runtime_error("Invalid RV200 snapshot CP bitmap body");
+				packet.body.reserve(words);
+				for (uint32_t n = 0; n < words; ++n)
+					packet.body.push_back(get32(b, i));
+			}
 		}
 		for (auto& entry : tmp.m_cp_microcode)
 		{
@@ -2179,11 +2323,13 @@ void CRV200::RestoreState(std::istream& in)
 	p.compare = get32(b, i);
 	p.compare_color = get32(b, i);
 	p.compare_mask = get32(b, i);
+	const uint32_t packed = version6 ? get32(b, i) : 0;
+	p.packed = packed != 0;
 	const bool mono = p.source_format < 2;
-	if (active > 1 || (inferred_clear && p.active) ||
+	if (active > 1 || packed > 1 || (inferred_clear && p.active) ||
 		tmp.m_scanline > 4096 || tmp.m_scanline2 > 2047 ||
-		p.width > 8192 ||
-		p.height > 8192 ||
+		p.width > 0x3fff ||
+		p.height > 0x3fff ||
 		(p.active &&
 		 (!p.width || !p.height ||
 		  (p.bpp != 1 && p.bpp != 2 && p.bpp != 4 && !(mono && p.bpp == 3)) ||
@@ -2195,7 +2341,9 @@ void CRV200::RestoreState(std::istream& in)
 		  (p.dx != 1 && p.dx != -1) || (p.dy != 1 && p.dy != -1) ||
 		  p.words_per_row !=
 			  (mono ? (p.width + 31) / 32 : (p.width * p.bpp + 3) / 4) ||
-		  p.word >= uint64_t(p.words_per_row) * p.height || p.rop > 255)))
+		  p.word >= (p.packed
+			  ? (uint64_t(p.width) * p.height * (mono ? 1u : p.bpp * 8u) + 31) / 32
+			  : uint64_t(p.words_per_row) * p.height) || p.rop > 255)))
 		throw std::runtime_error("Invalid RV200 snapshot execution state");
 	const uint32_t fl = get32(b, i);
 	if (fl > 4096 || fl > b.size() - i)
