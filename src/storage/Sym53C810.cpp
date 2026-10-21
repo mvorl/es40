@@ -1572,6 +1572,10 @@ void CSym53C810::write_b_dcntl(u8 value)
 	// start operation
 	if (value & R_DCNTL_STD)
 	{
+		// A guest start replaces any pending WAIT RESELECT. Register writes
+		// made by SCRIPTS itself belong to the program already running.
+		if (!scripts_running)
+			state.wait_reselect = false;
 		state.executing = true;
 		execute_scripts_inline();
 	}
@@ -1625,6 +1629,9 @@ void CSym53C810::post_dsp_write()
 {
 	if (!TB_R8(DMODE, MAN))
 	{
+		// End the old wait before inline execution can reach another one.
+		if (!scripts_running)
+			state.wait_reselect = false;
 		state.executing = true;
 		execute_scripts_inline();
 		
@@ -3176,7 +3183,12 @@ void CSym53C810::eval_interrupts()
 
 	// Halt execution if will_halt is true.
 	if (will_halt)
+	{
 		state.executing = false;
+		// SIGP redirects only an active WAIT RESELECT, not one ended by
+		// an interrupt. A later program must not inherit its jump address.
+		state.wait_reselect = false;
+	}
 
 	// Assert or de-assert the interrupt line as needed
 	if (will_assert != state.irq_asserted)
