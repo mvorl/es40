@@ -1241,6 +1241,7 @@ void CAlphaCPU::jit_run(int budget)
 		return;
 	}
 
+	const auto sources = instruction_sources();
 	while (budget > 0)
 	{
 		const u64 start_virt = state.pc;
@@ -1342,7 +1343,7 @@ void CAlphaCPU::jit_run(int budget)
 			CJitEngine::TraceFragment* t = m_jit->trace_lookup(start_virt, start_asn);
 			if (t && t->underrun >= 64) { m_jit->demote_trace(t); t = nullptr; }   // R3b: stopped looping -> net tax
 			if (t && (int)t->n_instr <= budget && (!(t->head_tag & 1) || state.sde)
-				&& m_jit->trace_ok(t, start_phys, (const uint8_t*)dram_ptr) && trace_segs_live(t))
+				&& m_jit->trace_ok(t, start_phys, sources) && trace_segs_live(t))
 			{
 				// chain-in: a predecessor's exit missed here and the trace is validated (vgen just
 				// re-stamped) -- patch its slots with the trace's chained entry so the edge lands
@@ -1378,7 +1379,7 @@ void CAlphaCPU::jit_run(int budget)
 			? m_jit->lookup(start_virt, start_asn, start_pal_shadow) : nullptr;
 		if (have_phys && !b)   // lazy-flushed survivor? hash-revalidate in place (no interpreted pass)
 			b = m_jit->revalidate_flushed(start_virt, start_asn, start_pal_shadow,
-				start_phys, (const uint8_t*)dram_ptr);
+				start_phys, sources);
 
 		// A valid block whose phys no longer matches = a page remap the virtual key can't see.
 		// The cold path below re-records it; log it -- it's the smoking gun for stale-chain bugs.
@@ -1469,7 +1470,7 @@ void CAlphaCPU::jit_run(int budget)
 				  blist[nb++] = succ; cur = succ;
 				}
 				if (!TraceLoopsOnly || closes)
-					m_jit->compile_trace(m_jit->trace_slot(start_virt), blist, nb, (const uint8_t*)dram_ptr, dram_size, hs);
+					m_jit->compile_trace(m_jit->trace_slot(start_virt), blist, nb, sources, hs);
 			}
 #endif   // JIT_TRACES
 #ifdef JIT_VERIFY
@@ -1558,7 +1559,7 @@ void CAlphaCPU::jit_run(int budget)
 				u32 n_interp = 0;              // ops the interp ran over the trace's fused span (vs t->code's done)
 			bool clean = true;
 			CJitEngine::TraceFragment* vtr = m_jit->traces_enabled() ? m_jit->trace_lookup(start_virt, start_asn) : nullptr;
-				if (vtr && !m_jit->trace_ok(vtr, start_phys, (const uint8_t*)dram_ptr)) vtr = nullptr;   // stale -> verify as a plain block
+				if (vtr && !m_jit->trace_ok(vtr, start_phys, sources)) vtr = nullptr;   // stale -> verify as a plain block
 				const u32 nseg = vtr ? vtr->n_segs : 1;   // interp the trace's full fused span; else just block b
 				for (u32 seg = 0; seg < nseg && clean; ++seg) {
 				if (vtr) { cur_len = vtr->segs[seg].n_instr; cur_tag = vtr->segs[seg].guest_pc;
@@ -1800,7 +1801,7 @@ void CAlphaCPU::jit_run(int budget)
 				// the trace's own state.pc write + frame visible to the differential harness.
 				if (m_jit->traces_enabled()) {
 					CJitEngine::TraceFragment* tr = m_jit->trace_lookup(start_virt, start_asn);
-					if (tr && m_jit->trace_ok(tr, start_phys, (const uint8_t*)dram_ptr)
+					if (tr && m_jit->trace_ok(tr, start_phys, sources)
 							&& [&]{ for (uint32_t s = 1; s < tr->n_segs; ++s) { u64 sp; if (!live_exec_phys(tr->segs[s].guest_pc, &sp) || sp != tr->segs[s].phys_pc) return false; } return true; }()) {   // verify now mirrors the production hook's interior live-phys check
 						memcpy(state.f, f_pre, sizeof(f_pre));
 						state.sde = ictl_sde_pre; state.hwe = ictl_hwe_pre;
@@ -2011,9 +2012,9 @@ void CAlphaCPU::jit_run(int budget)
 		if (have_phys && !src_stale && state.pc != expected)
 		{
 			CJitEngine::JitBlock* nb = m_jit->record(start_virt, start_phys, start_asn,
-				start_pal_shadow, start_asm, n, (const uint8_t*)dram_ptr);
+				start_pal_shadow, start_asm, n, sources);
 			if (!nb->compiled)
-				m_jit->compile_block(nb, (const uint8_t*)dram_ptr, dram_size,
+				m_jit->compile_block(nb, sources,
 					(void*)&CAlphaCPU::jit_read, (void*)&CAlphaCPU::jit_write,
 					(void*)&CAlphaCPU::jit_opcdec, (void*)&CAlphaCPU::jit_hw_mfpr,
 					(void*)&CAlphaCPU::jit_read_phys, (void*)&CAlphaCPU::jit_hw_mtpr,
@@ -2886,6 +2887,36 @@ void CAlphaCPU::check_state()
 	return;
 }
 
+void CAlphaCPU::count_down_irq_timers(int step)
+{
+	// The countdown and irq_h() must serialize the entire timer/line transition.
+	// An atomic countdown alone could still assert EIR after a concurrent cancel.
+	std::lock_guard<std::mutex> irq_lock(m_irq_lock);
+	bool timers_pending = false;
+	for (int line = 0; line < 6; ++line)
+	{
+		int& timer = state.irq_h_timer[line];
+		if (!timer)
+			continue;
+		if (timer <= step)
+		{
+			timer = 0;
+			state.eir |= (U64(0x1) << line);
+#ifdef JIT_STATS
+			m_stat_kick[4]++;
+#endif
+			state.check_int = true;
+		}
+		else
+		{
+			timer -= step;
+			timers_pending = true;
+		}
+	}
+	// Publish once, under the same lock used when a device arms or cancels a timer.
+	state.check_timers = timers_pending;
+}
+
 /**
  * \brief Called each clock-cycle.
  *
@@ -3082,32 +3113,7 @@ _next_instruction:
 			// irq_h timers, decrease them as needed, and set the interrupt if the timer
 			// reaches 0. Batch to reduce memory ops.
 			if (state.check_timers)
-			{
-				state.check_timers = false;
-				for (int j = 0; j < 6; j++)
-				{
-					if (state.irq_h_timer[j])
-					{
-						if (state.irq_h_timer[j] <= 32)
-						{
-							state.irq_h_timer[j] = 0;
-							state.eir |= (U64(0x1) << j);
-#ifdef JIT_STATS
-							m_stat_kick[4]++;
-#endif
-							// The timer hasn't reached 0 yet; check on the timers again next clock tick.
-							state.check_int = true;
-						}
-						else
-						{
-							// The timer has reached 0. Set the interrupt status, and set the flag that we
-							// need to check the interrupt status
-							state.irq_h_timer[j] -= 32;
-							state.check_timers = true;
-						}
-					}
-				}
-			}
+				count_down_irq_timers(32);
 		}
 #else
 		// New unwound interpreter / future JIT path
@@ -3119,29 +3125,7 @@ _next_instruction:
 
 		// Process delayed irq_h timers one instruction at a time.
 		if (state.check_timers)
-		{
-			state.check_timers = false;
-			for (int ti = 0; ti < 6; ti++)
-			{
-				if (state.irq_h_timer[ti])
-				{
-					if (state.irq_h_timer[ti] <= 1)
-					{
-						state.irq_h_timer[ti] = 0;
-						state.eir |= (U64(0x1) << ti);
-#ifdef JIT_STATS
-						m_stat_kick[4]++;
-#endif
-						state.check_int = true;
-					}
-					else
-					{
-						state.irq_h_timer[ti]--;
-						state.check_timers = true;
-					}
-				}
-			}
-		}
+			count_down_irq_timers(1);
 #endif
 
 		if (state.check_int && !(state.pc & 1))

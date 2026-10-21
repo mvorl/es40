@@ -2284,6 +2284,7 @@
     <ClInclude Include="..\src\CPU\AlphaReset.h" />
     <ClInclude Include="..\src\CPU\Ev68Reset.h" />
     <ClInclude Include="..\src\CPU\AlphaInstructionFetch.h" />
+    <ClInclude Include="..\src\CPU\AlphaInstructionSource.h" />
     <ClInclude Include="..\src\CPU\Ev68InstructionFetch.h" />
     <ClInclude Include="..\src\CPU\AlphaPAL.h" />
     <ClInclude Include="..\src\CPU\Ev68PAL.h" />

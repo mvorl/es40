@@ -28,6 +28,7 @@
 #define INCLUDED_ALPHAINSTRUCTIONFETCH_H
 
 #include <cstdint>
+#include "AlphaInstructionSource.h"
 
 class CAlphaCPU;
 
@@ -71,6 +72,9 @@ struct AlphaInstructionFetchPolicy
   // Reject targets that need dispatcher preparation before entering compiled code.
   // Called before lookup; a PAL target need not subsequently probe a translation.
   bool (*can_chain)(const CAlphaCPU& cpu, std::uint64_t target) = nullptr;
+
+  // Bounded backing words for JIT snapshots and revalidation. 
+  AlphaInstructionSourceView (*source)(CAlphaCPU& cpu, std::uint64_t pc) = nullptr;
 };
 
 #endif

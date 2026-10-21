@@ -335,15 +335,15 @@ public:
 
   // Source-coherence check (review: per-segment, from M0). head_live_phys is the head's freshly
   // resolved physical; on a remap/flush since build, fall back to blocks + re-form. See the .cpp.
-  bool trace_ok(TraceFragment* t, uint64_t head_live_phys, const uint8_t* dram);
+  bool trace_ok(TraceFragment* t, uint64_t head_live_phys, const AlphaInstructionSource& sources);
 
   // Lazy-flush survivor: hash-revalidate the slot in place (no interpreted pass, no re-record).
   JitBlock* revalidate_flushed(uint64_t virt_pc, uint32_t asn, bool pal_shadow,
-                               uint64_t phys_pc, const uint8_t* dram);
+                               uint64_t phys_pc, const AlphaInstructionSource& sources);
 
   JitBlock* record(uint64_t virt_pc, uint64_t phys_pc, uint32_t asn, bool pal_shadow,
-                   bool asm_global, uint32_t n_instr, const uint8_t* dram);
-  void compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_size, void* read_helper, void* write_helper, void* opcdec_helper, void* hw_mfpr_helper, void* hw_ld_helper, void* hw_mtpr_helper, void* hw_st_helper, void* indirect_helper, void* read_locked_helper, void* stc_helper, void* misc_helper, void* read_vpte_helper, void* read_wchk_helper, void* itof_helper, void* ftoi_helper, void* fltl_helper, void* fp_read_helper, void* fp_write_helper, void* fltv_helper);
+                   bool asm_global, uint32_t n_instr, const AlphaInstructionSource& sources);
+  void compile_block(JitBlock* b, const AlphaInstructionSource& sources, void* read_helper, void* write_helper, void* opcdec_helper, void* hw_mfpr_helper, void* hw_ld_helper, void* hw_mtpr_helper, void* hw_st_helper, void* indirect_helper, void* read_locked_helper, void* stc_helper, void* misc_helper, void* read_vpte_helper, void* read_wchk_helper, void* itof_helper, void* ftoi_helper, void* fltl_helper, void* fp_read_helper, void* fp_write_helper, void* fltv_helper);
   void flush();
 
   // Per-op codegen state, shared by compile_block and compile_trace within a backend.
@@ -358,7 +358,7 @@ public:
 
   // compile an N-block trace into slot t (reuses emit_op per block; blocks fused with a guard -> side-exit
   // between them). n_blocks==1 is the single-block case; the exit returns to the dispatcher.
-  void compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_blocks, const uint8_t* dram, uint64_t dram_size, const HelperSet& hs);
+  void compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_blocks, const AlphaInstructionSource& sources, const HelperSet& hs);
 
   void flush_non_global();   // flush only !asm_global blocks (the ASM-bit-clear / ASN icache flush)
   void reclaim_code();       // free ALL compiled code once past kReclaimBytes (cold-path only)
@@ -482,7 +482,7 @@ private:
   void*      m_exit = nullptr;    // shared epilogue (x64)
   void**     m_exit_slot = nullptr;   // CPU field that compiled code jumps through
 #ifdef JIT_REGPROF
-  const uint8_t* m_dbg_dram = nullptr;   // guest RAM base, for the hot-block dump
+  AlphaInstructionSource m_dbg_source; // Bound reader, never a borrowed source view.
 #endif
   std::unordered_set<void*> m_active_links;     // patched edges, bit 1 = PatchSite
   std::unordered_set<void*> m_global_src_links; // subset with global sources

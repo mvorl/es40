@@ -115,6 +115,23 @@ bool Ev68InstructionFetch::can_chain(const CAlphaCPU& cpu, u64 target)
   return target != (cpu.state.pal_base | 1);
 }
 
+AlphaInstructionSourceView Ev68InstructionFetch::source(CAlphaCPU& cpu, u64 pc)
+{
+  const auto mapping = probe(cpu, pc);
+  if (!mapping.valid || !cpu.dram_ptr || (mapping.physical & 3)
+    || mapping.physical >= cpu.dram_size)
+    return {};
+
+  // The EV68 JIT uses backing RAM so its interpreted-span check separately rejects
+  // cached insn that differ. Never cross the current 8 KiB translation.
+  const u64 ram_words = (cpu.dram_size - mapping.physical) / sizeof(u32);
+  const u64 page_words = (U64(0x2000) - (mapping.physical & U64(0x1fff))) / sizeof(u32);
+  const u32 count = (u32)((ram_words < page_words) ? ram_words : page_words);
+  if (!count) return {};
+  return {reinterpret_cast<const u8*>(cpu.dram_ptr) + mapping.physical,
+          mapping.physical, count, mapping.asm_global};
+}
+
 int Ev68InstructionFetch::fetch(CAlphaCPU& cpu, u32* instruction)
 {
   if (cpu.state.pc == cpu.seq_next_pc && cpu.seq_remaining > 0 && cpu.seq_cm == cpu.state.cm)

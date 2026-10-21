@@ -39,14 +39,16 @@ public:
   static bool matches_interpreted(const CAlphaCPU& cpu, std::uint64_t start_pc,
                                   std::uint32_t count);
   static bool can_chain(const CAlphaCPU& cpu, std::uint64_t target);
+  static AlphaInstructionSourceView source(CAlphaCPU& cpu, std::uint64_t pc);
 
-  // Backend snapshots/hashes still read DRAM directly. Until they consume family
-  // sources too, admit only this exact fetch and observational-source contract.
+  // Dispatcher/verifier candidate reads still assume EV68 RAM/cache sources.
+  // Keep admission exact until those remaining consumers use the bounded source.
   static constexpr bool supports_legacy_jit(const AlphaInstructionFetchPolicy& policy)
   {
     return policy.fetch == &fetch && policy.prepare_dispatch == &prepare_dispatch
       && policy.probe == &probe && policy.peek_cached == &peek_cached
-      && policy.matches_interpreted == &matches_interpreted && policy.can_chain == &can_chain;
+      && policy.matches_interpreted == &matches_interpreted && policy.can_chain == &can_chain
+      && policy.source == &source;
   }
 
 private:
@@ -56,7 +58,8 @@ private:
 inline constexpr AlphaInstructionFetchPolicy kEv68InstructionFetchPolicy{
   &Ev68InstructionFetch::fetch, &Ev68InstructionFetch::prepare_dispatch,
   &Ev68InstructionFetch::probe, &Ev68InstructionFetch::peek_cached,
-  &Ev68InstructionFetch::matches_interpreted, &Ev68InstructionFetch::can_chain
+  &Ev68InstructionFetch::matches_interpreted, &Ev68InstructionFetch::can_chain,
+  &Ev68InstructionFetch::source
 };
 
 #endif

@@ -30,14 +30,20 @@
 #ifdef ES40_JIT
 
 #include <cstdint>
+#include <cstddef>
 
 // FNV-1a/64 over a block's source words -- record() uses it to revalidate kept code after a flush
 // instead of recompiling, and to catch self-modifying code (changed bytes -> different hash).
 static inline uint64_t src_hash(const uint8_t* p, uint32_t n_instr)
 {
-  const uint32_t* w = (const uint32_t*) p;
   uint64_t h = 1469598103934665603ULL;
-  for (uint32_t i = 0; i < n_instr; ++i) { h ^= w[i]; h *= 1099511628211ULL; }
+  for (uint32_t i = 0; i < n_instr; ++i) {
+    const auto* w = p + static_cast<std::size_t>(i) * 4;
+    const uint32_t word = uint32_t(w[0]) | (uint32_t(w[1]) << 8)
+      | (uint32_t(w[2]) << 16) | (uint32_t(w[3]) << 24);
+    h ^= word;
+    h *= 1099511628211ULL;
+  }
   return h;
 }
 

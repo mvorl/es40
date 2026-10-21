@@ -2477,7 +2477,7 @@ void CJitEngine::build_trampolines()
   }
 }
 
-void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_size, void* read_helper, void* write_helper, void* opcdec_helper, void* hw_mfpr_helper, void* hw_ld_helper, void* hw_mtpr_helper, void* hw_st_helper, void* indirect_helper, void* read_locked_helper, void* stc_helper, void* misc_helper, void* read_vpte_helper, void* read_wchk_helper, void* itof_helper, void* ftoi_helper, void* fltl_helper, void* fp_read_helper, void* fp_write_helper, void* fltv_helper)
+void CJitEngine::compile_block(JitBlock* b, const AlphaInstructionSource& sources, void* read_helper, void* write_helper, void* opcdec_helper, void* hw_mfpr_helper, void* hw_ld_helper, void* hw_mtpr_helper, void* hw_st_helper, void* indirect_helper, void* read_locked_helper, void* stc_helper, void* misc_helper, void* read_vpte_helper, void* read_wchk_helper, void* itof_helper, void* ftoi_helper, void* fltl_helper, void* fp_read_helper, void* fp_write_helper, void* fltv_helper)
 {
   // Only the interpreted miss path calls this for an uncompiled block. Keep the
   // first encounter interpreted; compiled dispatch and chaining pay no counter cost.
@@ -2494,36 +2494,33 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   }
   b->compiled = true;
 
-  const uint64_t phys = b->phys;
-  if (dram == nullptr || b->n_instr == 0 || phys > dram_size
-      || static_cast<uint64_t>(b->n_instr) > (dram_size - phys) / sizeof(uint32_t))
+  if (b->n_instr == 0) return;
+  const auto source = sources.view(b->tag);
+  if (!source.contains(1) || source.identity != b->phys
+      || source.asm_global != b->asm_global) {
+    b->compiled = false;
     return;
+  }
 
   // PALmode blocks (PC bit 0) use the register-bank mapping captured in b->pal_shadow
   const bool pal_block = (b->tag & 1) != 0;
 
-  // Stop at the 8 KB page boundary: past it the next instruction's physical
-  // address need not be phys+4 (the next virtual page maps elsewhere), so words[]
-  // there would be the wrong instructions. (The page-crossing case verify caught.)
-  const uint64_t page_end = (phys & ~(uint64_t) 0x1FFF) + 0x2000;
-
-  // Compile from one immutable source image. 
-  uint32_t snapshot_len = b->n_instr;
-  const uint64_t fusion_avail = (std::min)(
-      (dram_size - phys) / sizeof(uint32_t),
-      (page_end - phys) / sizeof(uint32_t));
-  const uint32_t fusion_snapshot_len = static_cast<uint32_t>(
-      (std::min)(fusion_avail, uint64_t{39}));
-  if (snapshot_len < fusion_snapshot_len) snapshot_len = fusion_snapshot_len;
+  // The family bounds a contiguous instruction source. Copy it before another
+  // query can invalidate the borrowed view, including optional fusion lookahead.
+  const uint32_t scan_len = (std::min)((std::min)(b->n_instr, uint32_t{64}),
+                                      source.word_count);
+  const uint32_t snapshot_len = (std::min)(source.word_count,
+      (std::max)(scan_len, uint32_t{39}));
   std::vector<uint32_t> source_words(snapshot_len);
-  memcpy(source_words.data(), dram + phys,
-         static_cast<size_t>(snapshot_len) * sizeof(uint32_t));
-  const uint32_t* const words = source_words.data();   // x86 LE == Alpha LE
+  if (!source.copy_words(source_words.data(), snapshot_len)) {
+    b->compiled = false;
+    return;
+  }
+  const uint32_t* const words = source_words.data();
   uint32_t plen = 0;
   bool terminator_branch = false;       // last instruction is a compiled terminator (sets its own PC)
   bool terminator_jmp = false;          // ...and it's a computed jump (don't chain: targets vary)
-  while (plen < b->n_instr && plen < 64
-         && (phys + (uint64_t) plen * 4) < page_end)
+  while (plen < scan_len)
   {
     SafeOp sop = classify(words[plen], pal_block, m_profile.ipr_read, m_profile.ipr_write,
         m_profile.pal, m_profile.hw_load, m_profile.hw_store);
@@ -2578,7 +2575,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   bool byte_scan_fused = false;
   bool tail_scan_fused = false;
 #if defined(_WIN32) && !defined(JIT_VERIFY)
-  if (!pal_block && plen == 6 && phys + 39u * 4u <= page_end && phys + 39u * 4u <= dram_size) {
+  if (!pal_block && plen == 6 && snapshot_len >= 39) {
     static const uint32_t head[15] = {
       0x40020536, 0x47e0341c, 0x400203b7, 0x46df04dc, 0x4797041c, 0xe3800022,
       0x2ffe0000, 0x2ffe0000, 0x2ae10000, 0x2b830000, 0x40003120, 0x20630001,
@@ -2591,7 +2588,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
     counted_scan_fused = memcmp(words, head, sizeof(head)) == 0
                       && memcmp(words + 32, mismatch, sizeof(mismatch)) == 0;
   }
-  if (!pal_block && plen == 5 && phys + 10u * 4u <= page_end && phys + 10u * 4u <= dram_size) {
+  if (!pal_block && plen == 5 && snapshot_len >= 10) {
     static const uint32_t word_scan[10] = {
       0xa6e10000, 0x42fc01f6, 0x439701f8, 0x46d80016, 0xf6c00028,
       0x40011120, 0x40211401, 0xf81ffff8, 0x40011400, 0xe4000007
@@ -2601,7 +2598,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   // Inner byte-search loop.
   // R23 contains the aligned source word
   // Compare from R1&7 until R27 matches, R0 reaches zero, or R1 reaches the next word.
-  if (!pal_block && plen == 3 && phys + 8u * 4u <= page_end && phys + 8u * 4u <= dram_size) {
+  if (!pal_block && plen == 3 && snapshot_len >= 8) {
     static const uint32_t byte_scan[8] = {
       0x4ae100d8, 0x43780536, 0xe6c0001e,
       0x40003520, 0x40203401, 0xe400001b,
@@ -2612,7 +2609,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   // End of the inner loop search.
   // R23 remains the loaded word and R0 is the remaining byte count.
   // Each mismatch executes the 3 op update block.
-  if (!pal_block && plen == 3 && phys + 6u * 4u <= page_end && phys + 6u * 4u <= dram_size) {
+  if (!pal_block && plen == 3 && snapshot_len >= 6) {
     static const uint32_t tail_scan[6] = {
       0x4ae100d8, 0x431b0538, 0xe7000003,
       0x40003120, 0x40203401, 0xf41ffffa
@@ -2621,7 +2618,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   }
 #endif
   const uint32_t hash_len = counted_scan_fused ? 39u : byte_scan_fused ? 8u
-                          : tail_scan_fused ? 6u : word_scan_fused ? 10u : b->n_instr;
+                          : tail_scan_fused ? 6u : word_scan_fused ? 10u : plen;
   assert(hash_len <= source_words.size());
   const uint64_t source_hash = src_hash(
       reinterpret_cast<const uint8_t*>(source_words.data()), hash_len);
@@ -3349,8 +3346,10 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 
   // A source RACE is transient (another CPU modified the guest bytes mid-compile): clear the
   // attempt flag so the dispatcher retries, instead of interpreting this block until the next flush.
-  const size_t source_bytes = static_cast<size_t>(hash_len) * sizeof(uint32_t);
-  if (memcmp(dram + phys, source_words.data(), source_bytes) != 0) { b->compiled = false; return; }
+  if (!sources.matches(b->tag, b->phys, b->asm_global, source_words.data(), hash_len)) {
+    b->compiled = false;
+    return;
+  }
 
   auto* const rt = static_cast<JitRuntime*>(m_rt);
   const Error add_err = rt->add(&fn, &code);
@@ -3367,7 +3366,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   // add() can allocate/copy for long enough that another CPU modifies the guest source.
   // Never publish old code with a hash of new bytes; abandon the unreferenced image on a mismatch.
   if (eh.failed) { (void)rt->release(fn); return; }   // late deterministic emit error -> terminal
-  if (memcmp(dram + phys, source_words.data(), source_bytes) != 0) {
+  if (!sources.matches(b->tag, b->phys, b->asm_global, source_words.data(), hash_len)) {
     (void)rt->release(fn);
     b->compiled = false;   // post-add source race -> retry
     return;
@@ -3390,7 +3389,7 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
   b->code = fn;
   b->jit_body = jit_body;                                     // runnable chain entry publishes last
 #ifdef JIT_REGPROF
-  m_dbg_dram = dram;
+  m_dbg_source = sources;
 #endif
 }
 
@@ -3400,26 +3399,28 @@ void CJitEngine::compile_block(JitBlock* b, const uint8_t* dram, uint64_t dram_s
 // through in-trace, on a miss SIDE-EXIT to the dispatcher at the real next PC. n_blocks==1 = the single-
 // block trace. Fills the caller-provided slot t (code + per-segment source descriptors + coherence epoch).
 void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_blocks,
-                               const uint8_t* dram, uint64_t dram_size, const HelperSet& hs)
+                               const AlphaInstructionSource& sources, const HelperSet& hs)
 {
   using namespace asmjit;
-  if (dram == nullptr || m_rt == nullptr || n_blocks == 0 || n_blocks > kMaxTraceSegs) return;
+  if (m_rt == nullptr || n_blocks == 0 || n_blocks > kMaxTraceSegs) return;
   // Mirror compile_block's reclaim threshold.
   if (m_code_bytes >= kReclaimBytes) { m_reclaim_pending = true; return; }
   std::array<SourceSeg, kMaxTraceSegs> source_desc{};
   std::array<std::vector<uint32_t>, kMaxTraceSegs> source_words{};
-  // Validate every segment up front: a compiled prefix that fits in DRAM. (prefix_len, NOT n_instr --
+  // Validate every segment up front: a compiled prefix within its source. (prefix_len, NOT n_instr --
   // ops past the prefix never passed the safe-to-compile scan; emitting them runs code PAST the terminator.)
   for (uint32_t bi = 0; bi < n_blocks; ++bi) {
     const JitBlock* b = blocks[bi];
-    if (b == nullptr || b->prefix_len == 0 || b->phys > dram_size
-        || static_cast<uint64_t>(b->prefix_len)
-            > (dram_size - b->phys) / sizeof(uint32_t))
+    if (b == nullptr || b->prefix_len == 0)
+      return;
+    const auto source = sources.view(b->tag);
+    if (!source.contains(b->prefix_len) || source.identity != b->phys
+        || source.asm_global != b->asm_global)
       return;
     source_desc[bi] = {b->tag, b->phys, b->prefix_len, b->asm_global, b->asn, 0};
     source_words[bi].resize(source_desc[bi].n_instr);
-    memcpy(source_words[bi].data(), dram + source_desc[bi].phys_pc,
-           static_cast<size_t>(source_desc[bi].n_instr) * sizeof(uint32_t));
+    if (!source.copy_words(source_words[bi].data(), source_desc[bi].n_instr))
+      return;
   }
 
   // Regalloc: pick the trace's hottest guest GPRs for its callee-saved pins. A fresh
@@ -3808,8 +3809,8 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
   auto sources_current = [&]() noexcept {
     for (uint32_t bi = 0; bi < n_blocks; ++bi) {
       const SourceSeg& source = source_desc[bi];
-      if (memcmp(dram + source.phys_pc, source_words[bi].data(),
-                 static_cast<size_t>(source.n_instr) * sizeof(uint32_t)) != 0)
+      if (!sources.matches(source.guest_pc, source.phys_pc, source.asm_global,
+                           source_words[bi].data(), source.n_instr))
         return false;
     }
     return true;

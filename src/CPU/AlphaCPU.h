@@ -219,6 +219,7 @@
 #define INCLUDED_ALPHACPU_H
 
 #include <atomic>
+#include <mutex>
 #include <thread>
 #include "base/HostWakeEvent.h"
 #include "idle_detect.h"
@@ -348,12 +349,14 @@ private:
   CHostWakeEvent m_idle_wake;  // Host scheduling only; outside saved/model state.
   std::atomic<bool> StopThread{false};
   void service_interval_timer(std::chrono::steady_clock::time_point now);
+  void count_down_irq_timers(int step);
 
   int             fetch_instruction(u32* instruction);
   AlphaInstructionMapping probe_instruction_source(u64 pc);
   bool            peek_cached_instruction(u32* instruction) const;
   bool            instruction_source_matches(u64 start_pc, u32 count) const;
   bool            instruction_source_can_chain(u64 target) const;
+  AlphaInstructionSource instruction_sources();
   bool            icache_line_matches(int i, u64 address) const;
   bool            icache_hit(int i, u64 address) const;
   int             FindTBEntry(u64 virt, int flags);
@@ -837,8 +840,13 @@ private:
     int   iProcNum; /**< number of the current processor (0 in a 1-processor system) */
     u64   last_tb_virt;       /**< ITB_TAG staging register for ITB_PTE writes */
     bool  pal_vms;            /**< True if the PALcode base is 0x8000 (=VMS PALcode base) */
-    int   irq_h_timer[6];     /**< Timers for delayed IRQ_H[0:5] assertion */
+    int   irq_h_timer[6];     /**< Delayed IRQ_H[0:5] timers; guarded by m_irq_lock while running */
   } state;  /**< Determines CPU state that needs to be saved to the state file */
+
+  // Serialize timer expiry and line cancellation as one transition. Keep this
+  // outside (and after) state to preserve its saved layout and JIT offsets.
+  // Lock order: device bus -> drir_lock -> m_irq_lock; no device callbacks here.
+  std::mutex m_irq_lock;
 
   u64 last_dtb_virt[2];   /**< DTB_TAG0/1 staging registers for DTB_PTE0/1 writes */
 
@@ -987,6 +995,15 @@ inline bool CAlphaCPU::instruction_source_can_chain(u64 target) const
     && m_profile.instruction_fetch.can_chain(*this, target);
 }
 
+inline AlphaInstructionSource CAlphaCPU::instruction_sources()
+{
+  return {this, [](void* context, std::uint64_t pc) -> AlphaInstructionSourceView {
+    auto& cpu = *static_cast<CAlphaCPU*>(context);
+    return cpu.m_profile.instruction_fetch.source
+      ? cpu.m_profile.instruction_fetch.source(cpu, pc) : AlphaInstructionSourceView{};
+  }};
+}
+
 
 /**
  * Convert a virtual address to va_form format.
@@ -1040,6 +1057,7 @@ inline void CAlphaCPU::kick_int_if_pending()
  **/
 inline void CAlphaCPU::irq_h(int number, bool assert, int delay)
 {
+  std::unique_lock<std::mutex> irq_lock(m_irq_lock);
   const u64 bit = U64(0x1) << number;
   bool  active = (state.eir & bit) || state.irq_h_timer[number];
   if (assert && !active)
@@ -1058,6 +1076,7 @@ inline void CAlphaCPU::irq_h(int number, bool assert, int delay)
       state.check_int = true;
     }
 
+    irq_lock.unlock();
     wake_idle();
     return;
   }
@@ -1070,6 +1089,7 @@ inline void CAlphaCPU::irq_h(int number, bool assert, int delay)
     // interrupt was dispatched, and after its REI nothing re-polls.
     // Re-kick so it is picked up at the next dispatch boundary, matching real hardware.
     state.check_int = true;
+    irq_lock.unlock();
     wake_idle();
     return;
   }
@@ -1078,12 +1098,13 @@ inline void CAlphaCPU::irq_h(int number, bool assert, int delay)
   {
     state.eir &= ~bit;
     state.irq_h_timer[number] = 0;
-    state.check_timers = false;
+    bool timers_pending = false;
     for (int i = 0; i < 6; i++)
     {
       if (state.irq_h_timer[i])
-        state.check_timers = true;
+        timers_pending = true;
     }
+    state.check_timers = timers_pending;
   }
 }
 

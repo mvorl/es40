@@ -194,7 +194,7 @@ CJitEngine::~CJitEngine()
 
 CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uint32_t asn,
                                          bool pal_shadow, bool asm_global, uint32_t n_instr,
-                                         const uint8_t* dram)
+                                         const AlphaInstructionSource& sources)
 {
   JitBlock* const set = set_base(virt_pc);
 
@@ -210,19 +210,25 @@ CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uin
     // branch below verifies the code bytes (flush-fresh or hash), so stamp the chain epoch here.
     b.vgen = m_vgen_cur;
     // Still valid + flush-fresh: nothing flushed us since last seen, so the code is unchanged.
-    if (b.valid && b.flush_gen == m_flush_gen && b.phys == phys_pc) {
+    if (b.valid && b.flush_gen == m_flush_gen && b.phys == phys_pc
+        && b.asm_global == asm_global) {
       b.n_instr = n_instr;
       return &b;
     }
     // Revalidate: a flush dropped the block but kept the compiled code. If the bytes the prefix was
     // compiled from still hash the same, reuse it instead of recompiling. Hash over hash_len, NOT
     // the caller's n_instr -- interrupt-truncated cold passes make n vary for the same block.
-    if (b.code && b.phys == phys_pc && b.src_sum == src_hash(dram + phys_pc, b.hash_len)) {
-      b.valid = true;
-      b.flush_gen = m_flush_gen;
-      b.n_instr = n_instr;
-      b.jit_body = (void*) ((uint8_t*) (void*) b.code + b.body_off);   // restore chained re-entry
-      return &b;
+    if (b.code && b.phys == phys_pc) {
+      const auto source = sources.view(virt_pc);
+      if (source.identity == phys_pc && source.asm_global == asm_global
+          && source.asm_global == b.asm_global && source.contains(b.hash_len)
+          && b.src_sum == src_hash(source.bytes, b.hash_len)) {
+        b.valid = true;
+        b.flush_gen = m_flush_gen;
+        b.n_instr = n_instr;
+        b.jit_body = (void*) ((uint8_t*) (void*) b.code + b.body_off);   // restore chained re-entry
+        return &b;
+      }
     }
   }
 
@@ -295,7 +301,7 @@ CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uin
 // straight to the hot path 
 CJitEngine::JitBlock* CJitEngine::revalidate_flushed(uint64_t virt_pc, uint32_t asn,
                                                       bool pal_shadow, uint64_t phys_pc,
-                                                      const uint8_t* dram)
+                                                      const AlphaInstructionSource& sources)
 {
   // Resurrect BOTH lazy-flush survivors (flush(): valid, flush_gen-stale) AND flush_non_global() drops
   // (valid cleared). The source-hash below is the guard, matching record()'s revalidate path
@@ -311,7 +317,11 @@ CJitEngine::JitBlock* CJitEngine::revalidate_flushed(uint64_t virt_pc, uint32_t 
   if (!keyed)
     return nullptr;
   JitBlock& b = *keyed;
-  if (b.phys != phys_pc || b.src_sum != src_hash(dram + phys_pc, b.hash_len))
+  if (b.phys != phys_pc)
+    return nullptr;
+  const auto source = sources.view(virt_pc);
+  if (source.identity != phys_pc || source.asm_global != b.asm_global
+      || !source.contains(b.hash_len) || b.src_sum != src_hash(source.bytes, b.hash_len))
     return nullptr;
   b.valid = true;          // flush_non_global() may have cleared it; the hash just re-validated the bytes
   b.flush_gen = m_flush_gen;
@@ -324,15 +334,15 @@ CJitEngine::JitBlock* CJitEngine::revalidate_flushed(uint64_t virt_pc, uint32_t 
 // head_live_phys is the head's freshly resolved physical. The steps mirror the block dispatcher's phys
 // check (jit_run ~line 832) + revalidate_flushed's hash:
 //   1. head remap / ASN-recycle: the head's live physical no longer matches what we built from -> stale.
-//   2. epoch fresh (nothing flushed/ITB-invalidated since build) -> enter directly.
+//   2. source identity/global status/extent still match; a fresh epoch can skip hashing.
 //   3. epoch changed -> re-hash every fused segment. Unchanged bytes => the epoch bumped for an unrelated
 //      reason (e.g. an IMB on another page): keep the trace + re-stamp. Changed bytes (SMC/remap): stale.
-// Interior coherence: the source hash here checks BYTES at the cached phys -- it can't see an interior page
-// remapped to a DIFFERENT physical with identical bytes. The CALLER closes that gap by re-resolving each
-// segment's LIVE physical: trace_segs_live (trace entry) + the recorder's per-successor check (formation).
-bool CJitEngine::trace_ok(TraceFragment* t, uint64_t head_live_phys, const uint8_t* dram)
+// Every source is queried by its full guest PC, including interior segments whose bytes
+// may remain identical after a remap. Do not retain a borrowed view across another query.
+bool CJitEngine::trace_ok(TraceFragment* t, uint64_t head_live_phys,
+                          const AlphaInstructionSource& sources)
 {
-  if (t->n_segs == 0 || t->segs[0].phys_pc != head_live_phys)
+  if (t->n_segs == 0 || t->n_segs > kMaxTraceSegs || t->segs[0].phys_pc != head_live_phys)
     { note_trace_stale(); return false; }             // head remap / ASN recycle
   // A 1-block trace mirrors its head block's compiled prefix, whose length can change with NO source-byte
   // or epoch change: a fault-truncated cold record shrinks prefix_len (n_instr oscillates), a later clean
@@ -349,13 +359,16 @@ bool CJitEngine::trace_ok(TraceFragment* t, uint64_t head_live_phys, const uint8
       break;
     }
   }
-  if (t->vgen == m_vgen_cur)
-    return true;                                      // epoch fresh: nothing changed since build
+  const bool epoch_fresh = t->vgen == m_vgen_cur;
   for (uint32_t i = 0; i < t->n_segs; ++i) {
     const SourceSeg& s = t->segs[i];
-    if (s.src_sum != src_hash(dram + s.phys_pc, s.n_instr))
-      { note_trace_stale(); return false; }            // a segment's source bytes changed -> stale
+    const auto source = sources.view(s.guest_pc);
+    if (source.identity != s.phys_pc || source.asm_global != s.asm_global
+        || !source.contains(s.n_instr)
+        || (!epoch_fresh && s.src_sum != src_hash(source.bytes, s.n_instr)))
+      { note_trace_stale(); return false; }            // unavailable, remapped or changed source
   }
+  if (epoch_fresh) return true;                        // no source-byte hash on a fresh epoch
   t->vgen = m_vgen_cur;                               // all segments re-validated: re-stamp the epoch
   t->flush_gen = m_flush_gen;
   return true;
@@ -372,6 +385,23 @@ void CJitEngine::trace_selftest()
   uint32_t mem[8] = { 0x11111111, 0x22222222, 0x33333333, 0x44444444,
                       0x55555555, 0x66666666, 0x77777777, 0x88888888 };
   const uint8_t* d = (const uint8_t*) mem;
+  struct TestSource {
+    const uint8_t* bytes;
+    uint32_t word_limit = 8;
+    uint64_t unavailable_pc = 0;
+    uint64_t remapped_pc = 0;
+    bool asm_global = false;
+  } context{d};
+  const AlphaInstructionSource sources{&context, [](void* opaque, uint64_t pc) {
+    const auto& test = *static_cast<const TestSource*>(opaque);
+    if (pc < 0x2000 || pc >= 0x2020 || pc == test.unavailable_pc)
+      return AlphaInstructionSourceView{};
+    const uint64_t offset = pc - 0x2000;
+    const uint32_t remaining = static_cast<uint32_t>((32 - offset) / 4);
+    const uint32_t count = remaining < test.word_limit ? remaining : test.word_limit;
+    return AlphaInstructionSourceView{test.bytes + offset,
+      offset + (pc == test.remapped_pc ? 0x1000 : 0), count, test.asm_global};
+  }};
 
   TraceFragment t = {};
   t.valid = true; t.head_tag = 0x2000; t.asn = 1; t.n_segs = 2;
@@ -380,18 +410,37 @@ void CJitEngine::trace_selftest()
   t.vgen = m_vgen_cur;
 
   bool ok = true;
-  ok &= ( trace_ok(&t, 0,   d) == true  );    // 1. fresh: epoch + head-phys match -> enter
-  ok &= ( trace_ok(&t, 999, d) == false );    // 2. head remap / ASN-recycle: live head phys differs -> drop
+  ok &= ( trace_ok(&t, 0,   sources) == true  ); // 1. fresh: epoch + source metadata match -> enter
+  ok &= ( trace_ok(&t, 999, sources) == false ); // 2. head remap / ASN recycle -> drop
   note_itb_invalidate();                       // 3. ITB-invalidate, bytes unchanged:
-  ok &= ( trace_ok(&t, 0,   d) == true  );    //    epoch bumps, re-hash matches -> keep ...
+  ok &= ( trace_ok(&t, 0, sources) == true  ); //    epoch bumps, re-hash matches -> keep ...
   ok &= ( t.vgen == m_vgen_cur );              //    ... and re-stamped to the new epoch
   mem[5] = 0xDEADBEEF;                         // 4. SMC on interior seg1 + IMB (flush bump):
   ++m_flush_gen; ++m_vgen_cur;                 //    (flush()'s bump, minus its reclaim bookkeeping)
-  ok &= ( trace_ok(&t, 0,   d) == false );    //    re-hash mismatch -> drop
+  ok &= ( trace_ok(&t, 0, sources) == false ); //    re-hash mismatch -> drop
   mem[5] = 0x66666666;                         // 5. restore the byte, epoch still bumped:
-  ok &= ( trace_ok(&t, 0,   d) == true  );    //    re-hash matches again -> keep
+  ok &= ( trace_ok(&t, 0, sources) == true  ); //    re-hash matches again -> keep
 
-  printf("[JIT][CPU%d] trace_ok self-test (SMC/IMB/ITB-remap/head-remap): %s\n",
+  context.unavailable_pc = 0x2010;             // Missing interior source, even on a fresh epoch.
+  ok &= !trace_ok(&t, 0, sources);
+  context.unavailable_pc = 0;
+  context.word_limit = 3;                     // Frozen hash extent must fit the current view.
+  ok &= !trace_ok(&t, 0, sources);
+  context.word_limit = 8;
+  context.remapped_pc = 0x2010;               // Same bytes at a different source identity.
+  ok &= !trace_ok(&t, 0, sources);
+  context.remapped_pc = 0;
+  context.asm_global = true;                  // Global/process-specific sources are distinct.
+  ok &= !trace_ok(&t, 0, sources);
+  context.asm_global = false;
+  ok &= !trace_ok(&t, 0, AlphaInstructionSource{});
+  uint8_t unaligned[sizeof(mem) + 1];
+  memcpy(unaligned + 1, mem, sizeof(mem));
+  context.bytes = unaligned + 1;
+  ++m_vgen_cur;
+  ok &= trace_ok(&t, 0, sources);              // Byte-safe hashing accepts unaligned source storage.
+
+  printf("[JIT][CPU%d] trace_ok self-test (SMC/IMB/remap/bounded sources): %s\n",
          m_cpu_id, ok ? "PASS" : "*** FAIL ***");
   m_itb_gen = save_itb; m_flush_gen = save_flush; m_vgen_cur = save_vgen;
 }
@@ -922,7 +971,7 @@ void CJitEngine::regprof_report()
   // Hot-block dump every 16th report: the top blocks by executed host bytes, guest words + host
   // code as hex, for offline disassembly (scratch tool: hotblocks.py).
   static int report_n = 0;
-  if (++report_n % 16 == 0 && m_dbg_dram) {
+  if (++report_n % 16 == 0 && m_dbg_source.query) {
     char name[64]; snprintf(name, sizeof(name), "jit-hot-cpu%d.txt", m_cpu_id);
     FILE* f = fopen(name, "a");
     if (f) {
@@ -941,7 +990,13 @@ void CJitEngine::regprof_report()
         const JitBlock& b = m_blocks[top[k]];
         fprintf(f, "block tag=%016llx phys=%llx asn=%u hits=%llu prefix=%u hash_len=%u csz=%u\nguest:", (unsigned long long) b.tag,
                 (unsigned long long) b.phys, b.asn, (unsigned long long) b.rp_hits, b.prefix_len, b.hash_len, b.rp_csz);
-        for (uint32_t i = 0; i < b.hash_len; ++i) fprintf(f, " %08x", *(const uint32_t*) (m_dbg_dram + b.phys + i * 4));
+        const auto source = m_dbg_source.view(b.tag);
+        if (source.identity == b.phys && source.asm_global == b.asm_global
+            && source.contains(b.hash_len)) {
+          for (uint32_t i = 0; i < b.hash_len; ++i) fprintf(f, " %08x", source.word(i));
+        } else {
+          fprintf(f, " <unavailable>");
+        }
         fprintf(f, "\nhost:");
         for (uint32_t i = 0; i < b.rp_csz; ++i) fprintf(f, "%02x", ((const uint8_t*) (void*) b.code)[i]);
         fprintf(f, "\n");
