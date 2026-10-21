@@ -195,6 +195,7 @@ static bool rop_uses(uint8_t op, unsigned bit)
 uint32_t CRV200::ReadMem(uint32_t a, int dsize)
 {
 	m_counters.reads++;
+	run_cp();
 	const unsigned bits = unsigned(dsize);
 	if (!valid_access(a, bits, RegisterSpaceSize))
 	{
@@ -272,6 +273,7 @@ void CRV200::WriteMem(uint32_t a, int dsize, uint32_t value)
 		return;
 	}
 	write32(base, (value << shift) & mask, mask);
+	run_cp();
 }
 
 // MM_DATA is a window onto the register MM_INDEX selects; its byte lanes
@@ -359,9 +361,26 @@ uint32_t CRV200::read32(uint32_t a)
 		return a == CRTC2_CRNT_FRAME ? m_frame2 : m_frame;
 	if (a == DSTCACHE_CTLSTAT || a == RB2D_DSTCACHE_CTLSTAT)
 		return busy() ? 0x80000000u : 0;
-	// The CP never consumes commands in this model.
 	if (a == CP_RB_RPTR)
-		return 0;
+		return r(a);
+	if (a == CP_ME_RAM_DATAH)
+		return r(a) & 63u;
+	if (a == CP_ME_RAM_DATAL)
+	{
+		const uint32_t value = r(a);
+		if (m_cp_ram_read)
+		{
+			const auto& entry = m_cp_microcode[r(CP_ME_RAM_ADDR) & 255];
+			r(CP_ME_RAM_DATAH) = entry[0];
+			r(CP_ME_RAM_DATAL) = entry[1];
+			r(CP_ME_RAM_ADDR) = (r(CP_ME_RAM_ADDR) + 1) & 255;
+		}
+		return value;
+	}
+	if (a == CP_ME_RAM_RADDR)
+		return 0; // Write-only read-address selector.
+	if (a == RB3D_ZCACHE_CTLSTAT)
+		return 0; // No queued 3D rendering or dirty Z cache.
 	if (a >= 0xf00 && a < 0x1000)
 		return m_config_read ? m_config_read(a - 0xf00) : 0xffffffffu;
 	if (a >= GPIO_VGA_DDC && a <= GPIO_CRT2_DDC)
@@ -555,6 +574,12 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 		if ((v & ~old) & (1u | 32u))
 		{
 			m_pending = Pending{};
+			if ((v & ~old) & 1u)
+			{
+				m_cp_packet = {};
+				m_cp_ib_cursor = m_cp_ib_left = m_cp_since_update = 0;
+				r(CP_RB_RPTR) = r(CP_RB_WPTR) = 0;
+			}
 			m_inferred_clear_armed = false;
 			m_fault.clear();
 		}
@@ -567,13 +592,119 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 		a == CONFIG_REG_APER_SIZE || a == CRTC_CRNT_FRAME ||
 		a == CRTC2_CRNT_FRAME || a == CP_RB_RPTR)
 		return;
-	if (a == CP_RB_WPTR || a == CP_IB_BUFSZ || a == CP_CSQ_CNTL)
+	if (a == AGP_BASE || a == CP_RB_WPTR_DELAY || a == AIC_CNTL)
 	{
 		r(a) = v;
-		if (v)
-			fail(
-				"CP/ring/indirect-buffer execution is unsupported at " +
-				hex(a));
+		if ((a == CP_RB_WPTR_DELAY || a == AIC_CNTL) && v)
+			fail("unimplemented CP delay or PCI GART mode at " + hex(a));
+		return;
+	}
+	if (a == CP_RB_BASE || a == CP_IB_BASE || a == CP_RB_RPTR_ADDR ||
+		a == CP_RB_RPTR_WR || a == SCRATCH_ADDR || a == SCRATCH_UMSK)
+	{
+		const uint32_t mask = a == CP_RB_RPTR_WR ? 0x7fffffu :
+			a == SCRATCH_ADDR ? 0xffffffe0u :
+			a == SCRATCH_UMSK ? 0x3003fu :
+			a == CP_RB_RPTR_ADDR ? 0xffffffffu : 0xfffffffcu;
+		r(a) = v & mask;
+		return;
+	}
+	if (a == CP_RB_CNTL)
+	{
+		r(a) = v & 0x880f3f3fu;
+		return;
+	}
+	if (a == CP_RB_WPTR)
+	{
+		r(a) = v & 0x7fffffu;
+		if (r(CP_RB_CNTL) & 0x80000000u)
+		{
+			r(CP_RB_RPTR) = r(CP_RB_RPTR_WR);
+			m_cp_packet[0] = CPPacket{};
+			m_cp_since_update = 0;
+		}
+		return;
+	}
+	if (a == CP_CSQ_CNTL)
+	{
+		// The exercised transport is bus-master primary/indirect. 
+		// PIO and reserved modes shouldn't? yet? silently consume a DMA ring.
+		// There might be edge cases or card functions that aren't considered. 
+		r(a) = v & 0xf0000000u;
+		const unsigned mode = v >> 28;
+		if (mode && mode != 2 && mode != 4 && mode != 6 && mode != 8)
+			fail("unimplemented CP queue mode " + hex(mode));
+		return;
+	}
+	if (a == CP_IB_BUFSZ)
+	{
+		r(a) = v & 0x7fffffu;
+		if (r(a))
+		{
+			if (m_cp_ib_left || m_cp_packet[1].remaining)
+				fail("CP indirect buffer replaced while active");
+			else
+			{
+				m_cp_ib_cursor = r(CP_IB_BASE);
+				m_cp_ib_left = r(a);
+			}
+		}
+		return;
+	}
+	if (a == CP_ME_RAM_ADDR || a == CP_ME_RAM_RADDR)
+	{
+		r(CP_ME_RAM_ADDR) = v & 255;
+		m_cp_ram_read = a == CP_ME_RAM_RADDR;
+		if (m_cp_ram_read)
+		{
+			const auto& entry = m_cp_microcode[r(CP_ME_RAM_ADDR)];
+			r(CP_ME_RAM_DATAH) = entry[0];
+			r(CP_ME_RAM_DATAL) = entry[1];
+			r(CP_ME_RAM_ADDR) = (r(CP_ME_RAM_ADDR) + 1) & 255;
+		}
+		return;
+	}
+	if (a == CP_ME_RAM_DATAH || a == CP_ME_RAM_DATAL)
+	{
+		r(a) = a == CP_ME_RAM_DATAH ? v & 63u : v;
+		if (a == CP_ME_RAM_DATAL && !m_cp_ram_read)
+		{
+			m_cp_microcode[r(CP_ME_RAM_ADDR) & 255] =
+				{{r(CP_ME_RAM_DATAH), v}};
+			r(CP_ME_RAM_ADDR) = (r(CP_ME_RAM_ADDR) + 1) & 255;
+		}
+		return;
+	}
+	if (a >= SCRATCH_REG0 && a <= SCRATCH_REG5)
+	{
+		r(a) = v;
+		const unsigned slot = (a - SCRATCH_REG0) / 4;
+		uint32_t data = v;
+		if ((r(SCRATCH_UMSK) & (1u << slot)) &&
+			!cp_memory(uint64_t(r(SCRATCH_ADDR)) + slot * 4, data, true,
+				(r(SCRATCH_UMSK) >> 16) & 3))
+			fail("CP scratch writeback failed at " + hex(r(SCRATCH_ADDR)));
+		return;
+	}
+	if (a == 0x26c0 || a == 0x1c44)
+	{
+		// Render-engine scissor state initialized by the 2D driver.
+		r(a) = v & 0x07ff07ffu;
+		return;
+	}
+	if (a == 0x1660)
+	{
+		// All three auxiliary scissors disabled.
+		r(a) = v & 63u;
+		if (v & 0x15u)
+			fail("auxiliary scissor clipping is unsupported");
+		return;
+	}
+	if (a == RB2D_DSTCACHE_MODE || a == ISYNC_CNTL)
+	{
+		// Cache policy and ordering have no latency in the synchronous core. 
+		// It still waits for finished uploads anyway, I think. 
+		r(a) = v & (a == ISYNC_CNTL ? 63u : 0x0301030fu);
 		return;
 	}
 	if (a >= 0x1000 && a < 0x1400)
@@ -613,15 +744,32 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 		r(a) = v;
 		return;
 	}
+	if ((a >= CUR_OFFSET && a <= CUR_CLR1) ||
+		(a >= CUR2_OFFSET && a <= CUR2_CLR1))
+	{
+		const uint32_t reg = (a - CUR_OFFSET) & 0xff;
+		if (reg <= 8 && (v & 0x80000000u))
+		{
+			fail("cursor lock staging unsupported at " + hex(a));
+			return;
+		}
+		// Both RV200 cursor banks have identical field layouts. 
+		// Offset is 16-byte aligned; position is 14-bit X / 12-bit Y and crop is 6/6.
+		const uint32_t mask = reg == 0 ? 0x07fffff0u :
+			reg == 4 ? 0x3fff0fffu : reg == 8 ? 0x003f003fu : 0x00ffffffu;
+		r(a) = v & mask;
+		return;
+	}
 	if (a == WAIT_UNTIL)
 	{
 		r(a) = v;
-		if (v & ~(WAIT_2D | WAIT_DMA))
+		if (v & ~0x0007c200u)
 			note("WAIT_UNTIL contains unmodeled conditions " + hex(v));
 		return;
 	}
 	// Immediate flush of software-backed memory.
-	if (a == DSTCACHE_CTLSTAT || a == RB2D_DSTCACHE_CTLSTAT)
+	if (a == DSTCACHE_CTLSTAT || a == RB2D_DSTCACHE_CTLSTAT ||
+		a == RB3D_ZCACHE_CTLSTAT)
 	{
 		r(a) = v & ~0x8000000fu;
 		return;
@@ -643,7 +791,7 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 		a == CRTC2_H_TOTAL_DISP || a == CRTC2_H_SYNC_STRT_WID ||
 		a == CRTC2_V_TOTAL_DISP || a == CRTC2_V_SYNC_STRT_WID ||
 		a == CRTC2_OFFSET || a == CRTC2_OFFSET_CNTL || a == CRTC2_PITCH ||
-		(a >= CUR_OFFSET && a <= CUR_CLR1) || a == DP_WRITE_MSK ||
+		a == DP_WRITE_MSK ||
 		a == DP_CNTL || a == DEFAULT_PITCH_OFFSET ||
 		a == DEFAULT_SC_BOTTOM_RIGHT || a == SC_TOP_LEFT ||
 		a == SC_BOTTOM_RIGHT || a == SRC_SC_BOTTOM_RIGHT ||
@@ -1279,6 +1427,7 @@ void CRV200::host_word(uint32_t value, bool last)
 
 void CRV200::advance_scanlines(uint32_t lines)
 {
+	run_cp();
 	// Register-derived vertical timing; PLL frequency is not evaluated.
 	if (lines > 1000000u)
 	{
@@ -1343,8 +1492,11 @@ CRV200::Frame CRV200::scanout(std::string* error) const
 		return reject("CRTC disabled/blanked");
 	if (gen & 3u)
 		return reject("interlaced/doublescan scanout unsupported");
-	if (controller && (gen & (CRTC_CUR_EN | (1u << 15))))
-		return reject("CRTC2 cursor/icon scanout unsupported");
+	if (controller && (gen & (1u << 15)))
+		return reject("CRTC2 icon scanout unsupported");
+	const uint32_t cursor_mode = (gen >> 20) & 7;
+	if ((gen & CRTC_CUR_EN) && cursor_mode != 0 && cursor_mode != 2)
+		return reject("unsupported cursor format");
 	if (r(controller ? CRTC2_OFFSET_CNTL : CRTC_OFFSET_CNTL))
 		return reject(
 			"nonzero CRTC_OFFSET_CNTL requires an unimplemented display "
@@ -1409,31 +1561,34 @@ CRV200::Frame CRV200::scanout(std::string* error) const
 			f.argb[size_t(y) * w + x] =
 				0xff000000u | (rr << 16) | (gg << 8) | bb;
 		}
-	// No CRTC2 cursor registers have been exercised yet.
-	if (!controller)
-		composite_cursor(f);
+	composite_cursor(f, controller);
 	return f;
 }
 
 // 64x64 cursor at CUR_OFFSET. Mono rows: 8 AND then 8 XOR bytes, MSB first
 // (XFree86 R128/Radeon); ARGB rows: 64 premultiplied pixels. HORZ_VERT_OFF
 // skips left columns and shortens the top.
-void CRV200::composite_cursor(Frame& f) const
+void CRV200::composite_cursor(Frame& f, unsigned controller) const
 {
-	const uint32_t gen = r(CRTC_GEN_CNTL), mode = (gen >> 20) & 7;
+	const uint32_t gen = r(controller ? CRTC2_GEN_CNTL : CRTC_GEN_CNTL),
+		mode = (gen >> 20) & 7, delta = controller ? 0x100 : 0;
 	if (!(gen & CRTC_CUR_EN) || (mode != 0 && mode != 2))
 		return;
-	const uint32_t posn = r(CUR_HORZ_VERT_POSN), off = r(CUR_HORZ_VERT_OFF);
-	const uint32_t px = (posn >> 16) & 0x3fff, py = posn & 0x3fff;
+	const uint32_t posn = r(CUR_HORZ_VERT_POSN + delta),
+		off = r(CUR_HORZ_VERT_OFF + delta);
+	const uint32_t px = (posn >> 16) & 0x3fff, py = posn & 0xfff;
 	const uint32_t xoff = (off >> 16) & 0x3f, yoff = off & 0x3f;
 	const uint32_t stride = mode ? 256 : 16;
-	const uint32_t clr0 = r(CUR_CLR0) & 0xffffff, clr1 = r(CUR_CLR1) & 0xffffff;
+	const uint32_t clr0 = r(CUR_CLR0 + delta) & 0xffffff,
+		clr1 = r(CUR_CLR1 + delta) & 0xffffff;
+	const uint64_t base =
+		uint64_t(r(controller ? CRTC2_DISPLAY_BASE_ADDR : DISPLAY_BASE_ADDR)) +
+		(r(CUR_OFFSET + delta) & 0x07fffff0u);
 	for (uint32_t row = 0; row < 64 - yoff && py + row < f.height; ++row)
 	{
 		size_t line = 0;
 		if (!translate(
-				uint64_t(r(DISPLAY_BASE_ADDR)) + r(CUR_OFFSET) +
-					uint64_t(row) * stride, stride, line))
+				base + uint64_t(row) * stride, stride, line))
 			return;
 		for (uint32_t col = xoff; col < 64 && px + col - xoff < f.width; ++col)
 		{
@@ -1501,6 +1656,11 @@ void CRV200::reset(bool clear_vram)
 	m_fault.clear();
 	m_pending = Pending{};
 	m_inferred_clear_armed = false;
+	m_cp_packet = {};
+	m_cp_microcode = {};
+	m_cp_ram_read = m_cp_running = false;
+	m_cp_ib_cursor = m_cp_ib_left = m_cp_since_update = 0;
+	r(CP_ME_CNTL) = 1u << 30;
 	m_counters = {};
 	m_scanline = m_frame = m_scanline2 = m_frame2 = 0;
 	if (clear_vram)
@@ -1550,7 +1710,7 @@ void CRV200::fail(const std::string& s)
 
 bool CRV200::busy() const
 {
-	return m_pending.active || halted();
+	return m_pending.active || cp_busy() || halted();
 }
 
 bool CRV200::irq_asserted() const
@@ -1562,6 +1722,228 @@ void CRV200::update_irq()
 {
 	if (m_irq_callback)
 		m_irq_callback(irq_asserted());
+}
+
+// Command processor: 
+// the reached firmware exposes type-0 register writes, type-2 padding and type-3 NOP.
+// So far only one indirect stream. 
+static uint32_t cp_swap(uint32_t value, unsigned mode)
+{
+	if (mode == 1)
+		return ((value & 0x00ff00ffu) << 8) | ((value & 0xff00ff00u) >> 8);
+	if (mode == 2)
+		return ((value & 255u) << 24) | ((value & 0xff00u) << 8) |
+			((value >> 8) & 0xff00u) | (value >> 24);
+	if (mode == 3)
+		return (value << 16) | (value >> 16);
+	return value;
+}
+
+bool CRV200::cp_memory(uint64_t address, uint32_t& value, bool write,
+	unsigned swap)
+{
+	if (address > 0xfffffffcu || (address & 3))
+		return false;
+	const uint64_t fb_start = uint64_t(r(MC_FB_LOCATION) & 0xffffu) << 16;
+	const uint64_t fb_end = (uint64_t(r(MC_FB_LOCATION) >> 16) + 1) << 16;
+	if (address >= fb_start && address < fb_end)
+	{
+		size_t index;
+		if (!translate(address, 4, index))
+			return false;
+		// BUF_SWAP applies only to system-memory command fetches. 
+		if (write)
+		{
+			const uint32_t data = cp_swap(value, swap);
+			for (unsigned n = 0; n < 4; ++n)
+				m_vram[index + n] = uint8_t(data >> (n * 8));
+		}
+		else
+			value = pixel_read(index, 4);
+		return true;
+	}
+	if ((r(AIC_CNTL) & 1) || (r(BUS_CNTL) & (1u << 6)))
+		return false; // Unreached PCI GART, or disabled bus mastering.
+	const uint64_t agp_start = uint64_t(r(MC_AGP_LOCATION) & 0xffffu) << 16;
+	const uint64_t agp_end = (uint64_t(r(MC_AGP_LOCATION) >> 16) + 1) << 16;
+	if (address >= agp_start && address < agp_end)
+		address = address - agp_start + r(AGP_BASE);
+	if (address > 0xfffffffcu)
+		return false;
+	uint8_t bytes[4];
+	if (write)
+	{
+		const uint32_t data = cp_swap(value, swap);
+		for (unsigned n = 0; n < 4; ++n)
+			bytes[n] = uint8_t(data >> (8 * n));
+		return m_dma_write && m_dma_write(uint32_t(address), bytes, 4);
+	}
+	if (!m_dma_read || !m_dma_read(uint32_t(address), bytes, 4))
+		return false;
+	value = uint32_t(bytes[0]) | (uint32_t(bytes[1]) << 8) |
+		(uint32_t(bytes[2]) << 16) | (uint32_t(bytes[3]) << 24);
+	value = cp_swap(value, swap);
+	return true;
+}
+
+bool CRV200::cp_busy() const
+{
+	return (r(CP_CSQ_CNTL) >> 28) &&
+		(m_cp_ib_left || m_cp_packet[0].remaining ||
+		 m_cp_packet[1].remaining || r(CP_RB_RPTR) != r(CP_RB_WPTR));
+}
+
+bool CRV200::cp_writeback()
+{
+	if (!(r(CP_RB_CNTL) & (1u << 27)))
+	{
+		uint32_t pointer = r(CP_RB_RPTR);
+		if (!cp_memory(r(CP_RB_RPTR_ADDR) & ~3u, pointer, true,
+			r(CP_RB_RPTR_ADDR) & 3))
+		{
+			fail("CP ring read-pointer writeback failed at " +
+				hex(r(CP_RB_RPTR_ADDR) & ~3u));
+			return false;
+		}
+	}
+	m_cp_since_update = 0;
+	return true;
+}
+
+void CRV200::run_cp()
+{
+	const unsigned mode = r(CP_CSQ_CNTL) >> 28;
+	if (m_cp_running || halted() || !mode ||
+		(r(RBBM_SOFT_RESET) & 1) || !cp_busy())
+		return;
+	if (mode != 2 && mode != 4 && mode != 6 && mode != 8)
+	{
+		fail("unimplemented CP queue mode " + hex(mode));
+		return;
+	}
+	const uint32_t control = r(CP_RB_CNTL);
+	const unsigned size = control & 63, block = (control >> 8) & 63;
+	// The pointers are 23 bits. Larger exponents cannot be represented.
+	if (size > 22 || ((control >> 18) & 3) == 3)
+	{
+		fail("invalid/unimplemented CP ring size or fetch mode " + hex(control));
+		return;
+	}
+	const uint32_t ring_words = 2u << size;
+	if (r(CP_RB_RPTR) >= ring_words || r(CP_RB_WPTR) >= ring_words)
+	{
+		fail("CP ring pointer outside configured buffer");
+		return;
+	}
+	m_cp_running = true;
+	// A finite scheduling quantum also permits large rings to be snapshotted
+	// between packets. Further MMIO ticks resume execution.
+	for (unsigned budget = 0; budget < 65536 && !halted(); ++budget)
+	{
+		const unsigned stream = m_cp_ib_left ? 1 : 0;
+		if (stream && mode == 2)
+			break; // Indirect fetching is disabled, not completed.
+		if (!stream && m_cp_packet[1].remaining)
+		{
+			fail("CP indirect buffer ends inside a packet");
+			break;
+		}
+		if (!stream && r(CP_RB_RPTR) == r(CP_RB_WPTR))
+			break;
+		CPPacket& packet = m_cp_packet[stream];
+		const uint64_t address = stream ? uint64_t(m_cp_ib_cursor) :
+			uint64_t(r(CP_RB_BASE)) + uint64_t(r(CP_RB_RPTR)) * 4;
+		uint32_t word;
+		if (!cp_memory(address, word, false, (control >> 16) & 3))
+		{
+			fail("CP command fetch failed at " + hex(uint32_t(address)));
+			break;
+		}
+		if (packet.remaining && (packet.header >> 30) == 0)
+		{
+			const uint32_t target = alias(packet.reg);
+			if (target >= RegisterSpaceSize || target < 8 ||
+				(target >= 0x1000 && target < 0x1400))
+			{
+				fail("unsupported CP register target " + hex(target));
+				break;
+			}
+			if (target == CP_CSQ_CNTL || target == CP_RB_BASE ||
+				target == CP_RB_CNTL || target == CP_RB_WPTR ||
+				target == RBBM_SOFT_RESET)
+			{
+				fail("CP self-control register writes are unsupported at " + hex(target));
+				break;
+			}
+			if (target == WAIT_UNTIL && (word & ~0x0007c200u))
+			{
+				fail("unsupported CP wait conditions " + hex(word));
+				break;
+			}
+			if (m_pending.active &&
+				((target == WAIT_UNTIL &&
+				  ((word & 0x00054000u) || (r(ISYNC_CNTL) & 16))) ||
+				 ((r(ISYNC_CNTL) & 2) &&
+				  (target == 0x26c0 || target == 0x1c44 ||
+				   target == RB3D_ZCACHE_CTLSTAT)) ||
+				 ((r(ISYNC_CNTL) & 32) && target >= SCRATCH_REG0 &&
+				  target <= SCRATCH_REG5)))
+				break; // Leave this DWORD pending until the upload completes.
+			if (stream && target == CP_IB_BUFSZ && (word & 0x7fffffu))
+			{
+				fail("nested CP indirect buffers are unsupported");
+				break;
+			}
+		}
+		// Fetch/consume before executing the register side effect. 
+		// An IB initiator can then suspend the primary parser at the following word.
+		if (stream)
+		{
+			--m_cp_ib_left;
+			if (m_cp_ib_left && m_cp_ib_cursor > 0xfffffffbu)
+			{
+				fail("CP indirect buffer crosses the 32-bit address limit");
+				break;
+			}
+			m_cp_ib_cursor += 4;
+		}
+		else
+		{
+			r(CP_RB_RPTR) = (r(CP_RB_RPTR) + 1) & (ring_words - 1);
+			++m_cp_since_update;
+		}
+		if (!packet.remaining)
+		{
+			packet.header = word;
+			const unsigned kind = word >> 30;
+			if (kind == 0 || (kind == 3 && ((word >> 8) & 255) == 0x10))
+			{
+				packet.remaining = ((word >> 16) & 0x3fff) + 1;
+				packet.reg = (word & 0x1fff) * 4;
+			}
+			else if (kind != 2)
+				fail("unsupported CP packet " + hex(word));
+		}
+		else
+		{
+			--packet.remaining;
+			if ((packet.header >> 30) == 0)
+			{
+				const uint32_t target = alias(packet.reg);
+				if (!(packet.header & (1u << 15)))
+					packet.reg += 4;
+				write32(target, word, 0xffffffffu);
+			}
+		}
+		if (!stream && !halted() && block <= 22 &&
+			m_cp_since_update >= (2u << block) && !cp_writeback())
+			break;
+	}
+	// The CP publishes RPTR at an empty ring as well as at block intervals.
+	if (!halted() && m_cp_since_update && !m_cp_ib_left &&
+		r(CP_RB_RPTR) == r(CP_RB_WPTR))
+		cp_writeback();
+	m_cp_running = false;
 }
 
 // Snapshots
@@ -1619,6 +2001,21 @@ void CRV200::SaveState(std::ostream& out) const
 	put32(b, m_options.vram_bytes);
 	put32(b, m_options.strict_mmio ? 1u : 0u);
 	put32(b, m_inferred_clear_armed ? 1u : 0u);
+	put32(b, m_cp_ram_read ? 1u : 0u);
+	put32(b, m_cp_ib_cursor);
+	put32(b, m_cp_ib_left);
+	put32(b, m_cp_since_update);
+	for (const auto& packet : m_cp_packet)
+	{
+		put32(b, packet.header);
+		put32(b, packet.remaining);
+		put32(b, packet.reg);
+	}
+	for (const auto& entry : m_cp_microcode)
+	{
+		put32(b, entry[0]);
+		put32(b, entry[1]);
+	}
 	for (const uint32_t v : m_regs)
 		put32(b, v);
 	for (const uint32_t v : m_pll)
@@ -1671,7 +2068,7 @@ void CRV200::SaveState(std::ostream& out) const
 		put32(b, uint32_t(v >> 32));
 	}
 	b.insert(b.end(), m_vram.begin(), m_vram.end());
-	out.write("RV2SNP04", 8);
+	out.write("RV2SNP05", 8);
 	stream32(out, uint32_t(b.size()));
 	stream32(out, crc32(b));
 	out.write(
@@ -1684,7 +2081,8 @@ void CRV200::RestoreState(std::istream& in)
 {
 	char magic[8]{};
 	in.read(magic, 8);
-	const bool version4 = !std::memcmp(magic, "RV2SNP04", 8);
+	const bool version5 = !std::memcmp(magic, "RV2SNP05", 8);
+	const bool version4 = version5 || !std::memcmp(magic, "RV2SNP04", 8);
 	const bool version3 = version4 || !std::memcmp(magic, "RV2SNP03", 8);
 	const bool version2 = version3 || !std::memcmp(magic, "RV2SNP02", 8);
 	if (!in || (!version2 && std::memcmp(magic, "RV2SNP01", 8)))
@@ -1705,6 +2103,36 @@ void CRV200::RestoreState(std::istream& in)
 	if (inferred_clear > 1)
 		throw std::runtime_error("Invalid RV200 snapshot inference state");
 	tmp.m_inferred_clear_armed = inferred_clear != 0;
+	if (version5)
+	{
+		const uint32_t read_mode = get32(b, i);
+		tmp.m_cp_ram_read = read_mode != 0;
+		tmp.m_cp_ib_cursor = get32(b, i);
+		tmp.m_cp_ib_left = get32(b, i);
+		tmp.m_cp_since_update = get32(b, i);
+		if (read_mode > 1 || (tmp.m_cp_ib_cursor & 3) ||
+			tmp.m_cp_ib_left > 0x7fffffu)
+			throw std::runtime_error("Invalid RV200 snapshot CP state");
+		for (auto& packet : tmp.m_cp_packet)
+		{
+			packet.header = get32(b, i);
+			packet.remaining = get32(b, i);
+			packet.reg = get32(b, i);
+			const unsigned kind = packet.header >> 30;
+			if (packet.remaining > ((packet.header >> 16) & 0x3fff) + 1 ||
+				(packet.remaining && kind != 0 &&
+				 !(kind == 3 && ((packet.header >> 8) & 255) == 0x10)) ||
+				(packet.reg & 3) || packet.reg > 0x20000u)
+				throw std::runtime_error("Invalid RV200 snapshot CP packet");
+		}
+		for (auto& entry : tmp.m_cp_microcode)
+		{
+			entry[0] = get32(b, i);
+			entry[1] = get32(b, i);
+			if (entry[0] > 63)
+				throw std::runtime_error("Invalid RV200 snapshot CP microcode");
+		}
+	}
 	for (auto& v : tmp.m_regs)
 		v = get32(b, i);
 	if (inferred_clear && tmp.r(DP_DATATYPE) != 0)
@@ -1793,6 +2221,13 @@ void CRV200::RestoreState(std::istream& in)
 	m_palette2 = tmp.m_palette2;
 	m_pending = tmp.m_pending;
 	m_inferred_clear_armed = tmp.m_inferred_clear_armed;
+	m_cp_packet = tmp.m_cp_packet;
+	m_cp_microcode = tmp.m_cp_microcode;
+	m_cp_ram_read = tmp.m_cp_ram_read;
+	m_cp_ib_cursor = tmp.m_cp_ib_cursor;
+	m_cp_ib_left = tmp.m_cp_ib_left;
+	m_cp_since_update = tmp.m_cp_since_update;
+	m_cp_running = false;
 	m_scanline = tmp.m_scanline;
 	m_frame = tmp.m_frame;
 	m_scanline2 = tmp.m_scanline2;

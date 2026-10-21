@@ -1020,6 +1020,34 @@ try
 	m_rv200.set_config_reader([this](uint32_t address) {
 		return endian_32(pci_state.config_data[0][(address & 0xfc) / 4]);
 	});
+	m_rv200.set_dma_reader(
+		[this](uint32_t address, uint8_t* destination, size_t count) {
+			if (!(config_read(0, 4, 16) & 4))
+				return false;
+			// Use the shared PCI/IOMMU path: OpenVMS allocates its ring and
+			// indirect buffers in scatter-gather mapped system memory.
+			do_pci_read(address, destination, 1, count);
+			if (m_trace && count == 4)
+			{
+				const u32 word = u32(destination[0]) | (u32(destination[1]) << 8) |
+					(u32(destination[2]) << 16) | (u32(destination[3]) << 24);
+				trace("DR", 0, address, 32, word);
+			}
+			return true;
+		});
+	m_rv200.set_dma_writer(
+		[this](uint32_t address, const uint8_t* source, size_t count) {
+			if (!(config_read(0, 4, 16) & 4))
+				return false;
+			do_pci_write(address, const_cast<uint8_t*>(source), 1, count);
+			if (m_trace && count == 4)
+			{
+				const u32 word = u32(source[0]) | (u32(source[1]) << 8) |
+					(u32(source[2]) << 16) | (u32(source[3]) << 24);
+				trace("DW", 0, address, 32, word);
+			}
+			return true;
+		});
 	m_rv200.set_irq_callback([this](bool level) {
 		if (!m_replaying_pci)
 			do_pci_interrupt(0, level);

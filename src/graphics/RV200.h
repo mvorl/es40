@@ -77,10 +77,10 @@ public:
     HOST_PATH_CNTL = 0x0130, MEM_CNTL = 0x0140, MEM_TIMING_CNTL = 0x0144,
     MC_FB_LOCATION = 0x0148, MC_AGP_LOCATION = 0x014c, MC_STATUS = 0x0150,
     MEM_INIT_LAT_TIMER = 0x0154, MEM_SDRAM_MODE_REG = 0x0158,
-    PAD_CTLR_STRENGTH = 0x0168, AGP_CNTL = 0x0174,
+    PAD_CTLR_STRENGTH = 0x0168, AGP_BASE = 0x0170, AGP_CNTL = 0x0174,
     MEM_IO_CNTL_A0 = 0x0178, MEM_IO_CNTL_A1 = 0x017c,
     MC_DEBUG = 0x0188, MEM_IO_OE_CNTL = 0x018c, SEPROM_CNTL1 = 0x01c0,
-    MC_IND_INDEX = 0x01f8, MC_IND_DATA = 0x01fc,
+    AIC_CNTL = 0x01d0, MC_IND_INDEX = 0x01f8, MC_IND_DATA = 0x01fc,
     CRTC_H_TOTAL_DISP = 0x0200,
     CRTC_H_SYNC_STRT_WID = 0x0204, CRTC_V_TOTAL_DISP = 0x0208,
     CRTC_V_SYNC_STRT_WID = 0x020c, CRTC_VLINE_CRNT_VLINE = 0x0210,
@@ -97,9 +97,18 @@ public:
     CRTC2_V_TOTAL_DISP = 0x0308, CRTC2_V_SYNC_STRT_WID = 0x030c,
     CRTC2_VLINE_CRNT_VLINE = 0x0310, CRTC2_CRNT_FRAME = 0x0314,
     CRTC2_OFFSET = 0x0324, CRTC2_OFFSET_CNTL = 0x0328, CRTC2_PITCH = 0x032c,
+    CRTC2_DISPLAY_BASE_ADDR = 0x033c, CUR2_OFFSET = 0x0360,
+    CUR2_HORZ_VERT_POSN = 0x0364, CUR2_HORZ_VERT_OFF = 0x0368,
+    CUR2_CLR0 = 0x036c, CUR2_CLR1 = 0x0370,
     CRTC2_GEN_CNTL = 0x03f8, CRTC2_STATUS = 0x03fc, CP_RB_BASE = 0x0700,
-    CP_RB_CNTL = 0x0704, CP_RB_RPTR = 0x0710, CP_RB_WPTR = 0x0714,
+    CP_RB_CNTL = 0x0704, CP_RB_RPTR_ADDR = 0x070c,
+    CP_RB_RPTR = 0x0710, CP_RB_WPTR = 0x0714,
+    CP_RB_WPTR_DELAY = 0x0718, CP_RB_RPTR_WR = 0x071c,
     CP_IB_BASE = 0x0738, CP_IB_BUFSZ = 0x073c, CP_CSQ_CNTL = 0x0740,
+    SCRATCH_UMSK = 0x0770, SCRATCH_ADDR = 0x0774,
+    CP_ME_CNTL = 0x07d0, CP_ME_RAM_ADDR = 0x07d4,
+    CP_ME_RAM_RADDR = 0x07d8, CP_ME_RAM_DATAH = 0x07dc,
+    CP_ME_RAM_DATAL = 0x07e0,
     OV0_SCALE_CNTL = 0x0420, OV0_FLAG_CNTL = 0x04dc,
     TV_MASTER_CNTL = 0x0800, TV_PRE_DAC_MUX_CNTL = 0x0888,
     TV_DAC_CNTL = 0x088c, FCP_CNTL = 0x0910,
@@ -118,7 +127,8 @@ public:
     DST_WIDTH_HEIGHT = 0x1598, SRC_OFFSET = 0x15ac, SRC_PITCH = 0x15b0,
     CLR_CMP_CNTL = 0x15c0, CLR_CMP_CLR_SRC = 0x15c4, CLR_CMP_CLR_DST = 0x15c8,
     CLR_CMP_MASK = 0x15cc, DP_SRC_ENDIAN = 0x15d4, DP_SRC_FRGD_CLR = 0x15d8,
-    DP_SRC_BKGD_CLR = 0x15dc, DST_LINE_START = 0x1600, DST_LINE_END = 0x1604,
+    DP_SRC_BKGD_CLR = 0x15dc, SCRATCH_REG0 = 0x15e0,
+    SCRATCH_REG5 = 0x15f4, DST_LINE_START = 0x1600, DST_LINE_END = 0x1604,
     DST_LINE_PATCOUNT = 0x1608, SC_LEFT = 0x1640, SC_RIGHT = 0x1644,
     SC_TOP = 0x1648, SC_BOTTOM = 0x164c, DP_CNTL = 0x16c0, DP_DATATYPE = 0x16c4,
     DP_MIX = 0x16c8, DP_WRITE_MSK = 0x16cc, DP_CNTL_XDIR_YDIR_YMAJOR = 0x16d0,
@@ -127,7 +137,8 @@ public:
     SRC_SC_BOTTOM_RIGHT = 0x16f4, DSTCACHE_MODE = 0x1710,
     DSTCACHE_CTLSTAT = 0x1714, WAIT_UNTIL = 0x1720, ISYNC_CNTL = 0x1724,
     HOST_DATA0 = 0x17c0, HOST_DATA7 = 0x17dc, HOST_DATA_LAST = 0x17e0,
-    RB3D_CNTL = 0x1c3c, RB2D_DSTCACHE_CTLSTAT = 0x342c;
+    RB3D_CNTL = 0x1c3c, RB3D_ZCACHE_CTLSTAT = 0x3254,
+    RB2D_DSTCACHE_MODE = 0x3428, RB2D_DSTCACHE_CTLSTAT = 0x342c;
 
   static constexpr uint32_t GUI_ACTIVE = 0x80000000u, CRTC_EN = 1u << 25,
                             CRTC_CUR_EN = 1u << 16, CRTC_EXT_DISP_EN = 1u << 24,
@@ -171,6 +182,8 @@ public:
   using VGAWriter = std::function<void(uint32_t, uint8_t)>;
   using PaletteIndexCallback = std::function<void()>;
   using ConfigReader = std::function<uint32_t(uint32_t)>;
+  using DMAReader = std::function<bool(uint32_t, uint8_t*, size_t)>;
+  using DMAWriter = std::function<bool(uint32_t, const uint8_t*, size_t)>;
 
   CRV200();
   explicit CRV200(const Options& options);
@@ -266,6 +279,8 @@ public:
   }
 
   void set_config_reader(ConfigReader fn) { m_config_read = std::move(fn); }
+  void set_dma_reader(DMAReader fn) { m_dma_read = std::move(fn); }
+  void set_dma_writer(DMAWriter fn) { m_dma_write = std::move(fn); }
 
   void set_irq_callback(IRQCallback fn) { m_irq_callback = std::move(fn); }
 
@@ -312,6 +327,15 @@ private:
   bool m_aperture_warned = false;
   // One rectangle following a full datatype write from 32-bit format to zero.
   bool m_inferred_clear_armed = false;
+  // Packet execution is synchronous, but a stream can stop between DWORDs with incomplete/not finished formation.
+  struct CPPacket
+  {
+    uint32_t header = 0, remaining = 0, reg = 0;
+  };
+  std::array<CPPacket, 2> m_cp_packet{};
+  std::array<std::array<uint32_t, 2>, 256> m_cp_microcode{};
+  bool m_cp_ram_read = false, m_cp_running = false;
+  uint32_t m_cp_ib_cursor = 0, m_cp_ib_left = 0, m_cp_since_update = 0;
   std::string m_fault;
   Counters m_counters{};
   uint32_t m_scanline = 0, m_frame = 0, m_scanline2 = 0, m_frame2 = 0;
@@ -319,6 +343,8 @@ private:
   VGAWriter m_vga_write;
   PaletteIndexCallback m_palette_index;
   ConfigReader m_config_read;
+  DMAReader m_dma_read;
+  DMAWriter m_dma_write;
   IRQCallback m_irq_callback;
   DiagnosticCallback m_diagnostic;
   UnimplementedCallback m_unimplemented;
@@ -335,6 +361,11 @@ private:
   bool indexed_target(uint32_t lane, uint32_t& target);
   bool aperture_index(uint64_t address, size_t& index);
   void update_irq();
+  void run_cp();
+  bool cp_busy() const;
+  bool cp_memory(uint64_t address, uint32_t& value, bool write,
+    unsigned swap);
+  bool cp_writeback();
   void draw(uint32_t width, uint32_t height);
   void draw_line(uint32_t start, uint32_t end);
   void host_word(uint32_t value, bool last);
@@ -345,7 +376,7 @@ private:
   uint32_t pixel_read(size_t index, uint32_t bytes) const;
   void pixel_write(size_t index, uint32_t bytes, uint32_t value);
   bool clipped(int32_t x, int32_t y, uint32_t tl, uint32_t br) const;
-  void composite_cursor(Frame& frame) const;
+  void composite_cursor(Frame& frame, unsigned controller) const;
 };
 
 #endif // INCLUDED_RV200_H_
