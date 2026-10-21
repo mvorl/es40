@@ -55,6 +55,13 @@ static uint32_t bytes_per_pixel(uint32_t format)
 	}
 }
 
+// Drawing coordinates use signed 14-bit fields; bits 15:14 are reserved.
+// Scissor coordinates have a separate sign-magnitude encoding.
+static int32_t engine_coordinate(uint32_t value)
+{
+	return int32_t(value & 0x1fffu) - int32_t(value & 0x2000u);
+}
+
 // Alternate addresses of the RBBM registers.
 static uint32_t alias(uint32_t a)
 {
@@ -319,7 +326,7 @@ uint32_t CRV200::read32(uint32_t a)
 		return r(a == SRC_Y ? SRC_Y_X : DST_Y_X) >> 16;
 	if (a == DP_CNTL_XDIR_YDIR_YMAJOR)
 		return ((r(DP_CNTL) & 1u) << 31) | ((r(DP_CNTL) & 2u) << 14) |
-			(r(DP_CNTL) & 4u);
+			((r(DP_CNTL) & 4u) >> 2);
 	// Synchronous PIO availability, NOT a cycle model.
 	if (a == RBBM_STATUS)
 		return (busy() ? GUI_ACTIVE : 0u) | (halted() ? 0u : 64u);
@@ -575,11 +582,22 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 			fail("CP command FIFO unsupported");
 		return;
 	}
+	if (a == DST_LINE_START)
+	{
+		r(a) = v;
+		// Reset the pattern counter without changing RV200's Bresenham control.
+		r(DST_LINE_PATCOUNT) &= ~31u;
+		return;
+	}
 	if (a == DST_LINE_END)
 	{
 		r(a) = v;
 		if (!halted())
+		{
 			draw_line(r(DST_LINE_START), v);
+			if (!halted())
+				r(DST_LINE_START) = v;
+		}
 		return;
 	}
 	if (a == RB3D_CNTL)
@@ -622,7 +640,7 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 		a == SC_BOTTOM_RIGHT || a == SRC_SC_BOTTOM_RIGHT || a == DP_DATATYPE ||
 		a == CLR_CMP_CLR_SRC || a == CLR_CMP_CLR_DST || a == CLR_CMP_MASK ||
 		a == BRUSH_Y_X || a == BRUSH_DATA0 || a == BRUSH_DATA1 ||
-		a == DST_LINE_START || a == DST_LINE_PATCOUNT || a == DP_MIX ||
+		a == DST_LINE_PATCOUNT || a == DP_MIX ||
 		a == DP_BRUSH_FRGD_CLR || a == DP_BRUSH_BKGD_CLR ||
 		a == DP_SRC_FRGD_CLR || a == DP_SRC_BKGD_CLR || a == CLR_CMP_CNTL ||
 		a == DP_SRC_ENDIAN || (a >= GPIO_VGA_DDC && a <= GPIO_CRT2_DDC))
@@ -659,7 +677,8 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 	{
 		r(a) = v;
 		r(DP_CNTL) =
-			(r(DP_CNTL) & ~7u) | ((v >> 31) & 1u) | ((v >> 14) & 2u) | (v & 4u);
+			(r(DP_CNTL) & ~7u) | ((v >> 31) & 1u) | ((v >> 14) & 2u) |
+			((v & 1u) << 2);
 		return;
 	}
 	if (a == SRC_PITCH_OFFSET || a == DST_PITCH_OFFSET)
@@ -735,8 +754,8 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 		if (halted())
 			return;
 		draw(
-			a == DST_HEIGHT_WIDTH ? v & 0xffff : v >> 16,
-			a == DST_HEIGHT_WIDTH ? v >> 16 : v & 0xffff);
+			a == DST_HEIGHT_WIDTH ? v & 0x3fff : (v >> 16) & 0x3fff,
+			a == DST_HEIGHT_WIDTH ? (v >> 16) & 0x3fff : v & 0x3fff);
 		return;
 	}
 	if (a >= HOST_DATA0 && a <= HOST_DATA_LAST)
@@ -891,11 +910,6 @@ void CRV200::draw(uint32_t w, uint32_t h)
 	}
 	if (!w || !h)
 		return;
-	if (w > 8192 || h > 8192 || uint64_t(w) * h > 16u * 1024 * 1024)
-	{
-		fail("primitive exceeds bounded work limit");
-		return;
-	}
 	const uint32_t g = r(DP_GUI_MASTER_CNTL), type = r(DP_DATATYPE),
 				   bpp = bytes_per_pixel(type & 15);
 	const uint8_t op = uint8_t(r(DP_MIX) >> 16);
@@ -966,10 +980,10 @@ void CRV200::draw(uint32_t w, uint32_t h)
 	}
 	const uint32_t db = (dst & 0x3fffffu) << 10, dp = (dst >> 16) & 0x3fc0u;
 	const uint32_t sb = (src & 0x3fffffu) << 10, sp = (src >> 16) & 0x3fc0u;
-	const int32_t x = int16_t(r(DST_Y_X) & 0xffff),
-				  y = int16_t(r(DST_Y_X) >> 16);
-	const int32_t sx = int16_t(r(SRC_Y_X) & 0xffff),
-				  sy = int16_t(r(SRC_Y_X) >> 16);
+	const int32_t x = engine_coordinate(r(DST_Y_X)),
+				  y = engine_coordinate(r(DST_Y_X) >> 16);
+	const int32_t sx = engine_coordinate(r(SRC_Y_X)),
+				  sy = engine_coordinate(r(SRC_Y_X) >> 16);
 	const int32_t xd = (r(DP_CNTL) & 1) ? 1 : -1,
 				  yd = (r(DP_CNTL) & 2) ? 1 : -1;
 	const uint32_t tl = r(SC_TOP_LEFT), br = r(SC_BOTTOM_RIGHT),
@@ -1108,8 +1122,10 @@ void CRV200::draw_line(uint32_t start, uint32_t end)
 		return;
 	}
 	const uint32_t db = (dst & 0x3fffffu) << 10, dp = (dst >> 16) & 0x3fc0u;
-	const int32_t x0 = int16_t(start & 0xffff), y0 = int16_t(start >> 16);
-	const int32_t dx = int16_t(end & 0xffff) - x0, dy = int16_t(end >> 16) - y0;
+	const int32_t x0 = engine_coordinate(start),
+				  y0 = engine_coordinate(start >> 16);
+	const int32_t dx = engine_coordinate(end) - x0,
+				  dy = engine_coordinate(end >> 16) - y0;
 	const int32_t adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
 	const int32_t sx = dx < 0 ? -1 : 1, sy = dy < 0 ? -1 : 1;
 	const bool xmajor = adx >= ady;
@@ -1158,6 +1174,9 @@ void CRV200::draw_line(uint32_t start, uint32_t end)
 				y += sy;
 		}
 	}
+	// Clipped and transparent points still consume positions in the pattern.
+	r(DST_LINE_PATCOUNT) =
+		(r(DST_LINE_PATCOUNT) & ~31u) | ((phase + uint32_t(major)) & 31u);
 	m_counters.draws++;
 }
 
