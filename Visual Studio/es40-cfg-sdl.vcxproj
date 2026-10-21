@@ -153,6 +153,9 @@
     <Es40SDLRoot Condition="'$(Es40SDLRoot)'==''">C:\dev\SDL3</Es40SDLRoot>
     <Es40SDLConfig Condition="'$(Es40IsDebug)'=='true'">Debug</Es40SDLConfig>
     <Es40SDLConfig Condition="'$(Es40IsDebug)'!='true'">Release</Es40SDLConfig>
+    <!-- Source builds keep the runtime beside SDL3.lib; CI provisions it in bin\x64. -->
+    <Es40SDLRuntime Condition="'$(Es40SDLRuntime)'=='' and Exists('$(Es40SDLRoot)\VisualC\x64\$(Es40SDLConfig)\SDL3.dll')">$(Es40SDLRoot)\VisualC\x64\$(Es40SDLConfig)\SDL3.dll</Es40SDLRuntime>
+    <Es40SDLRuntime Condition="'$(Es40SDLRuntime)'==''">$(Es40SDLRoot)\bin\x64\SDL3.dll</Es40SDLRuntime>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
@@ -245,6 +248,6 @@
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Target Name="CopySDLRuntime" AfterTargets="Build">
-    <Copy SourceFiles="$(Es40SDLRoot)\VisualC\x64\$(Es40SDLConfig)\SDL3.dll" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(Es40SDLRuntime)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
   </Target>
 </Project>
