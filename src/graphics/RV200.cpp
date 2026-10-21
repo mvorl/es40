@@ -555,6 +555,7 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 		if ((v & ~old) & (1u | 32u))
 		{
 			m_pending = Pending{};
+			m_inferred_clear_armed = false;
 			m_fault.clear();
 		}
 		r(a) = v;
@@ -625,6 +626,14 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 		r(a) = v & ~0x8000000fu;
 		return;
 	}
+	if (a == DP_DATATYPE)
+	{
+		m_inferred_clear_armed = !m_pending.active &&
+			lanes == 0xffffffffu && v == 0 &&
+			(old & 15u) == 6;
+		r(a) = v;
+		return;
+	}
 	if (a == MM_INDEX || a == MC_FB_LOCATION || a == SURFACE_CNTL ||
 		a == BUS_CNTL || a == HOST_PATH_CNTL || a == CRTC_H_TOTAL_DISP ||
 		a == CRTC_V_TOTAL_DISP || a == CRTC_GEN_CNTL || a == CRTC_EXT_CNTL ||
@@ -637,7 +646,7 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 		(a >= CUR_OFFSET && a <= CUR_CLR1) || a == DP_WRITE_MSK ||
 		a == DP_CNTL || a == DEFAULT_PITCH_OFFSET ||
 		a == DEFAULT_SC_BOTTOM_RIGHT || a == SC_TOP_LEFT ||
-		a == SC_BOTTOM_RIGHT || a == SRC_SC_BOTTOM_RIGHT || a == DP_DATATYPE ||
+		a == SC_BOTTOM_RIGHT || a == SRC_SC_BOTTOM_RIGHT ||
 		a == CLR_CMP_CLR_SRC || a == CLR_CMP_CLR_DST || a == CLR_CMP_MASK ||
 		a == BRUSH_Y_X || a == BRUSH_DATA0 || a == BRUSH_DATA1 ||
 		a == DST_LINE_PATCOUNT || a == DP_MIX ||
@@ -650,6 +659,7 @@ void CRV200::write32(uint32_t a, uint32_t val, uint32_t lanes)
 	}
 	if (a == DP_GUI_MASTER_CNTL)
 	{
+		m_inferred_clear_armed = false;
 		r(a) = v;
 		r(DP_DATATYPE) =
 			((v >> 8) & 15) | ((v & 0x30f0u) << 4) | ((v & 0x4000u) << 16);
@@ -903,6 +913,8 @@ bool CRV200::clipped(int32_t x, int32_t y, uint32_t tl, uint32_t br) const
 
 void CRV200::draw(uint32_t w, uint32_t h)
 {
+	const bool clear_candidate = m_inferred_clear_armed;
+	m_inferred_clear_armed = false;
 	if (m_pending.active)
 	{
 		fail("new primitive while host upload is pending");
@@ -910,12 +922,29 @@ void CRV200::draw(uint32_t w, uint32_t h)
 	}
 	if (!w || !h)
 		return;
-	const uint32_t g = r(DP_GUI_MASTER_CNTL), type = r(DP_DATATYPE),
-				   bpp = bytes_per_pixel(type & 15);
+	const uint32_t g = r(DP_GUI_MASTER_CNTL), type = r(DP_DATATYPE);
+	uint32_t bpp = bytes_per_pixel(type & 15);
 	const uint8_t op = uint8_t(r(DP_MIX) >> 16);
 	bool uses_s = rop_uses(op, 1);
 	const bool uses_p = rop_uses(op, 2);
 	const uint32_t source = (r(DP_MIX) >> 8) & 7, brush = (type >> 8) & 15;
+	// Inferred from behavior and analysis: 
+	// OpenVMS RV200ClearMemory saves a configured 32-bit datatype, writes zero, 
+	// submits a black PATCOPY rectangle, then restores the datatype. 
+	// Neither that sequence nor the available ATI references establishes 
+	// datatype 0's  physical byte enables or address scaling.
+	// This is best guess for the usage now to bring up OpenVMS 
+	// We'll use the preceding width for that one black clear, with ordinary 
+	// linear row overlap.  We don't actually know what really happens in 
+	// real silicon and must not become a generic datatype-0 pixel format.
+	const bool inferred_clear = clear_candidate && type == 0 && op == 0xf0 &&
+		source == 2 && r(DP_BRUSH_FRGD_CLR) == 0 &&
+		r(DP_BRUSH_BKGD_CLR) == 0 && r(DP_WRITE_MSK) == 0xffffffffu &&
+		r(CLR_CMP_CNTL) == 0 && r(DP_SRC_ENDIAN) == 0 &&
+		!(g & ((1u << 27) | GMC_SRC_CLIP | 0x80000000u)) &&
+		!(r(DST_PITCH_OFFSET) & 0xc0000000u);
+	if (inferred_clear)
+		bpp = 4;
 	if (!bpp)
 	{
 		fail("unsupported pixel format " + hex(type & 15) +
@@ -990,6 +1019,14 @@ void CRV200::draw(uint32_t w, uint32_t h)
 				   mask = r(DP_WRITE_MSK), p = r(DP_BRUSH_FRGD_CLR);
 	const uint32_t brush_x = r(BRUSH_Y_X) & 7,
 				   brush_y = (r(BRUSH_Y_X) >> 8) & 7;
+	const auto destination_address = [&](int32_t xx, int32_t yy, size_t& di) {
+		if (!inferred_clear)
+			return pixel_address(db, dp, xx, yy, bpp, di);
+		// The inferred 2048-pixel clear has a 4096-byte pitch: rows overlap
+		// at 32 bits/pixel. Do not clip to pitch or change the guest's stride.
+		return xx >= 0 && yy >= 0 && translate(
+			uint64_t(db) + uint64_t(yy) * dp + uint64_t(xx) * bpp, bpp, di);
+	};
 	// Validate the entire destination/source footprint before modifying VRAM.
 	for (uint32_t j = 0; j < h; j++)
 		for (uint32_t i = 0; i < w; i++)
@@ -998,7 +1035,7 @@ void CRV200::draw(uint32_t w, uint32_t h)
 			size_t di = 0, si = 0;
 			if (clipped(xx, yy, tl, br))
 				continue;
-			if (!pixel_address(db, dp, xx, yy, bpp, di) ||
+			if (!destination_address(xx, yy, di) ||
 				(uses_s && source == 2 &&
 				 !pixel_address(
 					 sb, sp, sx + xd * int32_t(i), sy + yd * int32_t(j), bpp,
@@ -1008,6 +1045,9 @@ void CRV200::draw(uint32_t w, uint32_t h)
 				return;
 			}
 		}
+	if (inferred_clear)
+		note("Inferred datatype-0 black clear using preceding 32-bit format; "
+			 "physical VRAM footprint unverified");
 	m_counters.draws++;
 	if (uses_s && source == 3)
 	{
@@ -1050,7 +1090,7 @@ void CRV200::draw(uint32_t w, uint32_t h)
 			size_t di = 0, si = 0;
 			if (clipped(xx, yy, tl, br))
 				continue;
-			pixel_address(db, dp, xx, yy, bpp, di);
+			destination_address(xx, yy, di);
 			uint32_t s = 0;
 			if (uses_s && source == 2)
 			{
@@ -1085,6 +1125,7 @@ void CRV200::draw(uint32_t w, uint32_t h)
 // DST_LINE_PATCOUNT[4:0].
 void CRV200::draw_line(uint32_t start, uint32_t end)
 {
+	m_inferred_clear_armed = false;
 	if (m_pending.active)
 	{
 		fail("new primitive while host upload is pending");
@@ -1459,6 +1500,7 @@ void CRV200::reset(bool clear_vram)
 	m_aperture_warned = false;
 	m_fault.clear();
 	m_pending = Pending{};
+	m_inferred_clear_armed = false;
 	m_counters = {};
 	m_scanline = m_frame = m_scanline2 = m_frame2 = 0;
 	if (clear_vram)
@@ -1496,6 +1538,7 @@ void CRV200::note(const std::string& s)
 
 void CRV200::fail(const std::string& s)
 {
+	m_inferred_clear_armed = false;
 	if (m_fault.empty())
 	{
 		m_fault = s;
@@ -1574,7 +1617,8 @@ void CRV200::SaveState(std::ostream& out) const
 	std::vector<uint8_t> b;
 	b.reserve(m_vram.size() + 24000);
 	put32(b, m_options.vram_bytes);
-	put32(b, m_options.strict_mmio ? 1 : 0);
+	put32(b, m_options.strict_mmio ? 1u : 0u);
+	put32(b, m_inferred_clear_armed ? 1u : 0u);
 	for (const uint32_t v : m_regs)
 		put32(b, v);
 	for (const uint32_t v : m_pll)
@@ -1627,7 +1671,7 @@ void CRV200::SaveState(std::ostream& out) const
 		put32(b, uint32_t(v >> 32));
 	}
 	b.insert(b.end(), m_vram.begin(), m_vram.end());
-	out.write("RV2SNP03", 8);
+	out.write("RV2SNP04", 8);
 	stream32(out, uint32_t(b.size()));
 	stream32(out, crc32(b));
 	out.write(
@@ -1640,7 +1684,8 @@ void CRV200::RestoreState(std::istream& in)
 {
 	char magic[8]{};
 	in.read(magic, 8);
-	const bool version3 = !std::memcmp(magic, "RV2SNP03", 8);
+	const bool version4 = !std::memcmp(magic, "RV2SNP04", 8);
+	const bool version3 = version4 || !std::memcmp(magic, "RV2SNP03", 8);
 	const bool version2 = version3 || !std::memcmp(magic, "RV2SNP02", 8);
 	if (!in || (!version2 && std::memcmp(magic, "RV2SNP01", 8)))
 		throw std::runtime_error("RV200 snapshot format mismatch");
@@ -1656,8 +1701,14 @@ void CRV200::RestoreState(std::istream& in)
 		get32(b, i) != (m_options.strict_mmio ? 1u : 0u))
 		throw std::runtime_error("RV200 snapshot options mismatch");
 	CRV200 tmp(m_options);
+	const uint32_t inferred_clear = version4 ? get32(b, i) : 0;
+	if (inferred_clear > 1)
+		throw std::runtime_error("Invalid RV200 snapshot inference state");
+	tmp.m_inferred_clear_armed = inferred_clear != 0;
 	for (auto& v : tmp.m_regs)
 		v = get32(b, i);
+	if (inferred_clear && tmp.r(DP_DATATYPE) != 0)
+		throw std::runtime_error("Invalid RV200 snapshot inference datatype");
 	for (auto& v : tmp.m_pll)
 		v = get32(b, i);
 	if (version3)
@@ -1701,7 +1752,8 @@ void CRV200::RestoreState(std::istream& in)
 	p.compare_color = get32(b, i);
 	p.compare_mask = get32(b, i);
 	const bool mono = p.source_format < 2;
-	if (active > 1 || tmp.m_scanline > 4096 || tmp.m_scanline2 > 2047 ||
+	if (active > 1 || (inferred_clear && p.active) ||
+		tmp.m_scanline > 4096 || tmp.m_scanline2 > 2047 ||
 		p.width > 8192 ||
 		p.height > 8192 ||
 		(p.active &&
@@ -1740,6 +1792,7 @@ void CRV200::RestoreState(std::istream& in)
 	m_palette = tmp.m_palette;
 	m_palette2 = tmp.m_palette2;
 	m_pending = tmp.m_pending;
+	m_inferred_clear_armed = tmp.m_inferred_clear_armed;
 	m_scanline = tmp.m_scanline;
 	m_frame = tmp.m_frame;
 	m_scanline2 = tmp.m_scanline2;

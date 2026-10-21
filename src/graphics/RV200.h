@@ -310,6 +310,8 @@ private:
   std::array<uint32_t, 256> m_palette2{};
   std::array<bool, RegisterSpaceSize / 4> m_warned{};
   bool m_aperture_warned = false;
+  // One rectangle following a full datatype write from 32-bit format to zero.
+  bool m_inferred_clear_armed = false;
   std::string m_fault;
   Counters m_counters{};
   uint32_t m_scanline = 0, m_frame = 0, m_scanline2 = 0, m_frame2 = 0;
