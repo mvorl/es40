@@ -1175,6 +1175,9 @@ void CAlphaCPU::jit_run(int budget)
 {
 	if (budget <= 0)
 		return;
+	// CPU registration is complete by execution time, unlike construction of
+	// CPU0's JIT. SMP stores must use the shared RAM reservation protocol.
+	if (m_jit) m_jit->set_smp_memory(cSystem->get_cpu_num() > 1);
 
 	// Relative to the caller's budget, so no magic number here.
 	if (m_jit && idle_rule != RULE_NONE && idle_spin_min_instr == 0)
@@ -2097,7 +2100,7 @@ int CAlphaCPU::jit_unaligned_rw(CAlphaCPU* cpu, u64 va, int size_bits, u32 ins, 
 	for (int k = 0; k < n; ++k)
 	{
 		const u64 pa = (k < n1) ? phys[0] + k : phys[1] - (n - 1 - k);
-		if (rw) p[pa] = (u8)(v >> (k * 8));
+		if (rw) cpu->cSystem->cpu_write_ram(pa, 8, (u8)(v >> (k * 8)));
 		else    v |= (u64)p[pa] << (k * 8);
 	}
 	if (!rw) *data = v;
@@ -2433,15 +2436,15 @@ int CAlphaCPU::jit_read_locked(CAlphaCPU* cpu, u64 va, u64 descr, u64* out)
 					(unsigned long long) va, (unsigned long long) cpu->m_jit_vaddr[i]);
 		}
 		*out = cpu->m_jit_vlog[i];   // the interp pass's (already sign-extended) value
+		// The interpreter already established or consumed the real reservation.
+		// Replaying a logged load must not publish a new one with a newer generation.
+		return 0;
 	}
 	else
 	{
-		const u64 raw = dram_read(cpu->dram_ptr, phys, size_bits);
+		const u64 raw = cpu->cSystem->cpu_read_locked(cpu->state.iProcNum, phys, size_bits, cpu);
 		*out = (size_bits == 32) ? sext_u64_32(raw) : raw;   // LDL_L sign-extends; LDQ_L is the full quad
 	}
-
-	// Establish the LL exclusive monitor (DO_LDx_L's READ_VIRT_LOCK_F makes the same cpu_lock call).
-	cpu->cSystem->cpu_lock(cpu->state.iProcNum, phys, *out);
 	return 0;
 }
 
@@ -2651,7 +2654,7 @@ int CAlphaCPU::jit_write(CAlphaCPU* cpu, u64 va, u64 descr, u64 value)
 	}
 
 	if (phys < cpu->dram_size)
-		dram_write(cpu->dram_ptr, phys, size_bits, value);
+		cpu->cSystem->cpu_write_ram(phys, size_bits, value);
 	else
 		cpu->cSystem->WriteMem(phys, size_bits, value, cpu);
 	return 0;
@@ -2682,7 +2685,7 @@ int CAlphaCPU::jit_write_phys(CAlphaCPU* cpu, u64 phys, int size_bits, u64 value
 	phys &= ~((u64)(size_bits / 8) - 1);     // align like WRITE_PHYS_NT (ALIGN_PHYS)
 	if (phys >= cpu->dram_size)
 		return 1;                              // MMIO: let the interpreter do the ordered write
-	dram_write(cpu->dram_ptr, phys, size_bits, value);
+	cpu->cSystem->cpu_write_ram(phys, size_bits, value);
 	return 0;
 }
 

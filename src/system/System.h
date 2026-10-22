@@ -334,7 +334,9 @@ public:
   u64           get_c_dim(int ProcNum);
   void          set_c_dim(int ProcNum, u64 value);
 
-  void          cpu_lock(int cpuid, u64 address, u64 value);   // LDx_L: record locked range + loaded value
+  u64           cpu_read_locked(int cpuid, u64 phys, int size_bits,
+                                CSystemComponent* source);   // LDx_L: read and reserve atomically
+  void          cpu_write_ram(u64 phys, int size_bits, u64 value); // CPU store + reservation invalidation
   bool          cpu_take_lock(int cpuid, u64 address, u64* expected, bool* same_address);
   u64           cpu_stx_c(int cpuid, u64 phys, int size_bits, u64 value,
                           char* dram, u64 dram_sz, CSystemComponent* source);  // STx_C: 1 = success
@@ -425,11 +427,28 @@ private:
   bool          bNativePal = false;
   u64           cpu_lock_value[4]; // per-CPU LDx_L value, for same-address STx_C compare-and-swap
 
-  // LL/SC ABA guard. 
+  // RAM stores and LL/SC share the same 64-byte-line buckets. A generation
+  // change invalidates a reservation even when the stored value is unchanged.
   static const u32 kLLBuckets = 65536;   // 64B-line hash; power of two
-  std::atomic<u32> m_ll_seq[kLLBuckets];
-  std::atomic<u8>  m_ll_lk[kLLBuckets];  // serializes seq-check+CAS+bump per bucket
-  u32              m_ll_seq_snap[4];     // per-CPU bucket sequence at LDx_L time
+  std::atomic<u64> m_ll_seq[kLLBuckets];
+  std::atomic<u8>  m_ll_lk[kLLBuckets];
+  u64              m_ll_seq_snap[4];
+  void cpu_lock(int cpuid, u64 address, u64 value); // caller holds the RAM bucket
+  void cpu_lock_bucket(u32 bucket);
+
+  // At most two buckets for a scalar access. Acquire in bucket order, including
+  // at the hash wrap, and never call translation or device code while held.
+  class CLLRAMGuard {
+  public:
+    CLLRAMGuard(CSystem* system, u64 phys, int size_bits);
+    ~CLLRAMGuard();
+    CLLRAMGuard(const CLLRAMGuard&) = delete;
+    CLLRAMGuard& operator=(const CLLRAMGuard&) = delete;
+    void invalidate();
+  private:
+    CSystem* system;
+    u32 first, last;
+  };
 
   // Serializes drir RMW + delivery in interrupt() across device threads. On
   // CSystem (not in saved 'state'), so SaveState is unaffected.

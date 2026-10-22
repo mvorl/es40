@@ -2666,6 +2666,7 @@ struct A64EmitContext {
   uint64_t start_pc;
   bool pal_block;
   bool pal_shadow;
+  bool smp_memory = false;
   const A64BlockPlan* plan = nullptr;
   A64OpEmitReceipt receipt{};
   uint32_t receipt_index = UINT32_MAX;
@@ -3455,7 +3456,14 @@ static A64OpEmitReceipt emit_a64_mem_store(A64EmitContext& context,
   }
 
   const int size_bits = a64_int_mem_size_bits(op.opcode);
-  Error err = emit_a64_dpc_enter(context, op, size_bits, force_align, true, stub.slow);
+  Error err;
+  if (context.smp_memory) {
+    // Reuse the cold stub's ABI, DPC rebuild and forwarded-value restoration.
+    err = emit_a64_mem_va(context, op, force_align);
+    if (err == Error::kOk) err = a.b(stub.slow);
+  } else {
+    err = emit_a64_dpc_enter(context, op, size_bits, force_align, true, stub.slow);
+  }
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
   // Store value: pin, xzr for R31, or a reload from the regs[] slot.
   const A64GprRoute ra =
@@ -4512,7 +4520,8 @@ static A64OpEmitReceipt emit_a64_hw_st(A64EmitContext& context,
 
 #ifndef JIT_VERIFY
   const Label physical_slow = a.new_label(), physical_done = a.new_label();
-  err = emit_a64_load_cpu_u64(a, RA::kScratch0, context.offsets.dram_size);
+  if (context.smp_memory) err = a.b(physical_slow);   // serialize PAL stores with LL/SC too
+  if (err == Error::kOk) err = emit_a64_load_cpu_u64(a, RA::kScratch0, context.offsets.dram_size);
   if (err == Error::kOk) err = a.cmp(RA::kScratch4, RA::kScratch0);
   if (err == Error::kOk) err = a.b_hs(physical_slow);
   if (err == Error::kOk)
@@ -4689,7 +4698,7 @@ static A64OpEmitReceipt emit_a64_fp_mem(A64EmitContext& context,
   Error err = emit_a64_mem_va(context, op, false);
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
 #ifndef JIT_VERIFY
-  if (israw) {
+  if (israw && (isload || !context.smp_memory)) {
     if (context.cold == nullptr) return {Error::kInvalidState, op.kind};
     A64ColdStub stub{};
     stub.slow = a.new_label();
@@ -6444,6 +6453,7 @@ void CJitEngine::compile_block(JitBlock* b, const AlphaInstructionSource& source
 
   A64EmitContext emit_context{a, m_off, m_profile, helpers, regalloc, done, b->tag,
                               pal_block, b->pal_shadow};
+  emit_context.smp_memory = m_smp_memory;
   emit_context.plan = &plan;
   // Direct exits: non-PAL fall-throughs and integer branches. Chaining is verify-blind.
   bool direct_patch = false;

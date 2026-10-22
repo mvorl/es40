@@ -116,12 +116,16 @@
   } else {                                                                     \
     phys_address = hw_address;                                                 \
   }                                                                            \
-  /* Translate before alignment; preserve raw PA for tracing and locking. */   \
-  state.r[REG_1] = READ_PHYS_NT(hw_load.size_bits);                            \
+  /* Translate before alignment; reserve the address actually read. */         \
+  if (hw_load.locked) {                                                        \
+    state.r[REG_1] = cSystem->cpu_read_locked(state.iProcNum,                  \
+      ALIGN_PHYS(hw_load.size_bits / 8), hw_load.size_bits, this);            \
+    LLR;                                                                       \
+  } else {                                                                     \
+    state.r[REG_1] = READ_PHYS_NT(hw_load.size_bits);                          \
+  }                                                                            \
   if (hw_load.size_bits == 32)                                                 \
     state.r[REG_1] = sext_u64_32(state.r[REG_1]);                              \
-  if (hw_load.locked)                                                          \
-    cSystem->cpu_lock(state.iProcNum, phys_address, state.r[REG_1]);           \
 } while (0)
 
 #define DO_HW_LDL DO_HW_LD
@@ -142,7 +146,8 @@
   }                                                                            \
   /* Evaluate the source after translation, before any conditional result. */  \
   if (hw_store.conditional) {                                                  \
-    state.r[REG_1] = cSystem->cpu_stx_c(state.iProcNum, phys_address,          \
+    state.r[REG_1] = cSystem->cpu_stx_c(state.iProcNum,                       \
+      ALIGN_PHYS(hw_store.size_bits / 8),                                    \
       hw_store.size_bits, state.r[REG_1], dram_ptr, dram_size, this);          \
   } else {                                                                     \
     WRITE_PHYS_NT(state.r[REG_1], hw_store.size_bits);                         \

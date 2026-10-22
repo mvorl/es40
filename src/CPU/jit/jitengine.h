@@ -246,6 +246,9 @@ public:
     uint32_t mm_stat, fault_va;   // pure HW_MFPR fault-reporting fields
   };
   void set_offsets(const JitOffsets& o) { m_off = o; }
+  // Configure before compiling: native stores embed whether they must use the
+  // serialized RAM-write helpers to invalidate another CPU's LL reservation.
+  void set_smp_memory(bool enabled) { m_smp_memory = enabled; }
 
   // Per-op helper function pointers
   struct HelperSet {
@@ -465,6 +468,7 @@ public:
 private:
   // Compiled code embeds these values; the profile cannot change during reuse.
   const AlphaCPUProfile m_profile;
+  bool m_smp_memory = false;
   // Both caches are heap allocations (see the ctor), preferring large/huge pages: the block
   // cache is ~40 MB indexed by PC hash, effectively random access, so 4K pages thrash the
   JitBlock* m_blocks;

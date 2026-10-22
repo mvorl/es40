@@ -703,17 +703,7 @@ inline u64 fsqrt64(u64 asig, s32 exp)
   pbc = false;                                          \
   DATA_PHYS_TRAP(va, ACCESS_READ, (size/8)-1);          \
   LLR;                         \
-  if (pbc) {                                            \
-    const u64 _ua_va = (va);                            \
-    dest = 0;                                           \
-    for (int ii=0; ii<(size/8); ii++) {                 \
-      DATA_PHYS(_ua_va+ii, ACCESS_READ,0);             \
-      dest |= (cSystem->ReadMem(phys_address, 8, this) << (ii*8));  \
-    }                                                   \
-  } else {                                              \
-    dest = (phys_address < dram_size ? dram_read(dram_ptr, phys_address, size) : cSystem->ReadMem(phys_address, size, this));  \
-  }                                                     \
-  cSystem->cpu_lock(state.iProcNum, phys_address, dest);
+  dest = cSystem->cpu_read_locked(state.iProcNum, phys_address, size, this);
 
 #define READ_VIRT_F(va, size, dest, f)                    \
   pbc = false;                                            \
@@ -734,17 +724,7 @@ inline u64 fsqrt64(u64 asig, s32 exp)
   pbc = false;                                            \
   DATA_PHYS_TRAP(va, ACCESS_READ, (size/8)-1);            \
   LLR;                           \
-  if (pbc) {                                              \
-    u64 aa = 0;                                           \
-    for (int ii=0; ii<(size/8); ii++) {                   \
-      DATA_PHYS(va+ii, ACCESS_READ,0);                    \
-      aa |= (cSystem->ReadMem(phys_address, 8, this) << (ii*8));  \
-    }                                                     \
-    dest = f(aa);                                         \
-  } else {                                                \
-    dest = f((phys_address < dram_size ? dram_read(dram_ptr, phys_address, size) : cSystem->ReadMem(phys_address, size, this))); \
-  }                                                       \
-  cSystem->cpu_lock(state.iProcNum, phys_address, dest);
+  dest = f(cSystem->cpu_read_locked(state.iProcNum, phys_address, size, this));
 
  /**
   * Normal variant of write action
@@ -754,7 +734,7 @@ inline u64 fsqrt64(u64 asig, s32 exp)
 #define WRITE_PHYS(data, size)                         \
   if (phys_address < dram_size)                        \
   {                                                     \
-    dram_write(dram_ptr, phys_address, size, data);    \
+    cSystem->cpu_write_ram(phys_address, size, data);  \
   }                                                     \
   else                                                 \
     cSystem->WriteMem(phys_address, size, data, this); \
@@ -770,7 +750,7 @@ inline u64 fsqrt64(u64 asig, s32 exp)
       DATA_PHYS(va+ii, ACCESS_WRITE, 0);                    \
       if (phys_address < dram_size)                         \
       {                                                     \
-        dram_write(dram_ptr, phys_address, 8, aa);          \
+        cSystem->cpu_write_ram(phys_address, 8, aa);        \
       }                                                     \
       else                                                  \
         cSystem->WriteMem(phys_address, 8, aa, this);       \
@@ -779,7 +759,7 @@ inline u64 fsqrt64(u64 asig, s32 exp)
   } else {                                                  \
     if (phys_address < dram_size)                           \
     {                                                       \
-      dram_write(dram_ptr, phys_address, size, src);        \
+      cSystem->cpu_write_ram(phys_address, size, src);      \
     }                                                       \
     else                                                    \
       cSystem->WriteMem(phys_address, size, src, this);     \
@@ -826,13 +806,13 @@ inline u64 fsqrt64(u64 asig, s32 exp)
 #if defined(IDB)
 #define WRITE_PHYS_NT(data, size)                                          \
   { u64 _pa = ALIGN_PHYS((size) / 8);                                     \
-    if (_pa < dram_size) { dram_write(dram_ptr, _pa, size, data); } \
+    if (_pa < dram_size) { cSystem->cpu_write_ram(_pa, size, data); } \
     else cSystem->WriteMem(_pa, size, data, this); }                       \
   LWR
 #else
 #define WRITE_PHYS_NT(data, size)                                          \
   { u64 _pa = ALIGN_PHYS((size) / 8);                                     \
-    if (_pa < dram_size) { dram_write(dram_ptr, _pa, size, data); } \
+    if (_pa < dram_size) { cSystem->cpu_write_ram(_pa, size, data); } \
     else cSystem->WriteMem(_pa, size, data, this); }
 #endif
 

@@ -339,6 +339,7 @@
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
+#include <thread>
 
 #define CLOCK_RATIO 10000
 
@@ -1033,18 +1034,79 @@ static inline bool cpu_lock_matches(u64 locked_address, u64 address)
 }
 
 // --- Load-locked / store-conditional (HRM 4.2) -----------------------------
-// Keep the original CAS-backed model for same-address LL/SC sequences, because
-// it provides the emulator's MP atomicity. Some Alpha code stores conditionally
-// to a different quadword in the same locked cache line; those must not compare
-// against the value loaded from the LDx_L address.
+// ARM 4.2.4: every successful store by another CPU in the reserved range
+// invalidates the reservation. Serialize the RAM access and its generation
+// update with both LDx_L's read/publication and STx_C's check/store.
+void CSystem::cpu_lock_bucket(u32 bucket)
+{
+	for (unsigned spins = 0; m_ll_lk[bucket].exchange(1, std::memory_order_acquire); ++spins)
+		if ((spins & 63) == 63)
+			std::this_thread::yield();
+}
+
+CSystem::CLLRAMGuard::CLLRAMGuard(CSystem* sys, u64 phys, int size_bits)
+	: system(sys)
+{
+	const u32 a = (u32)((phys >> 6) & (kLLBuckets - 1));
+	const u32 b = (u32)(((phys + size_bits / 8 - 1) >> 6) & (kLLBuckets - 1));
+	first = a < b ? a : b;
+	last = a < b ? b : a;
+	system->cpu_lock_bucket(first);
+	if (last != first)
+		system->cpu_lock_bucket(last);
+}
+
+CSystem::CLLRAMGuard::~CLLRAMGuard()
+{
+	if (last != first)
+		system->m_ll_lk[last].store(0, std::memory_order_release);
+	system->m_ll_lk[first].store(0, std::memory_order_release);
+}
+
+void CSystem::CLLRAMGuard::invalidate()
+{
+	system->m_ll_seq[first].fetch_add(1, std::memory_order_relaxed);
+	if (last != first)
+		system->m_ll_seq[last].fetch_add(1, std::memory_order_relaxed);
+}
+
+u64 CSystem::cpu_read_locked(int cpuid, u64 phys, int size_bits, CSystemComponent* source)
+{
+	phys &= U64(0x00000807ffffffff);
+	if (phys >> iNumMemoryBits)
+	{
+		// Device access must not run while holding a RAM bucket.
+		const u64 value = ReadMem(phys, size_bits, source);
+		cpu_lock(cpuid, phys, size_bits == 32 ? sext_u64_32(value) : value);
+		return value;
+	}
+
+	CLLRAMGuard guard(this, phys, size_bits);
+	const u64 value = dram_read((const char*)memory, phys, size_bits);
+	cpu_lock(cpuid, phys, size_bits == 32 ? sext_u64_32(value) : value);
+	return value;
+}
+
+void CSystem::cpu_write_ram(u64 phys, int size_bits, u64 value)
+{
+	// With one configured CPU there are no remote CPU reservations to break.
+	if (iNumCPUs <= 1)
+	{
+		dram_write((char*)memory, phys, size_bits, value);
+		return;
+	}
+	CLLRAMGuard guard(this, phys, size_bits);
+	dram_write((char*)memory, phys, size_bits, value);
+	guard.invalidate();
+}
 
 void CSystem::cpu_lock(int cpuid, u64 address, u64 value)
 {
 	state.cpu_lock_address[cpuid] = address;
 	cpu_lock_value[cpuid] = value;
-	// ABA guard - snapshot the line's STx_C sequence. 
+	// For RAM, the caller still holds the bucket used for the memory read.
 	m_ll_seq_snap[cpuid] =
-		m_ll_seq[(u32)((address >> 6) & (kLLBuckets - 1))].load(std::memory_order_acquire);
+		m_ll_seq[(u32)((address >> 6) & (kLLBuckets - 1))].load(std::memory_order_relaxed);
 	state.cpu_lock_flags |= (1 << cpuid);   // atomic fetch_or
 }
 
@@ -1071,6 +1133,7 @@ bool CSystem::cpu_take_lock(int cpuid, u64 address, u64* expected, bool* same_ad
 u64 CSystem::cpu_stx_c(int cpuid, u64 phys, int size_bits, u64 value,
 	char* dram, u64 dram_sz, CSystemComponent* source)
 {
+	phys &= U64(0x00000807ffffffff);
 	u64  expected = 0;
 	bool same_address = false;
 	if (!cpu_take_lock(cpuid, phys, &expected, &same_address))
@@ -1083,11 +1146,10 @@ u64 CSystem::cpu_stx_c(int cpuid, u64 phys, int size_bits, u64 value,
 	}
 
 	const u32 b = (u32)((phys >> 6) & (kLLBuckets - 1));
-	while (m_ll_lk[b].exchange(1, std::memory_order_acquire))
-		;
+	CLLRAMGuard guard(this, phys, size_bits);
 	u64 ok;
 	if (m_ll_seq[b].load(std::memory_order_relaxed) != m_ll_seq_snap[cpuid])
-		ok = 0;    // another STx_C hit this line since our LDx_L
+		ok = 0;    // a store hit this reservation bucket since our LDx_L
 	else if (same_address)
 		ok = dram_cas(dram, phys, expected, value, size_bits) ? 1 : 0;
 	else
@@ -1097,8 +1159,7 @@ u64 CSystem::cpu_stx_c(int cpuid, u64 phys, int size_bits, u64 value,
 		ok = 1;
 	}
 	if (ok)
-		m_ll_seq[b].fetch_add(1, std::memory_order_relaxed);
-	m_ll_lk[b].store(0, std::memory_order_release);
+		guard.invalidate();
 	return ok;
 }
 
@@ -1464,6 +1525,24 @@ void CSystem::WriteMem(u64 address, int dsize, u64 data, CSystemComponent* sourc
 		pio_write(a, dsize, data, source);
 		return;
 	}
+
+	// PAL replacements and byte-split CPU accesses also reach this entry point. 
+	// Keep device DMA on its existing path. 
+	// Only CPU-originated RAM writes join the CPU reservation protocol here. 
+	// Preserve WriteMem's endian conversion.
+	for (int cpu = 0; source && cpu < iNumCPUs; ++cpu)
+		if (source == acCPUs[cpu])
+		{
+			switch (dsize)
+			{
+			case 8:  break;
+			case 16: data = endian_16((u16)data); break;
+			case 32: data = endian_32((u32)data); break;
+			default: data = endian_64(data); dsize = 64; break;
+			}
+			cpu_write_ram(a, dsize, data);
+			return;
+		}
 
 	p = (u8*)memory + a;
 

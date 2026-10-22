@@ -1144,6 +1144,9 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             Label slow = a.new_label();
             Label sdone = a.new_label();
             Label dpc_ready = a.new_label();
+            // All SMP stores must serialize with LL/SC, including DPC hits.
+            // The existing cold stub preserves the address/cache reuse state.
+            if (m_smp_memory) a.jmp(slow);
             if (reuse_dpc) {
                 // The preceding store's write-cache translation remains valid on the same page.
                 a.mov(x86::rax, x86::rdx);
@@ -1253,7 +1256,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
 #ifdef JIT_VERIFY
             emit_helper();
 #else
-            if (!israw) { emit_helper(); continue; }   // LDS/STS: ieee conversion only via the helper
+            if (!israw || (!isload && m_smp_memory)) { emit_helper(); continue; }
 
             // Inline fast path for LDT/STT: FPSTART (fpen gate + exc_sum=0), then the data-cache hit.
             // misalign / cache miss / MMIO / fpen==0 fall to the helper. R11 = slot byte offset; RAX/R10/R9 scratch.
@@ -1448,6 +1451,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             emit_address(store.displacement);                         // phys addr -> RDX
 #ifndef JIT_VERIFY
             const Label physical_slow = a.new_label(), physical_done = a.new_label();
+            if (m_smp_memory) a.jmp(physical_slow);   // serialize PAL stores with LL/SC too
             a.cmp(x86::rdx, x86::qword_ptr(x86::rbp, m_off.dram_size));
             a.jae(physical_slow);
             a.and_(x86::rdx, imm(-(size_bits / 8)));
