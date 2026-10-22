@@ -569,6 +569,9 @@ struct ColdMemStub {
   enum Kind { LOAD, STORE, FPMEM };
   Kind          kind;
   asmjit::Label slow;       // stub entry
+  asmjit::Label watched_probe; // optional monitored write-page probe
+  asmjit::Label raw_store;  // ordinary store, after address/translation checks
+  bool          watched_store = false;
   asmjit::Label join;       // fast-path merge point
   asmjit::Label done;       // the block's shared bail exit
   void*         helper;     // jit_read / jit_write / jit_fp_read / jit_fp_write
@@ -586,6 +589,103 @@ struct ColdMemStub {
   uint32_t      i;          // op index in the block
   uint64_t      fault_pc;   // resume PC on fault
 };
+
+// Lock the LL/SC bucket for an aligned RAM store. 
+// Preserve RDX (address), R10 (bias/base), R11 (DPC slot) and guest pins. 
+// Wached stores leave RCX = bucket.
+// Unwatched stores jump to raw_store if supplied, else leave RCX = 0.
+// First LL sets the watch byte after draining active CPUs.
+static void emit_x64_ram_store_lock(asmjit::x86::Assembler& a,
+    const CJitEngine::JitOffsets& off, uintptr_t ll_watch, uintptr_t ll_buckets,
+    const asmjit::Label& slow, bool physical,
+    const asmjit::Label* raw_store = nullptr)
+{
+  using namespace asmjit;
+  const Label watched = a.new_label(), ready = a.new_label();
+  if (physical) a.mov(x86::rax, x86::rdx);
+  else {
+    a.lea(x86::rax, x86::ptr(x86::r10, x86::rdx));
+    a.sub(x86::rax, x86::qword_ptr(x86::rbp, off.dram_ptr));
+  }
+  a.shr(x86::rax, imm(6));              // per-line watch index
+  a.mov(x86::rcx, imm(ll_watch));
+  a.cmp(x86::byte_ptr(x86::rcx, x86::rax), imm(0)); // acquire under x86 TSO
+  if (raw_store) {
+    a.je(*raw_store);                 // unmonitored line on a monitored page
+  } else {
+    a.jne(watched);
+    a.xor_(x86::ecx, x86::ecx);        // no bucket held
+    a.jmp(ready);
+  }
+  a.bind(watched);
+  // CSystem::LLBucket: 64-byte stride, sequence at 0, byte lock at 8.
+  a.and_(x86::eax, imm(65535));
+  a.shl(x86::rax, imm(6));              // bucket stride
+  a.mov(x86::rcx, imm(ll_buckets));
+  a.add(x86::rcx, x86::rax);
+  a.mov(x86::eax, imm(1));
+  a.xchg(x86::byte_ptr(x86::rcx, 8), x86::al); // acquire; XCHG is implicitly locked
+  a.test(x86::al, x86::al);
+  a.jnz(slow);
+  a.bind(ready);
+}
+
+static void emit_x64_ram_store_unlock(asmjit::x86::Assembler& a,
+    bool bucket_held = false)
+{
+  using namespace asmjit;
+  const Label ready = a.new_label();
+  if (!bucket_held) {
+    a.test(x86::rcx, x86::rcx);
+    a.jz(ready);
+  }
+  // Update the sequence while locked, then release after the RAM write.
+  a.inc(x86::qword_ptr(x86::rcx));
+  a.mov(x86::byte_ptr(x86::rcx, 8), imm(0)); // release under x86 TSO
+  a.bind(ready);
+}
+
+static void emit_x64_integer_store(asmjit::x86::Assembler& a,
+    int size_bits, int ra, int pin, int slot)
+{
+  using namespace asmjit;
+  const x86::Gp value = pin >= 0 ? x86::gpq((uint32_t)pin) : x86::rax;
+  if (pin < 0) {
+    if (ra == 31) a.xor_(x86::eax, x86::eax);
+    else          a.mov(x86::rax, x86::qword_ptr(x86::rbx, slot * 8));
+  }
+  if (size_bits == 64)      a.mov(x86::qword_ptr(x86::r10, x86::rdx), value);
+  else if (size_bits == 32) a.mov(x86::dword_ptr(x86::r10, x86::rdx), value.r32());
+  else if (size_bits == 16) a.mov(x86::word_ptr(x86::r10, x86::rdx), value.r16());
+  else                     a.mov(x86::byte_ptr(x86::r10, x86::rdx), value.r8());
+}
+
+// Full-probe miss: R10 = expected tag (with alignment bits), R11 = DPC slot,
+// RDX = VA. A watched hit preserves the slot/bias for the next memory op.
+static void emit_watched_store_stub(asmjit::x86::Assembler& a,
+    const CJitEngine::JitOffsets& off, uintptr_t ll_watch, uintptr_t ll_buckets,
+    const ColdMemStub& s)
+{
+  if (!s.watched_store) return;
+  using namespace asmjit;
+  a.bind(s.watched_probe);
+  a.or_(x86::r10, imm(off.dpc_ll_watch_tag));
+  a.cmp(x86::qword_ptr(x86::rbp, x86::r11, 0,
+      off.dpc_write_row + off.dpc_virt_page), x86::r10);
+  a.jne(s.slow); // miss or unaligned store; RAM untouched
+  a.mov(x86::r10, x86::qword_ptr(x86::rbp, x86::r11, 0,
+      off.dpc_write_row + off.dpc_host_bias));
+  emit_x64_ram_store_lock(a, off, ll_watch, ll_buckets, s.slow, false,
+      &s.raw_store);
+  if (s.kind == ColdMemStub::STORE) {
+    emit_x64_integer_store(a, s.size_bits, s.ra, s.pin, s.slot);
+  } else { // FPMEM is raw STT; FPSTART/alignment checks already passed
+    a.mov(x86::rax, x86::qword_ptr(x86::rbp, off.f_base + s.ra * 8));
+    a.mov(x86::qword_ptr(x86::r10, x86::rdx), x86::rax);
+  }
+  emit_x64_ram_store_unlock(a, true);
+  a.jmp(s.join);
+}
 
 // Emit one cold stub. Arg marshalling mirrors emit_call: non-immediate sources are placed before
 // immediates so a size/selector immediate can't overwrite RDX 
@@ -965,6 +1065,17 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             if (vb2 >= 0) { regalloc.host[vb2] = vh2; a.mov(x86::gpq((uint32_t) vh2), x86::qword_ptr(x86::rbx, vb2 * 8)); }
             };
 
+#ifndef JIT_VERIFY
+        // Physical stores lock inline; watched virtual stores lock in the cold stub.
+        auto emit_ram_store_lock = [&](const Label& slow, bool physical) {
+            if (m_smp_memory)
+                emit_x64_ram_store_lock(a, m_off, m_ll_watch, m_ll_buckets, slow, physical);
+        };
+        auto emit_ram_store_unlock = [&]() {
+            if (m_smp_memory) emit_x64_ram_store_unlock(a);
+        };
+#endif
+
         auto emit_dpc_offset = [&]() {
             uint32_t shift = 0;
             while ((1u << shift) < m_off.dpc_stride) ++shift;
@@ -1144,9 +1255,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             Label slow = a.new_label();
             Label sdone = a.new_label();
             Label dpc_ready = a.new_label();
-            // All SMP stores must serialize with LL/SC, including DPC hits.
-            // The existing cold stub preserves the address/cache reuse state.
-            if (m_smp_memory) a.jmp(slow);
+            const Label watched_page = a.new_label();
             if (reuse_dpc) {
                 // The preceding store's write-cache translation remains valid on the same page.
                 a.mov(x86::rax, x86::rdx);
@@ -1159,32 +1268,27 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             a.mov(x86::r10, x86::rdx);
             a.and_(x86::r10, imm(tag_mask));
             a.cmp(x86::qword_ptr(x86::rbp, x86::r11, 0,
-                m_off.dpc_write_row + m_off.dpc_virt_page), x86::r10); a.jne(slow);
+                m_off.dpc_write_row + m_off.dpc_virt_page), x86::r10);
+            a.jne(m_smp_memory ? watched_page : slow);
             a.mov(x86::r10, x86::qword_ptr(x86::rbp, x86::r11, 0,
                 m_off.dpc_write_row + m_off.dpc_host_bias));
             a.bind(dpc_ready);
             const int sp = (ra == 31) ? -1 : pin_id(ra);
-            if (sp >= 0) {
-                if (op == OP_STQ || op == OP_STQ_U) a.mov(x86::qword_ptr(x86::r10, x86::rdx), x86::gpq((uint32_t)sp));
-                else if (op == OP_STL) a.mov(x86::dword_ptr(x86::r10, x86::rdx), x86::gpd((uint32_t)sp));
-                else if (op == OP_STW) a.mov(x86::word_ptr(x86::r10, x86::rdx), x86::gpw((uint32_t)sp));
-                else                   a.mov(x86::byte_ptr(x86::r10, x86::rdx), x86::gpb((uint32_t)sp));
-            } else {
-                if (ra == 31) a.xor_(x86::eax, x86::eax); else mov_from_reg(x86::rax, ra);
-                if (op == OP_STQ || op == OP_STQ_U) a.mov(x86::qword_ptr(x86::r10, x86::rdx), x86::rax);
-                else if (op == OP_STL) a.mov(x86::dword_ptr(x86::r10, x86::rdx), x86::eax);
-                else if (op == OP_STW) a.mov(x86::word_ptr(x86::r10, x86::rdx), x86::ax);
-                else                   a.mov(x86::byte_ptr(x86::r10, x86::rdx), x86::al);
-            }
+            const int slot = (b->pal_shadow && ((ra & 0xc) == 0x4)) ? ra + 32 : ra;
+            // Plain tags need no LL/SC lock. The cold path also lands here for
+            // unwatched lines on watched pages. First LL updates all page aliases
+            // after draining active CPUs.
+            emit_x64_integer_store(a, size_bits, ra, sp, slot);
             a.bind(sdone);   // fast path falls through; the slow path is a cold-tail stub jumping back here
             {
                 ColdMemStub s{};
                 s.kind = ColdMemStub::STORE;  s.slow = slow;  s.join = sdone;  s.done = done;
+                s.watched_probe = watched_page; s.watched_store = m_smp_memory;
+                s.raw_store = dpc_ready;
                 s.helper = write_helper;      s.hidx = helper_index(hs, write_helper);
                 s.size_bits = size_bits;
                 s.ins = ins;
-                s.ra = ra;  s.pin = pin_id(ra);
-                s.slot = (b->pal_shadow && ((ra & 0xc) == 0x4)) ? ra + 32 : ra;   // PALshadow remap (see reg())
+                s.ra = ra;  s.pin = sp; s.slot = slot;
                 s.i = i;    s.fault_pc = b->tag + 4 * (uint64_t) i;
                 s.vol_bind = regalloc.vol_bind; s.vol_host = (s.vol_bind >= 0) ? regalloc.host[s.vol_bind] : -1;
                 s.vol_bind2 = regalloc.vol_bind2; s.vol_host2 = (s.vol_bind2 >= 0) ? regalloc.host[s.vol_bind2] : -1;
@@ -1256,12 +1360,14 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
 #ifdef JIT_VERIFY
             emit_helper();
 #else
-            if (!israw || (!isload && m_smp_memory)) { emit_helper(); continue; }
+            if (!israw) { emit_helper(); continue; }
 
             // Inline fast path for LDT/STT: FPSTART (fpen gate + exc_sum=0), then the data-cache hit.
             // misalign / cache miss / MMIO / fpen==0 fall to the helper. R11 = slot byte offset; RAX/R10/R9 scratch.
             Label slow = a.new_label();
             Label fdone = a.new_label();
+            const Label watched_page = a.new_label();
+            const Label raw_store = a.new_label();
             a.cmp(x86::byte_ptr(x86::rbp, m_off.fpen), imm(0));                          a.je(slow);   // fpen==0 -> FEN trap
             a.mov(x86::qword_ptr(x86::rbp, m_off.exc_sum), imm(0));                                    // exc_sum = 0
             a.test(x86::dl, imm(7));                                                     a.jnz(slow);  // 8-byte aligned
@@ -1269,8 +1375,10 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             const int dpc_row = isload ? 0 : (int)m_off.dpc_write_row;
             a.mov(x86::r10, x86::rdx);
             a.and_(x86::r10, imm(-0x2000));
-            a.cmp(x86::qword_ptr(x86::rbp, x86::r11, 0, dpc_row + (int)m_off.dpc_virt_page), x86::r10); a.jne(slow);
+            a.cmp(x86::qword_ptr(x86::rbp, x86::r11, 0, dpc_row + (int)m_off.dpc_virt_page), x86::r10);
+            a.jne(!isload && m_smp_memory ? watched_page : slow);
             a.mov(x86::r10, x86::qword_ptr(x86::rbp, x86::r11, 0, dpc_row + (int)m_off.dpc_host_bias));
+            a.bind(raw_store);
             if (isload) {                                                               // LDT: f[fa] = MEM[phys]
                 a.mov(x86::rax, x86::qword_ptr(x86::r10, x86::rdx));
                 a.mov(x86::qword_ptr(x86::rbp, m_off.f_base + fa * 8), x86::rax);
@@ -1283,6 +1391,8 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             {
                 ColdMemStub s{};
                 s.kind = ColdMemStub::FPMEM;  s.slow = slow;  s.join = fdone;  s.done = done;
+                s.watched_probe = watched_page; s.watched_store = !isload && m_smp_memory;
+                s.raw_store = raw_store;
                 s.helper = isload ? fp_read_helper : fp_write_helper;
                 s.hidx = helper_index(hs, s.helper);
                 s.ins = ins;  s.descr = descr;  s.ra = fa;  s.pin = -1;  s.slot = 0;   // helper owns the f[] access
@@ -1451,11 +1561,11 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             emit_address(store.displacement);                         // phys addr -> RDX
 #ifndef JIT_VERIFY
             const Label physical_slow = a.new_label(), physical_done = a.new_label();
-            if (m_smp_memory) a.jmp(physical_slow);   // serialize PAL stores with LL/SC too
             a.cmp(x86::rdx, x86::qword_ptr(x86::rbp, m_off.dram_size));
             a.jae(physical_slow);
             a.and_(x86::rdx, imm(-(size_bits / 8)));
             a.mov(x86::r10, x86::qword_ptr(x86::rbp, m_off.dram_ptr));
+            emit_ram_store_lock(physical_slow, true);
             const int sp = (ra == 31) ? -1 : pin_id(ra);
             if (sp >= 0) {
                 if (size_bits == 32) a.mov(x86::dword_ptr(x86::r10, x86::rdx), x86::gpd((uint32_t)sp));
@@ -1465,6 +1575,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 if (size_bits == 32) a.mov(x86::dword_ptr(x86::r10, x86::rdx), x86::eax);
                 else                 a.mov(x86::qword_ptr(x86::r10, x86::rdx), x86::rax);
             }
+            emit_ram_store_unlock();
             a.jmp(physical_done);
             a.bind(physical_slow);
 #endif
@@ -2497,6 +2608,7 @@ void CJitEngine::compile_block(JitBlock* b, const AlphaInstructionSource& source
     b->valid = true;   // b was just (re)validated by record(); restore it after the wipe
   }
   b->compiled = true;
+  b->jit_body_same_page = nullptr;
 
   if (b->n_instr == 0) return;
   const auto source = sources.view(b->tag);
@@ -2682,8 +2794,20 @@ void CJitEngine::compile_block(JitBlock* b, const AlphaInstructionSource& source
   // engine's shared entry trampoline (build_trampolines); every exit jumps to the shared epilogue.
   Label done = a.new_label();  // shared exit: `jmp [cpu + jit_exit]` (EAX preset by caller)
   Label body = a.new_label();  // chained re-entry
+  const Label body_same_page = a.new_label();
+  const Label exec_proof = a.new_label(), exec_denied = a.new_label();
   a.bind(body);
   const size_t body_off = code.code_size();   // byte offset of the chained entry from fn
+  if (!pal_block) {
+    // Check instruction access for CM. Static same-page branches use body_same_page;
+    // their source checked the same 8 KiB page. The mask lives with the code.
+    // jit_mode_bit is refreshed on C entry and compiled CM writes.
+    a.mov(x86::eax, x86::dword_ptr(x86::rbp, m_off.jit_mode_bit));
+    a.test(x86::dword_ptr(exec_proof, (int32_t)offsetof(NativeExecProof, mode_mask)), x86::eax);
+    a.jz(exec_denied);
+  }
+  a.bind(body_same_page);
+  const size_t body_same_page_off = code.code_size();
 #ifdef JIT_REGPROF
   a.mov(x86::rax, imm((uint64_t) &b->rp_hits));   // REGPROF: count every execution (cold entry + chained re-entry)
   a.inc(x86::qword_ptr(x86::rax));                // RAX is dead at body entry -- the first op reloads it
@@ -3097,8 +3221,8 @@ void CJitEngine::compile_block(JitBlock* b, const AlphaInstructionSource& source
   };
   auto emit_chain = [&](Label& lbl) {
     Label miss = a.new_label();
-    // Epoch changes proactively clear every patched LinkSlot, so body!=0 is the
-    // staleness proof.
+    // Mapping/code invalidation clears links. Mode changes keep them; native
+    // entries check CM and PAL entries check SDE.
     // Poly-link: walk the cached successor snapshots, 2-successor cache both.
     for (int sl = 0; sl < kLinkSlots; ++sl) {
       Label nxt = (sl + 1 < kLinkSlots) ? a.new_label() : miss;
@@ -3267,7 +3391,7 @@ void CJitEngine::compile_block(JitBlock* b, const AlphaInstructionSource& source
       Label not_self = a.new_label();
       a.mov(x86::rax, imm(b->tag));                             // tag may exceed imm32
       a.cmp(x86::r10, x86::rax);                                a.jne(not_self);
-      a.jmp(body);
+      a.jmp(pal_block ? body : body_same_page);
       a.bind(not_self);
     }
     emit_chain(exit_chain);
@@ -3295,10 +3419,20 @@ void CJitEngine::compile_block(JitBlock* b, const AlphaInstructionSource& source
   a.bind(done);                 // bail jumps here with EAX already set
   a.jmp(x86::qword_ptr(x86::rbp, (int32_t) m_off.jit_exit));   // shared epilogue: sync pins, restore frame, ret
 
+  if (!pal_block) {
+    a.bind(exec_denied);
+    a.mov(x86::rax, imm(b->tag));
+    a.mov(x86::qword_ptr(x86::rbp, m_off.state_pc), x86::rax);
+    a.mov(x86::eax, x86::r13d);   // no instructions executed in this block
+    a.jmp(done);
+  }
+
   // Cold tail: the outlined memop slow paths (dead 99.8% of the time -- dpc hit rate).
 #ifdef JIT_STATS
   g_cold_stub_counters = exit_kind_counter(3);   // [3] bail, [4] trapped
 #endif
+  for (const ColdMemStub& s : cold)
+    emit_watched_store_stub(a, m_off, m_ll_watch, m_ll_buckets, s);
   for (const ColdMemStub& s : cold)
     emit_cold_mem_stub(a, gpa, m_off, s);
 
@@ -3325,15 +3459,24 @@ void CJitEngine::compile_block(JitBlock* b, const AlphaInstructionSource& source
       a.jmp(exit_common);
     }
     a.align(AlignMode::kData, 8);
-    for (const DirectExit& x : dexits) {                // PatchSite { site, stub, tag }
+    for (const DirectExit& x : dexits) {                // PatchSite { site, stub, tag, source_tag }
       a.bind(x.desc);
       a.embed_label(x.site);
       a.embed_label(x.stub);
       a.embed_uint64(x.pc);
+      a.embed_uint64(b->tag);
     }
   }
 #endif
 
+  size_t exec_proof_off = 0;
+  if (!pal_block) {
+    a.align(AlignMode::kData, alignof(NativeExecProof));
+    a.bind(exec_proof);
+    exec_proof_off = code.code_size();
+    for (size_t offset = 0; offset < sizeof(NativeExecProof); offset += sizeof(uint64_t))
+      a.embed_uint64(0);
+  }
   const size_t csz = code.code_size();
   JitFn fn = nullptr;
 #ifdef JIT_DISASM
@@ -3381,6 +3524,10 @@ void CJitEngine::compile_block(JitBlock* b, const AlphaInstructionSource& source
   b->src_sum  = source_hash;                                  // include every word the fusion depends on
   b->hash_len = hash_len;                                     // freeze the hash extent (n_instr drifts)
   b->prefix_len = plen;
+  b->exec_proof = pal_block ? nullptr
+      : reinterpret_cast<NativeExecProof*>((uint8_t*)(void*)fn + exec_proof_off);
+  b->jit_body_same_page = pal_block ? nullptr
+      : static_cast<void*>((uint8_t*)(void*)fn + body_same_page_off);
   m_code_bytes += csz;   // track for the reclaim threshold (see flush())
 #ifdef JIT_STATS
   m_stat_compiled++;
@@ -3801,6 +3948,8 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
 
   // Cold tail: the outlined memop slow paths
   for (const ColdMemStub& s : cold)
+    emit_watched_store_stub(a, m_off, m_ll_watch, m_ll_buckets, s);
+  for (const ColdMemStub& s : cold)
     emit_cold_mem_stub(a, gpa, m_off, s);
 
 #ifdef JIT_STATS
@@ -3827,6 +3976,9 @@ void CJitEngine::compile_trace(TraceFragment* t, JitBlock** blocks, uint32_t n_b
     (void)rt->release(fn);
     return;
   }
+  // Old trace code still refers to t->exits[]. Clear incoming links before
+  // reusing those slots; compilation and source validation have succeeded.
+  if (t->code) invalidate_links(kBumpEvict);
   t->valid = false;
   uint32_t total = 0;
   for (uint32_t bi = 0; bi < n_blocks; ++bi) {

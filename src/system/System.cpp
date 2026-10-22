@@ -465,10 +465,11 @@ CSystem::CSystem(CConfigurator* cfg)
 	// LL/SC ABA-guard buckets start at sequence 0, unlocked.
 	for (u32 llb = 0; llb < kLLBuckets; llb++)
 	{
-		m_ll_seq[llb].store(0, std::memory_order_relaxed);
-		m_ll_lk[llb].store(0, std::memory_order_relaxed);
+		m_ll_buckets[llb].sequence.store(0, std::memory_order_relaxed);
+		m_ll_buckets[llb].lock.store(0, std::memory_order_relaxed);
 	}
 	memset(m_ll_seq_snap, 0, sizeof(m_ll_seq_snap));
+	allocate_ll_watch();
 
 	printf("%s(%s): $Id$\n",
 		cfg->get_myName(), cfg->get_myValue());
@@ -505,6 +506,33 @@ void CSystem::ResetMem(unsigned int membits)
 	}
 	else {
 		CHECK_ALLOCATION(memory = calloc((size_t)1 << iNumMemoryBits, 1));
+	}
+	// Caller must stop CPUs and discard JIT code before replacing RAM/watch pointers.
+	allocate_ll_watch();
+}
+
+void CSystem::allocate_ll_watch()
+{
+	const size_t lines = (size_t)((U64(1) << iNumMemoryBits) >> 6);
+	const size_t pages = (size_t)((U64(1) << iNumMemoryBits) >> 13);
+	try
+	{
+		auto watched = std::make_unique<std::atomic<u8>[]>(lines);
+		auto watched_pages = std::make_unique<std::atomic<u8>[]>(pages);
+		for (size_t line = 0; line < lines; ++line)
+			watched[line].store(0, std::memory_order_relaxed);
+		for (size_t page = 0; page < pages; ++page)
+			watched_pages[page].store(0, std::memory_order_relaxed);
+		m_ll_watch = std::move(watched);
+		m_ll_watch_pages = std::move(watched_pages);
+		// Drop reservations tied to the old RAM allocation.
+		state.cpu_lock_flags.store(0, std::memory_order_relaxed);
+		memset(cpu_lock_value, 0, sizeof(cpu_lock_value));
+		memset(m_ll_seq_snap, 0, sizeof(m_ll_seq_snap));
+	}
+	catch (const std::bad_alloc&)
+	{
+		FAILURE(OutOfMemory, "Unable to allocate the RAM load-locked watch map");
 	}
 }
 
@@ -1034,12 +1062,102 @@ static inline bool cpu_lock_matches(u64 locked_address, u64 address)
 }
 
 // --- Load-locked / store-conditional (HRM 4.2) -----------------------------
+void CSystem::enter_ll_jit(int cpuid) noexcept
+{
+	// seq_cst ensures either the freezer sees this CPU active or this CPU sees the freeze.
+	for (;;)
+	{
+		while (m_ll_jit_freeze.load(std::memory_order_seq_cst))
+			std::this_thread::yield();
+		m_ll_jit_cpu[cpuid].active.store(true, std::memory_order_seq_cst);
+		if (!m_ll_jit_freeze.load(std::memory_order_seq_cst))
+			return;
+		m_ll_jit_cpu[cpuid].active.store(false, std::memory_order_seq_cst);
+	}
+}
+
+CSystem::JitExecutionGuard::JitExecutionGuard(CSystem* sys, int cpu)
+	: system(sys->iNumCPUs > 1 ? sys : nullptr), cpuid(cpu)
+{
+	if (system && system->m_ll_jit_cpu[cpuid].depth++ == 0)
+		system->enter_ll_jit(cpuid);
+}
+
+CSystem::JitExecutionGuard::~JitExecutionGuard()
+{
+	if (system && --system->m_ll_jit_cpu[cpuid].depth == 0)
+		system->m_ll_jit_cpu[cpuid].active.store(false, std::memory_order_seq_cst);
+}
+
+void CSystem::watch_ll_lines(int cpuid, u64 phys, int size_bits)
+{
+#ifndef ES40_JIT
+	// Interpreter SMP stores already take the bucket lock.
+	(void)cpuid; (void)phys; (void)size_bits;
+	return;
+#else
+	if (iNumCPUs <= 1) return;
+	const size_t first = (size_t)(phys >> 6);
+	const size_t last = (size_t)((phys + size_bits / 8 - 1) >> 6);
+	if (m_ll_watch[first].load(std::memory_order_acquire) &&
+		m_ll_watch[last].load(std::memory_order_acquire))
+		return;
+
+	// Clear active before waiting: the mutex owner may be waiting for this CPU.
+	const bool resume = m_ll_jit_cpu[cpuid].depth != 0;
+	if (resume)
+		m_ll_jit_cpu[cpuid].active.store(false, std::memory_order_seq_cst);
+	try
+	{
+		std::lock_guard<std::mutex> setup(m_ll_watch_setup);
+		if (!m_ll_watch[first].load(std::memory_order_acquire) ||
+			!m_ll_watch[last].load(std::memory_order_acquire))
+		{
+			struct FreezeGuard
+			{
+				std::atomic<bool>& frozen;
+				explicit FreezeGuard(std::atomic<bool>& flag) : frozen(flag)
+				{ frozen.store(true, std::memory_order_seq_cst); }
+				~FreezeGuard() { frozen.store(false, std::memory_order_seq_cst); }
+			} freeze(m_ll_jit_freeze);
+
+			// Wait for stores already in flight. No bucket or device lock is held.
+			for (int cpu = 0; cpu < iNumCPUs; ++cpu)
+				while (m_ll_jit_cpu[cpu].active.load(std::memory_order_seq_cst))
+					std::this_thread::yield();
+			m_ll_watch[first].store(1, std::memory_order_release);
+			m_ll_watch[last].store(1, std::memory_order_release);
+			const auto promote_page = [&](u64 address)
+			{
+				auto& watched = m_ll_watch_pages[(size_t)(address >> 13)];
+				if (watched.load(std::memory_order_relaxed)) return;
+				watched.store(1, std::memory_order_release);
+				// Mark every cached write alias before letting CPUs run again.
+				for (int cpu = 0; cpu < iNumCPUs; ++cpu)
+					acCPUs[cpu]->promote_write_dpc_page(address);
+			};
+			promote_page(phys);
+			promote_page(phys + size_bits / 8 - 1);
+		}
+	}
+	catch (...)
+	{
+		// Re-enter execution before propagating the exception.
+		if (resume)
+			enter_ll_jit(cpuid);
+		throw;
+	}
+	if (resume)
+		enter_ll_jit(cpuid);
+#endif
+}
+
 // ARM 4.2.4: every successful store by another CPU in the reserved range
 // invalidates the reservation. Serialize the RAM access and its generation
 // update with both LDx_L's read/publication and STx_C's check/store.
 void CSystem::cpu_lock_bucket(u32 bucket)
 {
-	for (unsigned spins = 0; m_ll_lk[bucket].exchange(1, std::memory_order_acquire); ++spins)
+	for (unsigned spins = 0; m_ll_buckets[bucket].lock.exchange(1, std::memory_order_acquire); ++spins)
 		if ((spins & 63) == 63)
 			std::this_thread::yield();
 }
@@ -1059,15 +1177,22 @@ CSystem::CLLRAMGuard::CLLRAMGuard(CSystem* sys, u64 phys, int size_bits)
 CSystem::CLLRAMGuard::~CLLRAMGuard()
 {
 	if (last != first)
-		system->m_ll_lk[last].store(0, std::memory_order_release);
-	system->m_ll_lk[first].store(0, std::memory_order_release);
+		system->m_ll_buckets[last].lock.store(0, std::memory_order_release);
+	system->m_ll_buckets[first].lock.store(0, std::memory_order_release);
 }
 
 void CSystem::CLLRAMGuard::invalidate()
 {
-	system->m_ll_seq[first].fetch_add(1, std::memory_order_relaxed);
+	// The bucket lock covers this increment; no atomic RMW is needed.
+	auto& first_sequence = system->m_ll_buckets[first].sequence;
+	first_sequence.store(first_sequence.load(std::memory_order_relaxed) + 1,
+		std::memory_order_relaxed);
 	if (last != first)
-		system->m_ll_seq[last].fetch_add(1, std::memory_order_relaxed);
+	{
+		auto& last_sequence = system->m_ll_buckets[last].sequence;
+		last_sequence.store(last_sequence.load(std::memory_order_relaxed) + 1,
+			std::memory_order_relaxed);
+	}
 }
 
 u64 CSystem::cpu_read_locked(int cpuid, u64 phys, int size_bits, CSystemComponent* source)
@@ -1081,6 +1206,7 @@ u64 CSystem::cpu_read_locked(int cpuid, u64 phys, int size_bits, CSystemComponen
 		return value;
 	}
 
+	watch_ll_lines(cpuid, phys, size_bits);
 	CLLRAMGuard guard(this, phys, size_bits);
 	const u64 value = dram_read((const char*)memory, phys, size_bits);
 	cpu_lock(cpuid, phys, size_bits == 32 ? sext_u64_32(value) : value);
@@ -1106,7 +1232,7 @@ void CSystem::cpu_lock(int cpuid, u64 address, u64 value)
 	cpu_lock_value[cpuid] = value;
 	// For RAM, the caller still holds the bucket used for the memory read.
 	m_ll_seq_snap[cpuid] =
-		m_ll_seq[(u32)((address >> 6) & (kLLBuckets - 1))].load(std::memory_order_relaxed);
+		m_ll_buckets[(u32)((address >> 6) & (kLLBuckets - 1))].sequence.load(std::memory_order_relaxed);
 	state.cpu_lock_flags |= (1 << cpuid);   // atomic fetch_or
 }
 
@@ -1148,7 +1274,7 @@ u64 CSystem::cpu_stx_c(int cpuid, u64 phys, int size_bits, u64 value,
 	const u32 b = (u32)((phys >> 6) & (kLLBuckets - 1));
 	CLLRAMGuard guard(this, phys, size_bits);
 	u64 ok;
-	if (m_ll_seq[b].load(std::memory_order_relaxed) != m_ll_seq_snap[cpuid])
+	if (m_ll_buckets[b].sequence.load(std::memory_order_relaxed) != m_ll_seq_snap[cpuid])
 		ok = 0;    // a store hit this reservation bucket since our LDx_L
 	else if (same_address)
 		ok = dram_cas(dram, phys, expected, value, size_bits) ? 1 : 0;
@@ -2050,6 +2176,10 @@ bool CSystem::RestoreState(const char* fn)
 	}
 
 	read(&state, sizeof(state));
+	// Bucket generations and watch bits aren't saved. Clear restored reservations.
+	state.cpu_lock_flags.store(0, std::memory_order_relaxed);
+	memset(cpu_lock_value, 0, sizeof(cpu_lock_value));
+	memset(m_ll_seq_snap, 0, sizeof(m_ll_seq_snap));
 
 	// components
 	//

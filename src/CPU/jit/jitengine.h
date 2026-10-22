@@ -41,6 +41,7 @@
 #error "ES40_JIT requires an x86-64 or ARM64 host"
 #endif
 
+#include <cstddef>
 #include <cstdint>
 #include "../AlphaCPUProfile.h"
 #include <vector>
@@ -147,7 +148,22 @@ public:
     uint8_t* site;   // E9 opcode
     uint8_t* stub;   // unpatched target
     uint64_t tag;    // static successor PC
+    uint64_t source_tag; // immutable source PC, owned by this code allocation
   };
+  static_assert(offsetof(PatchSite, source_tag) == 24, "direct source tag offset");
+  static_assert(sizeof(PatchSite) == 32, "direct patch descriptor layout");
+
+  // Permission bits stay with the emitted code, which can outlive its
+  // JitBlock cache slot.
+  struct NativeExecProof
+  {
+    uint64_t epoch;      // last validated epoch; native entries test only mode_mask
+    uint32_t mode_mask;  // modes with execute access
+    uint32_t reserved;
+  };
+  static_assert(offsetof(NativeExecProof, epoch) == 0, "native proof epoch offset");
+  static_assert(offsetof(NativeExecProof, mode_mask) == 8, "native proof mode offset");
+  static_assert(sizeof(NativeExecProof) == 16, "native execution proof layout");
 
   // FIELD ORDER IS LOAD-BEARING: everything lookup() reads -- tag, asn, asm_global,
   // pal_shadow, valid, flush_gen -- is packed into the first 40 bytes so a way costs ONE
@@ -165,6 +181,8 @@ public:
                           // stale => lookup misses and revalidate_flushed() re-hashes (lazy IC_FLUSH).
     JitFn    code;        // compiled safe-prefix, or null (prologue entry, for C calls)
     void*    jit_body;    // chained re-entry point (after the prologue); null when not compiled
+    void*    jit_body_same_page; // after native mode guard; only static same-page edges, null for PAL
+    NativeExecProof* exec_proof; // embedded data for this code allocation; null for PAL
     LinkSlot link[kLinkSlots];    // cached direct successors (poly-link, round-robin back-patched)
 #ifdef JIT_STATS
     uint32_t link_misses; // instrumentation: per-source link-miss count, cumulative (poly-link sizing)
@@ -235,7 +253,8 @@ public:
     uint32_t dpc_stride, dpc_mask;   // direct-mapped page cache: per-slot byte stride, index mask
     uint32_t dpc_write_row;          // byte distance from read cache [0] to write cache [1] (store fast path)
     uint32_t dpc_bank;               // u32 byte offset of the current CM's bank (added to the slot index)
-    uint32_t state_cm, state_asn0, state_asn, dram_ptr, dram_size, state_pc, state_current_pc;
+    uint32_t dpc_ll_watch_tag;       // value: monitored-page marker, not a CPU field offset
+    uint32_t state_cm, jit_mode_bit, state_asn0, state_asn, dram_ptr, dram_size, state_pc, state_current_pc;
     uint32_t fpen, exc_sum, fpcr, f_base;   // FP inline path: FPSTART gate + FPCR (rounding/INE) + f[] base (f[i] = f_base + i*8)
     // For chaining: the budget ceiling and the interrupt-poll flags the compiled epilogue
     // checks before jumping on; link_from is where the epilogue records a link-patch request.
@@ -246,9 +265,13 @@ public:
     uint32_t mm_stat, fault_va;   // pure HW_MFPR fault-reporting fields
   };
   void set_offsets(const JitOffsets& o) { m_off = o; }
-  // Configure before compiling: native stores embed whether they must use the
-  // serialized RAM-write helpers to invalidate another CPU's LL reservation.
-  void set_smp_memory(bool enabled) { m_smp_memory = enabled; }
+  // Set before compiling: CSystem's LL/SC buckets and watch map.
+  // Bucket layout: 64-byte stride, sequence at 0, byte lock at 8.
+  void set_smp_memory(bool enabled, void* buckets, void* watched_lines) {
+    m_smp_memory = enabled;
+    m_ll_buckets = reinterpret_cast<uintptr_t>(buckets);
+    m_ll_watch = reinterpret_cast<uintptr_t>(watched_lines);
+  }
 
   // Per-op helper function pointers
   struct HelperSet {
@@ -372,12 +395,13 @@ public:
   // ITB-generation counter for the indirect-chain staleness check (jit_indirect). Bumped on every
   // I-stream TB invalidate (tbia/tbiap/tbis, ACCESS_EXEC) ... those can remap a code page WITHOUT
   // flushing the JIT, so a chained block could run stale bytes.
-  enum BumpCause { kBumpRemap, kBumpTbia, kBumpTbiap, kBumpTbisGh, kBumpFlush, kBumpFlushAsm, kBumpEvict, kBumpReclaim, kBumpMode, kBumpCauses };
+  enum BumpCause { kBumpRemap, kBumpTbia, kBumpTbiap, kBumpTbis, kBumpFlush, kBumpFlushAsm, kBumpEvict, kBumpReclaim, kBumpMode, kBumpCauses };
   inline void     note_itb_invalidate(int cause = kBumpTbia) { ++m_itb_gen; ++m_vgen_cur; invalidate_links(cause); }
   // ASN switch: only global-source edges can hold a wrong-ASN successor.
   inline void     note_asn_change()     { invalidate_links_global(); }
-  // Cached chains bypass translation; revalidate their targets in the new mode.
-  inline void     note_mode_change()    { ++m_vgen_cur; invalidate_links(kBumpMode); }
+  // Native entry guards check CM; traces still need their links cleared.
+  inline void     note_mode_change()    { ++m_vgen_cur; invalidate_links_mode(); }
+  void authorize_native(JitBlock* block, uint32_t mode); // call after checking instruction access
   // Combined validation epoch, maintained (not summed) so the emitted chain guard reads ONE qword.
   inline uint64_t vgen() const          { return m_vgen_cur; }
 #ifdef JIT_STATS
@@ -407,11 +431,13 @@ public:
 #endif
   // Tagged request pointer: bit 1 = PatchSite (else LinkSlot[]), bit 0 = non-global source.
   // target_global: a global-source edge is ASN-sensitive only when its target is not global.
+  // same_page_body is used only by a static native edge within one full-VA 8 KiB page.
   void patch_edge(void* tagged, uint64_t tag, uint64_t vgen_bits, void* body,
-                  bool target_global = false);
+                  bool target_global = false, void* same_page_body = nullptr);
   void invalidate_links(int cause = kBumpFlush);          // every patched edge (epoch change)
+  void invalidate_links_mode();     // guarded native blocks survive privilege-mode changes
   void invalidate_links_global();   // only edges out of global-source blocks (ASN change)
-  // Single-page ITB invalidate: only edges whose target is on that page; no epoch bump.
+  // Clear links and jump-cache entries targeting this translation page.
   void invalidate_links_page(uint64_t virt_page);
 #ifdef JIT_STATS
   inline void note_interp_breaker(uint32_t ins) { m_rt_break_op[ins >> 26]++; }   // first interpreted op
@@ -469,6 +495,8 @@ private:
   // Compiled code embeds these values; the profile cannot change during reuse.
   const AlphaCPUProfile m_profile;
   bool m_smp_memory = false;
+  uintptr_t m_ll_buckets = 0;
+  uintptr_t m_ll_watch = 0;
   // Both caches are heap allocations (see the ctor), preferring large/huge pages: the block
   // cache is ~40 MB indexed by PC hash, effectively random access, so 4K pages thrash the
   JitBlock* m_blocks;
@@ -480,6 +508,7 @@ private:
   uint64_t m_itb_gen = 0; // current ITB generation (bumped on every I-stream TB invalidate)
   uint64_t m_flush_gen = 0; // current icache-flush generation (bumped by flush(); lazy IC_FLUSH/IMB)
   uint64_t m_vgen_cur = 0;  // maintained epoch = itb + flush + non-global-flush bumps 
+  uint64_t m_exec_epoch = 1; // permission/coherence changes, excluding CM switches
   JumpCacheEntry m_jcache[kJumpCacheEntries] = {};   // computed-jump cache (per CPU)
   uint64_t m_jc_gen = 1;    // every invalidate_links() retires all jump-cache entries
   JitEnterFn m_enter = nullptr;   // shared prologue (x64)
@@ -490,6 +519,11 @@ private:
 #endif
   std::unordered_set<void*> m_active_links;     // patched edges, bit 1 = PatchSite
   std::unordered_set<void*> m_global_src_links; // subset with global sources
+  // ITB matching ignores VA bits 63:48. Use the same mask for link lookup
+  // and TBIS, including sign-extended aliases.
+  static constexpr uint64_t translation_page_key(uint64_t address) {
+    return (address & UINT64_C(0x0000ffffffffe000)) >> 13;
+  }
   std::unordered_map<uint64_t, std::unordered_set<void*>> m_edges_by_page;   // target page -> patched edges
   static void clear_edge(void* key);            // un-patch a site or empty a LinkSlot array
   uint64_t m_code_bytes;  // compiled bytes since last reclaim (see flush())

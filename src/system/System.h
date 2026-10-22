@@ -149,9 +149,11 @@
 #include "i2c_spd.h"
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -334,6 +336,38 @@ public:
   u64           get_c_dim(int ProcNum);
   void          set_c_dim(int ProcNum, u64 value);
 
+  // Shared by JIT stores and LL/SC. 64-byte spacing avoids false sharing on
+  // 64-byte host cache lines. JIT code keeps these addresses until destruction.
+  struct alignas(64) LLBucket {
+    std::atomic<u64> sequence;
+    std::atomic<u8> lock;
+  };
+  static_assert(std::is_standard_layout<LLBucket>::value, "JIT LL bucket layout");
+  static_assert(sizeof(LLBucket) == 64, "JIT LL bucket stride");
+  static_assert(offsetof(LLBucket, sequence) == 0, "JIT LL sequence offset");
+  static_assert(offsetof(LLBucket, lock) == 8, "JIT LL lock offset");
+  static const u32 kLLBuckets = 65536;   // 64B-line hash; power of two
+  static_assert(kLLBuckets == 65536, "JIT LL bucket hash mask");
+  LLBucket*     ll_buckets() { return m_ll_buckets; }
+  static_assert(sizeof(std::atomic<u8>) == 1, "JIT LL watch byte layout");
+  std::atomic<u8>* ll_watch_data() { return m_ll_watch.get(); }
+  bool ll_page_watched(u64 phys) const {
+    return m_ll_watch_pages[(size_t)(phys >> 13)].load(std::memory_order_acquire) != 0;
+  }
+
+  // First LDx_L on a line waits for these scopes before enabling its watch.
+  // Native stores that skip the bucket lock must run inside a scope.
+  class JitExecutionGuard {
+  public:
+    JitExecutionGuard(CSystem* system, int cpuid);
+    ~JitExecutionGuard();
+    JitExecutionGuard(const JitExecutionGuard&) = delete;
+    JitExecutionGuard& operator=(const JitExecutionGuard&) = delete;
+  private:
+    CSystem* system;
+    int cpuid;
+  };
+
   u64           cpu_read_locked(int cpuid, u64 phys, int size_bits,
                                 CSystemComponent* source);   // LDx_L: read and reserve atomically
   void          cpu_write_ram(u64 phys, int size_bits, u64 value); // CPU store + reservation invalidation
@@ -429,10 +463,22 @@ private:
 
   // RAM stores and LL/SC share the same 64-byte-line buckets. A generation
   // change invalidates a reservation even when the stored value is unchanged.
-  static const u32 kLLBuckets = 65536;   // 64B-line hash; power of two
-  std::atomic<u64> m_ll_seq[kLLBuckets];
-  std::atomic<u8>  m_ll_lk[kLLBuckets];
+  LLBucket         m_ll_buckets[kLLBuckets];
   u64              m_ll_seq_snap[4];
+  // One watch byte per physical 64-byte line keeps hash aliases unmarked.
+  // Bits stay set and the map address stays fixed until RAM is reallocated.
+  std::unique_ptr<std::atomic<u8>[]> m_ll_watch;
+  std::unique_ptr<std::atomic<u8>[]> m_ll_watch_pages; // watched pages for write-DPC tags
+  struct alignas(64) LLJitCpu {
+    std::atomic<bool> active{false};
+    unsigned depth = 0; // CPU thread only; counts nested execution scopes
+  };
+  LLJitCpu m_ll_jit_cpu[4];
+  std::atomic<bool> m_ll_jit_freeze{false};
+  std::mutex m_ll_watch_setup;
+  void allocate_ll_watch(); // called only when the RAM allocation changes
+  void enter_ll_jit(int cpuid) noexcept;
+  void watch_ll_lines(int cpuid, u64 phys, int size_bits);
   void cpu_lock(int cpuid, u64 address, u64 value); // caller holds the RAM bucket
   void cpu_lock_bucket(u32 bucket);
 

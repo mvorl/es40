@@ -280,6 +280,10 @@ public:
   virtual void  run();    // Thread entry point
   void          execute();
   void          release_threads();
+  // Write-DPC watch flag; bit 3 does not overlap the scalar alignment bits.
+  static constexpr u64 kDpcLLWatchTag = U64(8);
+  u64           write_dpc_tag(u64 virt_page, u64 phys) const;
+  void          promote_write_dpc_page(u64 phys); // caller holds System's execution freeze
 
   void          set_PAL_BASE(u64 pb);
   virtual void  check_state();
@@ -607,9 +611,9 @@ private:
   static constexpr u64 kDpcMask    = (u64) kDpcEntries - 1;
   static inline u64 dpc_index(u64 va) { return (va >> 13) & kDpcMask; }
   struct SDataPageCache {
-    u64  virt_page;   // va & ~0x1FFF
+    u64  virt_page;   // va & ~0x1FFF; write row may include kDpcLLWatchTag
     u64  phys_base;   // pa & ~0x1FFF
-    u64  host_bias;   // dram_ptr + phys_base - virt_page for DRAM, 0 for MMIO (host = bias + va)
+    u64  host_bias;   // dram_ptr + phys_base - unmarked VA page; 0 for MMIO (host = bias + va)
     u8   cm;          // current mode (CM) at fill time
     u8   asn;         // data ASN (asn0) at fill time
     bool valid;
@@ -617,7 +621,13 @@ private:
   // Byte offset of the current mode's bank; compiled code adds it to the slot index, so a CM
   // change selects another bank instead of flushing. Kept in step by dpc_sync_bank().
   u32 m_dpc_bank = 0;
-  inline void dpc_sync_bank() { m_dpc_bank = (u32) (state.cm & 3) * kDpcEntries * (u32) sizeof(SDataPageCache); }
+  // Derived execution context, outside saved state.
+  u32 m_jit_mode_bit = 1;
+  inline void dpc_sync_bank() {
+    const u32 mode = (u32)(state.cm & 3);
+    m_dpc_bank = mode * kDpcEntries * (u32)sizeof(SDataPageCache);
+    m_jit_mode_bit = 1u << mode;
+  }
   inline SDataPageCache& dpc_slot(int rw, u64 va) { return data_page_cache[rw][((state.cm & 3) << kDpcBits) | dpc_index(va)]; }
   static_assert(sizeof(SDataPageCache) == 32, "DPC slots stay power-of-two for JIT shift indexing");
 

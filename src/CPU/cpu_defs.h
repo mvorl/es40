@@ -592,8 +592,8 @@ inline u64 fsqrt64(u64 asig, s32 exp)
          address space). */                                                     \
       int _dpc_rw = (flags) & ACCESS_WRITE;                                     \
       u64 _dpc_vp = _dpc_va & ~U64(0x1FFF);                                     \
-      SDataPageCache& _dpc = data_page_cache[_dpc_rw][dpc_index(_dpc_va)];      \
-      if (_dpc.virt_page == _dpc_vp                                             \
+      SDataPageCache& _dpc = dpc_slot(_dpc_rw, _dpc_va);                         \
+      if ((_dpc.virt_page & ~(_dpc_rw ? kDpcLLWatchTag : 0)) == _dpc_vp       \
           && _dpc.valid                                                         \
           && _dpc.cm  == state.cm                                              \
           && _dpc.asn == state.asn0) {                                          \
@@ -605,7 +605,9 @@ inline u64 fsqrt64(u64 asig, s32 exp)
         _dpc.host_bias = ((phys_address | U64(0x1FFF)) < dram_size)                 \
                          ? ((u64) dram_ptr + (phys_address & ~U64(0x1FFF))           \
                             - _dpc_vp) : 0;                                         \
-        _dpc.virt_page = _dpc.host_bias ? _dpc_vp : ~U64(0);                    \
+        _dpc.virt_page = _dpc.host_bias                                         \
+          ? (_dpc_rw ? write_dpc_tag(_dpc_vp, phys_address) : _dpc_vp)           \
+          : ~U64(0);                                                           \
         _dpc.cm        = state.cm;                                              \
         _dpc.asn       = state.asn0;                                            \
         _dpc.valid     = _dpc.host_bias != 0;                                   \

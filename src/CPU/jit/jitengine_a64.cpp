@@ -615,7 +615,9 @@ struct A64LinkProbe {
   uint64_t packed_vgen = 0;
   bool body_present = false;
 
-  // Epoch bumps proactively clear every patched LinkSlot
+  // Mapping/coherence changes invalidate affected links.
+  // Mode changes may keep them.
+  // Native target bodies check their per-mode execution proof on entry.
   constexpr bool matches(uint64_t target,
                          A64LinkVariantPolicy variant_policy,
                          bool live_pal_shadow) const noexcept {
@@ -2667,6 +2669,8 @@ struct A64EmitContext {
   bool pal_block;
   bool pal_shadow;
   bool smp_memory = false;
+  uintptr_t ll_buckets = 0;
+  uintptr_t ll_watch = 0;
   const A64BlockPlan* plan = nullptr;
   A64OpEmitReceipt receipt{};
   uint32_t receipt_index = UINT32_MAX;
@@ -3306,6 +3310,19 @@ static asmjit::Error emit_a64_dpc_tag_cmp(A64EmitContext& c, uint64_t tag_mask,
   return err != Error::kOk ? err : a.cmp(RA::kScratch0, RA::kScratch5);
 }
 
+// Recheck the loaded write tag with the LL-watch bit.
+//
+// Alignment bits in the expected tag remain intact, so a marked page cannot admit a misaligned store.
+static asmjit::Error emit_a64_dpc_watch_cmp(A64EmitContext& c)
+{
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  Error err = c.assembler.orr(RA::kScratch5, RA::kScratch5,
+                               imm(c.offsets.dpc_ll_watch_tag));
+  return err != Error::kOk ? err
+      : c.assembler.cmp(RA::kScratch0, RA::kScratch5);
+}
+
 static asmjit::Error emit_a64_dpc_bias(A64EmitContext& c, bool is_write)
 {
   const uint32_t row = is_write ? c.offsets.dpc_write_row : 0;
@@ -3320,13 +3337,26 @@ static constexpr uint64_t a64_dpc_tag_mask(int size_bits, bool force_align) noex
 }
 
 // Full probe: VA in kScratch4 -> hit leaves bias in kScratch3, else `slow`.
+// Writes to marked pages branch to watched; plain hits fall through.
 static asmjit::Error emit_a64_dpc_probe(A64EmitContext& c, int size_bits,
-    bool force_align, bool is_write, const asmjit::Label& slow)
+    bool force_align, bool is_write, const asmjit::Label& slow,
+    const asmjit::Label* watched = nullptr)
 {
+  using namespace asmjit;
   asmjit::Error err = emit_a64_dpc_slot(c);
   if (err == asmjit::Error::kOk)
     err = emit_a64_dpc_tag_cmp(c, a64_dpc_tag_mask(size_bits, force_align), is_write);
-  if (err == asmjit::Error::kOk) err = c.assembler.b_ne(slow);
+  if (watched) {
+    const Label plain = c.assembler.new_label();
+    if (err == Error::kOk) err = c.assembler.b_eq(plain);
+    if (err == Error::kOk) err = emit_a64_dpc_watch_cmp(c);
+    if (err == Error::kOk) err = c.assembler.b_ne(slow);
+    if (err == Error::kOk) err = emit_a64_dpc_bias(c, true);
+    if (err == Error::kOk) err = c.assembler.b(*watched);
+    if (err == Error::kOk) err = c.assembler.bind(plain);
+  } else if (err == Error::kOk) {
+    err = c.assembler.b_ne(slow);
+  }
   return err != asmjit::Error::kOk ? err : emit_a64_dpc_bias(c, is_write);
 }
 
@@ -3345,7 +3375,8 @@ static asmjit::Error emit_a64_dpc_rederive(A64EmitContext& c, const A64DecodedOp
 
 // Memop entry - (x64's reuse_dpc)
 static asmjit::Error emit_a64_dpc_enter(A64EmitContext& c, const A64DecodedOp& op,
-    int size_bits, bool force_align, bool is_write, const asmjit::Label& slow)
+    int size_bits, bool force_align, bool is_write, const asmjit::Label& slow,
+    const asmjit::Label* watched = nullptr)
 {
   using RA = CJitEngine::RegAlloc;
   using namespace asmjit;
@@ -3364,11 +3395,87 @@ static asmjit::Error emit_a64_dpc_enter(A64EmitContext& c, const A64DecodedOp& o
       err = emit_a64_add_offset(a, RA::kScratch4, RA::kScratch4, delta, RA::kScratch0);
     if (err == Error::kOk) err = emit_a64_dpc_tag_cmp(c, tag_mask, is_write);
     if (err == Error::kOk) err = a.b_eq(ready);   // same page + aligned: keep slot/bias
+    if (watched) {
+      if (err == Error::kOk) err = emit_a64_dpc_watch_cmp(c);
+      if (err == Error::kOk) err = a.b_eq(*watched); // marked hit keeps the same slot/bias
+    }
   } else {
     err = emit_a64_mem_va(c, op, force_align);
   }
-  if (err == Error::kOk) err = emit_a64_dpc_probe(c, size_bits, force_align, is_write, slow);
+  if (err == Error::kOk)
+    err = emit_a64_dpc_probe(c, size_bits, force_align, is_write, slow, watched);
   return err != Error::kOk ? err : a.bind(ready);
+}
+
+// Aligned RAM hits touch one LL/SC bucket. Preserve the VA, DPC slot/bias and forwarded value;
+// x14 holds the lock address until release, or zero when the exact physical line is unmonitored.
+// First LL sets the watch byte after draining active CPUs. Contention falls
+// back to the helper before the RAM write, with no bucket held.
+static asmjit::Error emit_a64_ram_store_lock(A64EmitContext& c,
+    const asmjit::Label& slow, bool physical)
+{
+  if (!c.smp_memory) return asmjit::Error::kOk;
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = c.assembler;
+  const Label ready = a.new_label();
+  Error err;
+  if (physical) {
+    err = a.mov(RA::kScratch5, RA::kScratch4);
+  } else {
+    err = a.add(RA::kScratch5, RA::kScratch3, RA::kScratch4);
+    if (err == Error::kOk)
+      err = emit_a64_load_cpu_u64(a, RA::kScratch0, c.offsets.dram_ptr);
+    if (err == Error::kOk)
+      err = a.sub(RA::kScratch5, RA::kScratch5, RA::kScratch0);
+  }
+  if (c.ll_watch) {
+    const Label watched = a.new_label();
+    if (err == Error::kOk) err = a.lsr(RA::kScratch0, RA::kScratch5, 6);
+    if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kScratch1, c.ll_watch);
+    if (err == Error::kOk) err = a.add(RA::kScratch0, RA::kScratch0, RA::kScratch1);
+    if (err == Error::kOk) err = a.ldarb(RA::kScratch0.w(), a64::ptr(RA::kScratch0));
+    if (err == Error::kOk) err = a.cbnz(RA::kScratch0.w(), watched);
+    if (err == Error::kOk) err = a.mov(RA::kScratch5, a64::xzr);
+    if (err == Error::kOk) err = a.b(ready);
+    if (err == Error::kOk) err = a.bind(watched);
+  }
+  // CSystem::LLBucket: 64-byte stride, sequence at 0, byte lock at 8.
+  if (err == Error::kOk) err = a.and_(RA::kScratch5, RA::kScratch5, imm(0x3fffc0));
+  if (err == Error::kOk) err = emit_a64_mov_u64(a, RA::kScratch0, c.ll_buckets + 8);
+  if (err == Error::kOk) err = a.add(RA::kScratch5, RA::kScratch5, RA::kScratch0);
+  const Label busy = a.new_label();
+  if (err == Error::kOk) err = a.ldaxrb(RA::kScratch0.w(), a64::ptr(RA::kScratch5));
+  if (err == Error::kOk) err = a.cbnz(RA::kScratch0.w(), busy);
+  if (err == Error::kOk) err = a.mov(RA::kScratch0.w(), imm(1));
+  if (err == Error::kOk)
+    err = a.stxrb(RA::kScratch1.w(), RA::kScratch0.w(), a64::ptr(RA::kScratch5));
+  if (err == Error::kOk) err = a.cbnz(RA::kScratch1.w(), slow);
+  if (err == Error::kOk) err = a.b(ready);
+  if (err == Error::kOk) err = a.bind(busy);
+  if (err == Error::kOk) err = a.clrex(imm(15));
+  if (err == Error::kOk) err = a.b(slow);
+  return err != Error::kOk ? err : a.bind(ready);
+}
+
+static asmjit::Error emit_a64_ram_store_unlock(A64EmitContext& c)
+{
+  if (!c.smp_memory) return asmjit::Error::kOk;
+  using RA = CJitEngine::RegAlloc;
+  using namespace asmjit;
+  a64::Assembler& a = c.assembler;
+  const Label done = a.new_label();
+  Error err = a.cbz(RA::kScratch5, done);   // unmonitored store acquired no bucket
+  // Bump the sequence while locked. STLRB orders the RAM and sequence writes
+  // before releasing the bucket.
+  if (err == Error::kOk) err = a.ldur(RA::kScratch0, a64::ptr(RA::kScratch5, -8));
+  if (err == Error::kOk) err = a.add(RA::kScratch0, RA::kScratch0, imm(1));
+  if (err == Error::kOk) err = a.stur(RA::kScratch0, a64::ptr(RA::kScratch5, -8));
+  // The bundled AsmJit's stlrb() alias selects STLLRB; request baseline STLRB
+  // explicitly so this release works on ARMv8.0 hosts too.
+  if (err == Error::kOk)
+    err = a.emit(a64::Inst::kIdStlrb, a64::wzr, a64::ptr(RA::kScratch5));
+  return err != Error::kOk ? err : a.bind(done);
 }
 #endif
 
@@ -3456,36 +3563,44 @@ static A64OpEmitReceipt emit_a64_mem_store(A64EmitContext& context,
   }
 
   const int size_bits = a64_int_mem_size_bits(op.opcode);
-  Error err;
-  if (context.smp_memory) {
-    // Reuse the cold stub's ABI, DPC rebuild and forwarded-value restoration.
-    err = emit_a64_mem_va(context, op, force_align);
-    if (err == Error::kOk) err = a.b(stub.slow);
-  } else {
-    err = emit_a64_dpc_enter(context, op, size_bits, force_align, true, stub.slow);
-  }
+  const Label watched = a.new_label();
+  Error err = emit_a64_dpc_enter(context, op, size_bits, force_align, true,
+                                 stub.slow, context.smp_memory ? &watched : nullptr);
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
   // Store value: pin, xzr for R31, or a reload from the regs[] slot.
   const A64GprRoute ra =
       a64_guest_gpr_read_route(context.regs, op.ra, context.pal_shadow);
-  a64::Gp val = RA::kScratch2;
-  switch (ra.kind) {
-    case A64GprRouteKind::kZero:   val = a64::xzr; break;
-    case A64GprRouteKind::kPinned: val = a64::x(static_cast<uint32_t>(ra.host)); break;
-    case A64GprRouteKind::kMemory:
-      if (context.prev_fwd == static_cast<int>(op.ra)) break;   // already in kScratch2
-      err = a.ldr(RA::kScratch2, a64::ptr(RA::kRegs,
-                  static_cast<int32_t>(ra.slot * sizeof(uint64_t))));
-      break;
-    default:
-      return {Error::kInvalidArgument, op.kind};
-  }
-  if (err != Error::kOk) return a64_completed_op_receipt(op, err);
-  switch (size_bits) {
-    case 64: err = a.str(val, a64::ptr(RA::kScratch3, RA::kScratch4)); break;
-    case 32: err = a.str(val.w(), a64::ptr(RA::kScratch3, RA::kScratch4)); break;
-    case 16: err = a.strh(val.w(), a64::ptr(RA::kScratch3, RA::kScratch4)); break;
-    default: err = a.strb(val.w(), a64::ptr(RA::kScratch3, RA::kScratch4)); break;
+  const auto emit_store = [&]() -> Error {
+    a64::Gp val = RA::kScratch2;
+    switch (ra.kind) {
+      case A64GprRouteKind::kZero:   val = a64::xzr; break;
+      case A64GprRouteKind::kPinned: val = a64::x(static_cast<uint32_t>(ra.host)); break;
+      case A64GprRouteKind::kMemory:
+        if (context.prev_fwd == static_cast<int>(op.ra)) break;   // already in kScratch2
+        {
+          const Error load_err = a.ldr(RA::kScratch2, a64::ptr(RA::kRegs,
+              static_cast<int32_t>(ra.slot * sizeof(uint64_t))));
+          if (load_err != Error::kOk) return load_err;
+        }
+        break;
+      default: return Error::kInvalidArgument;
+    }
+    switch (size_bits) {
+      case 64: return a.str(val, a64::ptr(RA::kScratch3, RA::kScratch4));
+      case 32: return a.str(val.w(), a64::ptr(RA::kScratch3, RA::kScratch4));
+      case 16: return a.strh(val.w(), a64::ptr(RA::kScratch3, RA::kScratch4));
+      default: return a.strb(val.w(), a64::ptr(RA::kScratch3, RA::kScratch4));
+    }
+  };
+  // Plain page tags skip the watch lookup and lock. First LL marks the page
+  // only after draining active CPUs.
+  err = emit_store();
+  if (context.smp_memory) {
+    if (err == Error::kOk) err = a.b(stub.join);
+    if (err == Error::kOk) err = a.bind(watched);
+    if (err == Error::kOk) err = emit_a64_ram_store_lock(context, stub.slow, false);
+    if (err == Error::kOk) err = emit_store();
+    if (err == Error::kOk) err = emit_a64_ram_store_unlock(context);
   }
   if (err == Error::kOk) err = a.bind(stub.join);
   if (err == Error::kOk) {
@@ -4520,7 +4635,6 @@ static A64OpEmitReceipt emit_a64_hw_st(A64EmitContext& context,
 
 #ifndef JIT_VERIFY
   const Label physical_slow = a.new_label(), physical_done = a.new_label();
-  if (context.smp_memory) err = a.b(physical_slow);   // serialize PAL stores with LL/SC too
   if (err == Error::kOk) err = emit_a64_load_cpu_u64(a, RA::kScratch0, context.offsets.dram_size);
   if (err == Error::kOk) err = a.cmp(RA::kScratch4, RA::kScratch0);
   if (err == Error::kOk) err = a.b_hs(physical_slow);
@@ -4529,6 +4643,7 @@ static A64OpEmitReceipt emit_a64_hw_st(A64EmitContext& context,
                   imm(~(static_cast<uint64_t>(size_bits / 8) - 1)));
   if (err == Error::kOk)
     err = emit_a64_load_cpu_u64(a, RA::kScratch3, context.offsets.dram_ptr);
+  if (err == Error::kOk) err = emit_a64_ram_store_lock(context, physical_slow, true);
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
 
   const A64GprRoute ra =
@@ -4547,6 +4662,7 @@ static A64OpEmitReceipt emit_a64_hw_st(A64EmitContext& context,
   if (err == Error::kOk)
     err = size_bits == 32 ? a.str(value.w(), a64::ptr(RA::kScratch3, RA::kScratch4))
                           : a.str(value, a64::ptr(RA::kScratch3, RA::kScratch4));
+  if (err == Error::kOk) err = emit_a64_ram_store_unlock(context);
   if (err == Error::kOk) err = a.b(physical_done);
   if (err == Error::kOk) err = a.bind(physical_slow);
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
@@ -4698,7 +4814,7 @@ static A64OpEmitReceipt emit_a64_fp_mem(A64EmitContext& context,
   Error err = emit_a64_mem_va(context, op, false);
   if (err != Error::kOk) return a64_completed_op_receipt(op, err);
 #ifndef JIT_VERIFY
-  if (israw && (isload || !context.smp_memory)) {
+  if (israw) {
     if (context.cold == nullptr) return {Error::kInvalidState, op.kind};
     A64ColdStub stub{};
     stub.slow = a.new_label();
@@ -4706,6 +4822,7 @@ static A64OpEmitReceipt emit_a64_fp_mem(A64EmitContext& context,
     stub.op = op;
     stub.index = index;
     stub.kind = A64ColdStub::kFpMem;
+    const Label watched = a.new_label();
 
     err = emit_a64_load_cpu_u8(a, RA::kScratch3.w(), context.offsets.fpen, false);
     if (err == Error::kOk) err = a.cbz(RA::kScratch3.w(), stub.slow);
@@ -4713,7 +4830,8 @@ static A64OpEmitReceipt emit_a64_fp_mem(A64EmitContext& context,
     if (err == Error::kOk)
       err = emit_a64_store_cpu_u64(a, RA::kScratch0, context.offsets.exc_sum);
     if (err == Error::kOk)
-      err = emit_a64_dpc_probe(context, 64, false, !isload, stub.slow);
+      err = emit_a64_dpc_probe(context, 64, false, !isload, stub.slow,
+          !isload && context.smp_memory ? &watched : nullptr);
     if (err != Error::kOk) return a64_completed_op_receipt(op, err);
     if (isload) {
       err = a.ldr(RA::kScratch2, a64::ptr(RA::kScratch3, RA::kScratch4));
@@ -4723,6 +4841,16 @@ static A64OpEmitReceipt emit_a64_fp_mem(A64EmitContext& context,
       err = emit_a64_load_f_bits(context, RA::kScratch2, op.ra);
       if (err == Error::kOk)
         err = a.str(RA::kScratch2, a64::ptr(RA::kScratch3, RA::kScratch4));
+      if (context.smp_memory) {
+        if (err == Error::kOk) err = a.b(stub.join);
+        if (err == Error::kOk) err = a.bind(watched);
+        // Load before taking the bucket: large CPU-field offsets may use x14.
+        if (err == Error::kOk) err = emit_a64_load_f_bits(context, RA::kScratch2, op.ra);
+        if (err == Error::kOk) err = emit_a64_ram_store_lock(context, stub.slow, false);
+        if (err == Error::kOk)
+          err = a.str(RA::kScratch2, a64::ptr(RA::kScratch3, RA::kScratch4));
+        if (err == Error::kOk) err = emit_a64_ram_store_unlock(context);
+      }
     }
     if (err == Error::kOk) err = a.bind(stub.join);
     if (err == Error::kOk) context.cold->push_back(stub);
@@ -5611,7 +5739,8 @@ static asmjit::Error emit_a64_link_slots_probe(asmjit::a64::Assembler& a,
     if (err != Error::kOk) return err;
   }
 
-  // Epoch changes proactively clear every patched LinkSlot 
+  // Mapping/code invalidation clears links. On a mode change, keep links and
+  // let native entries check CM.
   for (uint32_t slot = 0; slot < CJitEngine::kLinkSlots; ++slot) {
     const Label next = slot + 1 < CJitEngine::kLinkSlots
         ? a.new_label() : miss;
@@ -6008,11 +6137,12 @@ static asmjit::Error emit_a64_direct_patch_cold(A64EmitContext& context,
   }
   err = a.align(AlignMode::kData, 8);
   if (err != Error::kOk) return err;
-  for (const A64DirectExit& x : exits) {                // PatchSite { site, stub, tag }
+  for (const A64DirectExit& x : exits) {                // PatchSite { site, stub, tag, source_tag }
     err = a.bind(x.desc);
     if (err == Error::kOk) err = a.embed_label(x.site);
     if (err == Error::kOk) err = a.embed_label(x.stub);
     if (err == Error::kOk) err = a.embed_uint64(x.pc);
+    if (err == Error::kOk) err = a.embed_uint64(context.start_pc);
     if (err != Error::kOk) return err;
   }
   return Error::kOk;
@@ -6328,6 +6458,8 @@ void CJitEngine::compile_block(JitBlock* b, const AlphaInstructionSource& source
   b->compiled = true;
   b->code = nullptr;
   b->jit_body = nullptr;
+  b->jit_body_same_page = nullptr;
+  b->exec_proof = nullptr;
   b->prefix_len = 0;
   b->body_off = 0;
   b->src_sum = 0;
@@ -6434,7 +6566,32 @@ void CJitEngine::compile_block(JitBlock* b, const AlphaInstructionSource& source
 
   asmjit::Label done = a.new_label();
   asmjit::Label body = a.new_label();
+  asmjit::Label body_same_page = a.new_label();
+  asmjit::Label exec_proof = a.new_label();
   if (a.bind(body) != asmjit::Error::kOk) return;
+  if (!pal_block) {
+    // Check instruction access for CM. Static same-page branches enter below
+    // this guard; their source checked the same 8 KiB page. The mask lives with
+    // the generated code, so reusing a cache slot cannot overwrite it.
+    const asmjit::Label authorized = a.new_label();
+    if (emit_a64_load_cpu_u32(a, RegAlloc::kScratch0.w(), m_off.jit_mode_bit)
+        != asmjit::Error::kOk) return;
+    if (a.adr(RegAlloc::kScratch1, exec_proof) != asmjit::Error::kOk) return;
+    if (a.ldr(RegAlloc::kScratch1.w(), asmjit::a64::ptr(RegAlloc::kScratch1,
+              static_cast<int32_t>(offsetof(NativeExecProof, mode_mask))))
+        != asmjit::Error::kOk) return;
+    if (a.tst(RegAlloc::kScratch1.w(), RegAlloc::kScratch0.w())
+        != asmjit::Error::kOk) return;
+    if (a.b_ne(authorized)
+        != asmjit::Error::kOk) return;
+    if (emit_a64_mov_u64(a, RegAlloc::kNextPc, b->tag) != asmjit::Error::kOk)
+      return;
+    if (emit_a64_store_cpu_u64(a, RegAlloc::kNextPc, m_off.state_pc)
+        != asmjit::Error::kOk) return;
+    if (a.b(done) != asmjit::Error::kOk) return;
+    if (a.bind(authorized) != asmjit::Error::kOk) return;
+  }
+  if (a.bind(body_same_page) != asmjit::Error::kOk) return;
 #ifdef JIT_REGPROF
   // REGPROF: count every execution.
   if (emit_a64_mov_u64(a, RegAlloc::kScratch0,
@@ -6454,6 +6611,8 @@ void CJitEngine::compile_block(JitBlock* b, const AlphaInstructionSource& source
   A64EmitContext emit_context{a, m_off, m_profile, helpers, regalloc, done, b->tag,
                               pal_block, b->pal_shadow};
   emit_context.smp_memory = m_smp_memory;
+  emit_context.ll_buckets = m_ll_buckets;
+  emit_context.ll_watch = m_ll_watch;
   emit_context.plan = &plan;
   // Direct exits: non-PAL fall-throughs and integer branches. Chaining is verify-blind.
   bool direct_patch = false;
@@ -6480,7 +6639,8 @@ void CJitEngine::compile_block(JitBlock* b, const AlphaInstructionSource& source
       ? emit_a64_direct_patch_tail(emit_context, exit, terminator_ins, direct_exits)
       : chain.eligible()
       ? emit_a64_direct_chain_tail(a, m_off, chain, &b->link[0],
-                                  b->tag, body, done, b->asm_global)
+                                  b->tag, pal_block ? body : body_same_page,
+                                  done, b->asm_global)
       : emit_a64_indirect_chain_tail(a, m_off, helpers, regalloc, indirect,
                                     &b->link[0], done, b->asm_global,
                                     A64JumpCache{&m_jcache[0], &m_jc_gen,
@@ -6525,6 +6685,13 @@ void CJitEngine::compile_block(JitBlock* b, const AlphaInstructionSource& source
   if (emit_a64_direct_patch_cold(emit_context, direct_exits, b->asm_global)
       != asmjit::Error::kOk) return;
 #endif
+  if (!pal_block) {
+    if (a.align(asmjit::AlignMode::kData, alignof(NativeExecProof))
+        != asmjit::Error::kOk) return;
+    if (a.bind(exec_proof) != asmjit::Error::kOk) return;
+    for (size_t offset = 0; offset < sizeof(NativeExecProof); offset += sizeof(uint64_t))
+      if (a.embed_uint64(0) != asmjit::Error::kOk) return;
+  }
   if (a.finalize() != asmjit::Error::kOk) return;
 
   const A64PendingPublication pending = prepare_a64_block_publication(
@@ -6573,6 +6740,13 @@ void CJitEngine::compile_block(JitBlock* b, const AlphaInstructionSource& source
 
   void* const jit_body = static_cast<void*>(
       reinterpret_cast<uint8_t*>(reinterpret_cast<void*>(fn)) + committed.body_off);
+  b->jit_body_same_page = pal_block ? nullptr : static_cast<void*>(
+      reinterpret_cast<uint8_t*>(reinterpret_cast<void*>(fn))
+      + code.label_offset(body_same_page));
+  if (!pal_block)
+    b->exec_proof = reinterpret_cast<NativeExecProof*>(
+        reinterpret_cast<uint8_t*>(reinterpret_cast<void*>(fn))
+        + code.label_offset(exec_proof));
   b->body_off = static_cast<uint32_t>(committed.body_off);
   b->src_sum = committed.source_hash;
   b->hash_len = committed.hash_len;

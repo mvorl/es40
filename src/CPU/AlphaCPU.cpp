@@ -706,7 +706,9 @@ void CAlphaCPU::init()
 		o.dpc_mask = (uint32_t)kDpcMask;
 		o.dpc_write_row = (uint32_t)((char*)&data_page_cache[1][0] - (char*)&data_page_cache[0][0]);
 		o.dpc_bank = (uint32_t)((char*)&m_dpc_bank - (char*)this);
+		o.dpc_ll_watch_tag = (uint32_t)kDpcLLWatchTag;
 		o.state_cm = (uint32_t)((char*)&state.cm - (char*)this);
+		o.jit_mode_bit = (uint32_t)((char*)&m_jit_mode_bit - (char*)this);
 		o.state_asn0 = (uint32_t)((char*)&state.asn0 - (char*)this);
 		o.state_asn = (uint32_t)((char*)&state.asn - (char*)this);
 		o.dram_ptr = (uint32_t)((char*)&dram_ptr - (char*)this);
@@ -1175,9 +1177,11 @@ void CAlphaCPU::jit_run(int budget)
 {
 	if (budget <= 0)
 		return;
+	CSystem::JitExecutionGuard execution(cSystem, state.iProcNum);
 	// CPU registration is complete by execution time, unlike construction of
 	// CPU0's JIT. SMP stores must use the shared RAM reservation protocol.
-	if (m_jit) m_jit->set_smp_memory(cSystem->get_cpu_num() > 1);
+	if (m_jit) m_jit->set_smp_memory(cSystem->get_cpu_num() > 1, cSystem->ll_buckets(),
+		cSystem->ll_watch_data());
 
 	// Relative to the caller's budget, so no magic number here.
 	if (m_jit && idle_rule != RULE_NONE && idle_spin_min_instr == 0)
@@ -1358,6 +1362,7 @@ void CAlphaCPU::jit_run(int budget)
 #ifdef JIT_STATS
 				const uint64_t _trace_t0 = jit_rdtsc();
 #endif
+				dpc_sync_bank();
 				const u32 done = ((CJitEngine::JitFn)t->code)(this, &state.r[0]);
 #ifdef JIT_STATS
 				const uint64_t _trace_tsc = jit_rdtsc() - _trace_t0;
@@ -1403,6 +1408,7 @@ void CAlphaCPU::jit_run(int budget)
 			&& (!(b->tag & 1) || b->pal_shadow == (bool)state.sde))
 		{
 			b->vgen = m_jit->vgen();   // phys validated + lookup proved flush-fresh: refresh the chain epoch
+			m_jit->authorize_native(b, (uint32_t)state.cm);
 #ifdef JIT_TRACES
 			// after a block has dispatched 8x, promote it to a single-block trace (a
 			// future trace head). Dispatch-counted for now -- it undercounts chained loops, but they
@@ -1473,7 +1479,12 @@ void CAlphaCPU::jit_run(int budget)
 				  blist[nb++] = succ; cur = succ;
 				}
 				if (!TraceLoopsOnly || closes)
+				{
+					// Compilation can replace the trace that owns this pending exit cache.
+					// Don't publish link with its previous source identity.
+					m_link_from = nullptr;
 					m_jit->compile_trace(m_jit->trace_slot(start_virt), blist, nb, sources, hs);
+				}
 			}
 #endif   // JIT_TRACES
 #ifdef JIT_VERIFY
@@ -1741,6 +1752,7 @@ void CAlphaCPU::jit_run(int budget)
 				m_jit_slog_i = 0;
 				m_jit_slog_n = sn;
 				dpc_sync_bank();
+				m_jit->authorize_native(b, (uint32_t)state.cm); // replay uses the restored mode
 				const u32 done = m_jit->run_block(this, jr, b);   // also writes state.pc (the JIT's next PC)
 				m_jit_vreplay = false;
 				if (!vtr && done == b->prefix_len)
@@ -1821,6 +1833,7 @@ void CAlphaCPU::jit_run(int budget)
 						memcpy(jr_t, snap, sizeof(jr_t));
 						m_jit_vreplay = true; m_jit_vmismatch = false; m_jit_vlog_i = 0; m_jit_slog_i = 0;
 						m_jit_vlog_n = vn; m_jit_slog_n = sn;
+						dpc_sync_bank();
 						const u32 done_t = ((CJitEngine::JitFn)tr->code)(this, jr_t);
 						m_jit_vreplay = false;
 							if (done_t == n_interp) {
@@ -1927,7 +1940,8 @@ void CAlphaCPU::jit_run(int budget)
 			// Tag-keyed: an existing entry for this target MUST be refreshed in place.
 			if (m_link_from) { m_jit->note_link_bail();
 				m_jit->patch_edge(m_link_from, b->tag,
-					b->vgen | (b->pal_shadow ? (U64(1) << 63) : 0), b->jit_body, b->asm_global);
+					b->vgen | (b->pal_shadow ? (U64(1) << 63) : 0), b->jit_body, b->asm_global,
+					b->jit_body_same_page);
 				m_link_from = nullptr; }
 			m_jit_budget = budget;   // ceiling for compiled chains (epilogue stops at it)
 #ifdef JIT_STATS
@@ -2080,7 +2094,8 @@ int CAlphaCPU::jit_unaligned_rw(CAlphaCPU* cpu, u64 va, int size_bits, u32 ins, 
 		if (k && ((va ^ va_last) >> 13) == 0) { phys[1] = phys[0] + n - 1; break; }
 		const u64 vp = a & ~U64(0x1FFF);
 		SDataPageCache& dpc = cpu->dpc_slot(rw, a);
-		if (dpc.virt_page == vp && dpc.valid && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
+		if ((dpc.virt_page & ~(rw ? kDpcLLWatchTag : 0)) == vp
+			&& dpc.valid && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
 			phys[k] = dpc.phys_base | (a & U64(0x1FFF));
 		else
 		{
@@ -2088,7 +2103,8 @@ int CAlphaCPU::jit_unaligned_rw(CAlphaCPU* cpu, u64 va, int size_bits, u32 ins, 
 			dpc.phys_base = phys[k] & ~U64(0x1FFF);
 			dpc.host_bias = ((phys[k] | U64(0x1FFF)) < cpu->dram_size)
 				? ((u64)cpu->dram_ptr + (phys[k] & ~U64(0x1FFF)) - vp) : 0;
-			dpc.virt_page = dpc.host_bias ? vp : ~U64(0);
+			dpc.virt_page = dpc.host_bias
+				? (rw ? cpu->write_dpc_tag(vp, phys[k]) : vp) : ~U64(0);
 			dpc.cm = (u8)cpu->state.cm;
 			dpc.asn = (u8)cpu->state.asn0;
 			dpc.valid = dpc.host_bias != 0;
@@ -2622,14 +2638,15 @@ int CAlphaCPU::jit_write(CAlphaCPU* cpu, u64 va, u64 descr, u64 value)
 	u64 phys;
 	const u64 vp = va & ~U64(0x1FFF);
 	SDataPageCache& dpc = cpu->dpc_slot(1, va);
-	if (dpc.virt_page == vp && dpc.valid && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
+	if ((dpc.virt_page & ~kDpcLLWatchTag) == vp
+		&& dpc.valid && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
 	{
 		phys = dpc.phys_base | (va & U64(0x1FFF));
 	}
 	else
 	{
 #if defined(JIT_REGPROF) && defined(_WIN32)
-		cpu->m_dpc_miss[dpc.virt_page == ~U64(0) ? 0 : dpc.virt_page != vp ? 1 : 2]++;
+		cpu->m_dpc_miss[dpc.virt_page == ~U64(0) ? 0 : (dpc.virt_page & ~kDpcLLWatchTag) != vp ? 1 : 2]++;
 #endif
 		if (ins && !cpu->m_jit_vreplay)
 		{
@@ -2647,7 +2664,7 @@ int CAlphaCPU::jit_write(CAlphaCPU* cpu, u64 va, u64 descr, u64 value)
 		dpc.phys_base = phys & ~U64(0x1FFF);
 		dpc.host_bias = ((phys | U64(0x1FFF)) < cpu->dram_size)
 			? ((u64)cpu->dram_ptr + (phys & ~U64(0x1FFF)) - vp) : 0;
-		dpc.virt_page = dpc.host_bias ? vp : ~U64(0);
+		dpc.virt_page = dpc.host_bias ? cpu->write_dpc_tag(vp, phys) : ~U64(0);
 		dpc.cm = (u8)cpu->state.cm;
 		dpc.asn = (u8)cpu->state.asn0;
 		dpc.valid = dpc.host_bias != 0;
@@ -2720,14 +2737,15 @@ u64 CAlphaCPU::jit_stc(CAlphaCPU* cpu, u64 va, u64 descr, u64 value)
 	u64 phys;
 	const u64 vp = va & ~U64(0x1FFF);
 	SDataPageCache& dpc = cpu->dpc_slot(1, va);
-	if (dpc.virt_page == vp && dpc.valid && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
+	if ((dpc.virt_page & ~kDpcLLWatchTag) == vp
+		&& dpc.valid && dpc.cm == cpu->state.cm && dpc.asn == cpu->state.asn0)
 	{
 		phys = dpc.phys_base | (va & U64(0x1FFF));
 	}
 	else
 	{
 #if defined(JIT_REGPROF) && defined(_WIN32)
-		cpu->m_dpc_miss[dpc.virt_page == ~U64(0) ? 0 : dpc.virt_page != vp ? 1 : 2]++;
+		cpu->m_dpc_miss[dpc.virt_page == ~U64(0) ? 0 : (dpc.virt_page & ~kDpcLLWatchTag) != vp ? 1 : 2]++;
 #endif
 		const auto access = cpu->m_profile.mmu_address.access(*cpu, ACCESS_WRITE);
 		const int i = cpu->FindTBEntry(va, ACCESS_WRITE, access.asn);
@@ -2739,7 +2757,7 @@ u64 CAlphaCPU::jit_stc(CAlphaCPU* cpu, u64 va, u64 descr, u64 value)
 		dpc.phys_base = phys & ~U64(0x1FFF);
 		dpc.host_bias = ((phys | U64(0x1FFF)) < cpu->dram_size)
 			? ((u64)cpu->dram_ptr + (phys & ~U64(0x1FFF)) - vp) : 0;
-		dpc.virt_page = dpc.host_bias ? vp : ~U64(0);
+		dpc.virt_page = dpc.host_bias ? cpu->write_dpc_tag(vp, phys) : ~U64(0);
 		dpc.cm = (u8)cpu->state.cm;
 		dpc.asn = (u8)cpu->state.asn0;
 		dpc.valid = dpc.host_bias != 0;
@@ -2807,7 +2825,8 @@ void* CAlphaCPU::jit_indirect_impl(CAlphaCPU* cpu, u64 target, void* link_cache)
 	auto hit = [&](void* body) -> void* {
 		if (link_cache)
 			cpu->m_jit->patch_edge(link_cache, target,
-				cpu->m_jit->vgen() | (b->pal_shadow ? (U64(1) << 63) : 0), body, b->asm_global);
+				cpu->m_jit->vgen() | (b->pal_shadow ? (U64(1) << 63) : 0), body, b->asm_global,
+				b->jit_body_same_page);
 		cpu->m_jit->jcache_fill(target, b->pal_shadow, body, (u32)cpu->state.asn);
 		cpu->m_jit->note_jmp_hit();
 		return body;
@@ -2818,8 +2837,7 @@ void* CAlphaCPU::jit_indirect_impl(CAlphaCPU* cpu, u64 target, void* link_cache)
 		// risk. lookup selected the body whose register-bank mapping matches the live SDE state.
 		return hit(b->jit_body);
 	}
-	// Native target: validate the live mapping every time (a single-page ITB
-	// invalidate no longer bumps the epoch), without fetching or delivering faults.
+	// Recheck the native mapping here; the dispatcher handles faults.
 	const u64 gen = cpu->m_jit->vgen();
 	const auto mapping = cpu->probe_instruction_source(target & ~U64(3));
 	if (!mapping.valid) return nullptr;   // let the dispatcher fault it in
@@ -2834,6 +2852,7 @@ void* CAlphaCPU::jit_indirect_impl(CAlphaCPU* cpu, u64 target, void* link_cache)
 		return nullptr;
 	}
 	b->vgen = gen;                                             // re-validated -> fast path henceforth
+	cpu->m_jit->authorize_native(b, (uint32_t)cpu->state.cm);
 	return hit(b->jit_body);
 }
 #endif
@@ -2920,6 +2939,28 @@ void CAlphaCPU::count_down_irq_timers(int step)
 	state.check_timers = timers_pending;
 }
 
+u64 CAlphaCPU::write_dpc_tag(u64 virt_page, u64 phys) const
+{
+#ifdef ES40_JIT
+	return virt_page | (cSystem->ll_page_watched(phys) ? kDpcLLWatchTag : 0);
+#else
+	(void)phys;
+	return virt_page;
+#endif
+}
+
+void CAlphaCPU::promote_write_dpc_page(u64 phys)
+{
+#ifdef ES40_JIT
+	const u64 page = phys & ~U64(0x1FFF);
+	for (auto& dpc : data_page_cache[1])
+		if (dpc.virt_page != ~U64(0) && dpc.valid && dpc.phys_base == page)
+			dpc.virt_page |= kDpcLLWatchTag;
+#else
+	(void)phys;
+#endif
+}
+
 /**
  * \brief Called each clock-cycle.
  *
@@ -2931,6 +2972,11 @@ void CAlphaCPU::count_down_irq_timers(int step)
  **/
 void CAlphaCPU::execute()
 {
+#ifdef ES40_JIT
+	// Debugger/firmware stepping can also fill the write DPC, so it must take
+	// part in the LL watch handshake even when called outside jit_run.
+	CSystem::JitExecutionGuard execution(cSystem, state.iProcNum);
+#endif
 	u32 ins;
 	int i = 0;
 	u64 phys_address;
@@ -4550,14 +4596,17 @@ void CAlphaCPU::add_tb(u64 virt, u64 pte_phys, u64 pte_flags, int flags, int asn
 			i = h;
 	}
 
-#ifdef ES40_JIT
-	// A same-(virt,asn) ITB overwrite with a DIFFERENT physical is a code-page remap performed
-	// WITHOUT a separate TBIS; chained JIT blocks compiled from the old mapping must re-validate, 
-	// so bump the generation. A next_tb eviction (i reassigned below) replaces a DIFFERENT vpage 
-	// (not a remap of this one) and must NOT bump.
-	const bool itb_remap = (t == TB_INDEX_ITB) && (i >= 0)
-		&& (state.tb[t][i].phys != fill.phys);
-#endif
+	// Check the ITB if the hint missed; an existing mapping may have different
+	// permissions even when the physical address is unchanged.
+	if (t == TB_INDEX_ITB && i < 0)
+		i = FindTBEntry(fill.virt, flags, asn);
+	const bool itb_changed = (t == TB_INDEX_ITB) && (i >= 0)
+		&& (state.tb[t][i].phys != fill.phys
+			|| state.tb[t][i].match_mask != fill.match_mask
+			|| state.tb[t][i].keep_mask != fill.keep_mask
+			|| state.tb[t][i].asm_bit != fill.asm_bit
+			|| memcmp(state.tb[t][i].fault, fill.fault, sizeof(fill.fault)) != 0
+			|| memcmp(state.tb[t][i].access, fill.access, sizeof(fill.access)) != 0);
 
 	if (i < 0)
 	{
@@ -4591,8 +4640,16 @@ void CAlphaCPU::add_tb(u64 virt, u64 pte_phys, u64 pte_flags, int flags, int asn
 	m_tb_idx[t][(fill.virt >> 13) & 255] = (u16)(i + 1);
 
 #ifdef ES40_JIT
-	if (itb_remap && m_jit) m_jit->note_itb_invalidate(CJitEngine::kBumpRemap);   // code page remapped in place -> chains re-validate
+	if (itb_changed && m_jit) m_jit->note_itb_invalidate(CJitEngine::kBumpRemap);
 #endif
+	if (itb_changed)
+	{
+		// Keep cached instruction bytes until IMB, but discard derived access proofs.
+		// Recheck same-physical permission change on next fetch.
+		memset(icache_valid_modes, 0, sizeof(icache_valid_modes));
+		break_seq_icache();
+		state.rem_ins_in_page = 0;
+	}
 
 #if defined(DEBUG_TB_)
 #if defined(IDB)
@@ -4691,8 +4748,14 @@ void CAlphaCPU::tbia(int flags)
 	state.last_found_tb[t][1] = 0;
 	state.next_tb[t] = 0;
 	if (t == TB_INDEX_DATA) flush_data_page_cache();
+	else
+	{
+		memset(icache_valid_modes, 0, sizeof(icache_valid_modes));
+		break_seq_icache();
+		state.rem_ins_in_page = 0;
+	}
 #ifdef ES40_JIT
-	else if (m_jit) m_jit->note_itb_invalidate(CJitEngine::kBumpTbia);   // whole ITB cleared -> indirect chains re-validate phys
+	if (t == TB_INDEX_ITB && m_jit) m_jit->note_itb_invalidate(CJitEngine::kBumpTbia);
 #endif
 }
 
@@ -4716,8 +4779,14 @@ void CAlphaCPU::tbiap(int flags)
 #endif
 
 	if (t == TB_INDEX_DATA) flush_data_page_cache();
+	else
+	{
+		memset(icache_valid_modes, 0, sizeof(icache_valid_modes));
+		break_seq_icache();
+		state.rem_ins_in_page = 0;
+	}
 #ifdef ES40_JIT
-	else if (m_jit) m_jit->note_itb_invalidate(CJitEngine::kBumpTbiap);   // process ITB entries cleared -> chains re-validate phys
+	if (t == TB_INDEX_ITB && m_jit) m_jit->note_itb_invalidate(CJitEngine::kBumpTbiap);
 #endif
 }
 
@@ -4742,17 +4811,14 @@ void CAlphaCPU::tbis(u64 virt, int flags)
 	int i = FindTBEntry(virt, flags);
 	if (i >= 0)
 		state.tb[t][i].valid = false;
+	memset(icache_valid_modes, 0, sizeof(icache_valid_modes));
+	break_seq_icache();
+	state.rem_ins_in_page = 0;
 #ifdef ES40_JIT
-	// Chains into this page must re-validate their physical before running again, cached
-	// entry or not. One 8 KB page clears only the edges targeting it; a granularity-hint
-	// entry spans several pages, so that case keeps the epoch bump.
-	if (m_jit)
-	{
-		if (i >= 0 && state.tb[t][i].match_mask != U64(0x0000ffffffffe000))
-			m_jit->note_itb_invalidate(CJitEngine::kBumpTbisGh);
-		else
-			m_jit->invalidate_links_page(virt);
-	}
+	// Native permission proofs can outlive the ITB entry that supplied them.
+	// Its original granularity hint may cover other 8 KiB pages even if today's matching entry is absent or smaller.
+	// Retire all incoming links until those original translation extents are tracked with the retained proofs.
+	if (m_jit) m_jit->note_itb_invalidate(CJitEngine::kBumpTbis);
 #endif
 }
 

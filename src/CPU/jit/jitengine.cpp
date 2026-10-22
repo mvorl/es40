@@ -243,13 +243,15 @@ CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uin
       victim = &set[rr];
       rr = (uint8_t) ((rr + 1) & (kWays - 1));
     }
-    // Evicted code still embeds &link[]; another ASN's occupant must not feed it.
-    if (victim->code && (victim->asm_global || asm_global || victim->asn != asn)) {
+  }
+  // Old code still uses &link[]. If either block is global or the ASN changes,
+  // clear incoming links before reusing the array. Otherwise old code could
+  // follow the replacement's successors.
+  if (victim->code && (victim->asm_global || asm_global || victim->asn != asn)) {
 #ifdef JIT_STATS
-      m_evict_link_clears++;
+    m_evict_link_clears++;
 #endif
-      invalidate_links(kBumpEvict);
-    }
+    invalidate_links(kBumpEvict);
   }
   JitBlock& b = *victim;
   b.vgen = m_vgen_cur;
@@ -278,6 +280,8 @@ CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uin
   b.flush_gen = m_flush_gen;
   b.code = nullptr;
   b.jit_body = nullptr;   // not compiled yet -> cached links to us must miss until compile
+  b.jit_body_same_page = nullptr;
+  b.exec_proof = nullptr;
   for (int i = 0; i < kLinkSlots; ++i) {
     b.link[i].tag = ~uint64_t(0); b.link[i].vgen = 0; b.link[i].body = nullptr;
   }   // no cached successors yet
@@ -466,6 +470,8 @@ void CJitEngine::reclaim_code()
     m_blocks[i].valid = false;
     m_blocks[i].code = nullptr;
     m_blocks[i].jit_body = nullptr;
+    m_blocks[i].jit_body_same_page = nullptr;
+    m_blocks[i].exec_proof = nullptr;
     m_blocks[i].compiled = false;
     // Link snapshots hold raw body pointers into the runtime just freed. The epoch alone can't be
     // trusted.
@@ -507,6 +513,8 @@ void CJitEngine::flush_non_global()
     if (!m_blocks[i].asm_global) {
       m_blocks[i].valid = false;
       m_blocks[i].jit_body = nullptr;
+      // Retained code still owns exec_proof and jit_body_same_page.
+      // Neither is exposed to an incoming edge until revalidation restores jit_body.
     }
   }
   for (int i = 0; i < kTraceEntries; ++i) {   // a trace spanning any !asm_global segment depends on a soft-dropped block -> drop it too
@@ -538,6 +546,26 @@ static bool write_site(CJitEngine::PatchSite* s, const uint8_t* target)
 #endif
 }
 
+void CJitEngine::authorize_native(JitBlock* block, uint32_t mode)
+{
+  if ((block->tag & 1) || !block->exec_proof) return;
+  NativeExecProof* const proof = block->exec_proof;
+  const uint32_t mode_bit = uint32_t{1} << (mode & 3);
+  if (proof->epoch == m_exec_epoch && (proof->mode_mask & mode_bit)) return;
+#if defined(ES40_JIT_A64)
+  // The permission mask is stored in JIT memory, so writes need the W^X scope.
+  asmjit::VirtMem::ProtectJitReadWriteScope scope(proof, sizeof(*proof));
+#endif
+  // Invalidation clears incoming links and jump-cache entries. The next entry
+  // checks the mapping before calling here, so generated code only tests the
+  // mode bit. Discard the old mode bits when the epoch changes.
+  if (proof->epoch != m_exec_epoch) {
+    proof->mode_mask = 0;
+    proof->epoch = m_exec_epoch;
+  }
+  proof->mode_mask |= mode_bit;
+}
+
 void CJitEngine::clear_edge(void* key)
 {
   if ((uintptr_t) key & 2) {
@@ -554,7 +582,7 @@ void CJitEngine::clear_edge(void* key)
 }
 
 void CJitEngine::patch_edge(void* tagged, uint64_t tag, uint64_t vgen_bits, void* body,
-                            bool target_global)
+                            bool target_global, void* same_page_body)
 {
   const uintptr_t raw = (uintptr_t) tagged;
   const bool global_src = (raw & 1) == 0;
@@ -563,7 +591,12 @@ void CJitEngine::patch_edge(void* tagged, uint64_t tag, uint64_t vgen_bits, void
   if (raw & 2) {
     PatchSite* s = (PatchSite*) (raw & ~(uintptr_t) 3);
     if (s->tag != tag) return;                        // a site resolves exactly one static PC
-    if (!write_site(s, (const uint8_t*) body)) {
+    // Native branches leave CM and the instruction mapping unchanged.
+    // Same-page targets can reuse the source's access check. Compare the full
+    // VA here; all other targets use the guarded entry.
+    void* const direct_body = same_page_body && !((s->source_tag | tag) & 1)
+        && ((s->source_tag ^ tag) & ~UINT64_C(0x1fff)) == 0 ? same_page_body : body;
+    if (!write_site(s, (const uint8_t*) direct_body)) {
 #ifdef JIT_STATS
       m_patch_unreachable++;
 #endif
@@ -581,24 +614,29 @@ void CJitEngine::patch_edge(void* tagged, uint64_t tag, uint64_t vgen_bits, void
     for (int i = 0; i < kLinkSlots; ++i)
       if (lf[i].body) { was_live = true; if (lf[i].tag == tag) found = i; }
       else if (empty < 0) empty = i;
-    if (found >= 0) { lf[found] = snap; return; }   // refreshed in place: already registered and indexed
+    if (found >= 0) {
+      lf[found] = snap;                            // already active and indexed by target page
+      if (global_src && !target_global) m_global_src_links.insert(key);
+      return;
+    }
     if (empty >= 0) lf[empty] = snap;
     else { for (int i = kLinkSlots - 1; i > 0; --i) lf[i] = lf[i - 1]; lf[0] = snap; }
-    register_sets = !was_live;                       // a live array is already in the registries
+    register_sets = !was_live;                       // a live array is already active
   }
-  if (register_sets) {
-    m_active_links.insert(key);
-    if (global_src && !target_global) m_global_src_links.insert(key);   // global->global never goes stale on ASN
-  }
-  m_edges_by_page[(tag & ~uint64_t(1)) >> 13].insert(key);
+  if (register_sets) m_active_links.insert(key);
+  // An already-live global-source array may acquire its first private target here.
+  if (global_src && !target_global) m_global_src_links.insert(key);
+  m_edges_by_page[translation_page_key(tag)].insert(key);
 }
 
 void CJitEngine::invalidate_links_page(uint64_t virt_page)
 {
+  ++m_exec_epoch;   // reauthorized targets discard their previous mode bits
+  const uint64_t page = translation_page_key(virt_page);
   for (int i = 0; i < kJumpCacheEntries; ++i)
-    if (m_jcache[i].body && ((m_jcache[i].tag & ~uint64_t(1)) >> 13) == (virt_page >> 13))
+    if (m_jcache[i].body && translation_page_key(m_jcache[i].tag) == page)
       m_jcache[i].body = nullptr, m_jcache[i].tag = ~uint64_t(0);
-  auto it = m_edges_by_page.find((virt_page & ~uint64_t(1)) >> 13);
+  auto it = m_edges_by_page.find(page);
   if (it == m_edges_by_page.end()) return;
 #ifdef JIT_STATS
   m_page_clears++;
@@ -610,6 +648,7 @@ void CJitEngine::invalidate_links_page(uint64_t virt_page)
 
 void CJitEngine::invalidate_links(int cause)
 {
+  ++m_exec_epoch;
 #ifdef JIT_STATS
   m_link_invalidations++;
   m_bump_cause[cause]++;
@@ -624,9 +663,24 @@ void CJitEngine::invalidate_links(int cause)
   m_edges_by_page.clear();
 }
 
+// Native entry guards check CM. Traces have no such check, so their links
+// still need to be cleared on a mode change.
+void CJitEngine::invalidate_links_mode()
+{
+  if (m_traces_enabled) {
+    invalidate_links(kBumpMode);
+    return;
+  }
+#ifdef JIT_STATS
+  m_link_invalidations++;
+  m_bump_cause[kBumpMode]++;
+#endif
+}
+
 // ASN switch: global-source edges only; they stay registered for the next epoch bump.
 void CJitEngine::invalidate_links_global()
 {
+  ++m_exec_epoch;   // reauthorized targets discard mode bits from the previous ASN
 #ifdef JIT_STATS
   m_asn_link_clears++;
   m_asn_links_cleared += m_global_src_links.size();
@@ -821,9 +875,9 @@ uint64_t CJitEngine::note_exec(uint32_t native_instr, uint32_t interp_instr, uin
     }
   }
   if (m_link_invalidations)
-    printf("[JIT][STATS][CPU%d] bump-cause: remap %llu | tbia %llu | tbiap %llu | tbis-gh %llu | flush %llu | flush-asm %llu | evict %llu | reclaim %llu | mode %llu\n",
+    printf("[JIT][STATS][CPU%d] bump-cause: remap %llu | tbia %llu | tbiap %llu | tbis %llu | flush %llu | flush-asm %llu | evict %llu | reclaim %llu | mode %llu\n",
            m_cpu_id, (unsigned long long) m_bump_cause[kBumpRemap], (unsigned long long) m_bump_cause[kBumpTbia],
-           (unsigned long long) m_bump_cause[kBumpTbiap], (unsigned long long) m_bump_cause[kBumpTbisGh],
+           (unsigned long long) m_bump_cause[kBumpTbiap], (unsigned long long) m_bump_cause[kBumpTbis],
            (unsigned long long) m_bump_cause[kBumpFlush], (unsigned long long) m_bump_cause[kBumpFlushAsm],
            (unsigned long long) m_bump_cause[kBumpEvict], (unsigned long long) m_bump_cause[kBumpReclaim],
            (unsigned long long) m_bump_cause[kBumpMode]);
