@@ -210,7 +210,7 @@ CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uin
     // branch below verifies the code bytes (flush-fresh or hash), so stamp the chain epoch here.
     b.vgen = m_vgen_cur;
     // Still valid + flush-fresh: nothing flushed us since last seen, so the code is unchanged.
-    if (b.valid && b.flush_gen == m_flush_gen && b.phys == phys_pc
+    if (b.valid && b.flush_gen == flush_generation(b.asm_global) && b.phys == phys_pc
         && b.asm_global == asm_global) {
       b.n_instr = n_instr;
       return &b;
@@ -224,7 +224,7 @@ CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uin
           && source.asm_global == b.asm_global && source.contains(b.hash_len)
           && b.src_sum == src_hash(source.bytes, b.hash_len)) {
         b.valid = true;
-        b.flush_gen = m_flush_gen;
+        b.flush_gen = flush_generation(b.asm_global);
         b.n_instr = n_instr;
         b.jit_body = (void*) ((uint8_t*) (void*) b.code + b.body_off);   // restore chained re-entry
         return &b;
@@ -277,7 +277,7 @@ CJitEngine::JitBlock* CJitEngine::record(uint64_t virt_pc, uint64_t phys_pc, uin
   b.pal_shadow = pal_shadow;
   b.n_instr = n_instr;
   b.valid = true;
-  b.flush_gen = m_flush_gen;
+  b.flush_gen = flush_generation(b.asm_global);
   b.code = nullptr;
   b.jit_body = nullptr;   // not compiled yet -> cached links to us must miss until compile
   b.jit_body_same_page = nullptr;
@@ -307,11 +307,8 @@ CJitEngine::JitBlock* CJitEngine::revalidate_flushed(uint64_t virt_pc, uint32_t 
                                                       bool pal_shadow, uint64_t phys_pc,
                                                       const AlphaInstructionSource& sources)
 {
-  // Resurrect BOTH lazy-flush survivors (flush(): valid, flush_gen-stale) AND flush_non_global() drops
-  // (valid cleared). The source-hash below is the guard, matching record()'s revalidate path
-  // so don't require valid flags; requiring it forced every flush_non_global'd block through an
-  // interpret pass. tag/asn/phys/hash still guard collisions, cross-process aliasing, page remaps,
-  // and self-modifying code.
+  // Both flush kinds retain compiled code. Check its mapping and source hash
+  // before refreshing the appropriate generation.
   JitBlock* keyed = nullptr;
   JitBlock* const set = set_base(virt_pc);
   for (int w = 0; w < kWays; ++w)
@@ -327,8 +324,8 @@ CJitEngine::JitBlock* CJitEngine::revalidate_flushed(uint64_t virt_pc, uint32_t 
   if (source.identity != phys_pc || source.asm_global != b.asm_global
       || !source.contains(b.hash_len) || b.src_sum != src_hash(source.bytes, b.hash_len))
     return nullptr;
-  b.valid = true;          // flush_non_global() may have cleared it; the hash just re-validated the bytes
-  b.flush_gen = m_flush_gen;
+  b.valid = true;
+  b.flush_gen = flush_generation(b.asm_global);
   b.vgen = m_vgen_cur;   // phys + code bytes just validated
   b.jit_body = (void*) ((uint8_t*) (void*) b.code + b.body_off);
   return &b;
@@ -488,9 +485,9 @@ void CJitEngine::reclaim_code()
 
 void CJitEngine::flush()
 {
-  // LAZY:  don't walk 16K slots each time. Bump the generation instead: stale blocks miss in
-  // lookup() and revalidate_flushed() re-hashes their source bytes before they run again.
+  // Stale blocks miss lookup() and revalidate their source bytes on next use.
   ++m_flush_gen;
+  ++m_non_global_flush_gen;
   ++m_vgen_cur;
   invalidate_links(kBumpFlush);
   if (m_rt && m_code_bytes >= kReclaimBytes)
@@ -498,30 +495,15 @@ void CJitEngine::flush()
                                 // reclaim_if_pending() does it at the next dispatch boundary.
 }
 
-// ASM-bit-clear icache flush (process/ASN switch): drop only !asm_global blocks. Global (ASM) PAL
-// blocks are ASN-independent and must survive it. The drop is SOFT, revalidate_flushed() re-hashes
-// and resurrects the compiled code on next use (no recompile, no interpret pass, unless the bytes
-// actually changed)
+// ASM-bit-clear icache flush: retain global blocks and lazily revalidate the rest.
 void CJitEngine::flush_non_global()
 {
   if (m_rt && m_code_bytes >= kReclaimBytes) { flush(); return; }
-  // The chain guard reads link SNAPSHOTS, not the successor's live jit_body, so the soft drop
-  // below is invisible to it so need to invalidate every cached edge by epoch instead. 
+  ++m_non_global_flush_gen;
   ++m_vgen_cur;
+  // Links hold raw entries; clear them before stale blocks can be entered again.
   invalidate_links(kBumpFlushAsm);
-  for (int i = 0; i < kCacheEntries; ++i) {
-    if (!m_blocks[i].asm_global) {
-      m_blocks[i].valid = false;
-      m_blocks[i].jit_body = nullptr;
-      // Retained code still owns exec_proof and jit_body_same_page.
-      // Neither is exposed to an incoming edge until revalidation restores jit_body.
-    }
-  }
-  for (int i = 0; i < kTraceEntries; ++i) {   // a trace spanning any !asm_global segment depends on a soft-dropped block -> drop it too
-    if (!m_traces[i].valid) continue;
-    for (uint32_t s = 0; s < m_traces[i].n_segs; ++s)
-      if (!m_traces[i].segs[s].asm_global) { m_traces[i].valid = false; note_trace_stale(); break; }
-  }
+  // As with a full flush, trace_ok() checks every segment after the epoch change.
 }
 
 // Retargets a direct exit; false beyond rel32 reach. Same-thread write only.

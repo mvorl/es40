@@ -177,8 +177,7 @@ public:
     bool     pal_shadow;  // PALmode variant: true maps R4-7/R20-23 to the shadow bank
     uint32_t n_instr;     // instructions in the straight-line block
     bool     valid;
-    uint64_t flush_gen;   // icache-flush generation at which the code bytes were last hash-validated;
-                          // stale => lookup misses and revalidate_flushed() re-hashes (lazy IC_FLUSH).
+    uint64_t flush_gen;   // global or process-specific flush generation at last source validation
     JitFn    code;        // compiled safe-prefix, or null (prologue entry, for C calls)
     void*    jit_body;    // chained re-entry point (after the prologue); null when not compiled
     void*    jit_body_same_page; // after native mode guard; only static same-page edges, null for PAL
@@ -301,6 +300,11 @@ public:
         && (!(virt_pc & 1) || b.pal_shadow == pal_shadow);
   }
 
+  inline uint64_t flush_generation(bool asm_global) const
+  {
+    return asm_global ? m_flush_gen : m_non_global_flush_gen;
+  }
+
   // Virtual+ASN keyed: no translation on the dispatch hot path. flush_gen-stale blocks
   // miss here; revalidate_flushed() resurrects them after a source-hash check.
   inline JitBlock* lookup(uint64_t virt_pc, uint32_t asn, bool pal_shadow)
@@ -308,7 +312,7 @@ public:
     JitBlock* const set = set_base(virt_pc);
     for (int w = 0; w < kWays; ++w) {
       JitBlock& b = set[w];
-      if (b.valid && b.flush_gen == m_flush_gen && b.tag == virt_pc
+      if (b.valid && b.flush_gen == flush_generation(b.asm_global) && b.tag == virt_pc
           && (b.asm_global || b.asn == asn)
           && (!(virt_pc & 1) || b.pal_shadow == pal_shadow))
         return &b;
@@ -507,6 +511,7 @@ private:
   uint64_t m_recorded;
   uint64_t m_itb_gen = 0; // current ITB generation (bumped on every I-stream TB invalidate)
   uint64_t m_flush_gen = 0; // current icache-flush generation (bumped by flush(); lazy IC_FLUSH/IMB)
+  uint64_t m_non_global_flush_gen = 0; // process-specific code: bumped by either kind of flush
   uint64_t m_vgen_cur = 0;  // maintained epoch = itb + flush + non-global-flush bumps 
   uint64_t m_exec_epoch = 1; // permission/coherence changes, excluding CM switches
   JumpCacheEntry m_jcache[kJumpCacheEntries] = {};   // computed-jump cache (per CPU)
