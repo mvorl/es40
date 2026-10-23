@@ -62,6 +62,8 @@
 #include <windowsx.h>
 #include <algorithm>
 #include <atomic>
+#include <cmath>
+#include <cstdlib>
 #include <exception>
 #include <functional>
 #include <limits>
@@ -112,6 +114,7 @@ public:
 	void record_callback_error() noexcept;
 	void send_key(unsigned scan, bool released);
 	void send_mouse(int dx, int dy, int dz, unsigned buttons);
+	void send_host_mouse(int dx, int dy, int dz, unsigned buttons);
 	void set_mouse_capture(bx_win32_gui_c* target);
 	void release_input_session();
 	bx_win32_gui_c* window_owner(HWND window) const;
@@ -137,6 +140,10 @@ private:
 	CKeyboard* keyboard = nullptr;
 	CSystem* system = nullptr;
 	bool guest_mouse_captured = false;
+	double mouse_speed = 1.0;
+	bool mouse_invert_x = false, mouse_invert_y = false;
+	// One guest pointer retains fractional motion across output handoffs.
+	double mouse_remainder_x = 0.0, mouse_remainder_y = 0.0;
 	bool input_reset_pending = false;
 	bool guest_keys[512] = {};
 	std::exception_ptr callback_error;
@@ -572,6 +579,17 @@ void win32_application::initialize()
 	if (GetCurrentThreadId() != owner_thread || shutting_down)
 		FAILURE(Win32, "Invalid display application initialization");
 	if (dispatcher) return;
+	const char* speed = cfg->get_text_value("mouse.speed", "1.0");
+	mouse_speed = std::atof(speed);
+	if (!std::isfinite(mouse_speed) || mouse_speed <= 0.0 ||
+		mouse_speed > 10.0)
+	{
+		printf("%%WIN32-W-MOUSESPEED: invalid mouse.speed \"%s\" "
+			"(valid: 0.0 < speed <= 10.0); using 1.0.\n", speed);
+		mouse_speed = 1.0;
+	}
+	mouse_invert_x = cfg->get_bool_value("mouse.invert_x", false);
+	mouse_invert_y = cfg->get_bool_value("mouse.invert_y", false);
 	register_win32_class(win32_window_class, win32_window_proc);
 	register_win32_class(win32_dispatch_class, win32_dispatch_proc);
 	dispatcher = CreateWindowEx(0, win32_dispatch_class, "", 0, 0, 0,
@@ -707,9 +725,26 @@ void win32_application::send_mouse(int dx, int dy, int dz, unsigned buttons)
 		keyboard->mouse_motion(dx, dy, dz, buttons);
 }
 
+void win32_application::send_host_mouse(int dx, int dy, int dz,
+	unsigned buttons)
+{
+	if (!keyboard || input_paused) return;
+	// The window has already converted host Y to the PS/2 positive-up axis.
+	mouse_remainder_x += dx * (mouse_invert_x ? -mouse_speed : mouse_speed);
+	mouse_remainder_y += dy * (mouse_invert_y ? -mouse_speed : mouse_speed);
+	const int scaled_x = (int)mouse_remainder_x;
+	const int scaled_y = (int)mouse_remainder_y;
+	mouse_remainder_x -= scaled_x;
+	mouse_remainder_y -= scaled_y;
+	if (scaled_x || scaled_y || dz || buttons != mouse_buttons)
+		send_mouse(scaled_x, scaled_y, dz, buttons);
+	mouse_buttons = buttons;
+}
+
 void win32_application::release_input_session()
 {
 	release_guest_keys();
+	mouse_remainder_x = mouse_remainder_y = 0.0;
 	set_mouse_capture(nullptr);
 	capture_hotkey_down = false;
 }
@@ -744,6 +779,7 @@ void win32_application::set_mouse_capture(bx_win32_gui_c* target)
 		if (GetCapture() != target->window || !target->confine_mouse())
 		{
 			capture_owner = nullptr;
+			mouse_remainder_x = mouse_remainder_y = 0.0;
 			ClipCursor(nullptr);
 			if (GetCapture() == target->window) ReleaseCapture();
 		}
@@ -958,9 +994,7 @@ void bx_win32_gui_c::mouse_event(int x, int y, int z, unsigned flags)
 	int dx = x - mouse_last_x, dy = mouse_last_y - y;
 	mouse_last_x = x;
 	mouse_last_y = y;
-	if (dx || dy || z || buttons != application.mouse_buttons)
-		application.send_mouse(dx, dy, z, buttons);
-	application.mouse_buttons = buttons;
+	application.send_host_mouse(dx, dy, z, buttons);
 }
 
 void bx_win32_gui_c::toggle_fullscreen()
