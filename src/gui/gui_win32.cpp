@@ -62,6 +62,7 @@
 #include <windowsx.h>
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <exception>
@@ -92,6 +93,186 @@ struct win32_call
 	std::exception_ptr error;
 };
 
+enum win32_hotkey_modifier : unsigned
+{
+	WIN32_HOTKEY_CTRL = 1, WIN32_HOTKEY_ALT = 2,
+	WIN32_HOTKEY_SHIFT = 4, WIN32_HOTKEY_GUI = 8
+};
+
+// Keep character, named and keypad keys distinct, without an SDL dependency.
+static constexpr unsigned win32_named_key = 0x10000;
+static constexpr unsigned win32_keypad_key = 0x20000;
+static const struct { unsigned key; const char* name; } win32_hotkey_names[] = {
+	{ win32_named_key | VK_RETURN, "Return" },
+	{ win32_named_key | VK_ESCAPE, "Escape" },
+	{ win32_named_key | VK_BACK, "Backspace" },
+	{ win32_named_key | VK_TAB, "Tab" }, { ' ', "Space" },
+	{ win32_named_key | VK_CAPITAL, "CapsLock" },
+	{ win32_named_key | VK_SNAPSHOT, "PrintScreen" },
+	{ win32_named_key | VK_SCROLL, "ScrollLock" },
+	{ win32_named_key | VK_PAUSE, "Pause" },
+	{ win32_named_key | VK_INSERT, "Insert" },
+	{ win32_named_key | VK_HOME, "Home" },
+	{ win32_named_key | VK_PRIOR, "PageUp" },
+	{ win32_named_key | VK_DELETE, "Delete" },
+	{ win32_named_key | VK_END, "End" },
+	{ win32_named_key | VK_NEXT, "PageDown" },
+	{ win32_named_key | VK_RIGHT, "Right" },
+	{ win32_named_key | VK_LEFT, "Left" },
+	{ win32_named_key | VK_DOWN, "Down" },
+	{ win32_named_key | VK_UP, "Up" },
+	{ win32_named_key | VK_NUMLOCK, "Numlock" },
+	{ win32_keypad_key | VK_DIVIDE, "Keypad /" },
+	{ win32_keypad_key | VK_MULTIPLY, "Keypad *" },
+	{ win32_keypad_key | VK_SUBTRACT, "Keypad -" },
+	{ win32_keypad_key | VK_ADD, "Keypad +" },
+	{ win32_keypad_key | VK_RETURN, "Keypad Enter" },
+	{ win32_keypad_key | VK_DECIMAL, "Keypad ." },
+	{ win32_keypad_key | VK_NUMPAD0, "Keypad 0" },
+	{ win32_keypad_key | VK_NUMPAD1, "Keypad 1" },
+	{ win32_keypad_key | VK_NUMPAD2, "Keypad 2" },
+	{ win32_keypad_key | VK_NUMPAD3, "Keypad 3" },
+	{ win32_keypad_key | VK_NUMPAD4, "Keypad 4" },
+	{ win32_keypad_key | VK_NUMPAD5, "Keypad 5" },
+	{ win32_keypad_key | VK_NUMPAD6, "Keypad 6" },
+	{ win32_keypad_key | VK_NUMPAD7, "Keypad 7" },
+	{ win32_keypad_key | VK_NUMPAD8, "Keypad 8" },
+	{ win32_keypad_key | VK_NUMPAD9, "Keypad 9" }
+};
+
+struct win32_hotkey_binding
+{
+	const char* config_name = nullptr;
+	unsigned key = 0, modifiers = 0;
+	bool enabled = false;
+	std::string display;
+	bool matches(unsigned host_key, unsigned host_modifiers) const
+		{ return enabled && key == host_key && modifiers == host_modifiers; }
+};
+
+static std::string trim_win32_hotkey(const std::string& text)
+{
+	size_t first = 0, last = text.size();
+	while (first < last && std::isspace((unsigned char)text[first])) ++first;
+	while (last > first && std::isspace((unsigned char)text[last - 1])) --last;
+	return text.substr(first, last - first);
+}
+
+static bool win32_hotkey_text_equals(const std::string& text, const char* name)
+{
+	if (text.size() != strlen(name)) return false;
+	for (size_t i = 0; i < text.size(); ++i)
+		if (std::tolower((unsigned char)text[i]) !=
+			std::tolower((unsigned char)name[i])) return false;
+	return true;
+}
+
+static unsigned parse_win32_hotkey_modifier(const std::string& text)
+{
+	if (win32_hotkey_text_equals(text, "Ctrl") ||
+		win32_hotkey_text_equals(text, "Control")) return WIN32_HOTKEY_CTRL;
+	if (win32_hotkey_text_equals(text, "Alt") ||
+		win32_hotkey_text_equals(text, "Option")) return WIN32_HOTKEY_ALT;
+	if (win32_hotkey_text_equals(text, "Shift")) return WIN32_HOTKEY_SHIFT;
+	for (const char* name : { "GUI", "Super", "Win", "Windows", "Cmd", "Command", "Meta" })
+		if (win32_hotkey_text_equals(text, name)) return WIN32_HOTKEY_GUI;
+	return 0;
+}
+
+static win32_hotkey_binding parse_win32_hotkey(CConfigurator* cfg,
+	const char* config_name, const char* default_value)
+{
+	win32_hotkey_binding binding;
+	binding.config_name = config_name;
+	const char* configured = cfg->get_text_value(config_name, default_value);
+	const std::string value = trim_win32_hotkey(configured ? configured : "");
+	if (win32_hotkey_text_equals(value, "none")) return binding;
+	std::string key_name = value;
+	bool invalid = value.empty();
+	for (;;)
+	{
+		const size_t separator = key_name.find('+');
+		if (separator == std::string::npos) break;
+		const unsigned modifier = parse_win32_hotkey_modifier(
+			trim_win32_hotkey(key_name.substr(0, separator)));
+		if (!modifier) break;
+		if (binding.modifiers & modifier) { invalid = true; break; }
+		binding.modifiers |= modifier;
+		key_name = trim_win32_hotkey(key_name.substr(separator + 1));
+	}
+	const struct { const char* alias; const char* name; } aliases[] = {
+		{ "PgUp", "PageUp" }, { "PgDn", "PageDown" }, { "PageDn", "PageDown" },
+		{ "Esc", "Escape" }, { "Del", "Delete" }, { "Ins", "Insert" },
+		{ "KeypadPlus", "Keypad +" }, { "KpPlus", "Keypad +" },
+		{ "KeypadMinus", "Keypad -" }, { "KpMinus", "Keypad -" }
+	};
+	for (const auto& alias : aliases)
+		if (win32_hotkey_text_equals(key_name, alias.alias)) key_name = alias.name;
+	for (const auto& named : win32_hotkey_names)
+		if (win32_hotkey_text_equals(key_name, named.name))
+			{ binding.key = named.key; key_name = named.name; break; }
+	for (unsigned i = 0; i < 24; ++i)
+	{
+		const std::string name = "F" + std::to_string(i + 1);
+		if (win32_hotkey_text_equals(key_name, name.c_str()))
+			{ binding.key = win32_named_key | (VK_F1 + i); key_name = name; break; }
+	}
+	if (!binding.key && key_name.size() == 1 &&
+		(unsigned char)key_name[0] >= 33 && (unsigned char)key_name[0] <= 126)
+	{
+		// SDL resolves shifted key names (e.g. ! on a US keyboard) to the
+		// underlying unshifted key, without adding an implicit Shift modifier.
+		const SHORT mapped = VkKeyScanW((wchar_t)(unsigned char)key_name[0]);
+		if (mapped != -1 && (HIBYTE(mapped) & 1))
+		{
+			const unsigned unshifted = MapVirtualKeyW(LOBYTE(mapped), MAPVK_VK_TO_CHAR) & 0xffff;
+			if (unshifted >= 33 && unshifted <= 126) key_name[0] = (char)unshifted;
+		}
+		key_name[0] = (char)std::toupper((unsigned char)key_name[0]);
+		binding.key = (unsigned char)key_name[0];
+	}
+	if (invalid || !binding.key)
+	{
+		printf("%%WIN32-W-HOTKEY: %s has invalid binding \"%s\"; "
+			"action disabled.\n", config_name, value.c_str());
+		return binding;
+	}
+	binding.enabled = true;
+	if (binding.modifiers & WIN32_HOTKEY_CTRL) binding.display += "Ctrl+";
+	if (binding.modifiers & WIN32_HOTKEY_ALT) binding.display += "Alt+";
+	if (binding.modifiers & WIN32_HOTKEY_SHIFT) binding.display += "Shift+";
+	if (binding.modifiers & WIN32_HOTKEY_GUI) binding.display += "GUI+";
+	binding.display += key_name;
+	return binding;
+}
+
+static unsigned win32_host_hotkey_modifiers()
+{
+	return ((GetKeyState(VK_CONTROL) & 0x8000) ? WIN32_HOTKEY_CTRL : 0) |
+		((GetKeyState(VK_MENU) & 0x8000) ? WIN32_HOTKEY_ALT : 0) |
+		((GetKeyState(VK_SHIFT) & 0x8000) ? WIN32_HOTKEY_SHIFT : 0) |
+		(((GetKeyState(VK_LWIN) | GetKeyState(VK_RWIN)) & 0x8000) ? WIN32_HOTKEY_GUI : 0);
+}
+
+static unsigned win32_host_hotkey_key(WPARAM key, unsigned scan)
+{
+	// NumLock changes virtual-key codes; SDL keeps keypad keys distinct.
+	if (scan >= 0x47 && scan <= 0x53)
+	{
+		static const unsigned keypad[] = { VK_NUMPAD7, VK_NUMPAD8, VK_NUMPAD9,
+			VK_SUBTRACT, VK_NUMPAD4, VK_NUMPAD5, VK_NUMPAD6, VK_ADD,
+			VK_NUMPAD1, VK_NUMPAD2, VK_NUMPAD3, VK_NUMPAD0, VK_DECIMAL };
+		return win32_keypad_key | keypad[scan - 0x47];
+	}
+	if (key == VK_MULTIPLY || key == VK_DIVIDE ||
+		(key == VK_RETURN && (scan & 0x100))) return win32_keypad_key | (unsigned)key;
+	if (key >= VK_F1 && key <= VK_F24) return win32_named_key | (unsigned)key;
+	for (const auto& named : win32_hotkey_names)
+		if (named.key == (win32_named_key | (unsigned)key)) return named.key;
+	// This does not consume text or change the host's dead-key composition state.
+	return MapVirtualKeyW((UINT)key, MAPVK_VK_TO_CHAR) & 0xffff;
+}
+
 // One application owns the output bindings, window thread and guest input.
 class win32_application
 {
@@ -114,7 +295,8 @@ public:
 	void record_callback_error() noexcept;
 	void send_key(unsigned scan, bool released);
 	bool consume_hotkey_key(unsigned scan, bool released, bool repeat);
-	void send_ctrl_alt_delete(unsigned scan);
+	void suppress_hotkey_keys(unsigned scan, unsigned modifiers);
+	void send_ctrl_alt_delete();
 	void send_mouse(int dx, int dy, int dz, unsigned buttons);
 	void send_host_mouse(int dx, int dy, int dz, unsigned buttons);
 	void set_mouse_capture(bx_win32_gui_c* target);
@@ -126,7 +308,7 @@ public:
 	std::map<HWND, bx_win32_gui_c*> windows;
 	bx_win32_gui_c* capture_owner = nullptr;
 	unsigned mouse_buttons = 0;
-	bool capture_hotkey_down = false;
+	win32_hotkey_binding hotkey_mouse_capture, hotkey_ctrl_alt_delete;
 	bool input_paused = false;
 	bool shutting_down = false;
 private:
@@ -593,6 +775,17 @@ void win32_application::initialize()
 	}
 	mouse_invert_x = cfg->get_bool_value("mouse.invert_x", false);
 	mouse_invert_y = cfg->get_bool_value("mouse.invert_y", false);
+	hotkey_mouse_capture = parse_win32_hotkey(cfg, "hotkey.mouse_capture", "Ctrl+F10");
+	hotkey_ctrl_alt_delete = parse_win32_hotkey(cfg, "hotkey.ctrl_alt_delete", "Ctrl+Alt+End");
+	if (hotkey_mouse_capture.enabled && hotkey_ctrl_alt_delete.enabled &&
+		hotkey_mouse_capture.key == hotkey_ctrl_alt_delete.key &&
+		hotkey_mouse_capture.modifiers == hotkey_ctrl_alt_delete.modifiers)
+	{
+		printf("%%WIN32-W-HOTKEY: %s and %s both use \"%s\"; both actions disabled.\n",
+			hotkey_mouse_capture.config_name, hotkey_ctrl_alt_delete.config_name,
+			hotkey_mouse_capture.display.c_str());
+		hotkey_mouse_capture.enabled = hotkey_ctrl_alt_delete.enabled = false;
+	}
 	register_win32_class(win32_window_class, win32_window_proc);
 	register_win32_class(win32_dispatch_class, win32_dispatch_proc);
 	dispatcher = CreateWindowEx(0, win32_dispatch_class, "", 0, 0, 0,
@@ -732,26 +925,34 @@ bool win32_application::consume_hotkey_key(unsigned scan, bool released, bool re
 	return true;
 }
 
-void win32_application::send_ctrl_alt_delete(unsigned scan)
+void win32_application::suppress_hotkey_keys(unsigned scan, unsigned modifiers)
 {
-	if (!keyboard || input_paused || scan >= 512) return;
+	if (input_paused || scan >= 512) return;
 	sync_input();
 	swallowed_hotkey_keys[scan] = true;
 	// release the guest modifiers before injecting the complete sequence. 
 	// Suppression belongs to the shared keyboard so repeats and releases can arrive 
 	// at a different output window.
-	const struct { unsigned scan; int key; } modifiers[] = {
-		{ 0x1d, VK_LCONTROL }, { 0x11d, VK_RCONTROL },
-		{ 0x38, VK_LMENU }, { 0x138, VK_RMENU }
+	const struct { unsigned scan; int key; unsigned modifier; } keys[] = {
+		{ 0x1d, VK_LCONTROL, WIN32_HOTKEY_CTRL }, { 0x11d, VK_RCONTROL, WIN32_HOTKEY_CTRL },
+		{ 0x38, VK_LMENU, WIN32_HOTKEY_ALT }, { 0x138, VK_RMENU, WIN32_HOTKEY_ALT },
+		{ 0x2a, VK_LSHIFT, WIN32_HOTKEY_SHIFT }, { 0x36, VK_RSHIFT, WIN32_HOTKEY_SHIFT },
+		{ 0x15b, VK_LWIN, WIN32_HOTKEY_GUI }, { 0x15c, VK_RWIN, WIN32_HOTKEY_GUI }
 	};
-	for (const auto& modifier : modifiers)
+	for (const auto& key : keys)
 	{
-		if (guest_keys[modifier.scan] || (GetKeyState(modifier.key) & 0x8000))
+		if ((modifiers & key.modifier) &&
+			(guest_keys[key.scan] || (GetKeyState(key.key) & 0x8000)))
 		{
-			swallowed_hotkey_keys[modifier.scan] = true;
-			send_key(modifier.scan, true);
+			swallowed_hotkey_keys[key.scan] = true;
+			send_key(key.scan, true);
 		}
 	}
+}
+
+void win32_application::send_ctrl_alt_delete()
+{
+	if (!keyboard || input_paused) return;
 	const u32 sequence[] = {
 		BX_KEY_CTRL_L, BX_KEY_ALT_L, BX_KEY_DELETE,
 		BX_KEY_DELETE | BX_KEY_RELEASED, BX_KEY_ALT_L | BX_KEY_RELEASED,
@@ -787,7 +988,6 @@ void win32_application::release_input_session()
 	release_guest_keys();
 	mouse_remainder_x = mouse_remainder_y = 0.0;
 	set_mouse_capture(nullptr);
-	capture_hotkey_down = false;
 }
 
 void win32_application::set_mouse_capture(bx_win32_gui_c* target)
@@ -862,11 +1062,17 @@ void bx_win32_gui_c::initialize_window()
 
 void bx_win32_gui_c::update_title()
 {
-	// Same base and hint formatting as SDL's build_window_titles(). 
-	if (window)
-		SetWindowText(window, (window_title + (application.capture_owner == this
-			? " - Ctrl+F10 releases mouse" : "") +
-			" - Ctrl+Alt+End sends C+A+Del").c_str());
+	if (!window) return;
+	// Same supported hints and ordering as SDL's build_window_titles().
+	std::string title = window_title;
+	const auto append_hint = [&](const win32_hotkey_binding& binding, const char* hint)
+	{
+		if (binding.enabled) title += " - " + binding.display + " " + hint;
+	};
+	if (application.capture_owner == this)
+		append_hint(application.hotkey_mouse_capture, "releases mouse");
+	append_hint(application.hotkey_ctrl_alt_delete, "sends C+A+Del");
+	SetWindowText(window, title.c_str());
 }
 
 void bx_win32_gui_c::dimension_update(unsigned x, unsigned y,
@@ -1168,25 +1374,26 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 		return 0;
 	case WM_KEYDOWN:
 	case WM_SYSKEYDOWN:
-		if (wparam == VK_END && (HIWORD(lparam) & KF_EXTENDED) &&
-			(GetKeyState(VK_CONTROL) & 0x8000) &&
-			(GetKeyState(VK_MENU) & 0x8000) &&
-			!(GetKeyState(VK_SHIFT) & 0x8000) &&
-			!(GetKeyState(VK_LWIN) & 0x8000) &&
-			!(GetKeyState(VK_RWIN) & 0x8000))
+	{
+		const unsigned scan = HIWORD(lparam) & 0x1ff;
+		const unsigned key = win32_host_hotkey_key(wparam, scan);
+		const unsigned modifiers = win32_host_hotkey_modifiers();
+		if (application.hotkey_ctrl_alt_delete.matches(key, modifiers))
 		{
 			if (!(lparam & (1L << 30)))
-				application.send_ctrl_alt_delete(HIWORD(lparam) & 0x1ff);
+			{
+				application.suppress_hotkey_keys(scan, modifiers);
+				application.send_ctrl_alt_delete();
+			}
 			return 0;
 		}
-		if (wparam == VK_F10 && !(lparam & (1L << 30)))
-			application.capture_hotkey_down = false;
-		if (wparam == VK_F10 && (application.capture_hotkey_down ||
-			(!(lparam & (1L << 30)) && (GetKeyState(VK_CONTROL) & 0x8000))))
+		if (application.hotkey_mouse_capture.matches(key, modifiers))
 		{
-			if (!application.capture_hotkey_down)
+			if (!(lparam & (1L << 30)))
+			{
+				application.suppress_hotkey_keys(scan, modifiers);
 				application.set_mouse_capture(application.capture_owner ? nullptr : this);
-			application.capture_hotkey_down = true;
+			}
 			return 0;
 		}
 		if (wparam == VK_RETURN && (HIWORD(lparam) & KF_ALTDOWN))
@@ -1194,15 +1401,11 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 			if (!(lparam & (1L << 30))) toggle_fullscreen();
 			return 0;
 		}
-		application.send_key((HIWORD(lparam) & 0x1ff), false);
+		application.send_key(scan, false);
 		return 0;
+	}
 	case WM_KEYUP:
 	case WM_SYSKEYUP:
-		if (wparam == VK_F10 && application.capture_hotkey_down)
-		{
-			application.capture_hotkey_down = false;
-			return 0;
-		}
 		application.send_key((HIWORD(lparam) & 0x1ff), true);
 		return 0;
 	case WM_CHAR:

@@ -780,7 +780,7 @@ static const char* const kv_gui_x11[] = {
   "keyboard.use_mapping", "keyboard.map", "private_colormap", 0 };
 static const char* const kv_gui_win32[] = {
   "keyboard.use_mapping", "keyboard.map", "mouse.speed", "mouse.invert_x",
-  "mouse.invert_y", 0 };
+  "mouse.invert_y", "hotkey.mouse_capture", "hotkey.ctrl_alt_delete", 0 };
 static const char* const kv_mpu401[] = { "midi_out", 0 };
 
 classinfo classes[] = {
