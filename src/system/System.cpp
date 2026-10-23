@@ -468,7 +468,7 @@ CSystem::CSystem(CConfigurator* cfg)
 		m_ll_buckets[llb].sequence.store(0, std::memory_order_relaxed);
 		m_ll_buckets[llb].lock.store(0, std::memory_order_relaxed);
 	}
-	memset(m_ll_seq_snap, 0, sizeof(m_ll_seq_snap));
+	clear_ll_reservations();
 	allocate_ll_watch();
 
 	printf("%s(%s): $Id$\n",
@@ -527,8 +527,7 @@ void CSystem::allocate_ll_watch()
 		m_ll_watch_pages = std::move(watched_pages);
 		// Drop reservations tied to the old RAM allocation.
 		state.cpu_lock_flags.store(0, std::memory_order_relaxed);
-		memset(cpu_lock_value, 0, sizeof(cpu_lock_value));
-		memset(m_ll_seq_snap, 0, sizeof(m_ll_seq_snap));
+		clear_ll_reservations();
 	}
 	catch (const std::bad_alloc&)
 	{
@@ -969,7 +968,7 @@ void CSystem::ResetChipsetState()
 	m_x86_bios_clock_active.store(false, std::memory_order_release);
 	state.cpu_lock_flags = 0;
 	memset(state.cpu_lock_address, 0, sizeof(state.cpu_lock_address));
-	memset(cpu_lock_value, 0, sizeof(cpu_lock_value));
+	clear_ll_reservations();
 
 	for (int i = 0; i < 4; i++)
 		state.cchip.dim[i] = 0;
@@ -1226,29 +1225,36 @@ void CSystem::cpu_write_ram(u64 phys, int size_bits, u64 value)
 	guard.invalidate();
 }
 
+void CSystem::clear_ll_reservations()
+{
+	for (auto& reservation : m_ll_reservations)
+		reservation = {};
+}
+
 void CSystem::cpu_lock(int cpuid, u64 address, u64 value)
 {
-	state.cpu_lock_address[cpuid] = address;
-	cpu_lock_value[cpuid] = value;
+	auto& reservation = m_ll_reservations[cpuid];
+	reservation.address = address;
+	reservation.value = value;
 	// For RAM, the caller still holds the bucket used for the memory read.
-	m_ll_seq_snap[cpuid] =
+	reservation.sequence =
 		m_ll_buckets[(u32)((address >> 6) & (kLLBuckets - 1))].sequence.load(std::memory_order_relaxed);
-	state.cpu_lock_flags |= (1 << cpuid);   // atomic fetch_or
+	reservation.valid = true;
 }
 
 bool CSystem::cpu_take_lock(int cpuid, u64 address, u64* expected, bool* same_address)
 {
+	auto& reservation = m_ll_reservations[cpuid];
 	// I/O-space conditional stores have no cache line to watch; treat as held.
 	bool held = (address & CPU_LOCK_IO_MASK) ||
-	            ((state.cpu_lock_flags.load() & (1 << cpuid)) &&
-	             cpu_lock_matches(state.cpu_lock_address[cpuid], address));
+	            (reservation.valid && cpu_lock_matches(reservation.address, address));
 
 	// STx_C always consumes this CPU's lock, success or fail.
-	state.cpu_lock_flags &= ~(1 << cpuid);  // atomic fetch_and
+	reservation.valid = false;
 	if (held)
 	{
-		*expected = cpu_lock_value[cpuid];
-		*same_address = (state.cpu_lock_address[cpuid] == address);
+		*expected = reservation.value;
+		*same_address = (reservation.address == address);
 	}
 	return held;
 }
@@ -1274,7 +1280,7 @@ u64 CSystem::cpu_stx_c(int cpuid, u64 phys, int size_bits, u64 value,
 	const u32 b = (u32)((phys >> 6) & (kLLBuckets - 1));
 	CLLRAMGuard guard(this, phys, size_bits);
 	u64 ok;
-	if (m_ll_buckets[b].sequence.load(std::memory_order_relaxed) != m_ll_seq_snap[cpuid])
+	if (m_ll_buckets[b].sequence.load(std::memory_order_relaxed) != m_ll_reservations[cpuid].sequence)
 		ok = 0;    // a store hit this reservation bucket since our LDx_L
 	else if (same_address)
 		ok = dram_cas(dram, phys, expected, value, size_bits) ? 1 : 0;
@@ -1295,7 +1301,7 @@ u64 CSystem::cpu_stx_c(int cpuid, u64 phys, int size_bits, u64 value,
  **/
 void CSystem::cpu_clear_lock(int cpuid)
 {
-	state.cpu_lock_flags &= ~(1 << cpuid);  // atomic fetch_and
+	m_ll_reservations[cpuid].valid = false;
 }
 
 // Geometry only; called under device_bus_mutex whenever a range or owner link
@@ -2011,7 +2017,7 @@ void CSystem::flush_storage()
 }
 
 /**
- * Save system state to a state file. Callers must first stop device threads.
+ * Save system state to a state file. Callers must first stop all component threads.
  **/
 void CSystem::SaveState(const char* fn)
 {
@@ -2067,6 +2073,15 @@ void CSystem::SaveState(const char* fn)
 		}
 	}
 
+	// Keep the existing snapshot layout; live reservations are CPU-local.
+	int lock_flags = 0;
+	for (int cpu = 0; cpu < 4; ++cpu)
+	{
+		const auto& reservation = m_ll_reservations[cpu];
+		state.cpu_lock_address[cpu] = reservation.address;
+		if (reservation.valid) lock_flags |= 1 << cpu;
+	}
+	state.cpu_lock_flags.store(lock_flags, std::memory_order_relaxed);
 	write(&state, sizeof(state));
 	for (int i = 0; i < iNumComponents; i++)
 	{
@@ -2077,7 +2092,7 @@ void CSystem::SaveState(const char* fn)
 }
 
 /**
- * Restore system state with device threads stopped. Return false only when
+ * Restore system state with all component threads stopped. Return false only when
  * the file is rejected before changing guest state; failures after that throw.
  **/
 bool CSystem::RestoreState(const char* fn)
@@ -2178,8 +2193,7 @@ bool CSystem::RestoreState(const char* fn)
 	read(&state, sizeof(state));
 	// Bucket generations and watch bits aren't saved. Clear restored reservations.
 	state.cpu_lock_flags.store(0, std::memory_order_relaxed);
-	memset(cpu_lock_value, 0, sizeof(cpu_lock_value));
-	memset(m_ll_seq_snap, 0, sizeof(m_ll_seq_snap));
+	clear_ll_reservations();
 
 	// components
 	//

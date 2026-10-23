@@ -43,6 +43,9 @@
 // The engine owns the executable-memory allocator (JitRuntime) for whichever backend is
 // built; only asmjit's core is needed here -- no instructions are emitted in this file.
 #include <asmjit/core.h>
+#if defined(ES40_JIT_X64) && defined(_MSC_VER)
+#include <intrin.h>
+#endif
 
 // ---- big-table allocation: prefer large/huge pages for the randomly-indexed caches ----
 // The block cache (~40 MB/CPU) is indexed by PC hash, so its accesses are TLB-hostile with 4K
@@ -528,24 +531,65 @@ static bool write_site(CJitEngine::PatchSite* s, const uint8_t* target)
 #endif
 }
 
+#if defined(ES40_JIT_X64)
+void CJitEngine::serialize_code()
+{
+#if defined(_MSC_VER)
+  int regs[4];
+  _ReadWriteBarrier();
+  __cpuid(regs, 0);
+  _ReadWriteBarrier();
+#else
+  uint32_t eax, ebx, ecx, edx;
+  __asm__ __volatile__("cpuid"
+      : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+      : "a"(0u), "c"(0u) : "memory");
+#endif
+}
+#endif
+
 void CJitEngine::authorize_native(JitBlock* block, uint32_t mode)
 {
   if ((block->tag & 1) || !block->exec_proof) return;
   NativeExecProof* const proof = block->exec_proof;
   const uint32_t mode_bit = uint32_t{1} << (mode & 3);
   if (proof->epoch == m_exec_epoch && (proof->mode_mask & mode_bit)) return;
-#if defined(ES40_JIT_A64)
+  // Invalidation retires incoming links; callers recheck the live mapping.
+  const uint32_t mode_mask =
+      (proof->epoch == m_exec_epoch ? proof->mode_mask : 0) | mode_bit;
+#if defined(ES40_JIT_X64)
+  // The engine has one executing owner. Use the writable alias for this allocation.
+  asmjit::JitAllocator::Span span;
+  auto& allocator = static_cast<asmjit::JitRuntime*>(m_rt)->allocator();
+  if (!block->code || allocator.query(asmjit::Out(span),
+      reinterpret_cast<void*>(block->code)) != asmjit::Error::kOk || !span.rw())
+    abort();
+  const size_t proof_offset = static_cast<uint8_t*>(static_cast<void*>(proof))
+      - static_cast<uint8_t*>(span.rx());
+  const uint32_t back = proof->guard_imm_back;
+  if (!back || back > proof_offset || proof_offset > span.size()
+      || span.size() - proof_offset < sizeof(*proof))
+    abort();
+  const size_t immediate_offset = proof_offset - back;
+  auto* const writable_proof = reinterpret_cast<NativeExecProof*>(
+      static_cast<uint8_t*>(span.rw()) + proof_offset);
+  auto* const immediate = static_cast<uint8_t*>(span.rw()) + immediate_offset;
+  const bool patch = proof->mode_mask != mode_mask;
+  {
+    asmjit::VirtMem::ProtectJitReadWriteScope scope(
+        static_cast<uint8_t*>(span.rx()) + immediate_offset, back + sizeof(*proof));
+    writable_proof->epoch = m_exec_epoch;
+    writable_proof->mode_mask = mode_mask;
+    if (patch) *immediate = static_cast<uint8_t>(mode_mask);
+  }
+  // The W^X scope has ended. CPUID serializes instruction fetch before any re-entry.
+  if (patch) serialize_code();
+#else
   // The permission mask is stored in JIT memory, so writes need the W^X scope.
   asmjit::VirtMem::ProtectJitReadWriteScope scope(proof, sizeof(*proof));
+  proof->epoch = m_exec_epoch;
+  proof->mode_mask = mode_mask;
 #endif
-  // Invalidation clears incoming links and jump-cache entries. The next entry
-  // checks the mapping before calling here, so generated code only tests the
-  // mode bit. Discard the old mode bits when the epoch changes.
-  if (proof->epoch != m_exec_epoch) {
-    proof->mode_mask = 0;
-    proof->epoch = m_exec_epoch;
-  }
-  proof->mode_mask |= mode_bit;
 }
 
 void CJitEngine::clear_edge(void* key)

@@ -384,6 +384,10 @@ void CAlphaCPU::run()
 			CThread::sleep(1);
 		}
 		printf("*** CPU%d *** STARTING ***\n", get_cpuid());
+#if defined(ES40_JIT_X64)
+		// Code can survive LoadROM and an earlier worker thread.
+		if (m_jit) CJitEngine::serialize_code();
+#endif
 #if defined(JIT_REGPROF) && defined(_WIN32)
 		if (m_jit && get_cpuid() == 0 && getenv("ES40_JIT_SAMPLER")) jit_sampler_start();
 #endif
@@ -1043,6 +1047,9 @@ void CAlphaCPU::jit_note_mode_change()
 // execution path even in a JIT build.
 void CAlphaCPU::jit_step(int budget)
 {
+#if defined(ES40_JIT_X64)
+	if (m_jit) CJitEngine::serialize_code();
+#endif
 	jit_run(budget);
 }
 

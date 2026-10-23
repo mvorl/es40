@@ -459,12 +459,20 @@ private:
 
   int           iNumCPUs;
   bool          bNativePal = false;
-  u64           cpu_lock_value[4]; // per-CPU LDx_L value, for same-address STx_C compare-and-swap
+  // Only the owning CPU accesses its reservation while CPUs are running.
+  struct alignas(64) LLReservation {
+    u64 address = 0;
+    u64 value = 0;
+    u64 sequence = 0;
+    bool valid = false;
+  };
+  static_assert(sizeof(LLReservation) == 64, "per-CPU LL reservation stride");
+  LLReservation m_ll_reservations[4];
+  void clear_ll_reservations(); // CPUs must be stopped
 
   // RAM stores and LL/SC share the same 64-byte-line buckets. A generation
   // change invalidates a reservation even when the stored value is unchanged.
   LLBucket         m_ll_buckets[kLLBuckets];
-  u64              m_ll_seq_snap[4];
   // One watch byte per physical 64-byte line keeps hash aliases unmarked.
   // Bits stay set and the map address stays fixed until RAM is reallocated.
   std::unique_ptr<std::atomic<u8>[]> m_ll_watch;
@@ -506,6 +514,7 @@ private:
   /// The state structure contains all elements that need to be saved to the statefile.
   struct SSys_state
   {
+    // Snapshot mirrors, refreshed by SaveState with CPUs stopped.
     std::atomic<int> cpu_lock_flags;
     u64 cpu_lock_address[4];
 

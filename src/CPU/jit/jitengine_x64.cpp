@@ -570,6 +570,7 @@ struct ColdMemStub {
   Kind          kind;
   asmjit::Label slow;       // stub entry
   asmjit::Label watched_probe; // optional monitored write-page probe
+  asmjit::Label watched_reuse; // marked tag matched with the previous slot/bias
   asmjit::Label raw_store;  // ordinary store, after address/translation checks
   bool          watched_store = false;
   asmjit::Label join;       // fast-path merge point
@@ -675,6 +676,7 @@ static void emit_watched_store_stub(asmjit::x86::Assembler& a,
   a.jne(s.slow); // miss or unaligned store; RAM untouched
   a.mov(x86::r10, x86::qword_ptr(x86::rbp, x86::r11, 0,
       off.dpc_write_row + off.dpc_host_bias));
+  if (s.watched_reuse.is_valid()) a.bind(s.watched_reuse);
   emit_x64_ram_store_lock(a, off, ll_watch, ll_buckets, s.slow, false,
       &s.raw_store);
   if (s.kind == ColdMemStub::STORE) {
@@ -1256,6 +1258,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             Label sdone = a.new_label();
             Label dpc_ready = a.new_label();
             const Label watched_page = a.new_label();
+            const Label watched_reuse = reuse_dpc && m_smp_memory ? a.new_label() : Label();
             if (reuse_dpc) {
                 // The preceding store's write-cache translation remains valid on the same page.
                 a.mov(x86::rax, x86::rdx);
@@ -1263,6 +1266,12 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 a.cmp(x86::qword_ptr(x86::rbp, x86::r11, 0,
                     m_off.dpc_write_row + m_off.dpc_virt_page), x86::rax);
                 a.je(dpc_ready);
+                if (watched_reuse.is_valid()) {
+                    a.or_(x86::rax, imm(m_off.dpc_ll_watch_tag));
+                    a.cmp(x86::qword_ptr(x86::rbp, x86::r11, 0,
+                        m_off.dpc_write_row + m_off.dpc_virt_page), x86::rax);
+                    a.je(watched_reuse); // same page + aligned: keep slot/bias
+                }
             }
             emit_dpc_offset();
             a.mov(x86::r10, x86::rdx);
@@ -1284,6 +1293,7 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
                 ColdMemStub s{};
                 s.kind = ColdMemStub::STORE;  s.slow = slow;  s.join = sdone;  s.done = done;
                 s.watched_probe = watched_page; s.watched_store = m_smp_memory;
+                s.watched_reuse = watched_reuse;
                 s.raw_store = dpc_ready;
                 s.helper = write_helper;      s.hidx = helper_index(hs, write_helper);
                 s.size_bits = size_bits;
@@ -2317,7 +2327,51 @@ void CJitEngine::emit_op(void* a_ptr, const uint8_t* gpa, void* done_ptr, const 
             const uint64_t mask = (size == 0) ? (uint64_t)0xff : (size == 1) ? (uint64_t)0xffff
                 : (size == 2) ? (uint64_t)0xffffffff : ~(uint64_t)0;
             op1_rax();                                                  // rax = Ra (data)
-            op2_rcx();                                                  // rcx = Rb / literal (selector)
+            if (islit) {
+                const uint32_t shift = (lit & 7u) * 8u;
+                const uint32_t high_shift = (64u - shift) & 63u;
+                // Literal masks need no table read or DPC scratch registers.
+                auto and_mask = [&](uint64_t keep) {
+                    if (keep == ~(uint64_t)0) return;
+                    if (keep == 0) a.xor_(x86::eax, x86::eax);
+                    else if (keep == 0xffffffffu) a.mov(x86::eax, x86::eax);
+                    else if (keep <= 0xffffffffu) a.and_(x86::eax, imm((uint32_t)keep));
+                    else if (keep >= 0xffffffff80000000ull) a.and_(x86::rax, imm(keep));
+                    else { a.mov(x86::rcx, imm(keep)); a.and_(x86::rax, x86::rcx); }
+                };
+                switch (op) {
+                case OP_EXTL:
+                    if (shift) a.shr(x86::rax, imm(shift));
+                    and_mask(mask);
+                    break;
+                case OP_EXTH:
+                    if (high_shift) a.shl(x86::rax, imm(high_shift));
+                    and_mask(mask);
+                    break;
+                case OP_INSL:
+                    and_mask(mask);
+                    if (shift) a.shl(x86::rax, imm(shift));
+                    break;
+                case OP_INSH:
+                    if (!shift) a.xor_(x86::eax, x86::eax);
+                    else { and_mask(mask); a.shr(x86::rax, imm(high_shift)); }
+                    break;
+                case OP_MSKL:
+                    and_mask(~(mask << shift));
+                    break;
+                case OP_MSKH:
+                    if (shift) and_mask(~(mask >> high_shift));
+                    break;
+                case OP_ZAP:
+                    and_mask(f == 0x30 ? ~g_zapnot_mask[lit] : g_zapnot_mask[lit]);
+                    break;
+                default: break;
+                }
+                mov_to_reg(rc, x86::rax);
+                if (rc != prev_dpc_base) preserve_dpc();
+                continue;
+            }
+            op2_rcx();                                                  // rcx = Rb (selector)
             switch (op) {
             case OP_EXTL:                                             // (Ra >> pos*8) & mask
                 a.and_(x86::ecx, imm(7)); a.shl(x86::ecx, imm(3));
@@ -2796,14 +2850,16 @@ void CJitEngine::compile_block(JitBlock* b, const AlphaInstructionSource& source
   Label body = a.new_label();  // chained re-entry
   const Label body_same_page = a.new_label();
   const Label exec_proof = a.new_label(), exec_denied = a.new_label();
+  size_t exec_mask_imm_off = 0;
   a.bind(body);
   const size_t body_off = code.code_size();   // byte offset of the chained entry from fn
   if (!pal_block) {
     // Check instruction access for CM. Static same-page branches use body_same_page;
-    // their source checked the same 8 KiB page. The mask lives with the code.
+    // their source checked the same 8 KiB page. Authorization patches the imm8.
     // jit_mode_bit is refreshed on C entry and compiled CM writes.
-    a.mov(x86::eax, x86::dword_ptr(x86::rbp, m_off.jit_mode_bit));
-    a.test(x86::dword_ptr(exec_proof, (int32_t)offsetof(NativeExecProof, mode_mask)), x86::eax);
+    if (a.test(x86::byte_ptr(x86::rbp, m_off.jit_mode_bit), imm(0)) != Error::kOk)
+      return;
+    exec_mask_imm_off = a.offset() - 1; // TEST r/m8, imm8 ends with its one-byte immediate
     a.jz(exec_denied);
   }
   a.bind(body_same_page);
@@ -3474,8 +3530,12 @@ void CJitEngine::compile_block(JitBlock* b, const AlphaInstructionSource& source
     a.align(AlignMode::kData, alignof(NativeExecProof));
     a.bind(exec_proof);
     exec_proof_off = code.code_size();
-    for (size_t offset = 0; offset < sizeof(NativeExecProof); offset += sizeof(uint64_t))
-      a.embed_uint64(0);
+    if (exec_proof_off <= exec_mask_imm_off
+        || exec_proof_off - exec_mask_imm_off > UINT32_MAX)
+      return;
+    a.embed_uint64(0); // epoch
+    a.embed_uint32(0); // mode mask; both copies initially deny every mode
+    a.embed_uint32(static_cast<uint32_t>(exec_proof_off - exec_mask_imm_off));
   }
   const size_t csz = code.code_size();
   JitFn fn = nullptr;

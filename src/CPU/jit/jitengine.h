@@ -134,6 +134,7 @@ public:
     void*    body;   // target's chained entry point
     uint64_t asn;    // I-stream ASN the body was resolved under
   };
+  static_assert(sizeof(JumpCacheEntry) == 32, "jump-cache entry stride");
   static constexpr int kJumpCacheEntries = 4096;
   static inline uint32_t jcache_index(uint64_t target) { return (uint32_t) (target >> 2) & (kJumpCacheEntries - 1); }
   inline void jcache_fill(uint64_t target, bool shadow, void* body, uint32_t asn)
@@ -157,12 +158,13 @@ public:
   // JitBlock cache slot.
   struct NativeExecProof
   {
-    uint64_t epoch;      // last validated epoch; native entries test only mode_mask
+    uint64_t epoch;      // last epoch authorized for mode_mask
     uint32_t mode_mask;  // modes with execute access
-    uint32_t reserved;
+    uint32_t guard_imm_back; // x64: bytes back from this proof to TEST's imm8; A64: zero
   };
   static_assert(offsetof(NativeExecProof, epoch) == 0, "native proof epoch offset");
   static_assert(offsetof(NativeExecProof, mode_mask) == 8, "native proof mode offset");
+  static_assert(offsetof(NativeExecProof, guard_imm_back) == 12, "native guard immediate offset");
   static_assert(sizeof(NativeExecProof) == 16, "native execution proof layout");
 
   // FIELD ORDER IS LOAD-BEARING: everything lookup() reads -- tag, asn, asm_global,
@@ -407,6 +409,9 @@ public:
   // Native entry guards check CM; traces still need their links cleared.
   inline void     note_mode_change()    { ++m_vgen_cur; invalidate_links_mode(); }
   void authorize_native(JitBlock* block, uint32_t mode); // call after checking instruction access
+#if defined(ES40_JIT_X64)
+  static void serialize_code(); // after code writes or taking ownership of generated code
+#endif
   // Combined validation epoch, maintained (not summed) so the emitted chain guard reads ONE qword.
   inline uint64_t vgen() const          { return m_vgen_cur; }
 #ifdef JIT_STATS
@@ -515,7 +520,7 @@ private:
   uint64_t m_non_global_flush_gen = 0; // process-specific code: bumped by either kind of flush
   uint64_t m_vgen_cur = 0;  // maintained epoch = itb + flush + non-global-flush bumps 
   uint64_t m_exec_epoch = 1; // permission/coherence changes, excluding CM switches
-  JumpCacheEntry m_jcache[kJumpCacheEntries] = {};   // computed-jump cache (per CPU)
+  alignas(64) JumpCacheEntry m_jcache[kJumpCacheEntries] = {};   // computed-jump cache (per CPU)
   uint64_t m_jc_gen = 1;    // every invalidate_links() retires all jump-cache entries
   JitEnterFn m_enter = nullptr;   // shared prologue (x64)
   void*      m_exit = nullptr;    // shared epilogue (x64)
