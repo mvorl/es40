@@ -2333,15 +2333,36 @@ static asmjit::a64::Gp a64_tail_scratch_avoiding(
   return asmjit::a64::xzr;
 }
 
+static asmjit::Error emit_a64_cpu_mem(asmjit::a64::Assembler& a,
+    const asmjit::a64::Gp& address, const asmjit::a64::Gp& expansion,
+    uint32_t offset, uint32_t access_size, asmjit::a64::Mem& mem)
+{
+  using namespace asmjit;
+  if ((offset & (access_size - 1u)) == 0) {
+    if (offset <= 4095u * access_size) {
+      mem = a64::ptr(CJitEngine::RegAlloc::kCpu, static_cast<int32_t>(offset));
+      return Error::kOk;
+    }
+    // Leave the low 12 bits in the load/store displacement.
+    if (offset <= 0x00ffffffu) {
+      mem = a64::ptr(address, static_cast<int32_t>(offset & 0xfffu));
+      return a.add(address, CJitEngine::RegAlloc::kCpu, imm(offset & 0xfff000u));
+    }
+  }
+  mem = a64::ptr(address);
+  return emit_a64_add_offset(a, address, CJitEngine::RegAlloc::kCpu,
+                            static_cast<int64_t>(offset), expansion);
+}
+
 static asmjit::Error emit_a64_load_cpu_u64(asmjit::a64::Assembler& a,
     const asmjit::a64::Gp& dst, uint32_t offset)
 {
   using namespace asmjit;
   if (!dst.is_gp64() || !a64_is_tail_scratch(dst)) return Error::kInvalidArgument;
   const a64::Gp expansion = a64_tail_scratch_avoiding(dst.id());
-  Error err = emit_a64_add_offset(a, dst, CJitEngine::RegAlloc::kCpu,
-                                  static_cast<int64_t>(offset), expansion);
-  return err != Error::kOk ? err : a.ldr(dst, a64::ptr(dst));
+  a64::Mem mem;
+  Error err = emit_a64_cpu_mem(a, dst, expansion, offset, 8, mem);
+  return err != Error::kOk ? err : a.ldr(dst, mem);
 }
 
 static asmjit::Error emit_a64_load_cpu_u8(asmjit::a64::Assembler& a,
@@ -2351,11 +2372,14 @@ static asmjit::Error emit_a64_load_cpu_u8(asmjit::a64::Assembler& a,
   if (!dst.is_gp32() || !a64_is_tail_scratch(dst)) return Error::kInvalidArgument;
   const a64::Gp address = a64::x(dst.id());
   const a64::Gp expansion = a64_tail_scratch_avoiding(dst.id());
-  Error err = emit_a64_add_offset(a, address, CJitEngine::RegAlloc::kCpu,
-                                  static_cast<int64_t>(offset), expansion);
-  if (err != Error::kOk) return err;
-  return acquire ? a.ldarb(dst, a64::ptr(address))
-                 : a.ldrb(dst, a64::ptr(address));
+  if (acquire) {
+    Error err = emit_a64_add_offset(a, address, CJitEngine::RegAlloc::kCpu,
+                                    static_cast<int64_t>(offset), expansion);
+    return err != Error::kOk ? err : a.ldarb(dst, a64::ptr(address));
+  }
+  a64::Mem mem;
+  Error err = emit_a64_cpu_mem(a, address, expansion, offset, 1, mem);
+  return err != Error::kOk ? err : a.ldrb(dst, mem);
 }
 
 static asmjit::Error emit_a64_load_cpu_u16(asmjit::a64::Assembler& a,
@@ -2365,11 +2389,14 @@ static asmjit::Error emit_a64_load_cpu_u16(asmjit::a64::Assembler& a,
   if (!dst.is_gp32() || !a64_is_tail_scratch(dst)) return Error::kInvalidArgument;
   const a64::Gp address = a64::x(dst.id());
   const a64::Gp expansion = a64_tail_scratch_avoiding(dst.id());
-  Error err = emit_a64_add_offset(a, address, CJitEngine::RegAlloc::kCpu,
-                                  static_cast<int64_t>(offset), expansion);
-  if (err != Error::kOk) return err;
-  return acquire ? a.ldarh(dst, a64::ptr(address))
-                 : a.ldrh(dst, a64::ptr(address));
+  if (acquire) {
+    Error err = emit_a64_add_offset(a, address, CJitEngine::RegAlloc::kCpu,
+                                    static_cast<int64_t>(offset), expansion);
+    return err != Error::kOk ? err : a.ldarh(dst, a64::ptr(address));
+  }
+  a64::Mem mem;
+  Error err = emit_a64_cpu_mem(a, address, expansion, offset, 2, mem);
+  return err != Error::kOk ? err : a.ldrh(dst, mem);
 }
 
 static asmjit::Error emit_a64_load_cpu_u32(asmjit::a64::Assembler& a,
@@ -2379,10 +2406,9 @@ static asmjit::Error emit_a64_load_cpu_u32(asmjit::a64::Assembler& a,
   if (!dst.is_gp32() || !a64_is_tail_scratch(dst)) return Error::kInvalidArgument;
   const a64::Gp address = a64::x(dst.id());
   const a64::Gp expansion = a64_tail_scratch_avoiding(dst.id());
-  Error err = emit_a64_add_offset(a, address, CJitEngine::RegAlloc::kCpu,
-                                  static_cast<int64_t>(offset), expansion);
-  if (err != Error::kOk) return err;
-  return a.ldr(dst, a64::ptr(address));
+  a64::Mem mem;
+  Error err = emit_a64_cpu_mem(a, address, expansion, offset, 4, mem);
+  return err != Error::kOk ? err : a.ldr(dst, mem);
 }
 
 static asmjit::Error emit_a64_store_cpu_u64(asmjit::a64::Assembler& a,
@@ -2396,9 +2422,9 @@ static asmjit::Error emit_a64_store_cpu_u64(asmjit::a64::Assembler& a,
       a64_tail_scratch_avoiding(src.id(), address.id());
   if (!a64_is_real_x(address) || !a64_is_real_x(expansion))
     return Error::kInvalidArgument;
-  Error err = emit_a64_add_offset(a, address, CJitEngine::RegAlloc::kCpu,
-                                  static_cast<int64_t>(offset), expansion);
-  return err != Error::kOk ? err : a.str(src, a64::ptr(address));
+  a64::Mem mem;
+  Error err = emit_a64_cpu_mem(a, address, expansion, offset, 8, mem);
+  return err != Error::kOk ? err : a.str(src, mem);
 }
 
 struct A64FrameLayout {
@@ -4339,8 +4365,9 @@ static A64OpEmitReceipt emit_a64_inta(A64EmitContext& context,
     const uint32_t sh =
         (func == 0x22 || func == 0x2b || func == 0x02 || func == 0x0b) ? 2
       : (func == 0x32 || func == 0x3b || func == 0x12 || func == 0x1b) ? 3 : 0;
+    const bool shifted_add = sh != 0 && !is_sub && !op.is_literal;
     a64::Gp val1 = op1;
-    if (sh != 0) {                               // lsl is bitfield-class: ZR-safe
+    if (sh != 0 && !shifted_add) {                // lsl is bitfield-class: ZR-safe
       err = a.lsl(RA::kScratch3, op1, imm(sh));
       val1 = RA::kScratch3;
     }
@@ -4356,7 +4383,8 @@ static A64OpEmitReceipt emit_a64_inta(A64EmitContext& context,
     } else {
       const a64::Gp op2 = source(op.rb, RA::kScratch1);
       if (err != Error::kOk) return a64_completed_op_receipt(op, err);
-      err = is_sub ? a.sub(dst, val1, op2) : a.add(dst, val1, op2);
+      err = shifted_add ? a.add(dst, op2, op1, a64::lsl(sh))
+          : is_sub ? a.sub(dst, val1, op2) : a.add(dst, val1, op2);
     }
     if (err == Error::kOk && is_long) err = a.sxtw(dst, dst.w());
   }
@@ -4974,8 +5002,7 @@ static A64OpEmitReceipt emit_a64_branch_fp(A64EmitContext& context,
     return a64_completed_op_receipt(op, err);
   }
 
-  err = emit_a64_load_cpu_u64(a, RA::kScratch1,
-      context.offsets.f_base + 8u * op.ra);
+  err = emit_a64_load_f_bits(context, RA::kScratch1, op.ra);
   if (err == Error::kOk) err = a.asr(RA::kScratch3, RA::kScratch1, imm(63));
   if (err == Error::kOk)
     err = a.and_(RA::kScratch1, RA::kScratch1, imm(0x7fffffffffffffffull));
@@ -5010,9 +5037,16 @@ static A64OpEmitReceipt emit_a64_branch_fp(A64EmitContext& context,
 
 // FLTI/SQRT inline support. 
 
-static asmjit::Error emit_a64_f_addr(A64EmitContext& c, uint32_t freg)
-{  // &state.f[freg] -> kScratch6
+static asmjit::Error emit_a64_f_mem(A64EmitContext& c, uint32_t freg,
+                                     asmjit::a64::Mem& mem)
+{
   using RA = CJitEngine::RegAlloc;
+  const uint64_t offset = uint64_t(c.offsets.f_from_r) + uint64_t(freg) * 8;
+  if ((offset & 7u) == 0 && offset <= 32760u) {
+    mem = asmjit::a64::ptr(RA::kRegs, static_cast<int32_t>(offset));
+    return asmjit::Error::kOk;
+  }
+  mem = asmjit::a64::ptr(RA::kScratch6);
   return emit_a64_add_offset(c.assembler, RA::kScratch6, RA::kCpu,
       static_cast<int64_t>(c.offsets.f_base) + 8 * static_cast<int64_t>(freg),
       RA::kScratch5);
@@ -5020,30 +5054,34 @@ static asmjit::Error emit_a64_f_addr(A64EmitContext& c, uint32_t freg)
 static asmjit::Error emit_a64_load_f(A64EmitContext& c, const asmjit::a64::Vec& d,
                                      uint32_t freg)
 {
-  asmjit::Error err = emit_a64_f_addr(c, freg);
+  asmjit::a64::Mem mem;
+  asmjit::Error err = emit_a64_f_mem(c, freg, mem);
   return err != asmjit::Error::kOk ? err
-      : c.assembler.ldr(d, asmjit::a64::ptr(CJitEngine::RegAlloc::kScratch6));
+      : c.assembler.ldr(d, mem);
 }
 static asmjit::Error emit_a64_store_f(A64EmitContext& c, const asmjit::a64::Vec& d,
                                       uint32_t freg)
 {
-  asmjit::Error err = emit_a64_f_addr(c, freg);
+  asmjit::a64::Mem mem;
+  asmjit::Error err = emit_a64_f_mem(c, freg, mem);
   return err != asmjit::Error::kOk ? err
-      : c.assembler.str(d, asmjit::a64::ptr(CJitEngine::RegAlloc::kScratch6));
+      : c.assembler.str(d, mem);
 }
 static asmjit::Error emit_a64_load_f_bits(A64EmitContext& c,
                                           const asmjit::a64::Gp& x, uint32_t freg)
 {
-  asmjit::Error err = emit_a64_f_addr(c, freg);
+  asmjit::a64::Mem mem;
+  asmjit::Error err = emit_a64_f_mem(c, freg, mem);
   return err != asmjit::Error::kOk ? err
-      : c.assembler.ldr(x, asmjit::a64::ptr(CJitEngine::RegAlloc::kScratch6));
+      : c.assembler.ldr(x, mem);
 }
 static asmjit::Error emit_a64_store_f_bits(A64EmitContext& c,
                                            const asmjit::a64::Gp& x, uint32_t freg)
 {
-  asmjit::Error err = emit_a64_f_addr(c, freg);
+  asmjit::a64::Mem mem;
+  asmjit::Error err = emit_a64_f_mem(c, freg, mem);
   return err != asmjit::Error::kOk ? err
-      : c.assembler.str(x, asmjit::a64::ptr(CJitEngine::RegAlloc::kScratch6));
+      : c.assembler.str(x, mem);
 }
 
 // FPSTART: fpen==0 -> FEN bail; exc_sum = 0.
@@ -5599,11 +5637,13 @@ static A64OpEmitReceipt emit_a64_planned_op(A64EmitContext& context,
       preserves = true; dest = op.rc; break;
     case A64OpKind::kLoadAddress:
       preserves = true; dest = op.ra; break;
-    case A64OpKind::kInta: {   // the scaled forms use kScratch3 (the bias register)
+    case A64OpKind::kInta: {   // scaled literals and subtracts use the bias register
       const uint32_t f = (op.ins >> 5) & 0x7fu;
       const bool scaled = f == 0x22 || f == 0x2b || f == 0x02 || f == 0x0b
                        || f == 0x32 || f == 0x3b || f == 0x12 || f == 0x1b;
-      preserves = !scaled; dest = op.rc; break;
+      const bool register_add = !op.is_literal
+          && (f == 0x22 || f == 0x02 || f == 0x32 || f == 0x12);
+      preserves = !scaled || register_add; dest = op.rc; break;
     }
     case A64OpKind::kIntsZap:   // register-form selector uses kScratch3
       preserves = op.is_literal; dest = op.rc; break;
@@ -6006,11 +6046,14 @@ static asmjit::Error emit_a64_indirect_chain_tail(asmjit::a64::Assembler& a,
   return a.b(done);
 #else
   const Label bailout = a.new_label();
+  const Label pic_miss = a.new_label();
   const Label resolver = a.new_label();
   err = emit_a64_chain_gate(a, offsets, contract.gate, bailout);
   if (err != Error::kOk) return err;
   err = emit_a64_link_slots_probe(a, offsets, slots,
-                                  contract.target_variant, resolver);
+                                  contract.target_variant, pic_miss);
+  if (err != Error::kOk) return err;
+  err = a.bind(pic_miss);
   if (err != Error::kOk) return err;
   if (jc.base && CJitEngine::kJumpCache) {
     err = emit_a64_jump_cache_probe(a, offsets, jc, slots, resolver,
