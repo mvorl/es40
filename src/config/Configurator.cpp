@@ -778,6 +778,8 @@ static const char* const kv_gui_sdl[] = {
   "hotkey.scale_down", 0 };
 static const char* const kv_gui_x11[] = {
   "keyboard.use_mapping", "keyboard.map", "private_colormap", 0 };
+static const char* const kv_gui_win32[] = {
+  "keyboard.use_mapping", "keyboard.map", 0 };
 static const char* const kv_mpu401[] = { "midi_out", 0 };
 
 classinfo classes[] = {
@@ -802,7 +804,7 @@ classinfo classes[] = {
   {"device", c_device, IS_DISK, kv_disk_device},
   {"ramdisk", c_ramdisk, IS_DISK, kv_disk_ram},
   {"sdl", c_sdl, N_P | IS_GUI, kv_gui_sdl},
-  {"win32", c_sdl, N_P | IS_GUI, kv_gui_sdl},
+  {"win32", c_win32, N_P | IS_GUI, kv_gui_win32},
   {"X11", c_x11, N_P | IS_GUI, kv_gui_x11},
   {"mpu401", c_mpu401, ON_CS, kv_mpu401},
   {"es1370", c_es1370, IS_PCI, kv_es1370},
