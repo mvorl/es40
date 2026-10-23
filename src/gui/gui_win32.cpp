@@ -83,6 +83,7 @@ static LRESULT CALLBACK win32_window_proc(HWND, UINT, WPARAM, LPARAM);
 static LRESULT CALLBACK win32_dispatch_proc(HWND, UINT, WPARAM, LPARAM);
 static const char win32_window_class[] = "ES40 Display";
 static const char win32_dispatch_class[] = "ES40 Display Dispatcher";
+static constexpr DWORD win32_window_style = WS_OVERLAPPEDWINDOW;
 static constexpr UINT win32_invoke_message = WM_APP + 1;
 static constexpr UINT win32_wake_message = WM_APP + 2;
 static constexpr UINT win32_reconcile_message = WM_APP + 3;
@@ -295,7 +296,7 @@ public:
 	void record_callback_error() noexcept;
 	void send_key(unsigned scan, bool released);
 	bool consume_hotkey_key(unsigned scan, bool released, bool repeat);
-	void suppress_hotkey_keys(unsigned scan, unsigned modifiers);
+	void suppress_hotkey_keys(unsigned scan, unsigned modifiers, bool release_modifiers = true);
 	void send_ctrl_alt_delete();
 	void send_mouse(int dx, int dy, int dz, unsigned buttons);
 	void send_host_mouse(int dx, int dy, int dz, unsigned buttons);
@@ -308,7 +309,7 @@ public:
 	std::map<HWND, bx_win32_gui_c*> windows;
 	bx_win32_gui_c* capture_owner = nullptr;
 	unsigned mouse_buttons = 0;
-	win32_hotkey_binding hotkey_mouse_capture, hotkey_ctrl_alt_delete;
+	win32_hotkey_binding hotkey_mouse_capture, hotkey_ctrl_alt_delete, hotkey_reset_window;
 	bool input_paused = false;
 	bool shutting_down = false;
 private:
@@ -377,6 +378,9 @@ private:
 	friend LRESULT CALLBACK win32_window_proc(HWND, UINT, WPARAM, LPARAM);
 	void initialize_window();
 	void dimension_update_impl(unsigned, unsigned);
+	void resize_window_to_guest();
+	void reset_window_size();
+	void update_mouse_geometry();
 	void exit_impl();
 	void update_title();
 	void paint(HDC);
@@ -401,7 +405,7 @@ private:
 	unsigned ignored_mouse_buttons = 0;
 	bool retired = false;
 	bool fullscreen = false;
-	RECT windowed_rect = {};
+	WINDOWPLACEMENT windowed_placement = { sizeof(WINDOWPLACEMENT) };
 };
 
 static std::unique_ptr<win32_application> win32_app;
@@ -777,15 +781,28 @@ void win32_application::initialize()
 	mouse_invert_y = cfg->get_bool_value("mouse.invert_y", false);
 	hotkey_mouse_capture = parse_win32_hotkey(cfg, "hotkey.mouse_capture", "Ctrl+F10");
 	hotkey_ctrl_alt_delete = parse_win32_hotkey(cfg, "hotkey.ctrl_alt_delete", "Ctrl+Alt+End");
-	if (hotkey_mouse_capture.enabled && hotkey_ctrl_alt_delete.enabled &&
-		hotkey_mouse_capture.key == hotkey_ctrl_alt_delete.key &&
-		hotkey_mouse_capture.modifiers == hotkey_ctrl_alt_delete.modifiers)
+	hotkey_reset_window = parse_win32_hotkey(cfg, "hotkey.reset_window", "Ctrl+Alt+Home");
+	win32_hotkey_binding* bindings[] = {
+		&hotkey_mouse_capture, &hotkey_ctrl_alt_delete, &hotkey_reset_window
+	};
+	constexpr size_t binding_count = sizeof(bindings) / sizeof(bindings[0]);
+	bool duplicate[binding_count] = {};
+	for (size_t i = 0; i < binding_count; ++i)
 	{
-		printf("%%WIN32-W-HOTKEY: %s and %s both use \"%s\"; both actions disabled.\n",
-			hotkey_mouse_capture.config_name, hotkey_ctrl_alt_delete.config_name,
-			hotkey_mouse_capture.display.c_str());
-		hotkey_mouse_capture.enabled = hotkey_ctrl_alt_delete.enabled = false;
+		for (size_t j = i + 1; j < binding_count; ++j)
+		{
+			if (bindings[i]->enabled && bindings[j]->enabled &&
+				bindings[i]->key == bindings[j]->key &&
+				bindings[i]->modifiers == bindings[j]->modifiers)
+			{
+				printf("%%WIN32-W-HOTKEY: %s and %s both use \"%s\"; both actions disabled.\n",
+					bindings[i]->config_name, bindings[j]->config_name, bindings[i]->display.c_str());
+				duplicate[i] = duplicate[j] = true;
+			}
+		}
 	}
+	for (size_t i = 0; i < binding_count; ++i)
+		if (duplicate[i]) bindings[i]->enabled = false;
 	register_win32_class(win32_window_class, win32_window_proc);
 	register_win32_class(win32_dispatch_class, win32_dispatch_proc);
 	dispatcher = CreateWindowEx(0, win32_dispatch_class, "", 0, 0, 0,
@@ -925,11 +942,13 @@ bool win32_application::consume_hotkey_key(unsigned scan, bool released, bool re
 	return true;
 }
 
-void win32_application::suppress_hotkey_keys(unsigned scan, unsigned modifiers)
+void win32_application::suppress_hotkey_keys(unsigned scan, unsigned modifiers,
+	bool release_modifiers)
 {
 	if (input_paused || scan >= 512) return;
 	sync_input();
 	swallowed_hotkey_keys[scan] = true;
+	if (!release_modifiers) return;
 	// release the guest modifiers before injecting the complete sequence. 
 	// Suppression belongs to the shared keyboard so repeats and releases can arrive 
 	// at a different output window.
@@ -1047,7 +1066,7 @@ void bx_win32_gui_c::initialize_window()
 		FAILURE(Win32, "Cannot initialize a retired display");
 	if (window) return;
 	if (width == 0 || height == 0) dimension_update_impl(640, 480);
-	const DWORD style = WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+	const DWORD style = win32_window_style;
 	RECT rect = { 0, 0, (LONG)width, (LONG)height };
 	AdjustWindowRectEx(&rect, style, FALSE, 0);
 	HWND created = CreateWindowEx(0, win32_window_class, window_title.c_str(),
@@ -1072,6 +1091,7 @@ void bx_win32_gui_c::update_title()
 	if (application.capture_owner == this)
 		append_hint(application.hotkey_mouse_capture, "releases mouse");
 	append_hint(application.hotkey_ctrl_alt_delete, "sends C+A+Del");
+	append_hint(application.hotkey_reset_window, "resets window");
 	SetWindowText(window, title.c_str());
 }
 
@@ -1095,17 +1115,35 @@ void bx_win32_gui_c::dimension_update_impl(unsigned x, unsigned y)
 	host_xres = (u16)x;
 	host_yres = (u16)y;
 	host_bpp = 32;
-	if (window && !fullscreen)
-	{
-		RECT rect = { 0, 0, (LONG)x, (LONG)y };
-		AdjustWindowRectEx(&rect, (DWORD)GetWindowLongPtr(window, GWL_STYLE),
-			FALSE, (DWORD)GetWindowLongPtr(window, GWL_EXSTYLE));
-		SetWindowPos(window, nullptr, 0, 0, rect.right - rect.left,
-			rect.bottom - rect.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-	}
+	resize_window_to_guest();
+	update_mouse_geometry();
+}
+
+void bx_win32_gui_c::resize_window_to_guest()
+{
+	if (!window || fullscreen || IsZoomed(window) || IsIconic(window)) return;
+	RECT rect = { 0, 0, (LONG)width, (LONG)height };
+	AdjustWindowRectEx(&rect, (DWORD)GetWindowLongPtr(window, GWL_STYLE),
+		FALSE, (DWORD)GetWindowLongPtr(window, GWL_EXSTYLE));
+	SetWindowPos(window, nullptr, 0, 0, rect.right - rect.left,
+		rect.bottom - rect.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+void bx_win32_gui_c::reset_window_size()
+{
+	if (!window || retired) return;
+	if (fullscreen) toggle_fullscreen();
+	if (IsZoomed(window) || IsIconic(window)) ShowWindow(window, SW_RESTORE);
+	// Manual resizing changes only the host window. 
+	// The framebuffer dimensions remain the guest-driven state.
+	resize_window_to_guest();
+}
+
+void bx_win32_gui_c::update_mouse_geometry()
+{
 	if (application.capture_owner == this)
 	{
-		if (confine_mouse()) recenter_mouse();
+		if (!IsIconic(window) && confine_mouse()) recenter_mouse();
 		else application.set_mouse_capture(nullptr);
 	}
 }
@@ -1248,14 +1286,15 @@ void bx_win32_gui_c::mouse_event(int x, int y, int z, unsigned flags)
 
 void bx_win32_gui_c::toggle_fullscreen()
 {
-	const LONG_PTR normal_style = WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+	const LONG_PTR style = GetWindowLongPtr(window, GWL_STYLE);
 	if (!fullscreen)
 	{
 		MONITORINFO monitor = { sizeof(MONITORINFO) };
 		if (!GetMonitorInfo(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor)) return;
-		GetWindowRect(window, &windowed_rect);
+		if (!GetWindowPlacement(window, &windowed_placement)) return;
 		fullscreen = true;
-		SetWindowLongPtr(window, GWL_STYLE, WS_POPUP);
+		SetWindowLongPtr(window, GWL_STYLE,
+			(style & ~(win32_window_style | WS_MAXIMIZE | WS_MINIMIZE)) | WS_POPUP);
 		SetWindowPos(window, nullptr, monitor.rcMonitor.left, monitor.rcMonitor.top,
 			monitor.rcMonitor.right - monitor.rcMonitor.left,
 			monitor.rcMonitor.bottom - monitor.rcMonitor.top,
@@ -1264,11 +1303,10 @@ void bx_win32_gui_c::toggle_fullscreen()
 	else
 	{
 		fullscreen = false;
-		SetWindowLongPtr(window, GWL_STYLE, normal_style);
-		SetWindowPos(window, nullptr, windowed_rect.left, windowed_rect.top,
-			windowed_rect.right - windowed_rect.left,
-			windowed_rect.bottom - windowed_rect.top,
-			SWP_FRAMECHANGED | SWP_NOZORDER);
+		SetWindowLongPtr(window, GWL_STYLE, (style & ~WS_POPUP) | win32_window_style);
+		SetWindowPlacement(window, &windowed_placement);
+		SetWindowPos(window, nullptr, 0, 0, 0, 0,
+			SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE);
 	}
 }
 
@@ -1323,11 +1361,14 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 		application.poll_input();
 		return 0;
 	case WM_TIMER:
-		if (application.capture_owner == this)
-		{
-			if (confine_mouse()) recenter_mouse();
-			else application.set_mouse_capture(nullptr);
-		}
+		update_mouse_geometry();
+		return 0;
+	case WM_MOVE:
+		update_mouse_geometry();
+		return 0;
+	case WM_SIZE:
+		update_mouse_geometry();
+		InvalidateRect(hwnd, nullptr, FALSE);
 		return 0;
 	case WM_SETCURSOR:
 		if (application.capture_owner == this && LOWORD(lparam) == HTCLIENT)
@@ -1384,6 +1425,15 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 			{
 				application.suppress_hotkey_keys(scan, modifiers);
 				application.send_ctrl_alt_delete();
+			}
+			return 0;
+		}
+		if (application.hotkey_reset_window.matches(key, modifiers))
+		{
+			if (!(lparam & (1L << 30)))
+			{
+				application.suppress_hotkey_keys(scan, modifiers, false);
+				reset_window_size();
 			}
 			return 0;
 		}
