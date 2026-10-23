@@ -2861,6 +2861,13 @@ void CJitEngine::compile_block(JitBlock* b, const AlphaInstructionSource& source
       return;
     exec_mask_imm_off = a.offset() - 1; // TEST r/m8, imm8 ends with its one-byte immediate
     a.jz(exec_denied);
+    const bool had_optimized_align = a.has_encoding_option(EncodingOptions::kOptimizedAlign);
+    a.add_encoding_options(EncodingOptions::kOptimizedAlign);
+    const Error align_err = a.align(AlignMode::kCode, 16);
+    if (!had_optimized_align)
+      a.clear_encoding_options(EncodingOptions::kOptimizedAlign);
+    if (align_err != Error::kOk)
+      return;
   }
   a.bind(body_same_page);
   const size_t body_same_page_off = code.code_size();

@@ -368,6 +368,7 @@ public:
     int cpuid;
   };
 
+  // LDx_L and STx_C accept naturally aligned 32- or 64-bit accesses.
   u64           cpu_read_locked(int cpuid, u64 phys, int size_bits,
                                 CSystemComponent* source);   // LDx_L: read and reserve atomically
   void          cpu_write_ram(u64 phys, int size_bits, u64 value); // CPU store + reservation invalidation
@@ -486,7 +487,7 @@ private:
   std::mutex m_ll_watch_setup;
   void allocate_ll_watch(); // called only when the RAM allocation changes
   void enter_ll_jit(int cpuid) noexcept;
-  void watch_ll_lines(int cpuid, u64 phys, int size_bits);
+  void watch_ll_line(int cpuid, u64 phys);
   void cpu_lock(int cpuid, u64 address, u64 value); // caller holds the RAM bucket
   void cpu_lock_bucket(u32 bucket);
 
@@ -494,6 +495,7 @@ private:
   // at the hash wrap, and never call translation or device code while held.
   class CLLRAMGuard {
   public:
+    CLLRAMGuard(CSystem* system, u64 phys); // aligned LDx_L/STx_C
     CLLRAMGuard(CSystem* system, u64 phys, int size_bits);
     ~CLLRAMGuard();
     CLLRAMGuard(const CLLRAMGuard&) = delete;

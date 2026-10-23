@@ -1088,18 +1088,16 @@ CSystem::JitExecutionGuard::~JitExecutionGuard()
 		system->m_ll_jit_cpu[cpuid].active.store(false, std::memory_order_seq_cst);
 }
 
-void CSystem::watch_ll_lines(int cpuid, u64 phys, int size_bits)
+void CSystem::watch_ll_line(int cpuid, u64 phys)
 {
 #ifndef ES40_JIT
 	// Interpreter SMP stores already take the bucket lock.
-	(void)cpuid; (void)phys; (void)size_bits;
+	(void)cpuid; (void)phys;
 	return;
 #else
 	if (iNumCPUs <= 1) return;
-	const size_t first = (size_t)(phys >> 6);
-	const size_t last = (size_t)((phys + size_bits / 8 - 1) >> 6);
-	if (m_ll_watch[first].load(std::memory_order_acquire) &&
-		m_ll_watch[last].load(std::memory_order_acquire))
+	const size_t line = (size_t)(phys >> 6);
+	if (m_ll_watch[line].load(std::memory_order_acquire))
 		return;
 
 	// Clear active before waiting: the mutex owner may be waiting for this CPU.
@@ -1109,8 +1107,7 @@ void CSystem::watch_ll_lines(int cpuid, u64 phys, int size_bits)
 	try
 	{
 		std::lock_guard<std::mutex> setup(m_ll_watch_setup);
-		if (!m_ll_watch[first].load(std::memory_order_acquire) ||
-			!m_ll_watch[last].load(std::memory_order_acquire))
+		if (!m_ll_watch[line].load(std::memory_order_acquire))
 		{
 			struct FreezeGuard
 			{
@@ -1124,19 +1121,15 @@ void CSystem::watch_ll_lines(int cpuid, u64 phys, int size_bits)
 			for (int cpu = 0; cpu < iNumCPUs; ++cpu)
 				while (m_ll_jit_cpu[cpu].active.load(std::memory_order_seq_cst))
 					std::this_thread::yield();
-			m_ll_watch[first].store(1, std::memory_order_release);
-			m_ll_watch[last].store(1, std::memory_order_release);
-			const auto promote_page = [&](u64 address)
+			m_ll_watch[line].store(1, std::memory_order_release);
+			auto& watched = m_ll_watch_pages[(size_t)(phys >> 13)];
+			if (!watched.load(std::memory_order_relaxed))
 			{
-				auto& watched = m_ll_watch_pages[(size_t)(address >> 13)];
-				if (watched.load(std::memory_order_relaxed)) return;
 				watched.store(1, std::memory_order_release);
 				// Mark every cached write alias before letting CPUs run again.
 				for (int cpu = 0; cpu < iNumCPUs; ++cpu)
-					acCPUs[cpu]->promote_write_dpc_page(address);
-			};
-			promote_page(phys);
-			promote_page(phys + size_bits / 8 - 1);
+					acCPUs[cpu]->promote_write_dpc_page(phys);
+			}
 		}
 	}
 	catch (...)
@@ -1159,6 +1152,12 @@ void CSystem::cpu_lock_bucket(u32 bucket)
 	for (unsigned spins = 0; m_ll_buckets[bucket].lock.exchange(1, std::memory_order_acquire); ++spins)
 		if ((spins & 63) == 63)
 			std::this_thread::yield();
+}
+
+CSystem::CLLRAMGuard::CLLRAMGuard(CSystem* sys, u64 phys)
+	: system(sys), first((u32)((phys >> 6) & (kLLBuckets - 1))), last(first)
+{
+	system->cpu_lock_bucket(first);
 }
 
 CSystem::CLLRAMGuard::CLLRAMGuard(CSystem* sys, u64 phys, int size_bits)
@@ -1205,8 +1204,8 @@ u64 CSystem::cpu_read_locked(int cpuid, u64 phys, int size_bits, CSystemComponen
 		return value;
 	}
 
-	watch_ll_lines(cpuid, phys, size_bits);
-	CLLRAMGuard guard(this, phys, size_bits);
+	watch_ll_line(cpuid, phys);
+	CLLRAMGuard guard(this, phys);
 	const u64 value = dram_read((const char*)memory, phys, size_bits);
 	cpu_lock(cpuid, phys, size_bits == 32 ? sext_u64_32(value) : value);
 	return value;
@@ -1278,7 +1277,7 @@ u64 CSystem::cpu_stx_c(int cpuid, u64 phys, int size_bits, u64 value,
 	}
 
 	const u32 b = (u32)((phys >> 6) & (kLLBuckets - 1));
-	CLLRAMGuard guard(this, phys, size_bits);
+	CLLRAMGuard guard(this, phys);
 	u64 ok;
 	if (m_ll_buckets[b].sequence.load(std::memory_order_relaxed) != m_ll_reservations[cpuid].sequence)
 		ok = 0;    // a store hit this reservation bucket since our LDx_L
