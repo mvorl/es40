@@ -113,6 +113,8 @@ public:
 	void request_shutdown();
 	void record_callback_error() noexcept;
 	void send_key(unsigned scan, bool released);
+	bool consume_hotkey_key(unsigned scan, bool released, bool repeat);
+	void send_ctrl_alt_delete(unsigned scan);
 	void send_mouse(int dx, int dy, int dz, unsigned buttons);
 	void send_host_mouse(int dx, int dy, int dz, unsigned buttons);
 	void set_mouse_capture(bx_win32_gui_c* target);
@@ -146,6 +148,7 @@ private:
 	double mouse_remainder_x = 0.0, mouse_remainder_y = 0.0;
 	bool input_reset_pending = false;
 	bool guest_keys[512] = {};
+	bool swallowed_hotkey_keys[512] = {};
 	std::exception_ptr callback_error;
 };
 
@@ -719,6 +722,44 @@ void win32_application::release_guest_keys()
 		if (guest_keys[i]) send_key(i, true);
 }
 
+bool win32_application::consume_hotkey_key(unsigned scan, bool released, bool repeat)
+{
+	if (scan >= 512) return false;
+	// A fresh press also recovers when the previous release went to another app.
+	if (!released && !repeat) swallowed_hotkey_keys[scan] = false;
+	if (!swallowed_hotkey_keys[scan]) return false;
+	if (released) swallowed_hotkey_keys[scan] = false;
+	return true;
+}
+
+void win32_application::send_ctrl_alt_delete(unsigned scan)
+{
+	if (!keyboard || input_paused || scan >= 512) return;
+	sync_input();
+	swallowed_hotkey_keys[scan] = true;
+	// release the guest modifiers before injecting the complete sequence. 
+	// Suppression belongs to the shared keyboard so repeats and releases can arrive 
+	// at a different output window.
+	const struct { unsigned scan; int key; } modifiers[] = {
+		{ 0x1d, VK_LCONTROL }, { 0x11d, VK_RCONTROL },
+		{ 0x38, VK_LMENU }, { 0x138, VK_RMENU }
+	};
+	for (const auto& modifier : modifiers)
+	{
+		if (guest_keys[modifier.scan] || (GetKeyState(modifier.key) & 0x8000))
+		{
+			swallowed_hotkey_keys[modifier.scan] = true;
+			send_key(modifier.scan, true);
+		}
+	}
+	const u32 sequence[] = {
+		BX_KEY_CTRL_L, BX_KEY_ALT_L, BX_KEY_DELETE,
+		BX_KEY_DELETE | BX_KEY_RELEASED, BX_KEY_ALT_L | BX_KEY_RELEASED,
+		BX_KEY_CTRL_L | BX_KEY_RELEASED
+	};
+	for (u32 key : sequence) keyboard->gen_scancode(key);
+}
+
 void win32_application::send_mouse(int dx, int dy, int dz, unsigned buttons)
 {
 	if (keyboard && !input_paused)
@@ -814,6 +855,7 @@ void bx_win32_gui_c::initialize_window()
 		rect.bottom - rect.top, nullptr, nullptr, GetModuleHandle(nullptr), this);
 	if (!created)
 		FAILURE(Win32, "Unable to create display window");
+	update_title();
 	SetTimer(window, 1, 330, nullptr);
 	ShowWindow(window, SW_SHOW);
 }
@@ -823,7 +865,8 @@ void bx_win32_gui_c::update_title()
 	// Same base and hint formatting as SDL's build_window_titles(). 
 	if (window)
 		SetWindowText(window, (window_title + (application.capture_owner == this
-			? " - Ctrl+F10 releases mouse" : "")).c_str());
+			? " - Ctrl+F10 releases mouse" : "") +
+			" - Ctrl+Alt+End sends C+A+Del").c_str());
 }
 
 void bx_win32_gui_c::dimension_update(unsigned x, unsigned y,
@@ -1035,6 +1078,13 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 		application.poll_input();
 		if (!application.window_owner(GetFocus())) return 0;
 	}
+	if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN ||
+		msg == WM_KEYUP || msg == WM_SYSKEYUP)
+	{
+		if (application.consume_hotkey_key(HIWORD(lparam) & 0x1ff,
+			msg == WM_KEYUP || msg == WM_SYSKEYUP, (lparam & (1L << 30)) != 0))
+			return 0;
+	}
 	switch (msg)
 	{
 	case WM_CLOSE:
@@ -1118,6 +1168,17 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 		return 0;
 	case WM_KEYDOWN:
 	case WM_SYSKEYDOWN:
+		if (wparam == VK_END && (HIWORD(lparam) & KF_EXTENDED) &&
+			(GetKeyState(VK_CONTROL) & 0x8000) &&
+			(GetKeyState(VK_MENU) & 0x8000) &&
+			!(GetKeyState(VK_SHIFT) & 0x8000) &&
+			!(GetKeyState(VK_LWIN) & 0x8000) &&
+			!(GetKeyState(VK_RWIN) & 0x8000))
+		{
+			if (!(lparam & (1L << 30)))
+				application.send_ctrl_alt_delete(HIWORD(lparam) & 0x1ff);
+			return 0;
+		}
 		if (wparam == VK_F10 && !(lparam & (1L << 30)))
 			application.capture_hotkey_down = false;
 		if (wparam == VK_F10 && (application.capture_hotkey_down ||
