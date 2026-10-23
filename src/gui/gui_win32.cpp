@@ -188,6 +188,8 @@ private:
 	void exit_impl();
 	void update_title();
 	void paint(HDC);
+	void prepare_paint_buffer(HDC, int, int);
+	void release_paint_buffer();
 	void mouse_event(int, int, int, unsigned);
 	void recenter_mouse();
 	bool confine_mouse();
@@ -198,6 +200,10 @@ private:
 	const std::string window_title;
 	std::vector<u32> pixels;
 	unsigned width = 0, height = 0;
+	HDC paint_dc = nullptr;
+	HBITMAP paint_bitmap = nullptr;
+	HGDIOBJ paint_original_bitmap = nullptr;
+	int paint_width = 0, paint_height = 0;
 	int mouse_last_x = 0, mouse_last_y = 0;
 	int wheel_remainder = 0;
 	unsigned ignored_mouse_buttons = 0;
@@ -835,23 +841,63 @@ void bx_win32_gui_c::graphics_frame_update(const u32* frame,
 void bx_win32_gui_c::paint(HDC dc)
 {
 	RECT rect;
-	GetClientRect(window, &rect);
-	FillRect(dc, &rect, (HBRUSH)GetStockObject(BLACK_BRUSH));
-	if (pixels.empty() || !width || !height) return;
-	// Match SDL's letterboxing if the host client area differs from the mode.
-	const double scale = (std::min)((double)rect.right / width,
-		(double)rect.bottom / height);
-	const int w = (int)(width * scale), h = (int)(height * scale);
-	BITMAPINFO info = {};
-	info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-	info.bmiHeader.biWidth = (LONG)width;
-	info.bmiHeader.biHeight = -(LONG)height;
-	info.bmiHeader.biPlanes = 1;
-	info.bmiHeader.biBitCount = 32;
-	info.bmiHeader.biCompression = BI_RGB;
-	SetStretchBltMode(dc, COLORONCOLOR);
-	StretchDIBits(dc, (rect.right - w) / 2, (rect.bottom - h) / 2, w, h,
-		0, 0, width, height, pixels.data(), &info, DIB_RGB_COLORS, SRCCOPY);
+	if (!GetClientRect(window, &rect) || IsRectEmpty(&rect)) return;
+	prepare_paint_buffer(dc, rect.right, rect.bottom);
+	// Compose the background and image offscreen.
+	FillRect(paint_dc, &rect, (HBRUSH)GetStockObject(BLACK_BRUSH));
+	if (!pixels.empty() && width && height)
+	{
+		// Match SDL's letterboxing if the client area differs from the mode.
+		const double scale = (std::min)((double)rect.right / width,
+			(double)rect.bottom / height);
+		const int w = (int)(width * scale), h = (int)(height * scale);
+		BITMAPINFO info = {};
+		info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+		info.bmiHeader.biWidth = (LONG)width;
+		info.bmiHeader.biHeight = -(LONG)height;
+		info.bmiHeader.biPlanes = 1;
+		info.bmiHeader.biBitCount = 32;
+		info.bmiHeader.biCompression = BI_RGB;
+		SetStretchBltMode(paint_dc, COLORONCOLOR);
+		StretchDIBits(paint_dc, (rect.right - w) / 2, (rect.bottom - h) / 2,
+			w, h, 0, 0, width, height, pixels.data(), &info,
+			DIB_RGB_COLORS, SRCCOPY);
+	}
+	BitBlt(dc, 0, 0, rect.right, rect.bottom, paint_dc, 0, 0, SRCCOPY);
+}
+
+void bx_win32_gui_c::prepare_paint_buffer(HDC reference, int x, int y)
+{
+	if (paint_dc && paint_width == x && paint_height == y) return;
+	HDC buffer_dc = CreateCompatibleDC(reference);
+	HBITMAP bitmap = buffer_dc ? CreateCompatibleBitmap(reference, x, y)
+		: nullptr;
+	HGDIOBJ original = bitmap ? SelectObject(buffer_dc, bitmap) : nullptr;
+	if (!original || original == HGDI_ERROR)
+	{
+		if (bitmap) DeleteObject(bitmap);
+		if (buffer_dc) DeleteDC(buffer_dc);
+		FAILURE(Win32, "Unable to create display paint buffer");
+	}
+	// Keep the previous buffer intact until its replacement is complete.
+	release_paint_buffer();
+	paint_dc = buffer_dc;
+	paint_bitmap = bitmap;
+	paint_original_bitmap = original;
+	paint_width = x;
+	paint_height = y;
+}
+
+void bx_win32_gui_c::release_paint_buffer()
+{
+	if (paint_dc && paint_original_bitmap)
+		SelectObject(paint_dc, paint_original_bitmap);
+	if (paint_bitmap) DeleteObject(paint_bitmap);
+	if (paint_dc) DeleteDC(paint_dc);
+	paint_dc = nullptr;
+	paint_bitmap = nullptr;
+	paint_original_bitmap = nullptr;
+	paint_width = paint_height = 0;
 }
 
 void bx_win32_gui_c::clear_screen()
@@ -1004,7 +1050,8 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 	{
 		PAINTSTRUCT ps;
 		HDC dc = BeginPaint(hwnd, &ps);
-		paint(dc);
+		try { paint(dc); }
+		catch (...) { EndPaint(hwnd, &ps); throw; }
 		EndPaint(hwnd, &ps);
 		return 0;
 	}
@@ -1115,10 +1162,13 @@ void bx_win32_gui_c::exit_impl()
 	if (retired) return;
 	retired = true;
 	if (application.capture_owner == this) application.set_mouse_capture(nullptr);
-	if (!window) return;
-	if (GetFocus() == window) application.release_input_session();
-	KillTimer(window, 1);
-	DestroyWindow(window);
+	if (window)
+	{
+		if (GetFocus() == window) application.release_input_session();
+		KillTimer(window, 1);
+		DestroyWindow(window);
+	}
+	release_paint_buffer();
 	pixels.clear();
 }
 
