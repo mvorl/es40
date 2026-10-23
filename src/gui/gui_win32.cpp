@@ -59,155 +59,156 @@
 #include "../StdAfx.h"
 
 #if defined(_WIN32)
-#include <process.h>
 #include <windowsx.h>
+#include <algorithm>
+#include <atomic>
+#include <exception>
+#include <functional>
+#include <limits>
+#include <map>
+#include <memory>
+#include <vector>
 
-#include "gui_win32_font.h"
-#include "keymap.h"
 #include "config/Configurator.h"
-#include "../graphics/VGA.h"
 #include "io/Keyboard.h"
-
+#include "system/System.h"
+#include "keymap.h"
 #include "gui.h"
+
+class bx_win32_gui_c;
+static LRESULT CALLBACK win32_window_proc(HWND, UINT, WPARAM, LPARAM);
+static LRESULT CALLBACK win32_dispatch_proc(HWND, UINT, WPARAM, LPARAM);
+static const char win32_window_class[] = "ES40 Display";
+static const char win32_dispatch_class[] = "ES40 Display Dispatcher";
+static constexpr UINT win32_invoke_message = WM_APP + 1;
+static constexpr UINT win32_wake_message = WM_APP + 2;
+static constexpr UINT win32_reconcile_message = WM_APP + 3;
+
+struct win32_call
+{
+	std::function<void()> fn;
+	std::exception_ptr error;
+};
+
+// One application owns the output bindings, window thread and guest input.
+class win32_application
+{
+public:
+	explicit win32_application(CConfigurator* cfg);
+	~win32_application();
+	bx_win32_gui_c& create_display();
+	bx_win32_gui_c& display_for_output(const std::string&, unsigned);
+	const bx_win32_gui_c* find_display_for_output(const std::string&, unsigned) const;
+	void initialize();
+	void pump();
+	void stop();
+	void invoke(std::function<void()> fn);
+	void exit_displays();
+	void poll_input();
+	void pause_input() { input_paused = true; }
+	void resume_input() { input_paused = false; }
+	void detach_input() { keyboard = nullptr; system = nullptr; }
+	void request_shutdown();
+	void record_callback_error() noexcept;
+	void send_key(unsigned scan, bool released);
+	void send_mouse(int dx, int dy, int dz, unsigned buttons);
+	void set_mouse_capture(bx_win32_gui_c* target);
+	void release_input_session();
+	bx_win32_gui_c* window_owner(HWND window) const;
+	bx_keymap_c* keymap() const { return shared_keymap.get(); }
+
+	// Accessed only on the application thread, including callbacks.
+	std::map<HWND, bx_win32_gui_c*> windows;
+	bx_win32_gui_c* capture_owner = nullptr;
+	unsigned mouse_buttons = 0;
+	bool capture_hotkey_down = false;
+	bool input_paused = false;
+	bool shutting_down = false;
+private:
+	void release_guest_keys();
+	void sync_input();
+	CConfigurator* cfg;
+	std::unique_ptr<bx_keymap_c> shared_keymap;
+	std::vector<std::unique_ptr<bx_win32_gui_c>> displays;
+	std::map<std::pair<std::string, unsigned>, bx_win32_gui_c*> outputs;
+	const DWORD owner_thread = GetCurrentThreadId();
+	HWND dispatcher = nullptr;
+	std::atomic<bool> running{ false };
+	CKeyboard* keyboard = nullptr;
+	CSystem* system = nullptr;
+	bool guest_mouse_captured = false;
+	bool input_reset_pending = false;
+	bool guest_keys[512] = {};
+	std::exception_ptr callback_error;
+};
 
 class bx_win32_gui_c : public bx_gui_c
 {
 public:
-	bx_win32_gui_c(CConfigurator* cfg)
-	{
-		myCfg = cfg;
-		bx_keymap = new bx_keymap_c(cfg);
-	};
-
-	virtual void  specific_init(unsigned x_tilesize, unsigned y_tilesize) override;
-	virtual void  text_update(u8* old_text, u8* new_text,
-		unsigned long cursor_x, unsigned long cursor_y,
-		bx_vga_tminfo_t tm_info, unsigned rows) override;
-	virtual void  graphics_tile_update(u8* snapshot, unsigned x, unsigned y) override;
-	virtual void  handle_events(void) override;
-	virtual void  flush(void) override;
-	virtual void  clear_screen(void) override;
-	virtual bool  palette_change(unsigned index, unsigned red, unsigned green,
-		unsigned blue) override;
-	virtual void  dimension_update(unsigned x, unsigned y, unsigned fheight = 0,
-		unsigned fwidth = 0, unsigned bpp = 8) override;
-	virtual void  mouse_enabled_changed_specific(bool val) override;
-	virtual void  exit(void) override;
-
-	virtual void  get_capabilities(u16* xres, u16* yres, u16* bpp) override;
-
-	virtual void  graphics_frame_update(const u32* pixels, unsigned width, unsigned height) override;
+	bx_win32_gui_c(win32_application& app, std::size_t ordinal)
+		: application(app), window_title("ES40 - Output " + std::to_string(ordinal)) {}
+	void specific_init(unsigned, unsigned) override;
+	// GPU renderers submit complete ARGB frames, including VGA text, as with SDL.
+	void text_update(u8*, u8*, unsigned long, unsigned long,
+		bx_vga_tminfo_t, unsigned) override {}
+	void graphics_tile_update(u8*, unsigned, unsigned) override {}
+	bx_svga_tileinfo_t* graphics_tile_info(bx_svga_tileinfo_t*) override { return nullptr; }
+	u8* graphics_tile_get(unsigned, unsigned, unsigned*, unsigned*) override { return nullptr; }
+	void graphics_tile_update_in_place(unsigned, unsigned, unsigned, unsigned) override {}
+	void graphics_frame_update(const u32*, unsigned, unsigned) override;
+	void handle_events() override;
+	void flush() override {}
+	void clear_screen() override;
+	bool palette_change(unsigned, unsigned, unsigned, unsigned) override { return true; }
+	void dimension_update(unsigned, unsigned, unsigned = 0,
+		unsigned = 0, unsigned = 8) override;
+	void mouse_enabled_changed_specific(bool) override;
+	void get_capabilities(u16*, u16*, u16*) override;
+	void exit() override;
+	void exit_application() override;
+	bx_gui_c& display_for_output(const std::string& path, unsigned id) override
+		{ return application.display_for_output(path, id); }
+	const bx_gui_c* find_display_for_output(const std::string& path, unsigned id) const override
+		{ return application.find_display_for_output(path, id); }
+	bool requires_main_thread() override { return true; }
+	void main_thread_init() override { application.initialize(); }
+	void main_thread_pump() override { application.pump(); }
+	void main_thread_stop() override { application.stop(); }
+	void pause_guest_input() override
+		{ application.invoke([this] { application.pause_input(); }); }
+	void resume_guest_input() override
+		{ application.invoke([this] { application.resume_input(); }); }
+	void detach_guest_input() override
+		{ application.invoke([this] { application.detach_input(); }); }
 private:
-	CConfigurator* myCfg;
+	friend class win32_application;
+	friend LRESULT CALLBACK win32_window_proc(HWND, UINT, WPARAM, LPARAM);
+	void initialize_window();
+	void dimension_update_impl(unsigned, unsigned);
+	void exit_impl();
+	void update_title();
+	void paint(HDC);
+	void mouse_event(int, int, int, unsigned);
+	void recenter_mouse();
+	bool confine_mouse();
+	void toggle_fullscreen();
+	LRESULT window_event(HWND, UINT, WPARAM, LPARAM);
+	win32_application& application;
+	HWND window = nullptr;
+	const std::string window_title;
+	std::vector<u32> pixels;
+	unsigned width = 0, height = 0;
+	int mouse_last_x = 0, mouse_last_y = 0;
+	int wheel_remainder = 0;
+	unsigned ignored_mouse_buttons = 0;
+	bool retired = false;
+	bool fullscreen = false;
+	RECT windowed_rect = {};
 };
 
-// declare one instance of the gui object and call macro to insert the
-// plugin code
-static bx_win32_gui_c* theGui = NULL;
-IMPLEMENT_GUI_PLUGIN_CODE(win32)
-#define EXIT_GUI_SHUTDOWN         1
-#define EXIT_GMH_FAILURE          2
-#define EXIT_FONT_BITMAP_ERROR    3
-#define EXIT_NORMAL               4
-#define EXIT_HEADER_BITMAP_ERROR  5
+static std::unique_ptr<win32_application> win32_app;
 
-// Keyboard/mouse stuff
-#define SCANCODE_BUFSIZE  256
-#define MOUSE_MOTION      0x22000000
-#define WM_MOUSE_CAPTURE (WM_APP + 1)
-#define BX_SYSKEY         (KF_UP | KF_REPEAT | KF_ALTDOWN)
-void  enq_key_event(u32, u32);
-void  enq_mouse_event(void);
-
-struct QueueEvent
-{
-	u32 key_event;
-	int mouse_x;
-	int mouse_y;
-	int mouse_z;
-	int mouse_button_state;
-};
-QueueEvent* deq_key_event(void);
-
-static QueueEvent     keyevents[SCANCODE_BUFSIZE];
-static unsigned       head = 0, tail = 0;
-static int            mouse_button_state = 0;
-static int            ms_xdelta = 0, ms_ydelta = 0, ms_zdelta = 0;
-static int            ms_lastx = 0, ms_lasty = 0;
-static BOOL           mouseCaptureMode = false;
-static bool           mouse_capture_changed = true;
-static unsigned       queued_mouse_buttons = 0;
-static unsigned       ignored_mouse_buttons = 0;
-static int            mouse_wheel_remainder = 0;
-static unsigned long  workerThread = 0;
-static DWORD          workerThreadID = 0;
-
-// Graphics screen stuff
-static unsigned       x_tilesize = 0, y_tilesize = 0;
-static BITMAPINFO* bitmap_info = (BITMAPINFO*)0;
-static RGBQUAD* cmap_index; // indeces into system colormap
-static HBITMAP        MemoryBitmap = NULL;
-static HDC            MemoryDC = NULL;
-static RECT           updated_area;
-static BOOL           updated_area_valid = false;
-static HWND           desktopWindow;
-static RECT           desktop;
-static BOOL           queryFullScreen = false;
-static int            desktop_x, desktop_y;
-
-// Text mode screen stuff
-static unsigned       prev_cursor_x = 0;
-static unsigned       prev_cursor_y = 0;
-static HBITMAP        vgafont[256];
-static int            xChar = 8, yChar = 16;
-static unsigned int   text_rows = 25, text_cols = 80;
-static u8             text_pal_idx[16];
-
-static u8             h_panning = 0, v_panning = 0;
-static u16            line_compare = 1023;
-
-// Misc stuff
-static unsigned       dimension_x, dimension_y, current_bpp;
-static unsigned       stretched_x, stretched_y;
-static unsigned       stretch_factor = 1;
-static BOOL           BxTextMode = true;
-static BOOL           fix_size = false;
-static HWND           hotKeyReceiver = NULL;
-static HWND           saveParent = NULL;
-
-static char           szAppName[] = "ES40 Emulator";
-static char           szWindowName[] =
-	"ES40 Emulator (Left-click captures mouse)";
-
-typedef struct
-{
-	HINSTANCE         hInstance;
-
-	CRITICAL_SECTION  drawCS;
-	CRITICAL_SECTION  keyCS;
-	CRITICAL_SECTION  mouseCS;
-
-	int               kill;         // reason for terminateEmul(int)
-	BOOL              UIinited;
-	HWND              mainWnd;
-	HWND              simWnd;
-} sharedThreadInfo;
-
-sharedThreadInfo      stInfo;
-
-LRESULT CALLBACK      mainWndProc(HWND, UINT, WPARAM, LPARAM);
-LRESULT CALLBACK      simWndProc(HWND, UINT, WPARAM, LPARAM);
-VOID                  UIThread(PVOID);
-void                  terminateEmul(int);
-void                  create_vga_font(void);
-static unsigned char  reverse_bitorder(unsigned char);
-void                  DrawBitmap(HDC, HBITMAP, int, int, int, int, int, int,
-	DWORD, unsigned char);
-void                  DrawChar(HDC, unsigned char, int, int, unsigned char cColor,
-	int, int);
-void                  updateUpdated(int, int, int, int);
-
-u32                   win32_to_bx_key[2][0x100] =
+static const u32 win32_to_bx_key[2][0x100] =
 {
   {     /* normal-keys */
 	/* 0x00 - 0x0f */
@@ -483,1580 +484,659 @@ u32                   win32_to_bx_key[2][0x100] =
 										}
 };
 
-/* Macro to convert WM_ button state to BX button state */
-#if defined(__MINGW32__) || defined(_MSC_VER)
-VOID CALLBACK         MyTimer(HWND, UINT, UINT, DWORD);
-void                  alarm(int);
-void                  bx_signal_handler(int);
-#endif
-static void processMouseXY(int x, int y, int z, unsigned windows_state)
+
+win32_application::win32_application(CConfigurator* cfg)
+	: cfg(cfg), shared_keymap(new bx_keymap_c(cfg)) {}
+
+win32_application::~win32_application()
 {
-	EnterCriticalSection(&stInfo.mouseCS);
-	if (mouseCaptureMode)
-	{
-		// A button held while acquiring capture belongs to the host gesture.
-		ignored_mouse_buttons &= windows_state;
-		windows_state &= ~ignored_mouse_buttons;
-		mouse_button_state = ((windows_state & MK_LBUTTON) ? 1 : 0) |
-			((windows_state & MK_RBUTTON) ? 2 : 0) |
-			((windows_state & MK_MBUTTON) ? 4 : 0);
-		ms_xdelta += x - ms_lastx;
-		ms_ydelta += ms_lasty - y; // PS/2 Y is positive upwards.
-		ms_zdelta += z;
-		ms_lastx = x;
-		ms_lasty = y;
-		enq_mouse_event();
-	}
-	LeaveCriticalSection(&stInfo.mouseCS);
+	// Normal teardown is explicit after the workers join. Cover startup errors
+	// too; before main_thread_init(), no display can have native resources.
+	try { exit_displays(); } catch (...) {}
+	for (const auto& display : displays)
+		if (bx_gui == display.get()) bx_gui = nullptr;
+	if (bx_keymap == shared_keymap.get()) bx_keymap = nullptr;
 }
 
-static void resetDelta()
+bx_win32_gui_c& win32_application::create_display()
 {
-	EnterCriticalSection(&stInfo.mouseCS);
-	ms_ydelta = ms_xdelta = ms_zdelta = 0;
-	LeaveCriticalSection(&stInfo.mouseCS);
+	if (shutting_down)
+		FAILURE(Win32, "Cannot create a display after application shutdown");
+	auto display = std::make_unique<bx_win32_gui_c>(*this, displays.size());
+	displays.push_back(std::move(display));
+	return *displays.back();
 }
 
-static void recenter_mouse()
+bx_win32_gui_c& win32_application::display_for_output(
+	const std::string& device_path, unsigned output_id)
 {
-	EnterCriticalSection(&stInfo.mouseCS);
-	RECT rect;
-	GetClientRect(stInfo.simWnd, &rect);
-	POINT pt = { (rect.right - rect.left) / 2,
-		(rect.bottom - rect.top) / 2 };
-	ms_lastx = pt.x;
-	ms_lasty = pt.y;
-	ClientToScreen(stInfo.simWnd, &pt);
-	SetCursorPos(pt.x, pt.y);
-	LeaveCriticalSection(&stInfo.mouseCS);
+	if (shutting_down)
+		FAILURE(Win32, "Cannot bind a display after application shutdown");
+	if (device_path.empty())
+		FAILURE(Configuration, "Display output requires a device identity");
+	const auto key = std::make_pair(device_path, output_id);
+	const auto existing = outputs.find(key);
+	if (existing != outputs.end()) return *existing->second;
+	const auto entry = outputs.emplace(key, nullptr).first;
+	try
+	{
+		entry->second = outputs.size() == 1 && !displays.empty()
+			? displays.front().get() : &create_display();
+	}
+	catch (...) { outputs.erase(entry); throw; }
+	return *entry->second;
 }
 
-// GUI thread must be dead/done in order to call terminateEmul
-void terminateEmul(int reason)
+const bx_win32_gui_c* win32_application::find_display_for_output(
+	const std::string& device_path, unsigned output_id) const
 {
-
-	// We know that Critical Sections were inited when x_tilesize has been set
-	// See bx_win32_gui_c::specific_init
-	if (x_tilesize != 0)
-	{
-		DeleteCriticalSection(&stInfo.drawCS);
-		DeleteCriticalSection(&stInfo.keyCS);
-		DeleteCriticalSection(&stInfo.mouseCS);
-	}
-
-	x_tilesize = 0;
-
-	if (MemoryDC)
-		DeleteDC(MemoryDC);
-	if (MemoryBitmap)
-		DeleteObject(MemoryBitmap);
-
-	if (bitmap_info)
-		delete[](char*) bitmap_info;
-
-	for (unsigned c = 0; c < 256; c++)
-		if (vgafont[c])
-			DeleteObject(vgafont[c]);
-
-	switch (reason)
-	{
-	case EXIT_GUI_SHUTDOWN:
-		FAILURE(Graceful, "Window closed, exiting!");
-		break;
-
-	case EXIT_GMH_FAILURE:
-		FAILURE(Win32, "GetModuleHandle failure!");
-		break;
-
-	case EXIT_FONT_BITMAP_ERROR:
-		FAILURE(Win32, "Font bitmap creation failure!");
-		break;
-
-	case EXIT_NORMAL:
-		break;
-	}
+	if (shutting_down || device_path.empty()) return nullptr;
+	const auto entry = outputs.find(std::make_pair(device_path, output_id));
+	return entry == outputs.end() ? nullptr : entry->second;
 }
 
-// ::SPECIFIC_INIT()
-//
-// Called from gui.cc, once upon program startup, to allow for the
-// specific GUI code (X11, BeOS, ...) to be initialized.
-//
-// tilewidth, tileheight: for optimization, graphics_tile_update() passes
-//     only updated regions of the screen to the gui code to be redrawn.
-
-//     These define the dimensions of a region (tile).
-void bx_win32_gui_c::specific_init(unsigned tilewidth, unsigned tileheight)
+int libwin32_LTX_plugin_init(CConfigurator* cfg)
 {
-	int i;
-
-	// prepare for possible fullscreen mode
-	desktopWindow = GetDesktopWindow();
-	GetWindowRect(desktopWindow, &desktop);
-	desktop_x = desktop.right - desktop.left;
-	desktop_y = desktop.bottom - desktop.top;
-	hotKeyReceiver = stInfo.simWnd;
-	BX_INFO(("Desktop Window dimensions: %d x %d", desktop_x, desktop_y));
-
-	static RGBQUAD  black_quad = { 0, 0, 0, 0 };
-	stInfo.kill = 0;
-	stInfo.UIinited = false;
-	InitializeCriticalSection(&stInfo.drawCS);
-	InitializeCriticalSection(&stInfo.keyCS);
-	InitializeCriticalSection(&stInfo.mouseCS);
-
-	x_tilesize = tilewidth;
-	y_tilesize = tileheight;
-
-	mouseCaptureMode = false;
-	mouse_capture_changed = true;
-	queued_mouse_buttons = ignored_mouse_buttons = 0;
-	mouse_button_state = mouse_wheel_remainder = 0;
-	head = tail = 0;
-	resetDelta();
-
-	stInfo.hInstance = GetModuleHandle(NULL);
-
-	dimension_x = 640;
-	dimension_y = 480;
-	current_bpp = 8;
-	stretched_x = dimension_x;
-	stretched_y = dimension_y;
-	stretch_factor = 1;
-
-	for (unsigned c = 0; c < 256; c++)
-		vgafont[c] = NULL;
-	create_vga_font();
-
-	bitmap_info = (BITMAPINFO*) new char[sizeof(BITMAPINFOHEADER) + 259 * sizeof(RGBQUAD)]; // 256 + 3 entries for 16 bpp mode
-	bitmap_info->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-	bitmap_info->bmiHeader.biWidth = x_tilesize;
-
-	// Height is negative for top-down bitmap
-	bitmap_info->bmiHeader.biHeight = -(LONG)y_tilesize;
-	bitmap_info->bmiHeader.biPlanes = 1;
-	bitmap_info->bmiHeader.biBitCount = 8;
-	bitmap_info->bmiHeader.biCompression = BI_RGB;
-	bitmap_info->bmiHeader.biSizeImage = x_tilesize * y_tilesize * 4;
-
-	// I think these next two figures don't matter; saying 45 pixels/centimeter
-	bitmap_info->bmiHeader.biXPelsPerMeter = 4500;
-	bitmap_info->bmiHeader.biYPelsPerMeter = 4500;
-	bitmap_info->bmiHeader.biClrUsed = 256;
-	bitmap_info->bmiHeader.biClrImportant = 0;
-	cmap_index = bitmap_info->bmiColors;
-
-	// start out with all color map indeces pointing to Black
-	cmap_index[0] = black_quad;
-	for (i = 1; i < 259; i++)
-	{
-		cmap_index[i] = cmap_index[0];
-	}
-
-	if (stInfo.hInstance)
-		workerThread = _beginthread(UIThread, 0, NULL);
-	else
-		terminateEmul(EXIT_GMH_FAILURE);
-
-	// Wait for a window before continuing
-	if ((stInfo.kill == 0) && (FindWindow(szAppName, NULL) == NULL))
-		Sleep(500);
-
-	// Now set this thread's priority to below normal because this is where
-	//  the emulated CPU runs, and it hogs the real CPU
-	// SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
-	// load keymap tables
-	if (myCfg->get_bool_value("keyboard.use_mapping"))
-	{
-		bx_keymap->loadKeymap(NULL);  // I have no function to convert X windows symbols
-	}
+	if (bx_gui || win32_app)
+		FAILURE(Configuration, "A GUI application is already installed");
+	auto app = std::make_unique<win32_application>(cfg);
+	auto& initial_display = app->create_display();
+	win32_app = std::move(app);
+	bx_gui = &initial_display;
+	bx_keymap = win32_app->keymap();
+	printf("%%GUI-I-INS: Installing win32 module as the ES40 GUI\n");
+	return 0;
 }
 
-void resize_main_window()
-{
-	RECT          R;
-	unsigned long mainStyle;
+void libwin32_LTX_plugin_fini() {}
 
-	// stretched_x and stretched_y were set in dimension_update()
-	// if we need to do any additional resizing, do it now
-	if ((desktop_y > 0) && (stretched_y >= (unsigned)desktop_y))
+static void register_win32_class(const char* name, WNDPROC proc)
+{
+	WNDCLASS wc = {};
+	wc.lpfnWndProc = proc;
+	wc.hInstance = GetModuleHandle(nullptr);
+	wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+	wc.lpszClassName = name;
+	if (!RegisterClass(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+		FAILURE(Win32, "Unable to register display window class");
+}
+
+void win32_application::initialize()
+{
+	if (GetCurrentThreadId() != owner_thread || shutting_down)
+		FAILURE(Win32, "Invalid display application initialization");
+	if (dispatcher) return;
+	register_win32_class(win32_window_class, win32_window_proc);
+	register_win32_class(win32_dispatch_class, win32_dispatch_proc);
+	dispatcher = CreateWindowEx(0, win32_dispatch_class, "", 0, 0, 0,
+		0, 0, HWND_MESSAGE, nullptr, GetModuleHandle(nullptr), nullptr);
+	if (!dispatcher)
+		FAILURE(Win32, "Unable to create display dispatcher");
+	if (cfg->get_bool_value("keyboard.use_mapping", false))
+		shared_keymap->loadKeymap(nullptr);
+	keyboard = theKeyboard;
+	system = theSystem;
+	if (keyboard) keyboard->set_mouse_capture(false);
+	running.store(true, std::memory_order_release);
+}
+
+void win32_application::invoke(std::function<void()> fn)
+{
+	if (GetCurrentThreadId() == owner_thread) { fn(); return; }
+	if (!running.load(std::memory_order_acquire) || !dispatcher)
+		FAILURE(Win32, "Display application thread is not running");
+	win32_call call = { std::move(fn), nullptr };
+	if (SendMessage(dispatcher, win32_invoke_message, 0, (LPARAM)&call) != 1)
+		FAILURE(Win32, "Unable to reach the display application thread");
+	if (call.error) std::rethrow_exception(call.error);
+}
+
+static LRESULT CALLBACK win32_dispatch_proc(HWND hwnd, UINT msg,
+	WPARAM wparam, LPARAM lparam)
+{
+	if (msg == win32_invoke_message)
 	{
-		if (!queryFullScreen)
+		auto& call = *reinterpret_cast<win32_call*>(lparam);
+		try { call.fn(); } catch (...) { call.error = std::current_exception(); }
+		return 1;
+	}
+	if (msg == win32_wake_message) return 0;
+	return DefWindowProc(hwnd, msg, wparam, lparam);
+}
+
+void win32_application::pump()
+{
+	while (running.load(std::memory_order_acquire))
+	{
+		MSG msg;
+		while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
 		{
-			MessageBox(NULL, "Going into fullscreen mode -- Alt-Enter to revert",
-				"Going fullscreen", MB_APPLMODAL);
-			queryFullScreen = true;
+			if (msg.message == WM_QUIT) request_shutdown();
+			else { TranslateMessage(&msg); DispatchMessage(&msg); }
 		}
-
-		// hide title bar
-		mainStyle = GetWindowLong(stInfo.mainWnd, GWL_STYLE);
-		mainStyle &= ~(WS_CAPTION | WS_BORDER);
-		SetWindowLong(stInfo.mainWnd, GWL_STYLE, mainStyle);
-
-		// maybe need to adjust stInfo.simWnd here also?
-		saveParent = SetParent(stInfo.mainWnd, desktopWindow);
-		if (saveParent)
-		{
-			BX_DEBUG(("Saved parent window"));
-			SetWindowPos(stInfo.mainWnd, HWND_TOPMOST, desktop.left, desktop.top,
-				desktop.right, desktop.bottom, SWP_SHOWWINDOW);
-		}
+		MsgWaitForMultipleObjects(0, nullptr, FALSE, 10, QS_ALLINPUT);
 	}
-	else
-	{
-		if (saveParent)
-		{
-			BX_DEBUG(("Restoring parent window"));
-			SetParent(stInfo.mainWnd, saveParent);
-			saveParent = NULL;
-		}
-
-		// put back the title bar, border, etc...
-		mainStyle = GetWindowLong(stInfo.mainWnd, GWL_STYLE);
-		mainStyle |= WS_CAPTION | WS_BORDER;
-		SetWindowLong(stInfo.mainWnd, GWL_STYLE, mainStyle);
-		SetRect(&R, 0, 0, stretched_x, stretched_y);
-
-		DWORD style = GetWindowLong(stInfo.simWnd, GWL_STYLE);
-		DWORD exstyle = GetWindowLong(stInfo.simWnd, GWL_EXSTYLE);
-		AdjustWindowRectEx(&R, style, false, exstyle);
-		style = GetWindowLong(stInfo.mainWnd, GWL_STYLE);
-		AdjustWindowRect(&R, style, false);
-		SetWindowPos(stInfo.mainWnd, HWND_TOP, 0, 0, R.right - R.left,
-			R.bottom - R.top, SWP_NOMOVE | SWP_NOZORDER);
-	}
-
-	fix_size = false;
 }
 
-// This thread controls the GUI window.
-VOID UIThread(PVOID pvoid)
+void win32_application::stop()
 {
-	MSG       msg;
-	HDC       hdc;
-	WNDCLASS  wndclass;
-	RECT      wndRect;
-
-	workerThreadID = GetCurrentThreadId();
-
-	GetClassInfo(NULL, WC_DIALOG, &wndclass);
-	wndclass.style = CS_HREDRAW | CS_VREDRAW;
-	wndclass.lpfnWndProc = mainWndProc;
-	wndclass.cbClsExtra = 0;
-	wndclass.cbWndExtra = 0;
-	wndclass.hInstance = stInfo.hInstance;
-	wndclass.lpszMenuName = NULL;
-	wndclass.lpszClassName = szAppName;
-
-	RegisterClass(&wndclass);
-
-	wndclass.style = CS_HREDRAW | CS_VREDRAW;
-	wndclass.lpfnWndProc = simWndProc;
-	wndclass.cbClsExtra = 0;
-	wndclass.cbWndExtra = 0;
-	wndclass.hInstance = stInfo.hInstance;
-	wndclass.hIcon = NULL;
-	wndclass.hCursor = LoadCursor(NULL, IDC_ARROW);
-	wndclass.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
-	wndclass.lpszMenuName = NULL;
-	wndclass.lpszClassName = "SIMWINDOW";
-
-	RegisterClass(&wndclass);
-
-	SetRect(&wndRect, 0, 0, stretched_x, stretched_y);
-
-	DWORD sim_style = WS_CHILD;
-	DWORD sim_exstyle = WS_EX_CLIENTEDGE;
-	AdjustWindowRectEx(&wndRect, sim_style, false, sim_exstyle);
-
-	DWORD main_style = WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-	AdjustWindowRect(&wndRect, main_style, false);
-	stInfo.mainWnd = CreateWindow(szAppName, szWindowName, main_style,
-		CW_USEDEFAULT, CW_USEDEFAULT,
-		wndRect.right - wndRect.left,
-		wndRect.bottom - wndRect.top, NULL, NULL,
-		stInfo.hInstance, NULL);
-
-	if (stInfo.mainWnd)
-	{
-
-		//    InitCommonControls();
-		stInfo.simWnd = CreateWindowEx(sim_exstyle, "SIMWINDOW", "", sim_style, 0,
-			0, 0, 0, stInfo.mainWnd, NULL,
-			stInfo.hInstance, NULL);
-
-		/* needed for the Japanese versions of Windows */
-		if (stInfo.simWnd)
-		{
-			HMODULE hm;
-			hm = GetModuleHandle("USER32");
-			if (hm)
-			{
-				BOOL(WINAPI * enableime) (HWND, BOOL);
-				enableime = (BOOL(WINAPI*) (HWND, BOOL)) GetProcAddress(hm,
-					"WINNLSEnableIME");
-				if (enableime)
-				{
-					enableime(stInfo.simWnd, false);
-					BX_INFO(("IME disabled"));
-				}
-			}
-		}
-
-		ShowWindow(stInfo.simWnd, SW_SHOW);
-		SetFocus(stInfo.simWnd);
-
-		hdc = GetDC(stInfo.simWnd);
-		MemoryBitmap = CreateCompatibleBitmap(hdc, BX_MAX_XRES, BX_MAX_YRES);
-		MemoryDC = CreateCompatibleDC(hdc);
-		ReleaseDC(stInfo.simWnd, hdc);
-
-		if (MemoryBitmap && MemoryDC)
-		{
-			resize_main_window();
-			ShowWindow(stInfo.mainWnd, SW_SHOW);
-#if BX_DEBUGGER
-			if (windebug)
-			{
-				InitDebugDialog(stInfo.mainWnd);
-			}
-#endif
-			stInfo.UIinited = true;
-
-			bx_gui->clear_screen();
-
-			while (GetMessage(&msg, NULL, 0, 0))
-			{
-				TranslateMessage(&msg);
-				DispatchMessage(&msg);
-			}
-		}
-	}
-
-	stInfo.kill = EXIT_GUI_SHUTDOWN;
-
-	_endthread();
+	running.store(false, std::memory_order_release);
+	if (dispatcher) PostMessage(dispatcher, win32_wake_message, 0, 0);
 }
 
-LRESULT CALLBACK mainWndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
+bx_win32_gui_c* win32_application::window_owner(HWND window) const
 {
-	switch (iMsg)
-	{
-	case WM_SETFOCUS:
-		SetFocus(stInfo.simWnd);
-		return 0;
-
-	case WM_ACTIVATEAPP:
-		if (!wParam)
-			SendMessage(stInfo.simWnd, WM_CANCELMODE, 0, 0);
-		break;
-
-	case WM_CLOSE:
-		SendMessage(stInfo.simWnd, WM_CLOSE, 0, 0);
-		break;
-
-	case WM_DESTROY:
-		PostQuitMessage(0);
-		return 0;
-
-	case WM_SIZE:
-	{
-		int   x;
-
-		int   y;
-
-		// now fit simWindow to mainWindow
-		//      int rect_data[] = { 1, 0, 0, 0 };
-		RECT  R;
-
-		//GetEffectiveClientRect( hwnd, &R, rect_data );
-		GetClientRect(hwnd, &R);
-		x = R.right - R.left;
-		y = R.bottom - R.top;
-		MoveWindow(stInfo.simWnd, R.left, R.top, x, y, true);
-		GetClientRect(stInfo.simWnd, &R);
-		x = R.right - R.left;
-		y = R.bottom - R.top;
-		if ((x != (int)stretched_x) || (y != (int)stretched_y))
-		{
-			BX_ERROR(("Sim client size(%d, %d) != stretched size(%d, %d)!", x, y,
-				stretched_x, stretched_y));
-			if (!saveParent)
-				fix_size = true;        // no fixing if fullscreen
-		}
-	}
-	break;
-	}
-
-	return DefWindowProc(hwnd, iMsg, wParam, lParam);
+	const auto entry = windows.find(window);
+	return entry == windows.end() ? nullptr : entry->second;
 }
 
-static bool confine_mouse()
+void win32_application::request_shutdown()
 {
-	RECT rect;
-	if (!GetClientRect(stInfo.simWnd, &rect) || IsRectEmpty(&rect))
-		return false;
-	MapWindowPoints(stInfo.simWnd, NULL, (POINT*)&rect, 2);
-	return ClipCursor(&rect) != 0;
+	if (system) system->RequestShutdown();
 }
 
-static void set_mouse_capture(bool capture)
+void win32_application::record_callback_error() noexcept
 {
-	if (capture && GetActiveWindow() != stInfo.mainWnd)
-		return;
-
-	EnterCriticalSection(&stInfo.mouseCS);
-	if (capture == (bool)mouseCaptureMode)
+	if (!callback_error)
 	{
-		LeaveCriticalSection(&stInfo.mouseCS);
-		return;
+		callback_error = std::current_exception();
+		request_shutdown();
 	}
+}
 
-	// Retire queued mouse input at the session boundary, preserving keys.
-	EnterCriticalSection(&stInfo.keyCS);
-	unsigned next = head;
-	for (unsigned i = head; i != tail; i = (i + 1) % SCANCODE_BUFSIZE)
+void win32_application::poll_input()
+{
+	if (callback_error) std::rethrow_exception(callback_error);
+	if (input_paused) return;
+	sync_input();
+	auto* focus = window_owner(GetFocus());
+	if (!focus) release_input_session();
+	else if (capture_owner && capture_owner != focus) set_mouse_capture(focus);
+	else if (capture_owner && GetCapture() != capture_owner->window)
+		set_mouse_capture(nullptr);
+}
+
+void win32_application::sync_input()
+{
+	if (input_paused || !keyboard || !input_reset_pending) return;
+	input_reset_pending = false;
+	release_guest_keys();
+	if (guest_mouse_captured) keyboard->mouse_motion(0, 0, 0, 0);
+	guest_mouse_captured = capture_owner != nullptr;
+	keyboard->set_mouse_capture(guest_mouse_captured);
+	mouse_buttons = 0;
+}
+
+static u32 translate_win32_key(unsigned scan)
+{
+	if (scan >= 512) return BX_KEY_UNHANDLED;
+	const u32 key = win32_to_bx_key[(scan >> 8) & 1][scan & 0xff];
+	// Zero denotes an unmapped scan code except for the left Control key.
+	return key || scan == 0x1d ? key : BX_KEY_UNHANDLED;
+}
+
+void win32_application::send_key(unsigned scan, bool released)
+{
+	if (!keyboard || input_paused || scan >= 512) return;
+	sync_input();
+	const u32 key = translate_win32_key(scan);
+	if (key == BX_KEY_UNHANDLED || (released && !guest_keys[scan])) return;
+	if (!released && guest_keys[scan] && (key == BX_KEY_CTRL_L ||
+		key == BX_KEY_CTRL_R || key == BX_KEY_ALT_L || key == BX_KEY_ALT_R ||
+		key == BX_KEY_SHIFT_L || key == BX_KEY_SHIFT_R)) return;
+	keyboard->gen_scancode(key | (released ? BX_KEY_RELEASED : 0));
+	guest_keys[scan] = !released;
+}
+
+void win32_application::release_guest_keys()
+{
+	if (input_paused) { input_reset_pending = true; return; }
+	for (unsigned i = 0; i < 512; ++i)
+		if (guest_keys[i]) send_key(i, true);
+}
+
+void win32_application::send_mouse(int dx, int dy, int dz, unsigned buttons)
+{
+	if (keyboard && !input_paused)
+		keyboard->mouse_motion(dx, dy, dz, buttons);
+}
+
+void win32_application::release_input_session()
+{
+	release_guest_keys();
+	set_mouse_capture(nullptr);
+	capture_hotkey_down = false;
+}
+
+void win32_application::set_mouse_capture(bx_win32_gui_c* target)
+{
+	if (target && (!target->window || target->retired ||
+		GetActiveWindow() != target->window)) return;
+	if (capture_owner == target) return;
+	auto* previous = capture_owner;
+	// Release buttons before disabling guest capture, including handoffs.
+	if (guest_mouse_captured) send_mouse(0, 0, 0, 0);
+	if (input_paused) input_reset_pending = true;
+	mouse_buttons = 0;
+	capture_owner = nullptr;
+	if (previous)
 	{
-		if (keyevents[i].key_event != MOUSE_MOTION)
-		{
-			keyevents[next] = keyevents[i];
-			next = (next + 1) % SCANCODE_BUFSIZE;
-		}
+		ClipCursor(nullptr);
+		if (GetCapture() == previous->window) ReleaseCapture();
+		previous->update_title();
 	}
-	tail = next;
-	mouseCaptureMode = capture;
-	mouse_capture_changed = true;
-	mouse_button_state = queued_mouse_buttons = 0;
-	mouse_wheel_remainder = 0;
-	resetDelta();
-	LeaveCriticalSection(&stInfo.keyCS);
-
-	if (capture)
+	if (target)
 	{
-		ignored_mouse_buttons =
+		target->wheel_remainder = 0;
+		target->ignored_mouse_buttons =
 			((GetKeyState(VK_LBUTTON) & 0x8000) ? MK_LBUTTON : 0) |
 			((GetKeyState(VK_RBUTTON) & 0x8000) ? MK_RBUTTON : 0) |
 			((GetKeyState(VK_MBUTTON) & 0x8000) ? MK_MBUTTON : 0);
-		SetCapture(stInfo.simWnd);
-		if (GetCapture() != stInfo.simWnd || !confine_mouse())
+		// Publish the new owner before SetCapture notifies the previous window.
+		capture_owner = target;
+		SetCapture(target->window);
+		if (GetCapture() != target->window || !target->confine_mouse())
 		{
-			set_mouse_capture(false);
-			LeaveCriticalSection(&stInfo.mouseCS);
-			return;
+			capture_owner = nullptr;
+			ClipCursor(nullptr);
+			if (GetCapture() == target->window) ReleaseCapture();
 		}
-		recenter_mouse();
+		else target->recenter_mouse();
+		target->update_title();
 	}
-	else
+	SetCursor(capture_owner ? nullptr : LoadCursor(nullptr, IDC_ARROW));
+	if (keyboard && !input_paused)
 	{
-		ignored_mouse_buttons = 0;
-		ClipCursor(NULL);
-		if (GetCapture() == stInfo.simWnd)
-			ReleaseCapture();
-	}
-	SetCursor(capture ? NULL : LoadCursor(NULL, IDC_ARROW));
-	SetWindowText(stInfo.mainWnd, capture ?
-		"ES40 Emulator (Ctrl+F10 releases mouse)" :
-		"ES40 Emulator (Left-click captures mouse)");
-	LeaveCriticalSection(&stInfo.mouseCS);
-}
-
-LRESULT CALLBACK simWndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
-{
-	HDC         hdc;
-
-	HDC         hdcMem;
-	PAINTSTRUCT ps;
-	static bool capture_hotkey_down = false;
-
-	switch (iMsg)
-	{
-	case WM_CREATE:
-#if BX_USE_WINDOWS_FONTS
-		InitFont();
-#endif
-		SetTimer(hwnd, 1, 330, NULL);
-		return 0;
-
-	case WM_TIMER:
-		if (mouseCaptureMode)
-		{
-			if (confine_mouse())
-				recenter_mouse();
-			else
-				set_mouse_capture(false);
-		}
-
-		if (fix_size)
-		{
-			resize_main_window();
-		}
-
-		return 0;
-
-	case WM_MOUSE_CAPTURE:
-		set_mouse_capture(wParam != 0);
-		return 0;
-
-	case WM_KILLFOCUS:
-	case WM_CANCELMODE:
-		set_mouse_capture(false);
-		return 0;
-
-	case WM_CAPTURECHANGED:
-		if ((HWND)lParam != hwnd)
-			set_mouse_capture(false);
-		return 0;
-
-	case WM_SETCURSOR:
-		if (mouseCaptureMode && LOWORD(lParam) == HTCLIENT)
-		{
-			SetCursor(NULL);
-			return TRUE;
-		}
-		break;
-
-	case WM_PAINT:
-		EnterCriticalSection(&stInfo.drawCS);
-		hdc = BeginPaint(hwnd, &ps);
-
-		hdcMem = CreateCompatibleDC(hdc);
-		SelectObject(hdcMem, MemoryBitmap);
-
-		if (stretch_factor == 1)
-		{
-			BitBlt(hdc, ps.rcPaint.left, ps.rcPaint.top,
-				ps.rcPaint.right - ps.rcPaint.left + 1,
-				ps.rcPaint.bottom - ps.rcPaint.top + 1, hdcMem, ps.rcPaint.left,
-				ps.rcPaint.top, SRCCOPY);
-		}
-		else
-		{
-			StretchBlt(hdc, ps.rcPaint.left, ps.rcPaint.top,
-				ps.rcPaint.right - ps.rcPaint.left + 1,
-				ps.rcPaint.bottom - ps.rcPaint.top + 1, hdcMem,
-				ps.rcPaint.left / stretch_factor, ps.rcPaint.top,
-				(ps.rcPaint.right - ps.rcPaint.left + 1) / stretch_factor,
-				(ps.rcPaint.bottom - ps.rcPaint.top + 1), SRCCOPY);
-		}
-
-		DeleteDC(hdcMem);
-		EndPaint(hwnd, &ps);
-		LeaveCriticalSection(&stInfo.drawCS);
-		return 0;
-
-	case WM_MOUSEMOVE:
-		processMouseXY(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), 0,
-			GET_KEYSTATE_WPARAM(wParam));
-		return 0;
-
-	case WM_MOUSEWHEEL:
-		if (mouseCaptureMode)
-		{
-			mouse_wheel_remainder += GET_WHEEL_DELTA_WPARAM(wParam);
-			int steps = mouse_wheel_remainder / WHEEL_DELTA;
-			mouse_wheel_remainder %= WHEEL_DELTA;
-			POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-			ScreenToClient(hwnd, &pt);
-			processMouseXY(pt.x, pt.y, steps, GET_KEYSTATE_WPARAM(wParam));
-		}
-		return 0;
-
-	case WM_LBUTTONDOWN:
-	case WM_LBUTTONDBLCLK:
-		if (!mouseCaptureMode)
-		{
-			set_mouse_capture(true);
-			return 0;
-		}
-		// fall through
-	case WM_LBUTTONUP:
-	case WM_MBUTTONDOWN:
-	case WM_MBUTTONDBLCLK:
-	case WM_MBUTTONUP:
-	case WM_RBUTTONDOWN:
-	case WM_RBUTTONDBLCLK:
-	case WM_RBUTTONUP:
-		processMouseXY(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), 0,
-			GET_KEYSTATE_WPARAM(wParam));
-		return 0;
-
-	case WM_CLOSE:
-		return DefWindowProc(hwnd, iMsg, wParam, lParam);
-
-	case WM_DESTROY:
-		set_mouse_capture(false);
-		KillTimer(hwnd, 1);
-		stInfo.UIinited = false;
-#if BX_USE_WINDOWS_FONTS
-		DestroyFont();
-#endif
-		return 0;
-
-	case WM_KEYDOWN:
-	case WM_SYSKEYDOWN:
-		// A fresh press also retires a hotkey released outside this window.
-		if (wParam == VK_F10 && !(lParam & (1L << 30)))
-			capture_hotkey_down = false;
-		if (wParam == VK_F10 && (capture_hotkey_down ||
-			(!(lParam & (1L << 30)) && (GetKeyState(VK_CONTROL) & 0x8000))))
-		{
-			if (!capture_hotkey_down)
-				set_mouse_capture(!mouseCaptureMode);
-			capture_hotkey_down = true;
-			return 0;
-		}
-		EnterCriticalSection(&stInfo.keyCS);
-		enq_key_event(HIWORD(lParam) & 0x01FF, BX_KEY_PRESSED);
-		LeaveCriticalSection(&stInfo.keyCS);
-		return 0;
-
-	case WM_KEYUP:
-	case WM_SYSKEYUP:
-		if (wParam == VK_F10 && capture_hotkey_down)
-		{
-			capture_hotkey_down = false;
-			return 0;
-		}
-
-		// check if it's keyup, alt key, non-repeat
-		// see http://msdn2.microsoft.com/en-us/library/ms646267.aspx
-		if (wParam == VK_RETURN)
-		{
-			if ((HIWORD(lParam) & BX_SYSKEY) == (KF_ALTDOWN | KF_UP))
-			{
-				if (!saveParent)
-				{
-					BX_INFO(("entering fullscreen mode"));
-					theGui->dimension_update(desktop_x, desktop_y, 0, 0, current_bpp);
-				}
-				else
-				{
-					BX_INFO(("leaving fullscreen mode"));
-					theGui->dimension_update(dimension_x, desktop_y - 1, 0, 0, current_bpp);
-				}
-			}
-		}
-		else
-		{
-			EnterCriticalSection(&stInfo.keyCS);
-			enq_key_event(HIWORD(lParam) & 0x01FF, BX_KEY_RELEASED);
-			LeaveCriticalSection(&stInfo.keyCS);
-		}
-
-		return 0;
-
-	case WM_SYSCHAR:
-
-		// check if it's keydown, alt key, non-repeat
-		// see http://msdn2.microsoft.com/en-us/library/ms646267.aspx
-		if (wParam == VK_RETURN)
-		{
-			if ((HIWORD(lParam) & BX_SYSKEY) == KF_ALTDOWN)
-			{
-				if (!saveParent)
-				{
-					BX_INFO(("entering fullscreen mode"));
-					theGui->dimension_update(desktop_x, desktop_y, 0, 0, current_bpp);
-				}
-				else
-				{
-					BX_INFO(("leaving fullscreen mode"));
-					theGui->dimension_update(dimension_x, desktop_y - 1, 0, 0, current_bpp);
-				}
-			}
-		}
-		return 0;
-		
-	case WM_CHAR:
-	case WM_DEADCHAR:
-	case WM_SYSDEADCHAR:
-		return 0;
-	}
-
-	return DefWindowProc(hwnd, iMsg, wParam, lParam);
-}
-
-void enq_key_event(u32 key, u32 press_release)
-{
-	static BOOL alt_pressed_l = false;
-	static BOOL alt_pressed_r = false;
-	static BOOL ctrl_pressed_l = false;
-	static BOOL ctrl_pressed_r = false;
-	static BOOL shift_pressed_l = false;
-	static BOOL shift_pressed_r = false;
-
-	// Windows generates multiple keypresses when holding down these keys
-	if (press_release == BX_KEY_PRESSED)
-	{
-		switch (key)
-		{
-		case 0x1d:
-			if (ctrl_pressed_l)
-				return;
-			ctrl_pressed_l = true;
-			break;
-
-		case 0x2a:
-			if (shift_pressed_l)
-				return;
-			shift_pressed_l = true;
-			break;
-
-		case 0x36:
-			if (shift_pressed_r)
-				return;
-			shift_pressed_r = true;
-			break;
-
-		case 0x38:
-			if (alt_pressed_l)
-				return;
-			alt_pressed_l = true;
-			break;
-
-		case 0x011d:
-			if (ctrl_pressed_r)
-				return;
-			ctrl_pressed_r = true;
-			break;
-
-		case 0x0138:
-			if (alt_pressed_r)
-				return;
-
-			// This makes the "AltGr" key on European keyboards work
-			if (ctrl_pressed_l)
-			{
-				enq_key_event(0x1d, BX_KEY_RELEASED);
-			}
-
-			alt_pressed_r = true;
-			break;
-		}
-	}
-	else
-	{
-		switch (key)
-		{
-		case 0x1d:    if (!ctrl_pressed_l) return; ctrl_pressed_l = false; break;
-		case 0x2a:    shift_pressed_l = false; break;
-		case 0x36:    shift_pressed_r = false; break;
-		case 0x38:    alt_pressed_l = false; break;
-		case 0x011d:  ctrl_pressed_r = false; break;
-		case 0x0138:  alt_pressed_r = false; break;
-		}
-	}
-
-	if (((tail + 1) % SCANCODE_BUFSIZE) == head)
-	{
-		BX_ERROR(("enq_scancode: buffer full"));
-		return;
-	}
-
-	keyevents[tail].key_event = key | press_release;
-	tail = (tail + 1) % SCANCODE_BUFSIZE;
-}
-
-void enq_mouse_event(void)
-{
-	EnterCriticalSection(&stInfo.mouseCS);
-	if (mouseCaptureMode && (ms_xdelta || ms_ydelta || ms_zdelta ||
-		(unsigned)mouse_button_state != queued_mouse_buttons))
-	{
-		// Protect the shared ring with keyCS as well.
-		EnterCriticalSection(&stInfo.keyCS);
-		if (((tail + 1) % SCANCODE_BUFSIZE) == head) {
-			// Keep pending motion/buttons for the next consumer pass.
-			LeaveCriticalSection(&stInfo.keyCS);
-			LeaveCriticalSection(&stInfo.mouseCS);
-			return;
-		}
-
-		QueueEvent& current = keyevents[tail];
-		current.key_event = MOUSE_MOTION;
-		current.mouse_x = ms_xdelta;
-		current.mouse_y = ms_ydelta;
-		current.mouse_z = ms_zdelta;
-		current.mouse_button_state = mouse_button_state;
-		queued_mouse_buttons = mouse_button_state;
-		resetDelta();
-		tail = (tail + 1) % SCANCODE_BUFSIZE;
-		LeaveCriticalSection(&stInfo.keyCS);
-	}
-
-	LeaveCriticalSection(&stInfo.mouseCS);
-}
-
-QueueEvent* deq_key_event(void)
-{
-	QueueEvent* key;
-
-	if (head == tail)
-	{
-		BX_ERROR(("deq_scancode: buffer empty"));
-		return((QueueEvent*)0);
-	}
-
-	key = &keyevents[head];
-	head = (head + 1) % SCANCODE_BUFSIZE;
-
-	return(key);
-}
-
-// ::HANDLE_EVENTS()
-//
-// Called periodically (vga_update_interval in .bochsrc) so the
-// the gui code can poll for keyboard, mouse, and other
-
-// relevant events.
-void bx_win32_gui_c::handle_events(void)
-{
-	u32 key;
-	u32 key_event;
-	static bool guest_mouse_captured = false;
-
-	if (stInfo.kill)
-		terminateEmul(stInfo.kill);
-	if (!theKeyboard)
-		return;
-
-	// Match the producer's lock order across capture changes and delivery.
-	EnterCriticalSection(&stInfo.mouseCS);
-	EnterCriticalSection(&stInfo.keyCS);
-	if (mouse_capture_changed)
-	{
-		if (guest_mouse_captured)
-			theKeyboard->mouse_motion(0, 0, 0, 0);
-		theKeyboard->set_mouse_capture(mouseCaptureMode != 0);
-		guest_mouse_captured = mouseCaptureMode != 0;
-		mouse_capture_changed = false;
-	}
-
-	do
-	{
-		enq_mouse_event();
-		while (head != tail)
-		{
-			QueueEvent* queue_event = deq_key_event();
-			if (!queue_event)
-				break;
-			key = queue_event->key_event;
-			if (key == MOUSE_MOTION)
-			{
-				theKeyboard->mouse_motion(queue_event->mouse_x,
-					queue_event->mouse_y, queue_event->mouse_z,
-					queue_event->mouse_button_state);
-			}
-			else
-			{
-				key_event = win32_to_bx_key[(key & 0x100) ? 1 : 0][key & 0xff];
-				if (key & BX_KEY_RELEASED)
-					key_event |= BX_KEY_RELEASED;
-				theKeyboard->gen_scancode(key_event);
-			}
-		}
-		// Retry input retained when the ring was full before draining it.
-		enq_mouse_event();
-	} while (head != tail);
-
-	LeaveCriticalSection(&stInfo.keyCS);
-	LeaveCriticalSection(&stInfo.mouseCS);
-}
-
-// ::FLUSH()
-//
-// Called periodically, requesting that the gui code flush all pending
-
-// screen update requests.
-void bx_win32_gui_c::flush(void)
-{
-	EnterCriticalSection(&stInfo.drawCS);
-	if (updated_area_valid)
-	{
-
-		// slight bugfix
-		updated_area.right++;
-		updated_area.bottom++;
-		InvalidateRect(stInfo.simWnd, &updated_area, false);
-		updated_area_valid = false;
-	}
-
-	LeaveCriticalSection(&stInfo.drawCS);
-}
-
-// ::CLEAR_SCREEN()
-//
-
-// Called to request that the VGA region is cleared.
-void bx_win32_gui_c::clear_screen(void)
-{
-	HGDIOBJ oldObj;
-
-	if (!stInfo.UIinited)
-		return;
-
-	EnterCriticalSection(&stInfo.drawCS);
-
-	oldObj = SelectObject(MemoryDC, MemoryBitmap);
-	PatBlt(MemoryDC, 0, 0, stretched_x, stretched_y, BLACKNESS);
-	SelectObject(MemoryDC, oldObj);
-
-	updateUpdated(0, 0, dimension_x - 1, dimension_y - 1);
-
-	LeaveCriticalSection(&stInfo.drawCS);
-}
-
-// ::TEXT_UPDATE()
-//
-// Called in a VGA text mode, to update the screen with
-// new content.
-//
-// old_text: array of character/attributes making up the contents
-//           of the screen from the last call.  See below
-// new_text: array of character/attributes making up the current
-//           contents, which should now be displayed.  See below
-//
-// format of old_text & new_text: each is tm_info.line_offset*text_rows
-//     bytes long. Each character consists of 2 bytes.  The first by is
-//     the character value, the second is the attribute byte.
-//
-// cursor_x: new x location of cursor
-// cursor_y: new y location of cursor
-// tm_info:  this structure contains information for additional
-//           features in text mode (cursor shape, line offset,...)
-
-// nrows:    number of text rows (unused here)
-void bx_win32_gui_c::text_update(u8* old_text, u8* new_text,
-	unsigned long cursor_x, unsigned long cursor_y,
-	bx_vga_tminfo_t tm_info, unsigned nrows)
-{
-	HDC           hdc;
-	unsigned char data[64];
-	u8* old_line;
-	u8* new_line;
-	u8            cAttr;
-	u8            cChar;
-	unsigned int  curs;
-	unsigned int  hchars;
-	unsigned int  i;
-	unsigned int  offset;
-	unsigned int  rows;
-	unsigned int  x;
-	unsigned int  y;
-	unsigned int  xc;
-	unsigned int  yc;
-	BOOL          forceUpdate = false;
-#if !BX_USE_WINDOWS_FONTS
-	u8* text_base;
-	u8            cfwidth;
-	u8            cfheight;
-	u8            cfheight2;
-	u8            font_col;
-	u8            font_row;
-	u8            font_row2;
-	u8            split_textrow;
-	u8            split_fontrows;
-	unsigned int  yc2;
-	unsigned int  cs_y;
-	BOOL          split_screen;
-#endif
-	if (!stInfo.UIinited)
-		return;
-
-	EnterCriticalSection(&stInfo.drawCS);
-
-	if (charmap_updated)
-	{
-		for (unsigned c = 0; c < 256; c++)
-		{
-			if (char_changed[c])
-			{
-				memset(data, 0, sizeof(data));
-
-				BOOL  gfxchar = tm_info.line_graphics && ((c & 0xE0) == 0xC0);
-				for (i = 0; i < (unsigned)yChar; i++)
-				{
-					data[i * 2] = vga_charmap[c * 32 + i];
-					if (gfxchar)
-					{
-						data[i * 2 + 1] = (data[i * 2] << 7);
-					}
-				}
-
-				SetBitmapBits(vgafont[c], 64, data);
-				char_changed[c] = 0;
-			}
-		}
-
-		forceUpdate = true;
-		charmap_updated = 0;
-	}
-
-	for (i = 0; i < 16; i++)
-	{
-		text_pal_idx[i] = theVGA->get_actl_palette_idx(i);  // DEV_vga_get_actl_pal_idx(i);
-	}
-
-	hdc = GetDC(stInfo.simWnd);
-
-#if !BX_USE_WINDOWS_FONTS
-	if ((tm_info.h_panning != h_panning) || (tm_info.v_panning != v_panning))
-	{
-		forceUpdate = 1;
-		h_panning = tm_info.h_panning;
-		v_panning = tm_info.v_panning;
-	}
-
-	if (tm_info.line_compare != line_compare)
-	{
-		forceUpdate = 1;
-		line_compare = tm_info.line_compare;
-	}
-#endif
-
-	// first invalidate character at previous and new cursor location
-	if ((prev_cursor_y < text_rows) && (prev_cursor_x < text_cols))
-	{
-		curs = prev_cursor_y * tm_info.line_offset + prev_cursor_x * 2;
-		old_text[curs] = ~new_text[curs];
-	}
-
-	if ((tm_info.cs_start <= tm_info.cs_end) && (tm_info.cs_start < yChar)
-		&& (cursor_y < text_rows) && (cursor_x < text_cols))
-	{
-		curs = cursor_y * tm_info.line_offset + cursor_x * 2;
-		old_text[curs] = ~new_text[curs];
-	}
-	else
-	{
-		curs = 0xffff;
-	}
-
-#if !BX_USE_WINDOWS_FONTS
-	rows = text_rows;
-	if (v_panning)
-		rows++;
-	y = 0;
-	cs_y = 0;
-	text_base = new_text - tm_info.start_address;
-	split_textrow = (line_compare + v_panning) / yChar;
-	split_fontrows = ((line_compare + v_panning) % yChar) + 1;
-	split_screen = 0;
-	do
-	{
-		hchars = text_cols;
-		if (h_panning)
-			hchars++;
-		if (split_screen)
-		{
-			yc = line_compare + cs_y * yChar + 1;
-			font_row = 0;
-			if (rows == 1)
-			{
-				cfheight = (dimension_y - line_compare - 1) % yChar;
-				if (cfheight == 0)
-					cfheight = yChar;
-			}
-			else
-			{
-				cfheight = yChar;
-			}
-		}
-		else if (v_panning)
-		{
-			if (y == 0)
-			{
-				yc = 0;
-				font_row = v_panning;
-				cfheight = yChar - v_panning;
-			}
-			else
-			{
-				yc = y * yChar - v_panning;
-				font_row = 0;
-				if (rows == 1)
-				{
-					cfheight = v_panning;
-				}
-				else
-				{
-					cfheight = yChar;
-				}
-			}
-		}
-		else
-		{
-			yc = y * yChar;
-			font_row = 0;
-			cfheight = yChar;
-		}
-
-		if (!split_screen && (y == split_textrow))
-		{
-			if (split_fontrows < cfheight)
-				cfheight = split_fontrows;
-		}
-
-		new_line = new_text;
-		old_line = old_text;
-		x = 0;
-		offset = cs_y * tm_info.line_offset;
-		do
-		{
-			if (h_panning)
-			{
-				if (hchars > text_cols)
-				{
-					xc = 0;
-					font_col = h_panning;
-					cfwidth = xChar - h_panning;
-				}
-				else
-				{
-					xc = x * xChar - h_panning;
-					font_col = 0;
-					if (hchars == 1)
-					{
-						cfwidth = h_panning;
-					}
-					else
-					{
-						cfwidth = xChar;
-					}
-				}
-			}
-			else
-			{
-				xc = x * xChar;
-				font_col = 0;
-				cfwidth = xChar;
-			}
-
-			if (forceUpdate || (old_text[0] != new_text[0])
-				|| (old_text[1] != new_text[1]))
-			{
-				cChar = new_text[0];
-				cAttr = new_text[1];
-				DrawBitmap(hdc, vgafont[cChar], xc, yc, cfwidth, cfheight, font_col,
-					font_row, SRCCOPY, cAttr);
-				if (offset == curs)
-				{
-					if (font_row == 0)
-					{
-						yc2 = yc + tm_info.cs_start;
-						font_row2 = tm_info.cs_start;
-						cfheight2 = tm_info.cs_end - tm_info.cs_start + 1;
-					}
-					else
-					{
-						if (v_panning > tm_info.cs_start)
-						{
-							yc2 = yc;
-							font_row2 = font_row;
-							cfheight2 = tm_info.cs_end - v_panning + 1;
-						}
-						else
-						{
-							yc2 = yc + tm_info.cs_start - v_panning;
-							font_row2 = tm_info.cs_start;
-							cfheight2 = tm_info.cs_end - tm_info.cs_start + 1;
-						}
-					}
-
-					cAttr = ((cAttr >> 4) & 0xF) + ((cAttr & 0xF) << 4);
-					DrawBitmap(hdc, vgafont[cChar], xc, yc2, cfwidth, cfheight2, font_col,
-						font_row2, SRCCOPY, cAttr);
-				}
-			}
-
-			x++;
-			new_text += 2;
-			old_text += 2;
-			offset += 2;
-		} while (--hchars);
-		if (!split_screen && (y == split_textrow))
-		{
-			new_text = text_base;
-			forceUpdate = 1;
-			cs_y = 0;
-			if (tm_info.split_hpanning)
-				h_panning = 0;
-			rows = ((dimension_y - line_compare + yChar - 2) / yChar) + 1;
-			split_screen = 1;
-		}
-		else
-		{
-			y++;
-			cs_y++;
-			new_text = new_line + tm_info.line_offset;
-			old_text = old_line + tm_info.line_offset;
-		}
-	} while (--rows);
-
-	h_panning = tm_info.h_panning;
-#else
-	rows = text_rows;
-	y = 0;
-	do
-	{
-		hchars = text_cols;
-		yc = y * yChar;
-		new_line = new_text;
-		old_line = old_text;
-		x = 0;
-		offset = y * tm_info.line_offset;
-		do
-		{
-			xc = x * xChar;
-			if (forceUpdate || (old_text[0] != new_text[0])
-				|| (old_text[1] != new_text[1]))
-			{
-				cChar = new_text[0];
-				cAttr = new_text[1];
-				DrawChar(hdc, cChar, xc, yc, cAttr, 1, 0);
-				if (offset == curs)
-				{
-					DrawChar(hdc, cChar, xc, yc, cAttr, tm_info.cs_start, tm_info.cs_end);
-				}
-			}
-
-			x++;
-			new_text += 2;
-			old_text += 2;
-			offset += 2;
-		} while (--hchars);
-		y++;
-		new_text = new_line + tm_info.line_offset;
-		old_text = old_line + tm_info.line_offset;
-	} while (--rows);
-#endif
-	prev_cursor_x = cursor_x;
-	prev_cursor_y = cursor_y;
-
-	ReleaseDC(stInfo.simWnd, hdc);
-
-	LeaveCriticalSection(&stInfo.drawCS);
-}
-
-// ::PALETTE_CHANGE()
-//
-// Allocate a color in the native GUI, for this color, and put
-// it in the colormap location 'index'.
-// returns: 0=no screen update needed (color map change has direct effect)
-
-//          1=screen updated needed (redraw using current colormap)
-bool bx_win32_gui_c::palette_change(unsigned index, unsigned red, unsigned green,
-	unsigned blue)
-{
-	if ((current_bpp == 16) && (index < 3))
-	{
-		cmap_index[256 + index].rgbRed = red;
-		cmap_index[256 + index].rgbBlue = blue;
-		cmap_index[256 + index].rgbGreen = green;
-		return 0;
-	}
-	else
-	{
-		cmap_index[index].rgbRed = red;
-		cmap_index[index].rgbBlue = blue;
-		cmap_index[index].rgbGreen = green;
-	}
-
-	return(1);
-}
-
-void bx_win32_gui_c::graphics_frame_update(const u32* pixels, unsigned width, unsigned height)
-{
-	BITMAPINFOHEADER bih = {};
-	bih.biSize = sizeof(BITMAPINFOHEADER);
-	bih.biWidth = (LONG)width;
-	bih.biHeight = -(LONG)height;   
-	bih.biPlanes = 1;
-	bih.biBitCount = 32;
-	bih.biCompression = BI_RGB;
-
-	EnterCriticalSection(&stInfo.drawCS);
-
-	HDC hdc = GetDC(stInfo.simWnd);
-	HGDIOBJ oldObj = SelectObject(MemoryDC, MemoryBitmap);
-
-	StretchDIBits(
-		MemoryDC,
-		0, 0, (int)width, (int)height,    
-		0, 0, (int)width, (int)height,   
-		pixels,
-		(const BITMAPINFO*)&bih,
-		DIB_RGB_COLORS,
-		SRCCOPY);
-
-	SelectObject(MemoryDC, oldObj);
-	updateUpdated(0, 0, width - 1, height - 1);
-
-	ReleaseDC(stInfo.simWnd, hdc);
-	LeaveCriticalSection(&stInfo.drawCS);
-}
-
-// ::GRAPHICS_TILE_UPDATE()
-//
-// Called to request that a tile of graphics be drawn to the
-// screen, since info in this region has changed.
-//
-// tile: array of 8bit values representing a block of pixels with
-//       dimension equal to the 'tilewidth' & 'tileheight' parameters to
-//       ::specific_init().  Each value specifies an index into the
-//       array of colors you allocated for ::palette_change()
-// x0: x origin of tile
-// y0: y origin of tile
-//
-// note: origin of tile and of window based on (0,0) being in the upper
-
-//       left of the window.
-void bx_win32_gui_c::graphics_tile_update(u8* tile, unsigned x0, unsigned y0)
-{
-	HDC     hdc;
-	HGDIOBJ oldObj;
-
-	EnterCriticalSection(&stInfo.drawCS);
-	hdc = GetDC(stInfo.simWnd);
-
-	oldObj = SelectObject(MemoryDC, MemoryBitmap);
-
-	StretchDIBits(MemoryDC, x0, y0, x_tilesize, y_tilesize, 0, 0, x_tilesize,
-		y_tilesize, tile, bitmap_info, DIB_RGB_COLORS, SRCCOPY);
-
-	SelectObject(MemoryDC, oldObj);
-
-	updateUpdated(x0, y0, x0 + x_tilesize - 1, y0 + y_tilesize - 1);
-
-	ReleaseDC(stInfo.simWnd, hdc);
-	LeaveCriticalSection(&stInfo.drawCS);
-}
-
-// ::DIMENSION_UPDATE()
-//
-// Called when the VGA mode changes it's X,Y dimensions.
-// Resize the window to this size.
-//
-// x: new VGA x size
-// y: new VGA y size
-// fheight: new VGA character height in text mode
-// fwidth : new VGA character width in text mode
-
-// bpp : bits per pixel in graphics mode
-void bx_win32_gui_c::dimension_update(unsigned x, unsigned y, unsigned fheight,
-	unsigned fwidth, unsigned bpp)
-{
-	BxTextMode = (fheight > 0);
-	if (BxTextMode)
-	{
-		text_cols = x / fwidth;
-		text_rows = y / fheight;
-		xChar = fwidth;
-		yChar = fheight;
-	}
-
-	if (x == dimension_x && y == dimension_y && bpp == current_bpp)
-		return;
-	dimension_x = x;
-	dimension_y = y;
-	stretched_x = dimension_x;
-	stretched_y = dimension_y;
-	stretch_factor = 1;
-	if (BxTextMode && (stretched_x < 400))
-	{
-		stretched_x *= 2;
-		stretch_factor *= 2;
-	}
-
-	bitmap_info->bmiHeader.biBitCount = bpp;
-	if (bpp == 16)
-	{
-		bitmap_info->bmiHeader.biCompression = BI_BITFIELDS;
-
-		static RGBQUAD  red_mask = { 0x00, 0xF8, 0x00, 0x00 };
-		static RGBQUAD  green_mask = { 0xE0, 0x07, 0x00, 0x00 };
-		static RGBQUAD  blue_mask = { 0x1F, 0x00, 0x00, 0x00 };
-		bitmap_info->bmiColors[256] = bitmap_info->bmiColors[0];
-		bitmap_info->bmiColors[257] = bitmap_info->bmiColors[1];
-		bitmap_info->bmiColors[258] = bitmap_info->bmiColors[2];
-		bitmap_info->bmiColors[0] = red_mask;
-		bitmap_info->bmiColors[1] = green_mask;
-		bitmap_info->bmiColors[2] = blue_mask;
-	}
-	else
-	{
-		if (current_bpp == 16)
-		{
-			bitmap_info->bmiColors[0] = bitmap_info->bmiColors[256];
-			bitmap_info->bmiColors[1] = bitmap_info->bmiColors[257];
-			bitmap_info->bmiColors[2] = bitmap_info->bmiColors[258];
-		}
-
-		bitmap_info->bmiHeader.biCompression = BI_RGB;
-		if (bpp == 15)
-		{
-			bitmap_info->bmiHeader.biBitCount = 16;
-		}
-	}
-
-	current_bpp = bpp;
-
-	resize_main_window();
-
-	BX_INFO(("dimension update x=%d y=%d fontheight=%d fontwidth=%d bpp=%d", x, y,
-		fheight, fwidth, bpp));
-
-	host_xres = x;
-	host_yres = y;
-	host_bpp = bpp;
-}
-
-// ::EXIT()
-//
-// Called before bochs terminates, to allow for a graceful
-
-// exit from the native GUI mechanism.
-void bx_win32_gui_c::exit(void)
-{
-	printf("# In bx_win32_gui_c::exit(void)!\n");
-
-	// kill thread first...
-	PostMessage(stInfo.mainWnd, WM_CLOSE, 0, 0);
-
-	// Wait until it dies
-	while ((stInfo.kill == 0) && (workerThreadID != 0))
-		Sleep(500);
-
-	if (!stInfo.kill)
-		terminateEmul(EXIT_NORMAL);
-}
-
-void create_vga_font(void)
-{
-	unsigned char data[64];
-
-	// VGA font is 8 or 9 wide and up to 32 high
-	for (unsigned c = 0; c < 256; c++)
-	{
-		vgafont[c] = CreateBitmap(9, 32, 1, 1, NULL);
-		if (!vgafont[c])
-			terminateEmul(EXIT_FONT_BITMAP_ERROR);
-		memset(data, 0, sizeof(data));
-		for (unsigned i = 0; i < 16; i++)
-			data[i * 2] = reverse_bitorder(bx_vgafont[c].data[i]);
-		SetBitmapBits(vgafont[c], 64, data);
+		guest_mouse_captured = capture_owner != nullptr;
+		keyboard->set_mouse_capture(guest_mouse_captured);
 	}
 }
 
-unsigned char reverse_bitorder(unsigned char b)
+void bx_win32_gui_c::specific_init(unsigned, unsigned)
 {
-	unsigned char ret = 0;
-
-	for (unsigned i = 0; i < 8; i++)
-	{
-		ret |= (b & 0x01) << (7 - i);
-		b >>= 1;
-	}
-
-	return(ret);
+	application.invoke([this] { initialize_window(); });
+	new_gfx_api = true;
 }
 
-COLORREF GetColorRef(unsigned char attr)
+void bx_win32_gui_c::initialize_window()
 {
-	u8  pal_idx = text_pal_idx[attr];
-	return RGB(cmap_index[pal_idx].rgbRed, cmap_index[pal_idx].rgbGreen,
-		cmap_index[pal_idx].rgbBlue);
+	if (retired || application.shutting_down)
+		FAILURE(Win32, "Cannot initialize a retired display");
+	if (window) return;
+	if (width == 0 || height == 0) dimension_update_impl(640, 480);
+	const DWORD style = WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+	RECT rect = { 0, 0, (LONG)width, (LONG)height };
+	AdjustWindowRectEx(&rect, style, FALSE, 0);
+	HWND created = CreateWindowEx(0, win32_window_class, window_title.c_str(),
+		style, CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left,
+		rect.bottom - rect.top, nullptr, nullptr, GetModuleHandle(nullptr), this);
+	if (!created)
+		FAILURE(Win32, "Unable to create display window");
+	SetTimer(window, 1, 330, nullptr);
+	ShowWindow(window, SW_SHOW);
 }
 
-void DrawBitmap(HDC hdc, HBITMAP hBitmap, int xStart, int yStart, int width,
-	int height, int fcol, int frow, DWORD dwRop, unsigned char cColor)
+void bx_win32_gui_c::update_title()
 {
-	BITMAP  bm;
-	HDC     hdcMem;
-	POINT   ptSize;
-	POINT   ptOrg;
-	HGDIOBJ oldObj;
-
-	hdcMem = CreateCompatibleDC(hdc);
-	SelectObject(hdcMem, hBitmap);
-	SetMapMode(hdcMem, GetMapMode(hdc));
-
-	GetObject(hBitmap, sizeof(BITMAP), (LPVOID)&bm);
-
-	ptSize.x = width;
-	ptSize.y = height;
-
-	DPtoLP(hdc, &ptSize, 1);
-
-	ptOrg.x = fcol;
-	ptOrg.y = frow;
-	DPtoLP(hdcMem, &ptOrg, 1);
-
-	oldObj = SelectObject(MemoryDC, MemoryBitmap);
-
-	// The highest background bit usually means blinking characters. No idea
-	// how to implement that so for now it's just implemented as color.
-	// Note: it is also possible to program the VGA controller to have the
-	// high bit for the foreground color enable blinking characters.
-	COLORREF  crFore = SetTextColor(MemoryDC, GetColorRef((cColor >> 4) & 0xf));
-	COLORREF  crBack = SetBkColor(MemoryDC, GetColorRef(cColor & 0xf));
-	BitBlt(MemoryDC, xStart, yStart, ptSize.x, ptSize.y, hdcMem, ptOrg.x, ptOrg.y,
-		dwRop);
-	SetBkColor(MemoryDC, crBack);
-	SetTextColor(MemoryDC, crFore);
-
-	SelectObject(MemoryDC, oldObj);
-
-	updateUpdated(xStart, yStart, ptSize.x + xStart - 1, ptSize.y + yStart - 1);
-
-	DeleteDC(hdcMem);
+	// Same base and hint formatting as SDL's build_window_titles(). 
+	if (window)
+		SetWindowText(window, (window_title + (application.capture_owner == this
+			? " - Ctrl+F10 releases mouse" : "")).c_str());
 }
 
-void updateUpdated(int x1, int y1, int x2, int y2)
+void bx_win32_gui_c::dimension_update(unsigned x, unsigned y,
+	unsigned, unsigned, unsigned)
 {
-	x1 *= stretch_factor;
-	x2 *= stretch_factor;
-	if (!updated_area_valid)
-	{
-		updated_area.left = x1;
-		updated_area.top = y1;
-		updated_area.right = x2;
-		updated_area.bottom = y2;
-	}
-	else
-	{
-		if (x1 < updated_area.left)
-			updated_area.left = x1;
-		if (y1 < updated_area.top)
-			updated_area.top = y1;
-		if (x2 > updated_area.right)
-			updated_area.right = x2;
-		if (y2 > updated_area.bottom)
-			updated_area.bottom = y2;
-	}
+	application.invoke([=] { dimension_update_impl(x, y); });
+}
 
-	updated_area_valid = true;
+void bx_win32_gui_c::dimension_update_impl(unsigned x, unsigned y)
+{
+	if (retired) return;
+	if (!x || !y || x > (unsigned)(std::numeric_limits<int>::max)() ||
+		y > (unsigned)(std::numeric_limits<int>::max)() ||
+		(size_t)x > (std::numeric_limits<size_t>::max)() / sizeof(u32) / y)
+		FAILURE(Win32, "Invalid display dimensions");
+	if (x == width && y == height) return;
+	pixels.assign((size_t)x * y, 0);
+	width = x;
+	height = y;
+	host_xres = (u16)x;
+	host_yres = (u16)y;
+	host_bpp = 32;
+	if (window && !fullscreen)
+	{
+		RECT rect = { 0, 0, (LONG)x, (LONG)y };
+		AdjustWindowRectEx(&rect, (DWORD)GetWindowLongPtr(window, GWL_STYLE),
+			FALSE, (DWORD)GetWindowLongPtr(window, GWL_EXSTYLE));
+		SetWindowPos(window, nullptr, 0, 0, rect.right - rect.left,
+			rect.bottom - rect.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+	}
+	if (application.capture_owner == this)
+	{
+		if (confine_mouse()) recenter_mouse();
+		else application.set_mouse_capture(nullptr);
+	}
+}
+
+void bx_win32_gui_c::graphics_frame_update(const u32* frame,
+	unsigned x, unsigned y)
+{
+	application.invoke([=]
+	{
+		if (!window || retired || !frame) return;
+		dimension_update_impl(x, y);
+		std::copy_n(frame, (size_t)x * y, pixels.data());
+		InvalidateRect(window, nullptr, FALSE);
+		UpdateWindow(window);
+	});
+}
+
+void bx_win32_gui_c::paint(HDC dc)
+{
+	RECT rect;
+	GetClientRect(window, &rect);
+	FillRect(dc, &rect, (HBRUSH)GetStockObject(BLACK_BRUSH));
+	if (pixels.empty() || !width || !height) return;
+	// Match SDL's letterboxing if the host client area differs from the mode.
+	const double scale = (std::min)((double)rect.right / width,
+		(double)rect.bottom / height);
+	const int w = (int)(width * scale), h = (int)(height * scale);
+	BITMAPINFO info = {};
+	info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+	info.bmiHeader.biWidth = (LONG)width;
+	info.bmiHeader.biHeight = -(LONG)height;
+	info.bmiHeader.biPlanes = 1;
+	info.bmiHeader.biBitCount = 32;
+	info.bmiHeader.biCompression = BI_RGB;
+	SetStretchBltMode(dc, COLORONCOLOR);
+	StretchDIBits(dc, (rect.right - w) / 2, (rect.bottom - h) / 2, w, h,
+		0, 0, width, height, pixels.data(), &info, DIB_RGB_COLORS, SRCCOPY);
+}
+
+void bx_win32_gui_c::clear_screen()
+{
+	application.invoke([this]
+	{
+		if (!window || retired) return;
+		std::fill(pixels.begin(), pixels.end(), 0);
+		InvalidateRect(window, nullptr, FALSE);
+		UpdateWindow(window);
+	});
+}
+
+void bx_win32_gui_c::handle_events()
+{
+	application.invoke([this] { application.poll_input(); });
 }
 
 void bx_win32_gui_c::mouse_enabled_changed_specific(bool val)
 {
-	// Native capture and cursor operations belong to the window thread.
-	PostMessage(stInfo.simWnd, WM_MOUSE_CAPTURE, val, 0);
+	application.invoke([=] { application.set_mouse_capture(val ? this : nullptr); });
 }
 
 void bx_win32_gui_c::get_capabilities(u16* xres, u16* yres, u16* bpp)
 {
-	if (desktop_y > 0)
+	*xres = (u16)GetSystemMetrics(SM_CXSCREEN);
+	*yres = (u16)GetSystemMetrics(SM_CYSCREEN);
+	*bpp = 32;
+}
+
+bool bx_win32_gui_c::confine_mouse()
+{
+	RECT rect;
+	if (!GetClientRect(window, &rect) || IsRectEmpty(&rect)) return false;
+	MapWindowPoints(window, nullptr, (POINT*)&rect, 2);
+	return ClipCursor(&rect) != 0;
+}
+
+void bx_win32_gui_c::recenter_mouse()
+{
+	RECT rect;
+	GetClientRect(window, &rect);
+	POINT pt = { (rect.right - rect.left) / 2,
+		(rect.bottom - rect.top) / 2 };
+	mouse_last_x = pt.x;
+	mouse_last_y = pt.y;
+	ClientToScreen(window, &pt);
+	SetCursorPos(pt.x, pt.y);
+}
+
+void bx_win32_gui_c::mouse_event(int x, int y, int z, unsigned flags)
+{
+	if (application.capture_owner != this || application.input_paused) return;
+	ignored_mouse_buttons &= flags;
+	flags &= ~ignored_mouse_buttons;
+	unsigned buttons = ((flags & MK_LBUTTON) ? 1 : 0) |
+		((flags & MK_RBUTTON) ? 2 : 0) | ((flags & MK_MBUTTON) ? 4 : 0);
+	int dx = x - mouse_last_x, dy = mouse_last_y - y;
+	mouse_last_x = x;
+	mouse_last_y = y;
+	if (dx || dy || z || buttons != application.mouse_buttons)
+		application.send_mouse(dx, dy, z, buttons);
+	application.mouse_buttons = buttons;
+}
+
+void bx_win32_gui_c::toggle_fullscreen()
+{
+	const LONG_PTR normal_style = WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+	if (!fullscreen)
 	{
-		*xres = (u16)desktop_x;
-		*yres = (u16)desktop_y;
-		*bpp = 32;
+		MONITORINFO monitor = { sizeof(MONITORINFO) };
+		if (!GetMonitorInfo(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor)) return;
+		GetWindowRect(window, &windowed_rect);
+		fullscreen = true;
+		SetWindowLongPtr(window, GWL_STYLE, WS_POPUP);
+		SetWindowPos(window, nullptr, monitor.rcMonitor.left, monitor.rcMonitor.top,
+			monitor.rcMonitor.right - monitor.rcMonitor.left,
+			monitor.rcMonitor.bottom - monitor.rcMonitor.top,
+			SWP_FRAMECHANGED | SWP_NOZORDER);
 	}
 	else
 	{
-		*xres = 1024;
-		*yres = 768;
-		*bpp = 32;
+		fullscreen = false;
+		SetWindowLongPtr(window, GWL_STYLE, normal_style);
+		SetWindowPos(window, nullptr, windowed_rect.left, windowed_rect.top,
+			windowed_rect.right - windowed_rect.left,
+			windowed_rect.bottom - windowed_rect.top,
+			SWP_FRAMECHANGED | SWP_NOZORDER);
 	}
 }
-#endif /* if BX_WITH_WIN32 */
+
+LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
+	WPARAM wparam, LPARAM lparam)
+{
+	const bool input_message = msg == WM_KEYDOWN || msg == WM_KEYUP ||
+		msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP ||
+		(msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST);
+	if (input_message)
+	{
+		if (application.input_paused) return 0;
+		application.poll_input();
+		if (!application.window_owner(GetFocus())) return 0;
+	}
+	switch (msg)
+	{
+	case WM_CLOSE:
+		application.request_shutdown();
+		return 0;
+	case WM_SETFOCUS:
+		if (application.capture_owner && application.capture_owner != this)
+			application.set_mouse_capture(this);
+		return 0;
+	case WM_KILLFOCUS:
+		if (!application.window_owner((HWND)wparam)) application.release_input_session();
+		return 0;
+	case WM_ACTIVATEAPP:
+		if (!wparam) application.release_input_session();
+		return 0;
+	case WM_CANCELMODE:
+		application.release_input_session();
+		return 0;
+	case WM_CAPTURECHANGED:
+		if (application.capture_owner == this && (HWND)lparam != hwnd)
+		{
+			// Focus can still be changing between our windows. Reconcile after
+			// that transition; never reacquire capture inside this notification.
+			ClipCursor(nullptr);
+			SetCursor(LoadCursor(nullptr, IDC_ARROW));
+			PostMessage(hwnd, win32_reconcile_message, 0, 0);
+		}
+		return 0;
+	case win32_reconcile_message:
+		application.poll_input();
+		return 0;
+	case WM_TIMER:
+		if (application.capture_owner == this)
+		{
+			if (confine_mouse()) recenter_mouse();
+			else application.set_mouse_capture(nullptr);
+		}
+		return 0;
+	case WM_SETCURSOR:
+		if (application.capture_owner == this && LOWORD(lparam) == HTCLIENT)
+		{
+			SetCursor(nullptr);
+			return TRUE;
+		}
+		break;
+	case WM_PAINT:
+	{
+		PAINTSTRUCT ps;
+		HDC dc = BeginPaint(hwnd, &ps);
+		paint(dc);
+		EndPaint(hwnd, &ps);
+		return 0;
+	}
+	case WM_ERASEBKGND:
+		return 1;
+	case WM_MOUSEMOVE:
+	case WM_LBUTTONUP:
+	case WM_MBUTTONDOWN:
+	case WM_MBUTTONUP:
+	case WM_RBUTTONDOWN:
+	case WM_RBUTTONUP:
+		mouse_event(GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam), 0,
+			GET_KEYSTATE_WPARAM(wparam));
+		return 0;
+	case WM_LBUTTONDOWN:
+		if (application.capture_owner != this) application.set_mouse_capture(this);
+		else mouse_event(GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam), 0,
+			GET_KEYSTATE_WPARAM(wparam));
+		return 0;
+	case WM_MOUSEWHEEL:
+		if (application.capture_owner == this)
+		{
+			wheel_remainder += GET_WHEEL_DELTA_WPARAM(wparam);
+			int steps = wheel_remainder / WHEEL_DELTA;
+			wheel_remainder %= WHEEL_DELTA;
+			POINT pt = { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+			ScreenToClient(hwnd, &pt);
+			mouse_event(pt.x, pt.y, steps, GET_KEYSTATE_WPARAM(wparam));
+		}
+		return 0;
+	case WM_KEYDOWN:
+	case WM_SYSKEYDOWN:
+		if (wparam == VK_F10 && !(lparam & (1L << 30)))
+			application.capture_hotkey_down = false;
+		if (wparam == VK_F10 && (application.capture_hotkey_down ||
+			(!(lparam & (1L << 30)) && (GetKeyState(VK_CONTROL) & 0x8000))))
+		{
+			if (!application.capture_hotkey_down)
+				application.set_mouse_capture(application.capture_owner ? nullptr : this);
+			application.capture_hotkey_down = true;
+			return 0;
+		}
+		if (wparam == VK_RETURN && (HIWORD(lparam) & KF_ALTDOWN))
+		{
+			if (!(lparam & (1L << 30))) toggle_fullscreen();
+			return 0;
+		}
+		application.send_key((HIWORD(lparam) & 0x1ff), false);
+		return 0;
+	case WM_KEYUP:
+	case WM_SYSKEYUP:
+		if (wparam == VK_F10 && application.capture_hotkey_down)
+		{
+			application.capture_hotkey_down = false;
+			return 0;
+		}
+		application.send_key((HIWORD(lparam) & 0x1ff), true);
+		return 0;
+	case WM_CHAR:
+	case WM_SYSCHAR:
+	case WM_DEADCHAR:
+	case WM_SYSDEADCHAR:
+		return 0;
+	}
+	return DefWindowProc(hwnd, msg, wparam, lparam);
+}
+
+static LRESULT CALLBACK win32_window_proc(HWND hwnd, UINT msg,
+	WPARAM wparam, LPARAM lparam)
+{
+	auto* owner = reinterpret_cast<bx_win32_gui_c*>(
+		GetWindowLongPtr(hwnd, GWLP_USERDATA));
+	if (msg == WM_NCCREATE)
+	{
+		owner = static_cast<bx_win32_gui_c*>(
+			reinterpret_cast<CREATESTRUCT*>(lparam)->lpCreateParams);
+		SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)owner);
+	}
+	if (!owner) return DefWindowProc(hwnd, msg, wparam, lparam);
+	try
+	{
+		if (msg == WM_NCCREATE)
+		{
+			owner->window = hwnd;
+			owner->application.windows.emplace(hwnd, owner);
+			return DefWindowProc(hwnd, msg, wparam, lparam);
+		}
+		if (msg == WM_NCDESTROY)
+		{
+			owner->application.windows.erase(hwnd);
+			SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
+			owner->window = nullptr;
+			return DefWindowProc(hwnd, msg, wparam, lparam);
+		}
+		return owner->window_event(hwnd, msg, wparam, lparam);
+	}
+	catch (...)
+	{
+		// Never unwind through a native callback. A display worker rethrows the
+		// first error through handle_events(), and main keeps serving shutdown.
+		owner->application.record_callback_error();
+		return msg == WM_NCCREATE ? FALSE : 0;
+	}
+}
+
+void bx_win32_gui_c::exit_impl()
+{
+	if (retired) return;
+	retired = true;
+	if (application.capture_owner == this) application.set_mouse_capture(nullptr);
+	if (!window) return;
+	if (GetFocus() == window) application.release_input_session();
+	KillTimer(window, 1);
+	DestroyWindow(window);
+	pixels.clear();
+}
+
+void bx_win32_gui_c::exit()
+{
+	application.invoke([this] { exit_impl(); });
+}
+
+void win32_application::exit_displays()
+{
+	shutting_down = true;
+	for (const auto& display : displays) display->exit_impl();
+	if (dispatcher) { DestroyWindow(dispatcher); dispatcher = nullptr; }
+}
+
+void bx_win32_gui_c::exit_application()
+{
+	application.invoke([this] { application.exit_displays(); });
+}
+
+#endif // _WIN32

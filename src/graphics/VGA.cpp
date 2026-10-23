@@ -52,7 +52,7 @@ CVGA::CVGA(class CConfigurator* cfg, class CSystem* c, int pcibus, int pcidev) :
 	if (another_vga && !c->graphics_multihead_enabled())
 		FAILURE(Configuration,
 			"Multiple VGA cards require graphics.multihead=true in the system configuration");
-	// X11 & Win32 single-display backends still use this alias. It does not select
+	// The X11 single-display backend still uses this alias. It does not select
 	// a firmware console when multiple cards are present.
 	theVGA = another_vga ? nullptr : this;
 }
