@@ -295,7 +295,7 @@ public:
 	void request_shutdown();
 	void record_callback_error() noexcept;
 	void send_key(unsigned scan, bool released);
-	bool consume_hotkey_key(unsigned scan, bool released, bool repeat);
+	bool consume_hotkey_key(unsigned scan, bool released, bool repeat, bool allow_repeat = false);
 	void suppress_hotkey_keys(unsigned scan, unsigned modifiers, bool release_modifiers = true);
 	void send_ctrl_alt_delete();
 	void send_mouse(int dx, int dy, int dz, unsigned buttons);
@@ -310,6 +310,9 @@ public:
 	bx_win32_gui_c* capture_owner = nullptr;
 	unsigned mouse_buttons = 0;
 	win32_hotkey_binding hotkey_mouse_capture, hotkey_ctrl_alt_delete, hotkey_reset_window;
+	win32_hotkey_binding hotkey_scale_up, hotkey_scale_down;
+	int configured_scale = 1;
+	bool scale_change_enable = false;
 	bool input_paused = false;
 	bool shutting_down = false;
 private:
@@ -378,8 +381,12 @@ private:
 	friend LRESULT CALLBACK win32_window_proc(HWND, UINT, WPARAM, LPARAM);
 	void initialize_window();
 	void dimension_update_impl(unsigned, unsigned);
+	int window_scale() const;
+	void update_driven_size();
+	RECT window_rect_for_client(int, int) const;
 	void resize_window_to_guest();
 	void reset_window_size();
+	void adjust_window_scale(int);
 	void update_mouse_geometry();
 	void exit_impl();
 	void update_title();
@@ -396,6 +403,8 @@ private:
 	const std::string window_title;
 	std::vector<u32> pixels;
 	unsigned width = 0, height = 0;
+	int driven_width = 0, driven_height = 0;
+	int runtime_scale_override = 0;
 	HDC paint_dc = nullptr;
 	HBITMAP paint_bitmap = nullptr;
 	HGDIOBJ paint_original_bitmap = nullptr;
@@ -779,11 +788,24 @@ void win32_application::initialize()
 	}
 	mouse_invert_x = cfg->get_bool_value("mouse.invert_x", false);
 	mouse_invert_y = cfg->get_bool_value("mouse.invert_y", false);
+	const u64 scale = cfg->get_num_value("video.scale_ratio", true, 0);
+	if (scale > 8)
+		printf("%%WIN32-W-SCALE: invalid video.scale_ratio %llu (valid: 0 - 8); "
+			"using 1x.\n", (unsigned long long)scale);
+	configured_scale = scale >= 1 && scale <= 8 ? (int)scale : 1;
+	scale_change_enable = cfg->get_bool_value("video.scale_change_enable", false);
 	hotkey_mouse_capture = parse_win32_hotkey(cfg, "hotkey.mouse_capture", "Ctrl+F10");
 	hotkey_ctrl_alt_delete = parse_win32_hotkey(cfg, "hotkey.ctrl_alt_delete", "Ctrl+Alt+End");
 	hotkey_reset_window = parse_win32_hotkey(cfg, "hotkey.reset_window", "Ctrl+Alt+Home");
+	hotkey_scale_up = parse_win32_hotkey(cfg, "hotkey.scale_up", "Ctrl+PageUp");
+	hotkey_scale_down = parse_win32_hotkey(cfg, "hotkey.scale_down", "Ctrl+PageDown");
 	win32_hotkey_binding* bindings[] = {
-		&hotkey_mouse_capture, &hotkey_ctrl_alt_delete, &hotkey_reset_window
+		&hotkey_mouse_capture, &hotkey_ctrl_alt_delete, &hotkey_reset_window,
+		&hotkey_scale_up, &hotkey_scale_down
+	};
+	const bool active[] = {
+		hotkey_mouse_capture.enabled, hotkey_ctrl_alt_delete.enabled, hotkey_reset_window.enabled,
+		hotkey_scale_up.enabled && scale_change_enable, hotkey_scale_down.enabled && scale_change_enable
 	};
 	constexpr size_t binding_count = sizeof(bindings) / sizeof(bindings[0]);
 	bool duplicate[binding_count] = {};
@@ -791,7 +813,7 @@ void win32_application::initialize()
 	{
 		for (size_t j = i + 1; j < binding_count; ++j)
 		{
-			if (bindings[i]->enabled && bindings[j]->enabled &&
+			if (active[i] && active[j] &&
 				bindings[i]->key == bindings[j]->key &&
 				bindings[i]->modifiers == bindings[j]->modifiers)
 			{
@@ -932,12 +954,14 @@ void win32_application::release_guest_keys()
 		if (guest_keys[i]) send_key(i, true);
 }
 
-bool win32_application::consume_hotkey_key(unsigned scan, bool released, bool repeat)
+bool win32_application::consume_hotkey_key(unsigned scan, bool released, bool repeat,
+	bool allow_repeat)
 {
 	if (scan >= 512) return false;
 	// A fresh press also recovers when the previous release went to another app.
 	if (!released && !repeat) swallowed_hotkey_keys[scan] = false;
 	if (!swallowed_hotkey_keys[scan]) return false;
+	if (!released && repeat && allow_repeat) return false;
 	if (released) swallowed_hotkey_keys[scan] = false;
 	return true;
 }
@@ -1067,13 +1091,13 @@ void bx_win32_gui_c::initialize_window()
 	if (window) return;
 	if (width == 0 || height == 0) dimension_update_impl(640, 480);
 	const DWORD style = win32_window_style;
-	RECT rect = { 0, 0, (LONG)width, (LONG)height };
-	AdjustWindowRectEx(&rect, style, FALSE, 0);
+	RECT rect = window_rect_for_client(driven_width, driven_height);
 	HWND created = CreateWindowEx(0, win32_window_class, window_title.c_str(),
 		style, CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left,
 		rect.bottom - rect.top, nullptr, nullptr, GetModuleHandle(nullptr), this);
 	if (!created)
 		FAILURE(Win32, "Unable to create display window");
+	resize_window_to_guest();
 	update_title();
 	SetTimer(window, 1, 330, nullptr);
 	ShowWindow(window, SW_SHOW);
@@ -1115,18 +1139,47 @@ void bx_win32_gui_c::dimension_update_impl(unsigned x, unsigned y)
 	host_xres = (u16)x;
 	host_yres = (u16)y;
 	host_bpp = 32;
+	update_driven_size();
 	resize_window_to_guest();
 	update_mouse_geometry();
+}
+
+int bx_win32_gui_c::window_scale() const
+{
+	if (runtime_scale_override) return runtime_scale_override;
+	return application.configured_scale;
+}
+
+void bx_win32_gui_c::update_driven_size()
+{
+	const unsigned scale = (unsigned)window_scale();
+	const unsigned limit = (unsigned)(std::numeric_limits<int>::max)() / scale;
+	if (!width || !height || width > limit || height > limit)
+		FAILURE(Win32, "Scaled display dimensions are out of range");
+	driven_width = (int)(width * scale);
+	driven_height = (int)(height * scale);
+}
+
+RECT bx_win32_gui_c::window_rect_for_client(int client_width, int client_height) const
+{
+	RECT rect = { 0, 0, client_width, client_height };
+	const DWORD style = window ? (DWORD)GetWindowLongPtr(window, GWL_STYLE) : win32_window_style;
+	const DWORD ex_style = window ? (DWORD)GetWindowLongPtr(window, GWL_EXSTYLE) : 0;
+	if (!AdjustWindowRectEx(&rect, style, FALSE, ex_style) ||
+		(long long)rect.right - rect.left <= 0 || (long long)rect.bottom - rect.top <= 0 ||
+		(long long)rect.right - rect.left > (std::numeric_limits<int>::max)() ||
+		(long long)rect.bottom - rect.top > (std::numeric_limits<int>::max)())
+		FAILURE(Win32, "Unable to calculate display window size");
+	return rect;
 }
 
 void bx_win32_gui_c::resize_window_to_guest()
 {
 	if (!window || fullscreen || IsZoomed(window) || IsIconic(window)) return;
-	RECT rect = { 0, 0, (LONG)width, (LONG)height };
-	AdjustWindowRectEx(&rect, (DWORD)GetWindowLongPtr(window, GWL_STYLE),
-		FALSE, (DWORD)GetWindowLongPtr(window, GWL_EXSTYLE));
+	RECT rect = window_rect_for_client(driven_width, driven_height);
+	// Allow exact guest-driven sizes beyond Windows' interactive tracking limits.
 	SetWindowPos(window, nullptr, 0, 0, rect.right - rect.left,
-		rect.bottom - rect.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+		rect.bottom - rect.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSENDCHANGING);
 }
 
 void bx_win32_gui_c::reset_window_size()
@@ -1137,6 +1190,17 @@ void bx_win32_gui_c::reset_window_size()
 	// Manual resizing changes only the host window. 
 	// The framebuffer dimensions remain the guest-driven state.
 	resize_window_to_guest();
+}
+
+void bx_win32_gui_c::adjust_window_scale(int delta)
+{
+	if (!window || retired) return;
+	const int current = window_scale();
+	const int next = (std::max)(1, (std::min)(8, current + delta));
+	if (next == runtime_scale_override) return;
+	runtime_scale_override = next;
+	update_driven_size();
+	reset_window_size();
 }
 
 void bx_win32_gui_c::update_mouse_geometry()
@@ -1325,8 +1389,14 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 	if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN ||
 		msg == WM_KEYUP || msg == WM_SYSKEYUP)
 	{
-		if (application.consume_hotkey_key(HIWORD(lparam) & 0x1ff,
-			msg == WM_KEYUP || msg == WM_SYSKEYUP, (lparam & (1L << 30)) != 0))
+		const unsigned scan = HIWORD(lparam) & 0x1ff;
+		const unsigned key = win32_host_hotkey_key(wparam, scan);
+		const unsigned modifiers = win32_host_hotkey_modifiers();
+		const bool scale_repeat = application.scale_change_enable &&
+			(application.hotkey_scale_up.matches(key, modifiers) ||
+			 application.hotkey_scale_down.matches(key, modifiers));
+		if (application.consume_hotkey_key(scan, msg == WM_KEYUP || msg == WM_SYSKEYUP,
+			(lparam & (1L << 30)) != 0, scale_repeat))
 			return 0;
 	}
 	switch (msg)
@@ -1435,6 +1505,18 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 				application.suppress_hotkey_keys(scan, modifiers, false);
 				reset_window_size();
 			}
+			return 0;
+		}
+		if (application.scale_change_enable && application.hotkey_scale_up.matches(key, modifiers))
+		{
+			if (!(lparam & (1L << 30))) application.suppress_hotkey_keys(scan, modifiers, false);
+			adjust_window_scale(+1);
+			return 0;
+		}
+		if (application.scale_change_enable && application.hotkey_scale_down.matches(key, modifiers))
+		{
+			if (!(lparam & (1L << 30))) application.suppress_hotkey_keys(scan, modifiers, false);
+			adjust_window_scale(-1);
 			return 0;
 		}
 		if (application.hotkey_mouse_capture.matches(key, modifiers))
