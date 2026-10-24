@@ -168,14 +168,14 @@ using namespace std;
 #include "MultipleChoiceQuestion.h"
 #include "ShrinkingChoiceQuestion.h"
 
-struct SDLHotkeyPrompt
+struct GUIHotkeyPrompt
 {
 	const char* config_name;
 	const char* description;
 	const char* default_binding;
 };
 
-static const SDLHotkeyPrompt sdl_hotkey_prompts[] = {
+static const GUIHotkeyPrompt gui_hotkey_prompts[] = {
 	{ "hotkey.mouse_capture", "Mouse capture", "Ctrl+F10" },
 	{ "hotkey.media", "Removable media selector", "Ctrl+F11" },
 	{ "hotkey.ctrl_alt_delete", "Send Ctrl+Alt+Delete to the guest", "Ctrl+Alt+End" },
@@ -193,7 +193,7 @@ static string trim_answer(const string& value)
 	return value.substr(first, last - first + 1);
 }
 
-static string ask_hotkey_override(const SDLHotkeyPrompt& prompt)
+static string ask_hotkey_override(const GUIHotkeyPrompt& prompt)
 {
 	FreeTextQuestion hotkey_q;
 	hotkey_q.setQuestion(string(prompt.description) + " hotkey override "
@@ -551,16 +551,15 @@ int main(int argc, char* argv[])
 //#if defined(HAVE_X11)
 //	gui_q.addAnswer("X11", "X11", "Unix X-Windows GUI support.");
 //#endif
-//#if defined(_WIN32)
-//	gui_q.addAnswer("win32", "win32", "Windows 32 GUI support.");
-//#endif
+#if defined(_WIN32)
+	gui_q.addAnswer("win32", "win32", "Windows 32 GUI support.");
+#endif
 
 	if (gui_q.countAnswers() == 1)
 	{
 		/* The only valid answer is "none".
 		 */
-		//cout << "\nSorry, the GUI is not available! (no SDL, win32 or X11 support found).\n";
-		cout << "\nSorry, the GUI is not available! (no SDL support found).\n";
+		cout << "\nNo graphical output backend is available in this build.\n";
 		gui_q.setAnswer("");
 	}
 	else
@@ -572,6 +571,7 @@ int main(int argc, char* argv[])
 
 	if (gui_q.getAnswer() != "")
 	{
+		const bool win32_gui = gui_q.getAnswer() == "win32";
 		/* Yes, we have a GUI.
 		 */
 		os << "gui = " << gui_q.getAnswer() << "\n";
@@ -579,8 +579,10 @@ int main(int argc, char* argv[])
 
 		MultipleChoiceQuestion vid_scale_q;
 		vid_scale_q.setQuestion("Do you want to set a custom scale ratio for the display output?");
-		vid_scale_q.setExplanation("The display output is scaled automatically based on system DPI by default, which can be overrided.");
-		vid_scale_q.addAnswer("no", "no", "Set the display scale ratio automatically.");
+		vid_scale_q.setExplanation(win32_gui ?
+			"Native Win32 uses a 1x scale by default. Choose yes to set an integer scale factor." :
+			"SDL uses the OS display scale (DPI) by default. Choose yes to set an integer scale factor.");
+		vid_scale_q.addAnswer("no", "no", "Use the default display scale ratio.");
 		vid_scale_q.addAnswer("yes", "yes", "Set a custom display scale ratio.");
 		vid_scale_q.setDefault("no");
 		vid_scale_q.ask();
@@ -625,7 +627,7 @@ int main(int argc, char* argv[])
 
 		os << "  video.scale_change_enable = " << vid_scale_change_enable_q.ask() << ";\n";
 
-		if (gui_q.getAnswer() == "sdl")
+		if (gui_q.getAnswer() == "sdl" || win32_gui)
 		{
 			MultipleChoiceQuestion mouse_absolute_q;
 			mouse_absolute_q.setQuestion(
@@ -634,7 +636,7 @@ int main(int argc, char* argv[])
 				"Choose no for normal desktop operation (recommended default). "
 				"Choose yes if your input source supplies absolute pointer "
 				"coordinates. "
-				"SDL derives movement from successive window "
+				"Movement is derived from successive window "
 				"positions while capture is enabled. The guest still receives "
 				"relative PS/2 movement, so its pointer is not guaranteed to match "
 				"an exact host pixel. Mouse speed and inversion settings still "
@@ -646,34 +648,37 @@ int main(int argc, char* argv[])
 			mouse_absolute_q.setDefault("no");
 			os << "  mouse.absolute = " << mouse_absolute_q.ask() << ";\n";
 
-			cout << "\nSDL GUI runtime hotkey defaults:\n";
+			cout << "\n" << (win32_gui ? "Win32" : "SDL") << " GUI runtime hotkey defaults:\n";
 			for (size_t i = 0;
-				i < sizeof(sdl_hotkey_prompts) / sizeof(sdl_hotkey_prompts[0]); i++)
+				i < sizeof(gui_hotkey_prompts) / sizeof(gui_hotkey_prompts[0]); i++)
 			{
-				cout << "  " << sdl_hotkey_prompts[i].description << ": "
-					<< sdl_hotkey_prompts[i].default_binding << "\n";
+				cout << "  " << gui_hotkey_prompts[i].description << ": "
+					<< gui_hotkey_prompts[i].default_binding << "\n";
 			}
+			if (win32_gui)
+				cout << "  The media selector hotkey is saved but currently ignored by Win32.\n";
 			cout << "\n";
 
 			MultipleChoiceQuestion customize_hotkeys_q;
-			customize_hotkeys_q.setQuestion("Would you like to customize the SDL GUI keyboard shortcuts?");
+			customize_hotkeys_q.setQuestion(string("Would you like to customize the ") +
+				(win32_gui ? "Win32" : "SDL") + " GUI keyboard shortcuts?");
 			customize_hotkeys_q.setExplanation(
 				"Choose 'yes' to enter optional overrides. At each hotkey prompt, "
 				"leave the answer blank to keep the built-in default or enter "
 				"'none' to disable that keyboard binding.");
 			customize_hotkeys_q.addAnswer("no", "no", "Use runtime defaults; write no hotkey settings.");
-			customize_hotkeys_q.addAnswer("yes", "yes", "Review all six shortcuts; Enter keeps each runtime default, and none disables it.");
+			customize_hotkeys_q.addAnswer("yes", "yes", "Review all supported shortcuts; Enter keeps each runtime default, and none disables it.");
 			customize_hotkeys_q.setDefault("no");
 
 			if (customize_hotkeys_q.ask() == "yes")
 			{
 				for (size_t i = 0;
-					i < sizeof(sdl_hotkey_prompts) / sizeof(sdl_hotkey_prompts[0]); i++)
+					i < sizeof(gui_hotkey_prompts) / sizeof(gui_hotkey_prompts[0]); i++)
 				{
-					string answer = ask_hotkey_override(sdl_hotkey_prompts[i]);
+					string answer = ask_hotkey_override(gui_hotkey_prompts[i]);
 					if (!answer.empty())
 					{
-						os << "  " << sdl_hotkey_prompts[i].config_name
+						os << "  " << gui_hotkey_prompts[i].config_name
 							<< " = \"" << answer << "\";\n";
 					}
 				}

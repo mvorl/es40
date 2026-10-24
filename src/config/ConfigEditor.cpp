@@ -859,7 +859,7 @@ void add_scsi_disks(const char *title, const int max_scsi_id, CConfigurator *par
  * GUI configuration
  **/
 
-#if defined(HAVE_SDL)
+#if defined(HAVE_SDL) || defined(_WIN32)
 void validation_hotkey(EditorField *field)
 {
     // TODO: I found no way to match case-insensitively?!
@@ -885,7 +885,7 @@ void validation_hotkey(EditorField *field)
     "Invalid or duplicate bindings are reported at runtime and\n"                         \
     "the affected actions are disabled."
 
-bool check_gui_sdl_keyboard(FormEntry_t entry[], int num_entries, FormValues_t values)
+bool check_gui_keyboard(FormEntry_t entry[], int num_entries, FormValues_t values)
 {
     if (!strcmp(values[fentry_index(entry, num_entries, "keyboard use mapping?")], STR_YES) &&
         !strcmp(values[fentry_index(entry, num_entries, "keyboard map")], ""))
@@ -896,8 +896,8 @@ bool check_gui_sdl_keyboard(FormEntry_t entry[], int num_entries, FormValues_t v
     return true;
 }
 
-// Form for SDL GUI keyboard & general hotkey settings
-void edit_gui_sdl_keyboard(const char *title)
+// Shared SDL/Win32 keyboard and general hotkey settings.
+void edit_gui_keyboard(const char *title)
 {
     FormEntry_t entry[] = {
         {"keyboard use mapping?", STR_NO, "keyboard.use_mapping",
@@ -909,7 +909,8 @@ void edit_gui_sdl_keyboard(const char *title)
          "The keymap file to use when keyboard.use_mapping is enabled.",
          validation_file},
         {"hotkey.media", "Ctrl+F11", "hotkey.media",
-         "Host key combination used to bring up the removable media selector.\n" HOTKEY_HELP,
+         "Host key combination used to bring up the removable media selector.\n"
+         "Win32 currently ignores this setting.\n" HOTKEY_HELP,
          validation_hotkey},
         {"hotkey.ctrl_alt_delete", "Ctrl+Alt+End", "hotkey.ctrl_alt_delete",
          "Host key combination used to send Ctrl+Alt+Delete to the guest.\n" HOTKEY_HELP,
@@ -930,7 +931,7 @@ void edit_gui_sdl_keyboard(const char *title)
             preset[i] = (char *)entry[i].preset;
     }
 
-    FormValues_t values = show_form(title, entry, preset, num_entries, check_gui_sdl_keyboard);
+    FormValues_t values = show_form(title, entry, preset, num_entries, check_gui_keyboard);
 
     if (values != NULL)
     {
@@ -945,20 +946,20 @@ void edit_gui_sdl_keyboard(const char *title)
     free(preset);
 }
 
-void validation_gui_sdl_mousespeed(EditorField *field)
+void validation_gui_mousespeed(EditorField *field)
 {
     editor_number(field, EditorField::Type::Number, 1, 0.1, 10.0);
 }
 
-// Form for SDL GUI mouse settings
-void edit_gui_sdl_mouse(const char *title)
+// Shared SDL/Win32 mouse settings.
+void edit_gui_mouse(const char *title)
 {
     FormEntry_t entry[] = {
-        {"mouse.speed favtor", "1.0", "mouse.speed",
+        {"mouse speed factor", "1.0", "mouse.speed",
          "Multiplier applied to host mouse motion before it is passed to the guest.\n"
          "Use a value below 1.0 to slow the guest pointer down (e.g. 0.5 for half speed),\n"
          "or above 1.0 (up to 10.0) to speed it up.",
-         validation_gui_sdl_mousespeed},
+         validation_gui_mousespeed},
         {"mouse invert x?", STR_NO, "mouse.invert_x",
          "Reverse the direction of host mouse motion on the horizontal axis.",
          validation_yes_no},
@@ -1018,13 +1019,13 @@ void edit_gui_sdl_mouse(const char *title)
     free(preset);
 }
 
-void validation_gui_sdl_scaleratio(EditorField *field)
+void validation_gui_scaleratio(EditorField *field)
 {
     editor_number(field, EditorField::Type::Integer, 1, 0, 10);
 }
 
-// Form for SDL GUI video settings
-void edit_gui_sdl_video(const char *title)
+// Shared SDL/Win32 video settings.
+void edit_gui_video(const char *title)
 {
     FormEntry_t entry[] = {
         {"video linear", STR_YES, "video.linear",
@@ -1032,11 +1033,10 @@ void edit_gui_sdl_video(const char *title)
          "true = linear (smooth), false = nearest neighbor (sharp pixels).",
          validation_yes_no},
         {"video scale ratio", "0", "video.scale_ratio",
-         "Integer scale factor for the emulator window (1 - 8). For example,"
+         "Integer scale factor for the emulator window (1 - 10). For example, "
          "2 renders the guest's 640x480 display in a 1280x960 window. The default\n"
-         "is 0, which sizes the window automatically from the OS display scale\n"
-         "(DPI) setting.",
-         validation_gui_sdl_scaleratio},
+         "is 0: native Win32 uses 1x; SDL uses the OS display scale (DPI).",
+         validation_gui_scaleratio},
         {"video scale change enable?", STR_NO, "video.scale_change_enable",
          "If enabled, the display scale ratio can be adjusted on the fly\n"
          "while the emulator is running, without restarting.\n"
@@ -1084,28 +1084,24 @@ void edit_gui_sdl_video(const char *title)
     free(preset);
 }
 
-// Menu for SDL GUI
-void edit_gui_sdl(const char *title)
+static void edit_gui_settings(const char *title, const char *backend)
 {
     MenuEntry_t entry[] = {
-        {"Edit keyboard settings", "Edit SDL keyboard and general settings.", edit_gui_sdl_keyboard},
-        {"Edit mouse settings", "Edit SDL mouse settings.", edit_gui_sdl_mouse},
-        {"Edit video settings", "Edit SDL video settings.", edit_gui_sdl_video}};
+        {"Edit keyboard settings", "Edit keyboard and general settings.", edit_gui_keyboard},
+        {"Edit mouse settings", "Edit mouse settings.", edit_gui_mouse},
+        {"Edit video settings", "Edit video settings.", edit_gui_video}};
     const int num_entries = ARRAY_SIZE(entry);
-    CConfigurator *c;
-
-    c = theConfig->find_child("gui");
-    if (c != nullptr && strcmp(c->get_myValue(), "sdl"))
-    {
-        theConfig->remove_child(c->get_myName());
-        c = nullptr;
-    }
-    if (c == nullptr)
-        c = new CConfigurator(theConfig, (char *)"gui", (char *)"sdl");
+    edit_node(theConfig, theConfig->find_child("gui"), "gui", backend);
 
     show_menu(title, entry, num_entries, MENU_3RD_LEVEL);
 }
-#endif // HAVE_SDL
+#if defined(HAVE_SDL)
+void edit_gui_sdl(const char *title) { edit_gui_settings(title, "sdl"); }
+#endif
+#if defined(_WIN32)
+void edit_gui_win32(const char *title) { edit_gui_settings(title, "win32"); }
+#endif
+#endif // HAVE_SDL || _WIN32
 
 #if 0 && defined(HAVE_X11)
 bool check_gui_x11(FormEntry_t entry[], int num_entries, FormValues_t values)
@@ -1187,16 +1183,16 @@ void edit_gui(const char *title)
         ,
         {"X11", "Unix X-Windows GUI support.", edit_gui_x11}
 #endif
-#if 0 && defined(_WIN32)
+#if defined(_WIN32)
         ,
-        {"win32", "Windows 32 GUI support.", edit_gui_win32}
+        {"win32", "Native Windows GUI.", edit_gui_win32}
 #endif
     };
     int num_entries = ARRAY_SIZE(entry);
 
     if (num_entries == 1)
     {
-        show_text(title, "Sorry, the GUI is not available! (no SDL support found).");
+        show_text(title, "No graphical output backend is available in this build.");
         return;
     }
 
