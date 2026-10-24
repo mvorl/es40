@@ -784,7 +784,7 @@ static const char* const kv_gui_win32[] = {
   "keyboard.use_mapping", "keyboard.map", "mouse.speed", "mouse.invert_x",
   "mouse.invert_y", "mouse.absolute", "hotkey.mouse_capture", "hotkey.ctrl_alt_delete",
   "hotkey.reset_window", "video.scale_ratio", "video.scale_change_enable",
-  "hotkey.scale_up", "hotkey.scale_down", "video.linear", 0 };
+  "hotkey.scale_up", "hotkey.scale_down", "video.linear", "hotkey.media", 0 };
 static const char* const kv_mpu401[] = { "midi_out", 0 };
 
 classinfo classes[] = {
