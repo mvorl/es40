@@ -407,7 +407,7 @@ public:
 	void suppress_hotkey_keys(unsigned scan, unsigned modifiers, bool release_modifiers = true);
 	void send_ctrl_alt_delete();
 	void send_mouse(int dx, int dy, int dz, unsigned buttons);
-	void send_host_mouse(int dx, int dy, int dz, unsigned buttons);
+	void send_host_mouse(double dx, double dy, int dz, unsigned buttons);
 	void set_mouse_capture(bx_win32_gui_c* target);
 	void release_input_session();
 	bx_win32_gui_c* window_owner(HWND window) const;
@@ -428,6 +428,8 @@ public:
 private:
 	void release_guest_keys();
 	void reconcile_mouse_releases();
+	bool set_raw_mouse_target(HWND);
+	void discard_raw_mouse_input(HWND);
 	void sync_input();
 	CConfigurator* cfg;
 	std::unique_ptr<bx_keymap_c> shared_keymap;
@@ -435,6 +437,8 @@ private:
 	std::map<std::pair<std::string, unsigned>, bx_win32_gui_c*> outputs;
 	const DWORD owner_thread = GetCurrentThreadId();
 	HWND dispatcher = nullptr;
+	HWND raw_mouse_target = nullptr;
+	unsigned mouse_capture_transition = 0;
 	std::atomic<bool> running{ false };
 	CKeyboard* keyboard = nullptr;
 	CSystem* system = nullptr;
@@ -508,9 +512,9 @@ private:
 	void prepare_paint_buffer(HDC, int, int);
 	void release_paint_buffer();
 	void mouse_event(int, int, int, unsigned, bool motion = false);
+	void raw_mouse_event(HRAWINPUT);
 	void reset_absolute_mouse_position()
 		{ if (application.mouse_absolute) mouse_position_valid = false; }
-	void recenter_mouse();
 	bool confine_mouse();
 	void toggle_fullscreen();
 	LRESULT window_event(HWND, UINT, WPARAM, LPARAM);
@@ -1175,13 +1179,19 @@ void win32_application::send_mouse(int dx, int dy, int dz, unsigned buttons)
 		keyboard->mouse_motion(dx, dy, dz, buttons);
 }
 
-void win32_application::send_host_mouse(int dx, int dy, int dz,
+void win32_application::send_host_mouse(double dx, double dy, int dz,
 	unsigned buttons)
 {
 	if (!keyboard || input_paused) return;
 	// The window has already converted host Y to the PS/2 positive-up axis.
 	mouse_remainder_x += dx * (mouse_invert_x ? -mouse_speed : mouse_speed);
 	mouse_remainder_y += dy * (mouse_invert_y ? -mouse_speed : mouse_speed);
+	// Raw motion has signed 32-bit counts rather than client-pixel deltas.
+	// Bound the scaled result before converting to the guest's integer API.
+	const double minimum = (std::numeric_limits<int>::min)();
+	const double maximum = (std::numeric_limits<int>::max)();
+	mouse_remainder_x = (std::max)(minimum, (std::min)(maximum, mouse_remainder_x));
+	mouse_remainder_y = (std::max)(minimum, (std::min)(maximum, mouse_remainder_y));
 	const int scaled_x = (int)mouse_remainder_x;
 	const int scaled_y = (int)mouse_remainder_y;
 	mouse_remainder_x -= scaled_x;
@@ -1198,11 +1208,56 @@ void win32_application::release_input_session()
 	set_mouse_capture(nullptr);
 }
 
+bool win32_application::set_raw_mouse_target(HWND target)
+{
+	if (raw_mouse_target == target) return true;
+	// Keep legacy buttons and wheel events, and receive motion only while
+	// this application is in the foreground. These APIs predate Windows 7.
+	RAWINPUTDEVICE mouse = { 0x01, 0x02, target ? 0u : RIDEV_REMOVE, target };
+	if (!RegisterRawInputDevices(&mouse, 1, sizeof(mouse)))
+	{
+		printf("%%WIN32-W-RAWMOUSE: Unable to %s raw mouse input (error %lu).\n",
+			target ? "capture" : "release", GetLastError());
+		return false;
+	}
+	raw_mouse_target = target;
+	return true;
+}
+
+void win32_application::discard_raw_mouse_input(HWND window)
+{
+	if (!window) return;
+	MSG msg;
+	while (PeekMessage(&msg, window, WM_INPUT, WM_INPUT, PM_REMOVE | PM_QS_INPUT))
+	{
+		if (msg.message == WM_QUIT) request_shutdown();
+		else DefWindowProc(msg.hwnd, msg.message, msg.wParam, msg.lParam);
+	}
+}
+
 void win32_application::set_mouse_capture(bx_win32_gui_c* target)
 {
 	if (target && (!target->window || target->retired ||
 		GetActiveWindow() != target->window)) return;
 	if (capture_owner == target) return;
+	const unsigned transition = ++mouse_capture_transition;
+	if (!mouse_absolute)
+	{
+		HWND previous_target = raw_mouse_target;
+		set_raw_mouse_target(nullptr);
+		discard_raw_mouse_input(previous_target);
+		if (target && target->window != previous_target) discard_raw_mouse_input(target->window);
+		// PeekMessage can run a nested main-thread callback. A newer capture
+		// request or display retirement takes precedence over this request.
+		if (transition != mouse_capture_transition ||
+			(target && (shutting_down || !target->window || target->retired ||
+			 GetActiveWindow() != target->window)))
+		{
+			if (capture_owner && !raw_mouse_target &&
+				!set_raw_mouse_target(capture_owner->window)) set_mouse_capture(nullptr);
+			return;
+		}
+	}
 	auto* previous = capture_owner;
 	const bool transferring = previous && target;
 	// Absolute coordinates belong to one window, while fractional motion
@@ -1235,14 +1290,14 @@ void win32_application::set_mouse_capture(bx_win32_gui_c* target)
 		if (!mouse_absolute)
 		{
 			SetCapture(target->window);
-			if (GetCapture() != target->window || !target->confine_mouse())
+			if (GetCapture() != target->window || !target->confine_mouse() ||
+				!set_raw_mouse_target(target->window))
 			{
 				capture_owner = nullptr;
 				mouse_remainder_x = mouse_remainder_y = 0.0;
 				ClipCursor(nullptr);
 				if (GetCapture() == target->window) ReleaseCapture();
 			}
-			else target->recenter_mouse();
 		}
 		target->update_title();
 	}
@@ -1256,6 +1311,7 @@ void win32_application::set_mouse_capture(bx_win32_gui_c* target)
 		if (input_paused) input_reset_pending = true;
 		mouse_buttons = 0;
 	}
+	if (!capture_owner) set_raw_mouse_target(nullptr);
 	SetCursor(capture_owner ? nullptr : LoadCursor(nullptr, IDC_ARROW));
 	if (keyboard && !input_paused)
 	{
@@ -1285,7 +1341,6 @@ void bx_win32_gui_c::initialize_window()
 		FAILURE(Win32, "Unable to create display window");
 	resize_window_to_guest();
 	update_title();
-	SetTimer(window, 1, 330, nullptr);
 	ShowWindow(window, SW_SHOW);
 }
 
@@ -1398,8 +1453,7 @@ void bx_win32_gui_c::update_mouse_geometry()
 		if (IsIconic(window)) application.set_mouse_capture(nullptr);
 		else if (!application.mouse_absolute)
 		{
-			if (confine_mouse()) recenter_mouse();
-			else application.set_mouse_capture(nullptr);
+			if (!confine_mouse()) application.set_mouse_capture(nullptr);
 		}
 	}
 }
@@ -1545,16 +1599,20 @@ bool bx_win32_gui_c::confine_mouse()
 	return ClipCursor(&rect) != 0;
 }
 
-void bx_win32_gui_c::recenter_mouse()
+void bx_win32_gui_c::raw_mouse_event(HRAWINPUT handle)
 {
-	RECT rect;
-	GetClientRect(window, &rect);
-	POINT pt = { (rect.right - rect.left) / 2,
-		(rect.bottom - rect.top) / 2 };
-	mouse_last_x = pt.x;
-	mouse_last_y = pt.y;
-	ClientToScreen(window, &pt);
-	SetCursorPos(pt.x, pt.y);
+	if (application.mouse_absolute || application.capture_owner != this) return;
+	RAWINPUT input = {};
+	UINT size = sizeof(input);
+	if (GetRawInputData(handle, RID_INPUT, &input, &size, sizeof(RAWINPUTHEADER)) != sizeof(input) ||
+		input.header.dwSize != sizeof(input) || input.header.dwType != RIM_TYPEMOUSE) return;
+	const RAWMOUSE& mouse = input.data.mouse;
+	// Absolute-device coordinates are not relative counts. Such input uses
+	// the existing mouse.absolute window-coordinate path instead.
+	if (mouse.usFlags & MOUSE_MOVE_ABSOLUTE) return;
+	if (mouse.lLastX || mouse.lLastY)
+		application.send_host_mouse((double)mouse.lLastX, -(double)mouse.lLastY,
+			0, application.mouse_buttons);
 }
 
 void bx_win32_gui_c::mouse_event(int x, int y, int z, unsigned flags, bool motion)
@@ -1565,9 +1623,9 @@ void bx_win32_gui_c::mouse_event(int x, int y, int z, unsigned flags, bool motio
 	unsigned buttons = ((flags & MK_LBUTTON) ? 1 : 0) |
 		((flags & MK_RBUTTON) ? 2 : 0) | ((flags & MK_MBUTTON) ? 4 : 0);
 	int dx = 0, dy = 0;
-	if (!application.mouse_absolute || motion)
+	if (application.mouse_absolute && motion)
 	{
-		if (!application.mouse_absolute || mouse_position_valid)
+		if (mouse_position_valid)
 		{
 			dx = x - mouse_last_x;
 			dy = mouse_last_y - y;
@@ -1611,7 +1669,7 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 	WPARAM wparam, LPARAM lparam)
 {
 	const bool input_message = msg == WM_KEYDOWN || msg == WM_KEYUP ||
-		msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP ||
+		msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP || msg == WM_INPUT ||
 		(msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST);
 	if (input_message)
 	{
@@ -1634,6 +1692,10 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 	}
 	switch (msg)
 	{
+	case WM_INPUT:
+		if (GET_RAWINPUT_CODE_WPARAM(wparam) == RIM_INPUT)
+			raw_mouse_event((HRAWINPUT)lparam);
+		return 0;
 	case WM_CLOSE:
 		application.request_shutdown();
 		return 0;
@@ -1665,7 +1727,7 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 	case win32_reconcile_message:
 		application.poll_input();
 		return 0;
-	case WM_TIMER:
+	case WM_DISPLAYCHANGE:
 		update_mouse_geometry();
 		return 0;
 	case WM_MOVE:
@@ -1825,13 +1887,16 @@ static LRESULT CALLBACK win32_window_proc(HWND hwnd, UINT msg,
 			owner->window = nullptr;
 			return DefWindowProc(hwnd, msg, wparam, lparam);
 		}
-		return owner->window_event(hwnd, msg, wparam, lparam);
+		const LRESULT result = owner->window_event(hwnd, msg, wparam, lparam);
+		if (msg == WM_INPUT) DefWindowProc(hwnd, msg, wparam, lparam);
+		return result;
 	}
 	catch (...)
 	{
 		// Never unwind through a native callback. A display worker rethrows the
 		// first error through handle_events(), and main keeps serving shutdown.
 		owner->application.record_callback_error();
+		if (msg == WM_INPUT) DefWindowProc(hwnd, msg, wparam, lparam);
 		return msg == WM_NCCREATE ? FALSE : 0;
 	}
 }
@@ -1844,7 +1909,6 @@ void bx_win32_gui_c::exit_impl()
 	if (window)
 	{
 		if (GetFocus() == window) application.release_input_session();
-		KillTimer(window, 1);
 		DestroyWindow(window);
 	}
 	release_paint_buffer();
@@ -1862,6 +1926,7 @@ void win32_application::exit_displays()
 {
 	shutting_down = true;
 	for (const auto& display : displays) display->exit_impl();
+	set_raw_mouse_target(nullptr);
 	if (dispatcher) { DestroyWindow(dispatcher); dispatcher = nullptr; }
 }
 
