@@ -316,7 +316,7 @@ public:
 	void invoke(std::function<void()> fn);
 	void exit_displays();
 	void poll_input();
-	void pause_input() { input_paused = true; }
+	void pause_input();
 	void resume_input() { input_paused = false; }
 	void detach_input() { keyboard = nullptr; system = nullptr; }
 	void request_shutdown();
@@ -341,6 +341,7 @@ public:
 	int configured_scale = 1;
 	bool scale_change_enable = false;
 	bool video_linear = true;
+	bool mouse_absolute = false;
 	bool input_paused = false;
 	bool shutting_down = false;
 private:
@@ -422,7 +423,9 @@ private:
 	const u32* linear_frame(unsigned, unsigned);
 	void prepare_paint_buffer(HDC, int, int);
 	void release_paint_buffer();
-	void mouse_event(int, int, int, unsigned);
+	void mouse_event(int, int, int, unsigned, bool motion = false);
+	void reset_absolute_mouse_position()
+		{ if (application.mouse_absolute) mouse_position_valid = false; }
 	void recenter_mouse();
 	bool confine_mouse();
 	void toggle_fullscreen();
@@ -441,6 +444,7 @@ private:
 	HGDIOBJ paint_original_bitmap = nullptr;
 	int paint_width = 0, paint_height = 0;
 	int mouse_last_x = 0, mouse_last_y = 0;
+	bool mouse_position_valid = false, mouse_tracking = false;
 	int wheel_remainder = 0;
 	unsigned ignored_mouse_buttons = 0;
 	bool retired = false;
@@ -819,6 +823,7 @@ void win32_application::initialize()
 	}
 	mouse_invert_x = cfg->get_bool_value("mouse.invert_x", false);
 	mouse_invert_y = cfg->get_bool_value("mouse.invert_y", false);
+	mouse_absolute = cfg->get_bool_value("mouse.absolute", false);
 	const u64 scale = cfg->get_num_value("video.scale_ratio", true, 0);
 	if (scale > 8)
 		printf("%%WIN32-W-SCALE: invalid video.scale_ratio %llu (valid: 0 - 8); "
@@ -943,8 +948,14 @@ void win32_application::poll_input()
 	auto* focus = window_owner(GetFocus());
 	if (!focus) release_input_session();
 	else if (capture_owner && capture_owner != focus) set_mouse_capture(focus);
-	else if (capture_owner && GetCapture() != capture_owner->window)
+	else if (capture_owner && !mouse_absolute && GetCapture() != capture_owner->window)
 		set_mouse_capture(nullptr);
+}
+
+void win32_application::pause_input()
+{
+	input_paused = true;
+	for (const auto& display : displays) display->reset_absolute_mouse_position();
 }
 
 void win32_application::sync_input()
@@ -1071,6 +1082,10 @@ void win32_application::set_mouse_capture(bx_win32_gui_c* target)
 		GetActiveWindow() != target->window)) return;
 	if (capture_owner == target) return;
 	auto* previous = capture_owner;
+	// Absolute coordinates belong to one window, while fractional motion
+	// belongs to the shared guest stream. Only handoffs retain that carry.
+	if (mouse_absolute && (!previous || !target))
+		mouse_remainder_x = mouse_remainder_y = 0.0;
 	// Release buttons before disabling guest capture, including handoffs.
 	if (guest_mouse_captured) send_mouse(0, 0, 0, 0);
 	if (input_paused) input_reset_pending = true;
@@ -1078,12 +1093,17 @@ void win32_application::set_mouse_capture(bx_win32_gui_c* target)
 	capture_owner = nullptr;
 	if (previous)
 	{
-		ClipCursor(nullptr);
-		if (GetCapture() == previous->window) ReleaseCapture();
+		previous->reset_absolute_mouse_position();
+		if (!mouse_absolute)
+		{
+			ClipCursor(nullptr);
+			if (GetCapture() == previous->window) ReleaseCapture();
+		}
 		previous->update_title();
 	}
 	if (target)
 	{
+		target->reset_absolute_mouse_position();
 		target->wheel_remainder = 0;
 		target->ignored_mouse_buttons =
 			((GetKeyState(VK_LBUTTON) & 0x8000) ? MK_LBUTTON : 0) |
@@ -1091,15 +1111,20 @@ void win32_application::set_mouse_capture(bx_win32_gui_c* target)
 			((GetKeyState(VK_MBUTTON) & 0x8000) ? MK_MBUTTON : 0);
 		// Publish the new owner before SetCapture notifies the previous window.
 		capture_owner = target;
-		SetCapture(target->window);
-		if (GetCapture() != target->window || !target->confine_mouse())
+		// Like SDL with relative mode disabled, absolute input leaves the
+		// host pointer free to leave and reenter the client area.
+		if (!mouse_absolute)
 		{
-			capture_owner = nullptr;
-			mouse_remainder_x = mouse_remainder_y = 0.0;
-			ClipCursor(nullptr);
-			if (GetCapture() == target->window) ReleaseCapture();
+			SetCapture(target->window);
+			if (GetCapture() != target->window || !target->confine_mouse())
+			{
+				capture_owner = nullptr;
+				mouse_remainder_x = mouse_remainder_y = 0.0;
+				ClipCursor(nullptr);
+				if (GetCapture() == target->window) ReleaseCapture();
+			}
+			else target->recenter_mouse();
 		}
-		else target->recenter_mouse();
 		target->update_title();
 	}
 	SetCursor(capture_owner ? nullptr : LoadCursor(nullptr, IDC_ARROW));
@@ -1165,6 +1190,7 @@ void bx_win32_gui_c::dimension_update_impl(unsigned x, unsigned y)
 		(size_t)x > (std::numeric_limits<size_t>::max)() / sizeof(u32) / y)
 		FAILURE(Win32, "Invalid display dimensions");
 	if (x == width && y == height) return;
+	reset_absolute_mouse_position();
 	pixels.assign((size_t)x * y, 0);
 	width = x;
 	height = y;
@@ -1217,6 +1243,7 @@ void bx_win32_gui_c::resize_window_to_guest()
 void bx_win32_gui_c::reset_window_size()
 {
 	if (!window || retired) return;
+	reset_absolute_mouse_position();
 	if (fullscreen) toggle_fullscreen();
 	if (IsZoomed(window) || IsIconic(window)) ShowWindow(window, SW_RESTORE);
 	// Manual resizing changes only the host window. 
@@ -1239,8 +1266,12 @@ void bx_win32_gui_c::update_mouse_geometry()
 {
 	if (application.capture_owner == this)
 	{
-		if (!IsIconic(window) && confine_mouse()) recenter_mouse();
-		else application.set_mouse_capture(nullptr);
+		if (IsIconic(window)) application.set_mouse_capture(nullptr);
+		else if (!application.mouse_absolute)
+		{
+			if (confine_mouse()) recenter_mouse();
+			else application.set_mouse_capture(nullptr);
+		}
 	}
 }
 
@@ -1397,16 +1428,27 @@ void bx_win32_gui_c::recenter_mouse()
 	SetCursorPos(pt.x, pt.y);
 }
 
-void bx_win32_gui_c::mouse_event(int x, int y, int z, unsigned flags)
+void bx_win32_gui_c::mouse_event(int x, int y, int z, unsigned flags, bool motion)
 {
 	if (application.capture_owner != this || application.input_paused) return;
 	ignored_mouse_buttons &= flags;
 	flags &= ~ignored_mouse_buttons;
 	unsigned buttons = ((flags & MK_LBUTTON) ? 1 : 0) |
 		((flags & MK_RBUTTON) ? 2 : 0) | ((flags & MK_MBUTTON) ? 4 : 0);
-	int dx = x - mouse_last_x, dy = mouse_last_y - y;
-	mouse_last_x = x;
-	mouse_last_y = y;
+	int dx = 0, dy = 0;
+	if (!application.mouse_absolute || motion)
+	{
+		if (!application.mouse_absolute || mouse_position_valid)
+		{
+			dx = x - mouse_last_x;
+			dy = mouse_last_y - y;
+		}
+		// The first absolute motion seeds the window-local baseline. Button
+		// and wheel coordinates must never move it or generate motion.
+		mouse_last_x = x;
+		mouse_last_y = y;
+		mouse_position_valid = true;
+	}
 	application.send_host_mouse(dx, dy, z, buttons);
 }
 
@@ -1467,10 +1509,12 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 		application.request_shutdown();
 		return 0;
 	case WM_SETFOCUS:
+		reset_absolute_mouse_position();
 		if (application.capture_owner && application.capture_owner != this)
 			application.set_mouse_capture(this);
 		return 0;
 	case WM_KILLFOCUS:
+		reset_absolute_mouse_position();
 		if (!application.window_owner((HWND)wparam)) application.release_input_session();
 		return 0;
 	case WM_ACTIVATEAPP:
@@ -1480,7 +1524,7 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 		application.release_input_session();
 		return 0;
 	case WM_CAPTURECHANGED:
-		if (application.capture_owner == this && (HWND)lparam != hwnd)
+		if (!application.mouse_absolute && application.capture_owner == this && (HWND)lparam != hwnd)
 		{
 			// Focus can still be changing between our windows. Reconcile after
 			// that transition; never reacquire capture inside this notification.
@@ -1496,9 +1540,11 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 		update_mouse_geometry();
 		return 0;
 	case WM_MOVE:
+		reset_absolute_mouse_position();
 		update_mouse_geometry();
 		return 0;
 	case WM_SIZE:
+		reset_absolute_mouse_position();
 		update_mouse_geometry();
 		InvalidateRect(hwnd, nullptr, FALSE);
 		return 0;
@@ -1521,6 +1567,18 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 	case WM_ERASEBKGND:
 		return 1;
 	case WM_MOUSEMOVE:
+		if (application.mouse_absolute && !mouse_tracking)
+		{
+			TRACKMOUSEEVENT tracking = { sizeof(TRACKMOUSEEVENT), TME_LEAVE, hwnd, 0 };
+			mouse_tracking = TrackMouseEvent(&tracking) != 0;
+		}
+		mouse_event(GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam), 0,
+			GET_KEYSTATE_WPARAM(wparam), true);
+		return 0;
+	case WM_MOUSELEAVE:
+		mouse_tracking = false;
+		reset_absolute_mouse_position();
+		return 0;
 	case WM_LBUTTONUP:
 	case WM_MBUTTONDOWN:
 	case WM_MBUTTONUP:
