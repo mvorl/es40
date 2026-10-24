@@ -924,10 +924,10 @@ void win32_application::initialize()
 	mouse_invert_y = cfg->get_bool_value("mouse.invert_y", false);
 	mouse_absolute = cfg->get_bool_value("mouse.absolute", false);
 	const u64 scale = cfg->get_num_value("video.scale_ratio", true, 0);
-	if (scale > 8)
-		printf("%%WIN32-W-SCALE: invalid video.scale_ratio %llu (valid: 0 - 8); "
+	if (scale > 10)
+		printf("%%WIN32-W-SCALE: invalid video.scale_ratio %llu (valid: 0 - 10); "
 			"using 1x.\n", (unsigned long long)scale);
-	configured_scale = scale >= 1 && scale <= 8 ? (int)scale : 1;
+	configured_scale = scale >= 1 && scale <= 10 ? (int)scale : 1;
 	scale_change_enable = cfg->get_bool_value("video.scale_change_enable", false);
 	video_linear = cfg->get_bool_value("video.linear", true);
 	hotkey_mouse_capture = parse_win32_hotkey(cfg, "hotkey.mouse_capture", "Ctrl+F10");
