@@ -301,6 +301,74 @@ static unsigned win32_host_hotkey_key(WPARAM key, unsigned scan)
 	return MapVirtualKeyW((UINT)key, MAPVK_VK_TO_CHAR) & 0xffff;
 }
 
+// Use SDL-style host names in the existing three-column keymap format,
+// translated to native identities without requiring SDL in this backend.
+static const struct { const char* name; unsigned key; } win32_keymap_names[] = {
+	{ "CLEAR", win32_named_key | VK_CLEAR },
+	{ "NUMLOCKCLEAR", win32_named_key | VK_NUMLOCK },
+	{ "LSHIFT", win32_named_key | VK_LSHIFT }, { "RSHIFT", win32_named_key | VK_RSHIFT },
+	{ "LCTRL", win32_named_key | VK_LCONTROL }, { "RCTRL", win32_named_key | VK_RCONTROL },
+	{ "LALT", win32_named_key | VK_LMENU }, { "RALT", win32_named_key | VK_RMENU },
+	{ "LGUI", win32_named_key | VK_LWIN }, { "RGUI", win32_named_key | VK_RWIN },
+	{ "MENU", win32_named_key | VK_APPS }, { "HELP", win32_named_key | VK_HELP },
+	{ "KP_ENTER", win32_keypad_key | VK_RETURN },
+	{ "KP_PERIOD", win32_keypad_key | VK_DECIMAL },
+	{ "KP_DIVIDE", win32_keypad_key | VK_DIVIDE },
+	{ "KP_MULTIPLY", win32_keypad_key | VK_MULTIPLY },
+	{ "KP_MINUS", win32_keypad_key | VK_SUBTRACT },
+	{ "KP_PLUS", win32_keypad_key | VK_ADD },
+	{ "KP_EQUALS", win32_keypad_key | VK_OEM_NEC_EQUAL },
+	{ "EXCLAIM", '!' }, { "DBLAPOSTROPHE", '"' }, { "HASH", '#' },
+	{ "DOLLAR", '$' }, { "AMPERSAND", '&' }, { "APOSTROPHE", '\'' },
+	{ "LEFTPAREN", '(' }, { "RIGHTPAREN", ')' }, { "ASTERISK", '*' },
+	{ "PLUS", '+' }, { "COMMA", ',' }, { "MINUS", '-' }, { "PERIOD", '.' },
+	{ "SLASH", '/' }, { "COLON", ':' }, { "SEMICOLON", ';' },
+	{ "LESS", '<' }, { "EQUALS", '=' }, { "GREATER", '>' },
+	{ "QUESTION", '?' }, { "AT", '@' }, { "LEFTBRACKET", '[' },
+	{ "BACKSLASH", '\\' }, { "RIGHTBRACKET", ']' }, { "CARET", '^' },
+	{ "UNDERSCORE", '_' }, { "GRAVE", '`' }
+};
+
+static u32 win32_keymap_symbol(const char* name)
+{
+	if (strncmp(name, "SDLK_", 5)) return BX_KEYMAP_UNKNOWN;
+	const std::string key = name + 5;
+	if (key.size() == 1 && std::isalnum((unsigned char)key[0]) &&
+		(unsigned char)key[0] < 128)
+		return (unsigned)std::toupper((unsigned char)key[0]);
+	if (key.size() == 4 && key.compare(0, 3, "KP_") == 0 &&
+		key[3] >= '0' && key[3] <= '9')
+		return win32_keypad_key | (VK_NUMPAD0 + key[3] - '0');
+	for (unsigned i = 0; i < 24; ++i)
+		if (key == "F" + std::to_string(i + 1)) return win32_named_key | (VK_F1 + i);
+	for (const auto& named : win32_hotkey_names)
+		if (win32_hotkey_text_equals(key, named.name)) return named.key;
+	for (const auto& named : win32_keymap_names)
+		if (key == named.name) return named.key;
+	return BX_KEYMAP_UNKNOWN;
+}
+
+static unsigned win32_host_mapping_key(WPARAM key, unsigned scan)
+{
+	// WM_KEY* uses generic modifier VKs; the scan identifies each side.
+	switch (scan)
+	{
+	case 0x2a: return win32_named_key | VK_LSHIFT;
+	case 0x36: return win32_named_key | VK_RSHIFT;
+	case 0x1d: return win32_named_key | VK_LCONTROL;
+	case 0x11d: return win32_named_key | VK_RCONTROL;
+	case 0x38: return win32_named_key | VK_LMENU;
+	case 0x138: return win32_named_key | VK_RMENU;
+	}
+	if (scan >= 0x47 && scan <= 0x53) return win32_host_hotkey_key(key, scan);
+	// SDL's default key events normalize symbol-based number rows to digits.
+	if (key >= '0' && key <= '9') return (unsigned)key;
+	if (key == VK_OEM_NEC_EQUAL) return win32_keypad_key | VK_OEM_NEC_EQUAL;
+	for (const auto& named : win32_keymap_names)
+		if (named.key == (win32_named_key | (unsigned)key)) return named.key;
+	return win32_host_hotkey_key(key, scan);
+}
+
 // One application owns the output bindings, window thread and guest input.
 class win32_application
 {
@@ -321,7 +389,7 @@ public:
 	void detach_input() { keyboard = nullptr; system = nullptr; }
 	void request_shutdown();
 	void record_callback_error() noexcept;
-	void send_key(unsigned scan, bool released);
+	void send_key(unsigned scan, bool released, unsigned host_key = 0);
 	bool consume_hotkey_key(unsigned scan, bool released, bool repeat, bool allow_repeat = false);
 	void suppress_hotkey_keys(unsigned scan, unsigned modifiers, bool release_modifiers = true);
 	void send_ctrl_alt_delete();
@@ -362,7 +430,9 @@ private:
 	// One guest pointer retains fractional motion across output handoffs.
 	double mouse_remainder_x = 0.0, mouse_remainder_y = 0.0;
 	bool input_reset_pending = false;
+	bool keyboard_use_mapping = false;
 	bool guest_keys[512] = {};
+	u32 guest_key_by_scan[512] = {};
 	bool swallowed_hotkey_keys[512] = {};
 	std::exception_ptr callback_error;
 };
@@ -812,6 +882,17 @@ void win32_application::initialize()
 	if (GetCurrentThreadId() != owner_thread || shutting_down)
 		FAILURE(Win32, "Invalid display application initialization");
 	if (dispatcher) return;
+	keyboard_use_mapping = cfg->get_bool_value("keyboard.use_mapping", false);
+	if (keyboard_use_mapping)
+	{
+		// Publish only a complete map. No dispatcher or input can observe a
+		// partial load, and a failed initialization can retry from scratch.
+		auto loaded = std::make_unique<bx_keymap_c>(cfg);
+		loaded->loadKeymap(win32_keymap_symbol);
+		const bool published = bx_keymap == shared_keymap.get();
+		shared_keymap.swap(loaded);
+		if (published) bx_keymap = shared_keymap.get();
+	}
 	const char* speed = cfg->get_text_value("mouse.speed", "1.0");
 	mouse_speed = std::atof(speed);
 	if (!std::isfinite(mouse_speed) || mouse_speed <= 0.0 ||
@@ -868,8 +949,6 @@ void win32_application::initialize()
 		0, 0, HWND_MESSAGE, nullptr, GetModuleHandle(nullptr), nullptr);
 	if (!dispatcher)
 		FAILURE(Win32, "Unable to create display dispatcher");
-	if (cfg->get_bool_value("keyboard.use_mapping", false))
-		shared_keymap->loadKeymap(nullptr);
 	keyboard = theKeyboard;
 	system = theSystem;
 	if (keyboard) keyboard->set_mouse_capture(false);
@@ -977,16 +1056,32 @@ static u32 translate_win32_key(unsigned scan)
 	return key || scan == 0x1d ? key : BX_KEY_UNHANDLED;
 }
 
-void win32_application::send_key(unsigned scan, bool released)
+void win32_application::send_key(unsigned scan, bool released, unsigned host_key)
 {
 	if (!keyboard || input_paused || scan >= 512) return;
 	sync_input();
-	const u32 key = translate_win32_key(scan);
-	if (key == BX_KEY_UNHANDLED || (released && !guest_keys[scan])) return;
+	if (released && !guest_keys[scan]) return;
+	u32 key;
+	if (guest_keys[scan]) key = guest_key_by_scan[scan];
+	else if (keyboard_use_mapping)
+	{
+		const BXKeyEntry* entry = shared_keymap->findHostKey(host_key);
+		if (!entry)
+		{
+			BX_ERROR(("host key 0x%x not mapped!", host_key));
+			return;
+		}
+		key = entry->baseKey;
+	}
+	else key = translate_win32_key(scan);
+	if (key == BX_KEY_UNHANDLED) return;
 	if (!released && guest_keys[scan] && (key == BX_KEY_CTRL_L ||
 		key == BX_KEY_CTRL_R || key == BX_KEY_ALT_L || key == BX_KEY_ALT_R ||
 		key == BX_KEY_SHIFT_L || key == BX_KEY_SHIFT_R)) return;
 	keyboard->gen_scancode(key | (released ? BX_KEY_RELEASED : 0));
+	// Repeats, focus-loss cleanup and releases from any output retain the
+	// original guest key even if the host keyboard layout changes meanwhile.
+	guest_key_by_scan[scan] = key;
 	guest_keys[scan] = !released;
 }
 
@@ -1653,7 +1748,7 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 			if (!(lparam & (1L << 30))) toggle_fullscreen();
 			return 0;
 		}
-		application.send_key(scan, false);
+		application.send_key(scan, false, win32_host_mapping_key(wparam, scan));
 		return 0;
 	}
 	case WM_KEYUP:
