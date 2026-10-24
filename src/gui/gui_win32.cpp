@@ -94,6 +94,33 @@ struct win32_call
 	std::exception_ptr error;
 };
 
+struct win32_linear_sample
+{
+	unsigned first, second, fraction;
+};
+
+static win32_linear_sample win32_linear_axis(unsigned position,
+	unsigned source_size, unsigned target_size)
+{
+	// Sample pixel centers and clamp at the image edge, as SDL textures do.
+	const double source = (std::max)(0.0, (std::min)((double)source_size - 1,
+		(position + 0.5) * source_size / target_size - 0.5));
+	const unsigned first = (unsigned)source;
+	return { first, (std::min)(first + 1, source_size - 1),
+		(unsigned)((source - first) * 256 + 0.5) };
+}
+
+static u32 win32_linear_mix(u32 first, u32 second, unsigned fraction)
+{
+	// Interpolate red/blue together and green separately, with 8-bit weights.
+	const unsigned inverse = 256 - fraction;
+	const u32 rb = (((first & 0x00ff00ff) * inverse +
+		(second & 0x00ff00ff) * fraction + 0x00800080) >> 8) & 0x00ff00ff;
+	const u32 g = (((first & 0x0000ff00) * inverse +
+		(second & 0x0000ff00) * fraction + 0x00008000) >> 8) & 0x0000ff00;
+	return rb | g;
+}
+
 enum win32_hotkey_modifier : unsigned
 {
 	WIN32_HOTKEY_CTRL = 1, WIN32_HOTKEY_ALT = 2,
@@ -313,6 +340,7 @@ public:
 	win32_hotkey_binding hotkey_scale_up, hotkey_scale_down;
 	int configured_scale = 1;
 	bool scale_change_enable = false;
+	bool video_linear = true;
 	bool input_paused = false;
 	bool shutting_down = false;
 private:
@@ -391,6 +419,7 @@ private:
 	void exit_impl();
 	void update_title();
 	void paint(HDC);
+	const u32* linear_frame(unsigned, unsigned);
 	void prepare_paint_buffer(HDC, int, int);
 	void release_paint_buffer();
 	void mouse_event(int, int, int, unsigned);
@@ -402,6 +431,8 @@ private:
 	HWND window = nullptr;
 	const std::string window_title;
 	std::vector<u32> pixels;
+	std::vector<u32> filtered_pixels;
+	std::vector<win32_linear_sample> linear_columns;
 	unsigned width = 0, height = 0;
 	int driven_width = 0, driven_height = 0;
 	int runtime_scale_override = 0;
@@ -794,6 +825,7 @@ void win32_application::initialize()
 			"using 1x.\n", (unsigned long long)scale);
 	configured_scale = scale >= 1 && scale <= 8 ? (int)scale : 1;
 	scale_change_enable = cfg->get_bool_value("video.scale_change_enable", false);
+	video_linear = cfg->get_bool_value("video.linear", true);
 	hotkey_mouse_capture = parse_win32_hotkey(cfg, "hotkey.mouse_capture", "Ctrl+F10");
 	hotkey_ctrl_alt_delete = parse_win32_hotkey(cfg, "hotkey.ctrl_alt_delete", "Ctrl+Alt+End");
 	hotkey_reset_window = parse_win32_hotkey(cfg, "hotkey.reset_window", "Ctrl+Alt+Home");
@@ -1225,6 +1257,31 @@ void bx_win32_gui_c::graphics_frame_update(const u32* frame,
 	});
 }
 
+const u32* bx_win32_gui_c::linear_frame(unsigned x, unsigned y)
+{
+	if ((size_t)x > filtered_pixels.max_size() / y)
+		FAILURE(Win32, "Filtered display dimensions are out of range");
+	filtered_pixels.resize((size_t)x * y);
+	linear_columns.resize(x);
+	for (unsigned column = 0; column < x; ++column)
+		linear_columns[column] = win32_linear_axis(column, width, x);
+	for (unsigned row = 0; row < y; ++row)
+	{
+		const auto sample = win32_linear_axis(row, height, y);
+		const u32* top = pixels.data() + (size_t)sample.first * width;
+		const u32* bottom = pixels.data() + (size_t)sample.second * width;
+		u32* target = filtered_pixels.data() + (size_t)row * x;
+		for (unsigned column = 0; column < x; ++column)
+		{
+			const auto& horizontal = linear_columns[column];
+			const u32 a = win32_linear_mix(top[horizontal.first], top[horizontal.second], horizontal.fraction);
+			const u32 b = win32_linear_mix(bottom[horizontal.first], bottom[horizontal.second], horizontal.fraction);
+			target[column] = 0xff000000 | win32_linear_mix(a, b, sample.fraction);
+		}
+	}
+	return filtered_pixels.data();
+}
+
 void bx_win32_gui_c::paint(HDC dc)
 {
 	RECT rect;
@@ -1238,16 +1295,21 @@ void bx_win32_gui_c::paint(HDC dc)
 		const double scale = (std::min)((double)rect.right / width,
 			(double)rect.bottom / height);
 		const int w = (int)(width * scale), h = (int)(height * scale);
+		const bool filter = application.video_linear && w > 0 && h > 0 &&
+			((unsigned)w != width || (unsigned)h != height);
+		const u32* frame = filter ? linear_frame((unsigned)w, (unsigned)h) : pixels.data();
+		const unsigned source_width = filter ? (unsigned)w : width;
+		const unsigned source_height = filter ? (unsigned)h : height;
 		BITMAPINFO info = {};
 		info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-		info.bmiHeader.biWidth = (LONG)width;
-		info.bmiHeader.biHeight = -(LONG)height;
+		info.bmiHeader.biWidth = (LONG)source_width;
+		info.bmiHeader.biHeight = -(LONG)source_height;
 		info.bmiHeader.biPlanes = 1;
 		info.bmiHeader.biBitCount = 32;
 		info.bmiHeader.biCompression = BI_RGB;
 		SetStretchBltMode(paint_dc, COLORONCOLOR);
 		StretchDIBits(paint_dc, (rect.right - w) / 2, (rect.bottom - h) / 2,
-			w, h, 0, 0, width, height, pixels.data(), &info,
+			w, h, 0, 0, source_width, source_height, frame, &info,
 			DIB_RGB_COLORS, SRCCOPY);
 	}
 	BitBlt(dc, 0, 0, rect.right, rect.bottom, paint_dc, 0, 0, SRCCOPY);
@@ -1600,6 +1662,8 @@ void bx_win32_gui_c::exit_impl()
 	}
 	release_paint_buffer();
 	pixels.clear();
+	std::vector<u32>().swap(filtered_pixels);
+	std::vector<win32_linear_sample>().swap(linear_columns);
 }
 
 void bx_win32_gui_c::exit()
