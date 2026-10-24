@@ -377,6 +377,15 @@ static unsigned win32_host_mouse_buttons()
 		((GetKeyState(VK_MBUTTON) & 0x8000) ? 4 : 0);
 }
 
+static unsigned win32_key_state_key(unsigned key, unsigned scan)
+{
+	// WM_KEY* reports generic modifier VKs, but each side can be held alone.
+	if (key == VK_SHIFT) return scan == 0x36 ? VK_RSHIFT : VK_LSHIFT;
+	if (key == VK_CONTROL) return scan & 0x100 ? VK_RCONTROL : VK_LCONTROL;
+	if (key == VK_MENU) return scan & 0x100 ? VK_RMENU : VK_LMENU;
+	return key < 256 ? key : 0;
+}
+
 static unsigned win32_mouse_button_flags(unsigned buttons)
 {
 	return ((buttons & 1) ? MK_LBUTTON : 0) |
@@ -397,13 +406,14 @@ public:
 	void stop();
 	void invoke(std::function<void()> fn);
 	void exit_displays();
-	void poll_input();
+	void poll_input(unsigned current_key_scan = 512);
 	void pause_input();
 	void resume_input() { input_paused = false; }
 	void detach_input() { keyboard = nullptr; system = nullptr; }
 	void request_shutdown();
 	void record_callback_error() noexcept;
-	void send_key(unsigned scan, bool released, unsigned host_key = 0);
+	void observe_key(unsigned scan, unsigned virtual_key, bool released, bool repeat);
+	void send_key(unsigned scan, bool released, unsigned host_key = 0, unsigned virtual_key = 0);
 	bool consume_hotkey_key(unsigned scan, bool released, bool repeat, bool allow_repeat = false);
 	void suppress_hotkey_keys(unsigned scan, unsigned modifiers, bool release_modifiers = true);
 	void send_ctrl_alt_delete();
@@ -431,6 +441,7 @@ public:
 	bool shutting_down = false;
 private:
 	void release_guest_keys();
+	void reconcile_keyboard_releases(unsigned current_key_scan);
 	void reconcile_mouse_releases();
 	bool set_raw_mouse_target(HWND);
 	void discard_raw_mouse_input(HWND);
@@ -455,6 +466,10 @@ private:
 	bool keyboard_use_mapping = false;
 	bool guest_keys[512] = {};
 	u32 guest_key_by_scan[512] = {};
+	unsigned host_virtual_key_by_scan[512] = {};
+	unsigned guest_virtual_key_by_scan[512] = {};
+	bool guest_key_state_ambiguous[512] = {};
+	bool reconciled_key_releases[512] = {};
 	bool swallowed_hotkey_keys[512] = {};
 	std::exception_ptr callback_error;
 };
@@ -1056,7 +1071,7 @@ void win32_application::record_callback_error() noexcept
 	}
 }
 
-void win32_application::poll_input()
+void win32_application::poll_input(unsigned current_key_scan)
 {
 	if (callback_error) std::rethrow_exception(callback_error);
 	if (input_paused) return;
@@ -1068,7 +1083,24 @@ void win32_application::poll_input()
 	else if (capture_owner && capture_owner != focus) set_mouse_capture(focus);
 	else if (capture_owner && !mouse_absolute && GetCapture() != capture_owner->window)
 		set_mouse_capture(nullptr);
+	reconcile_keyboard_releases(current_key_scan);
 	reconcile_mouse_releases();
+}
+
+void win32_application::reconcile_keyboard_releases(unsigned current_key_scan)
+{
+	if (!keyboard || input_paused) return;
+	for (unsigned scan = 0; scan < 512; ++scan)
+	{
+		const unsigned key = guest_virtual_key_by_scan[scan];
+		// GetKeyState follows the message queue. Let the current key event finish normally
+		// and then only repair releases missing from the guest stream.
+		if (scan == current_key_scan || !guest_keys[scan] || !key ||
+			guest_key_state_ambiguous[scan] || (GetKeyState(key) & 0x8000)) continue;
+		send_key(scan, true);
+		host_virtual_key_by_scan[scan] = 0;
+		reconciled_key_releases[scan] = true;
+	}
 }
 
 void win32_application::reconcile_mouse_releases()
@@ -1139,7 +1171,24 @@ static u32 translate_win32_key(unsigned scan)
 	return key || scan == 0x1d ? key : BX_KEY_UNHANDLED;
 }
 
-void win32_application::send_key(unsigned scan, bool released, unsigned host_key)
+void win32_application::observe_key(unsigned scan, unsigned virtual_key, bool released, bool repeat)
+{
+	if (scan >= 512) return;
+	if (released) { host_virtual_key_by_scan[scan] = 0; return; }
+	if (repeat && reconciled_key_releases[scan]) return;
+	// A fresh press proves that an earlier press ended, even if no poll ran between actions
+	if (!repeat && guest_keys[scan]) send_key(scan, true);
+	if (!repeat || !host_virtual_key_by_scan[scan])
+		host_virtual_key_by_scan[scan] = win32_key_state_key(virtual_key, scan);
+	const unsigned key = host_virtual_key_by_scan[scan];
+	// Observe unmapped keys and host shortcuts too: their shared VK state could 
+	// make a still valid for the guest held key look released
+	for (unsigned other = 0; key && other < 512; ++other)
+		if (other != scan && guest_keys[other] && guest_virtual_key_by_scan[other] == key)
+			guest_key_state_ambiguous[other] = true;
+}
+
+void win32_application::send_key(unsigned scan, bool released, unsigned host_key, unsigned virtual_key)
 {
 	if (!keyboard || input_paused || scan >= 512) return;
 	sync_input();
@@ -1162,6 +1211,17 @@ void win32_application::send_key(unsigned scan, bool released, unsigned host_key
 		key == BX_KEY_CTRL_R || key == BX_KEY_ALT_L || key == BX_KEY_ALT_R ||
 		key == BX_KEY_SHIFT_L || key == BX_KEY_SHIFT_R)) return;
 	keyboard->gen_scancode(key | (released ? BX_KEY_RELEASED : 0));
+	if (!released && !guest_keys[scan])
+	{
+		const unsigned state_key = win32_key_state_key(virtual_key, scan);
+		guest_virtual_key_by_scan[scan] = state_key;
+		guest_key_state_ambiguous[scan] = false;
+		// Main/keypad Enter and NumLock-off navigation can share a VK. 
+		for (unsigned other = 0; state_key && other < 512; ++other)
+			if (other != scan && host_virtual_key_by_scan[other] == state_key)
+				guest_key_state_ambiguous[scan] = true;
+	}
+	if (released) guest_virtual_key_by_scan[scan] = 0;
 	// Repeats, focus-loss cleanup and releases from any output retain the
 	// original guest key even if the host keyboard layout changes meanwhile.
 	guest_key_by_scan[scan] = key;
@@ -1180,7 +1240,13 @@ bool win32_application::consume_hotkey_key(unsigned scan, bool released, bool re
 {
 	if (scan >= 512) return false;
 	// A fresh press also recovers when the previous release went to another app.
-	if (!released && !repeat) swallowed_hotkey_keys[scan] = false;
+	if (!released && !repeat)
+	{
+		swallowed_hotkey_keys[scan] = false;
+		reconciled_key_releases[scan] = false;
+	}
+	// A delayed key-up or repeat must not revive a repaired press.
+	if (reconciled_key_releases[scan]) return true;
 	if (!swallowed_hotkey_keys[scan]) return false;
 	if (!released && repeat && allow_repeat) return false;
 	if (released) swallowed_hotkey_keys[scan] = false;
@@ -1256,6 +1322,7 @@ void win32_application::send_host_mouse(double dx, double dy, int dz,
 void win32_application::release_input_session()
 {
 	release_guest_keys();
+	std::fill_n(host_virtual_key_by_scan, 512, 0);
 	mouse_remainder_x = mouse_remainder_y = 0.0;
 	set_mouse_capture(nullptr);
 }
@@ -1722,17 +1789,22 @@ void bx_win32_gui_c::toggle_fullscreen()
 LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 	WPARAM wparam, LPARAM lparam)
 {
-	const bool input_message = msg == WM_KEYDOWN || msg == WM_KEYUP ||
-		msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP || msg == WM_INPUT ||
+	const bool key_message = msg == WM_KEYDOWN || msg == WM_KEYUP ||
+		msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP;
+	const bool input_message = key_message || msg == WM_INPUT ||
 		(msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST);
 	if (input_message)
 	{
+		// Keep native alias bookkeeping through a pause; send_key() still
+		// blocks all guest changes until input resumes.
+		if (key_message)
+			application.observe_key(HIWORD(lparam) & 0x1ff, (unsigned)wparam,
+				msg == WM_KEYUP || msg == WM_SYSKEYUP, (lparam & (1L << 30)) != 0);
 		if (application.input_paused) return 0;
-		application.poll_input();
+		application.poll_input(key_message ? HIWORD(lparam) & 0x1ff : 512);
 		if (!application.media.active() && !application.window_owner(GetFocus())) return 0;
 	}
-	if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN ||
-		msg == WM_KEYUP || msg == WM_SYSKEYUP)
+	if (key_message)
 	{
 		const unsigned scan = HIWORD(lparam) & 0x1ff;
 		const unsigned key = win32_host_hotkey_key(wparam, scan);
@@ -1908,7 +1980,7 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 			if (!(lparam & (1L << 30))) toggle_fullscreen();
 			return 0;
 		}
-		application.send_key(scan, false, win32_host_mapping_key(wparam, scan));
+		application.send_key(scan, false, win32_host_mapping_key(wparam, scan), (unsigned)wparam);
 		return 0;
 	}
 	case WM_KEYUP:
