@@ -369,6 +369,19 @@ static unsigned win32_host_mapping_key(WPARAM key, unsigned scan)
 	return win32_host_hotkey_key(key, scan);
 }
 
+static unsigned win32_host_mouse_buttons()
+{
+	return ((GetKeyState(VK_LBUTTON) & 0x8000) ? 1 : 0) |
+		((GetKeyState(VK_RBUTTON) & 0x8000) ? 2 : 0) |
+		((GetKeyState(VK_MBUTTON) & 0x8000) ? 4 : 0);
+}
+
+static unsigned win32_mouse_button_flags(unsigned buttons)
+{
+	return ((buttons & 1) ? MK_LBUTTON : 0) |
+		((buttons & 2) ? MK_RBUTTON : 0) | ((buttons & 4) ? MK_MBUTTON : 0);
+}
+
 // One application owns the output bindings, window thread and guest input.
 class win32_application
 {
@@ -414,6 +427,7 @@ public:
 	bool shutting_down = false;
 private:
 	void release_guest_keys();
+	void reconcile_mouse_releases();
 	void sync_input();
 	CConfigurator* cfg;
 	std::unique_ptr<bx_keymap_c> shared_keymap;
@@ -1029,6 +1043,19 @@ void win32_application::poll_input()
 	else if (capture_owner && capture_owner != focus) set_mouse_capture(focus);
 	else if (capture_owner && !mouse_absolute && GetCapture() != capture_owner->window)
 		set_mouse_capture(nullptr);
+	reconcile_mouse_releases();
+}
+
+void win32_application::reconcile_mouse_releases()
+{
+	if (!capture_owner || input_paused) return;
+	// Repair only releases; never manufacture a guest press.
+	const unsigned host_buttons = win32_host_mouse_buttons();
+	capture_owner->ignored_mouse_buttons &= win32_mouse_button_flags(host_buttons);
+	const unsigned held = mouse_buttons & host_buttons;
+	if (held == mouse_buttons) return;
+	send_mouse(0, 0, 0, held);
+	mouse_buttons = held;
 }
 
 void win32_application::pause_input()
@@ -1177,14 +1204,11 @@ void win32_application::set_mouse_capture(bx_win32_gui_c* target)
 		GetActiveWindow() != target->window)) return;
 	if (capture_owner == target) return;
 	auto* previous = capture_owner;
+	const bool transferring = previous && target;
 	// Absolute coordinates belong to one window, while fractional motion
 	// belongs to the shared guest stream. Only handoffs retain that carry.
 	if (mouse_absolute && (!previous || !target))
 		mouse_remainder_x = mouse_remainder_y = 0.0;
-	// Release buttons before disabling guest capture, including handoffs.
-	if (guest_mouse_captured) send_mouse(0, 0, 0, 0);
-	if (input_paused) input_reset_pending = true;
-	mouse_buttons = 0;
 	capture_owner = nullptr;
 	if (previous)
 	{
@@ -1200,10 +1224,10 @@ void win32_application::set_mouse_capture(bx_win32_gui_c* target)
 	{
 		target->reset_absolute_mouse_position();
 		target->wheel_remainder = 0;
-		target->ignored_mouse_buttons =
-			((GetKeyState(VK_LBUTTON) & 0x8000) ? MK_LBUTTON : 0) |
-			((GetKeyState(VK_RBUTTON) & 0x8000) ? MK_RBUTTON : 0) |
-			((GetKeyState(VK_MBUTTON) & 0x8000) ? MK_MBUTTON : 0);
+		// Continue guest-held buttons during a handoff. 
+		const unsigned ignored = win32_host_mouse_buttons() &
+			~(transferring ? mouse_buttons : 0);
+		target->ignored_mouse_buttons = win32_mouse_button_flags(ignored);
 		// Publish the new owner before SetCapture notifies the previous window.
 		capture_owner = target;
 		// Like SDL with relative mode disabled, absolute input leaves the
@@ -1221,6 +1245,16 @@ void win32_application::set_mouse_capture(bx_win32_gui_c* target)
 			else target->recenter_mouse();
 		}
 		target->update_title();
+	}
+	if (transferring && capture_owner)
+		reconcile_mouse_releases();
+	else
+	{
+		// A release or failed handoff ends the mouse session. 
+		// Send the/ release before clearing capture.
+		if (guest_mouse_captured) send_mouse(0, 0, 0, 0);
+		if (input_paused) input_reset_pending = true;
+		mouse_buttons = 0;
 	}
 	SetCursor(capture_owner ? nullptr : LoadCursor(nullptr, IDC_ARROW));
 	if (keyboard && !input_paused)
