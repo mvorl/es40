@@ -307,6 +307,9 @@
     <ClCompile Include="..\src\gui\gui_win32.cpp">
       <Filter>Source Files\gui</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\gui\win32_media.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\gui\gui.cpp">
       <Filter>Source Files\gui</Filter>
     </ClCompile>
@@ -634,6 +637,9 @@
       <Filter>Header Files\gui</Filter>
     </ClInclude>
     <ClInclude Include="..\src\gui\sdl_media.h">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\gui\win32_media.h">
       <Filter>Header Files\gui</Filter>
     </ClInclude>
     <ClInclude Include="..\src\gui\sdl_fonts.h">

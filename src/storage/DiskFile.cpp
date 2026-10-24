@@ -113,10 +113,6 @@
 #include "StdAfx.h"
 #include "DiskFile.h"
 
-#if defined(HAVE_SDL)
-#include "gui/sdl_media.h"
-#endif
-
 #include <ctype.h>
 #include <exception>
 #include <filesystem>
@@ -137,6 +133,45 @@
 
 namespace
 {
+std::mutex removable_disks_mutex;
+std::vector<std::shared_ptr<CDiskFileMediaMailbox> > removable_disks;
+
+void register_removable_disk(
+    const std::shared_ptr<CDiskFileMediaMailbox>& mailbox) noexcept
+{
+    try
+    {
+        if (!mailbox)
+            return;
+        std::lock_guard<std::mutex> lock(removable_disks_mutex);
+        removable_disks.push_back(mailbox);
+    }
+    catch (...)
+    {
+    }
+}
+
+void unregister_removable_disk(
+    const std::shared_ptr<CDiskFileMediaMailbox>& mailbox) noexcept
+{
+    try
+    {
+        std::lock_guard<std::mutex> lock(removable_disks_mutex);
+        for (std::vector<std::shared_ptr<CDiskFileMediaMailbox> >::iterator it =
+                 removable_disks.begin(); it != removable_disks.end(); ++it)
+        {
+            if (*it == mailbox)
+            {
+                removable_disks.erase(it);
+                break;
+            }
+        }
+    }
+    catch (...)
+    {
+    }
+}
+
 // Length-prefix paths so arbitrary filename characters cannot alias fields.
 void append_identity_string(std::ostringstream& out, const std::string& value)
 {
@@ -211,6 +246,12 @@ std::string image_identity(FILE* image, const std::string& path)
 #endif
     return out.str();
 }
+}
+
+std::vector<std::shared_ptr<CDiskFileMediaMailbox> > disk_file_removable_media()
+{
+    std::lock_guard<std::mutex> lock(removable_disks_mutex);
+    return removable_disks;
 }
 
 CDiskFileMediaMailbox::CDiskFileMediaMailbox(const std::string& label,
@@ -450,9 +491,7 @@ CDiskFile::CDiskFile(CConfigurator* cfg, CSystem* sys, CDiskController* c,
         media_mailbox = std::make_shared<CDiskFileMediaMailbox>(
             std::string(kind) + ": " + device, floppy_device, read_only);
         media_mailbox->update_mounted_image(filename);
-#if defined(HAVE_SDL)
-        sdl_register_removable_disk(media_mailbox);
-#endif
+        register_removable_disk(media_mailbox);
     }
 
     if (start_without_media)
@@ -491,9 +530,7 @@ CDiskFile::~CDiskFile(void)
     if (media_mailbox)
     {
         media_mailbox->deactivate();
-#if defined(HAVE_SDL)
-        sdl_unregister_removable_disk(media_mailbox);
-#endif
+        unregister_removable_disk(media_mailbox);
     }
 
     // Close any open bin/cue file handles and free the track array.

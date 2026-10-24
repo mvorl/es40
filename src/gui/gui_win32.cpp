@@ -77,6 +77,7 @@
 #include "system/System.h"
 #include "keymap.h"
 #include "gui.h"
+#include "win32_media.h"
 
 class bx_win32_gui_c;
 static LRESULT CALLBACK win32_window_proc(HWND, UINT, WPARAM, LPARAM);
@@ -410,6 +411,8 @@ public:
 	void send_host_mouse(double dx, double dy, int dz, unsigned buttons);
 	void set_mouse_capture(bx_win32_gui_c* target);
 	void release_input_session();
+	void release_media_input();
+	bool media_key_event(UINT, WPARAM, LPARAM);
 	bx_win32_gui_c* window_owner(HWND window) const;
 	bx_keymap_c* keymap() const { return shared_keymap.get(); }
 
@@ -417,7 +420,8 @@ public:
 	std::map<HWND, bx_win32_gui_c*> windows;
 	bx_win32_gui_c* capture_owner = nullptr;
 	unsigned mouse_buttons = 0;
-	win32_hotkey_binding hotkey_mouse_capture, hotkey_ctrl_alt_delete, hotkey_reset_window;
+	win32_media_selector media;
+	win32_hotkey_binding hotkey_mouse_capture, hotkey_media, hotkey_ctrl_alt_delete, hotkey_reset_window;
 	win32_hotkey_binding hotkey_scale_up, hotkey_scale_down;
 	int configured_scale = 1;
 	bool scale_change_enable = false;
@@ -820,7 +824,9 @@ static const u32 win32_to_bx_key[2][0x100] =
 
 
 win32_application::win32_application(CConfigurator* cfg)
-	: cfg(cfg), shared_keymap(new bx_keymap_c(cfg)) {}
+	: media([this](UINT msg, WPARAM key, LPARAM flags) { return media_key_event(msg, key, flags); },
+		[this] { release_media_input(); }, [this] { if (system) system->RequestSystemReset(); }),
+	  cfg(cfg), shared_keymap(new bx_keymap_c(cfg)) {}
 
 win32_application::~win32_application()
 {
@@ -931,16 +937,17 @@ void win32_application::initialize()
 	scale_change_enable = cfg->get_bool_value("video.scale_change_enable", false);
 	video_linear = cfg->get_bool_value("video.linear", true);
 	hotkey_mouse_capture = parse_win32_hotkey(cfg, "hotkey.mouse_capture", "Ctrl+F10");
+	hotkey_media = parse_win32_hotkey(cfg, "hotkey.media", "Ctrl+F11");
 	hotkey_ctrl_alt_delete = parse_win32_hotkey(cfg, "hotkey.ctrl_alt_delete", "Ctrl+Alt+End");
 	hotkey_reset_window = parse_win32_hotkey(cfg, "hotkey.reset_window", "Ctrl+Alt+Home");
 	hotkey_scale_up = parse_win32_hotkey(cfg, "hotkey.scale_up", "Ctrl+PageUp");
 	hotkey_scale_down = parse_win32_hotkey(cfg, "hotkey.scale_down", "Ctrl+PageDown");
 	win32_hotkey_binding* bindings[] = {
-		&hotkey_mouse_capture, &hotkey_ctrl_alt_delete, &hotkey_reset_window,
+		&hotkey_mouse_capture, &hotkey_media, &hotkey_ctrl_alt_delete, &hotkey_reset_window,
 		&hotkey_scale_up, &hotkey_scale_down
 	};
 	const bool active[] = {
-		hotkey_mouse_capture.enabled, hotkey_ctrl_alt_delete.enabled, hotkey_reset_window.enabled,
+		hotkey_mouse_capture.enabled, hotkey_media.enabled, hotkey_ctrl_alt_delete.enabled, hotkey_reset_window.enabled,
 		hotkey_scale_up.enabled && scale_change_enable, hotkey_scale_down.enabled && scale_change_enable
 	};
 	constexpr size_t binding_count = sizeof(bindings) / sizeof(bindings[0]);
@@ -964,7 +971,7 @@ void win32_application::initialize()
 	register_win32_class(win32_window_class, win32_window_proc);
 	register_win32_class(win32_dispatch_class, win32_dispatch_proc);
 	dispatcher = CreateWindowEx(0, win32_dispatch_class, "", 0, 0, 0,
-		0, 0, HWND_MESSAGE, nullptr, GetModuleHandle(nullptr), nullptr);
+		0, 0, HWND_MESSAGE, nullptr, GetModuleHandle(nullptr), this);
 	if (!dispatcher)
 		FAILURE(Win32, "Unable to create display dispatcher");
 	keyboard = theKeyboard;
@@ -987,13 +994,25 @@ void win32_application::invoke(std::function<void()> fn)
 static LRESULT CALLBACK win32_dispatch_proc(HWND hwnd, UINT msg,
 	WPARAM wparam, LPARAM lparam)
 {
+	if (msg == WM_NCCREATE)
+		SetWindowLongPtr(hwnd, GWLP_USERDATA,
+			(LONG_PTR)reinterpret_cast<CREATESTRUCT*>(lparam)->lpCreateParams);
 	if (msg == win32_invoke_message)
 	{
 		auto& call = *reinterpret_cast<win32_call*>(lparam);
 		try { call.fn(); } catch (...) { call.error = std::current_exception(); }
 		return 1;
 	}
-	if (msg == win32_wake_message) return 0;
+	if (msg == win32_wake_message)
+	{
+		auto* app = reinterpret_cast<win32_application*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
+		if (app)
+		{
+			try { app->media.close(); }
+			catch (...) { app->record_callback_error(); }
+		}
+		return 0;
+	}
 	return DefWindowProc(hwnd, msg, wparam, lparam);
 }
 
@@ -1041,7 +1060,9 @@ void win32_application::poll_input()
 {
 	if (callback_error) std::rethrow_exception(callback_error);
 	if (input_paused) return;
+	media.reconcile_input();
 	sync_input();
+	if (media.active()) { release_input_session(); return; }
 	auto* focus = window_owner(GetFocus());
 	if (!focus) release_input_session();
 	else if (capture_owner && capture_owner != focus) set_mouse_capture(focus);
@@ -1065,7 +1086,38 @@ void win32_application::reconcile_mouse_releases()
 void win32_application::pause_input()
 {
 	input_paused = true;
+	media.close();
 	for (const auto& display : displays) display->reset_absolute_mouse_position();
+}
+
+void win32_application::release_media_input()
+{
+	release_input_session();
+	std::fill_n(swallowed_hotkey_keys, 512, true);
+}
+
+bool win32_application::media_key_event(UINT msg, WPARAM wparam, LPARAM lparam)
+{
+	if (input_paused || shutting_down) return true;
+	const unsigned scan = HIWORD(lparam) & 0x1ff;
+	if (msg == WM_KEYUP || msg == WM_SYSKEYUP)
+	{
+		consume_hotkey_key(scan, true, false);
+		return true;
+	}
+	const unsigned key = win32_host_hotkey_key(wparam, scan);
+	const unsigned modifiers = win32_host_hotkey_modifiers();
+	if (hotkey_media.matches(key, modifiers))
+	{
+		if (!(lparam & (1L << 30)))
+		{
+			release_media_input();
+			media.toggle(media.parent());
+		}
+		return true;
+	}
+	suppress_hotkey_keys(scan, 0, false);
+	return false;
 }
 
 void win32_application::sync_input()
@@ -1237,6 +1289,7 @@ void win32_application::discard_raw_mouse_input(HWND window)
 
 void win32_application::set_mouse_capture(bx_win32_gui_c* target)
 {
+	if (target && (input_paused || media.active())) return;
 	if (target && (!target->window || target->retired ||
 		GetActiveWindow() != target->window)) return;
 	if (capture_owner == target) return;
@@ -1355,6 +1408,7 @@ void bx_win32_gui_c::update_title()
 	};
 	if (application.capture_owner == this)
 		append_hint(application.hotkey_mouse_capture, "releases mouse");
+	append_hint(application.hotkey_media, "media");
 	append_hint(application.hotkey_ctrl_alt_delete, "sends C+A+Del");
 	append_hint(application.hotkey_reset_window, "resets window");
 	SetWindowText(window, title.c_str());
@@ -1675,7 +1729,7 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 	{
 		if (application.input_paused) return 0;
 		application.poll_input();
-		if (!application.window_owner(GetFocus())) return 0;
+		if (!application.media.active() && !application.window_owner(GetFocus())) return 0;
 	}
 	if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN ||
 		msg == WM_KEYUP || msg == WM_SYSKEYUP)
@@ -1689,7 +1743,17 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 		if (application.consume_hotkey_key(scan, msg == WM_KEYUP || msg == WM_SYSKEYUP,
 			(lparam & (1L << 30)) != 0, scale_repeat))
 			return 0;
+		if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && application.hotkey_media.matches(key, modifiers))
+		{
+			if (!(lparam & (1L << 30)))
+			{
+				application.release_media_input();
+				application.media.toggle(hwnd);
+			}
+			return 0;
+		}
 	}
+	if (input_message && application.media.filter_message(msg, wparam, lparam)) return 0;
 	switch (msg)
 	{
 	case WM_INPUT:
@@ -1908,6 +1972,7 @@ void bx_win32_gui_c::exit_impl()
 	if (application.capture_owner == this) application.set_mouse_capture(nullptr);
 	if (window)
 	{
+		if (application.media.parent() == window) application.media.close();
 		if (GetFocus() == window) application.release_input_session();
 		DestroyWindow(window);
 	}
@@ -1925,6 +1990,7 @@ void bx_win32_gui_c::exit()
 void win32_application::exit_displays()
 {
 	shutting_down = true;
+	media.shutdown();
 	for (const auto& display : displays) display->exit_impl();
 	set_raw_mouse_target(nullptr);
 	if (dispatcher) { DestroyWindow(dispatcher); dispatcher = nullptr; }

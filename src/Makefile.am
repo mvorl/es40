@@ -199,6 +199,9 @@ EXTRA_DIST = \
 	network/slirp-rs/src/dns.rs \
 	network/slirp-rs/src/icmp.rs
 
+# Native Windows builds use CMake or Visual Studio.
+EXTRA_DIST += gui/win32_media.cpp gui/win32_media.h
+
 #       graphics/Cirrus.cpp  - readd this to the sources line below when it's fixed
 
 es40_SOURCES = chipset/AliM1543C.cpp \

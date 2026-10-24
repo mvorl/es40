@@ -30,15 +30,6 @@
 
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_video.h>
-#include <memory>
-
-class CDiskFileMediaMailbox;
-
-void sdl_register_removable_disk(
-  const std::shared_ptr<CDiskFileMediaMailbox>& mailbox) noexcept;
-void sdl_unregister_removable_disk(
-  const std::shared_ptr<CDiskFileMediaMailbox>& mailbox) noexcept;
-
 void sdl_select_media(SDL_Window* window) noexcept;
 void sdl_media_pump() noexcept;
 bool sdl_media_handle_event(const SDL_Event* event) noexcept;

@@ -909,8 +909,7 @@ void edit_gui_keyboard(const char *title)
          "The keymap file to use when keyboard.use_mapping is enabled.",
          validation_file},
         {"hotkey.media", "Ctrl+F11", "hotkey.media",
-         "Host key combination used to bring up the removable media selector.\n"
-         "Win32 currently ignores this setting.\n" HOTKEY_HELP,
+         "Host key combination used to bring up the removable media selector.\n" HOTKEY_HELP,
          validation_hotkey},
         {"hotkey.ctrl_alt_delete", "Ctrl+Alt+End", "hotkey.ctrl_alt_delete",
          "Host key combination used to send Ctrl+Alt+Delete to the guest.\n" HOTKEY_HELP,

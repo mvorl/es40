@@ -487,8 +487,10 @@ endif()
 if (WIN32)
     list(APPEND ES40_SOURCES
         src/gui/gui_win32.cpp
+        src/gui/win32_media.cpp
+        src/gui/win32_media.h
         )
-    list(APPEND ES40_LIBRARIES winmm)
+    list(APPEND ES40_LIBRARIES winmm comdlg32)
 endif()
 
 if (NOT ES40_DISABLE_NETWORKING)

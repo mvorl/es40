@@ -136,6 +136,9 @@ private:
   std::deque<SDiskFileMediaAction> pending_actions;
 };
 
+// Thread-safe snapshot; shared mailboxes remain safe after their drives close.
+std::vector<std::shared_ptr<CDiskFileMediaMailbox> > disk_file_removable_media();
+
 /**
  * \brief Emulated disk that uses an image file.
  *

@@ -655,8 +655,6 @@ int main(int argc, char* argv[])
 				cout << "  " << gui_hotkey_prompts[i].description << ": "
 					<< gui_hotkey_prompts[i].default_binding << "\n";
 			}
-			if (win32_gui)
-				cout << "  The media selector hotkey is saved but currently ignored by Win32.\n";
 			cout << "\n";
 
 			MultipleChoiceQuestion customize_hotkeys_q;
@@ -667,7 +665,7 @@ int main(int argc, char* argv[])
 				"leave the answer blank to keep the built-in default or enter "
 				"'none' to disable that keyboard binding.");
 			customize_hotkeys_q.addAnswer("no", "no", "Use runtime defaults; write no hotkey settings.");
-			customize_hotkeys_q.addAnswer("yes", "yes", "Review all supported shortcuts; Enter keeps each runtime default, and none disables it.");
+			customize_hotkeys_q.addAnswer("yes", "yes", "Review all six shortcuts; Enter keeps each runtime default, and none disables it.");
 			customize_hotkeys_q.setDefault("no");
 
 			if (customize_hotkeys_q.ask() == "yes")

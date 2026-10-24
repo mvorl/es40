@@ -76,8 +76,6 @@ static const SBlankFloppyFormat blank_floppy_formats[] = {
 static std::atomic<bool> file_dialog_open(false);
 static const char* const native_dialog_parent_property =
     "es40.media.native_dialog_parent";
-static std::mutex removable_disks_mutex;
-static std::vector<std::shared_ptr<CDiskFileMediaMailbox> > removable_disks;
 
 enum EMediaPopupMode
 {
@@ -121,49 +119,6 @@ static std::shared_ptr<CDiskFileMediaMailbox>
     pending_lock_confirmation_device;
 static std::string pending_lock_confirmation_path;
 static bool pending_lock_confirmation_eject = false;
-
-void sdl_register_removable_disk(
-    const std::shared_ptr<CDiskFileMediaMailbox>& mailbox) noexcept
-{
-    try
-    {
-        if (!mailbox)
-            return;
-        std::lock_guard<std::mutex> lock(removable_disks_mutex);
-        removable_disks.push_back(mailbox);
-    }
-    catch (...)
-    {
-    }
-}
-
-void sdl_unregister_removable_disk(
-    const std::shared_ptr<CDiskFileMediaMailbox>& mailbox) noexcept
-{
-    try
-    {
-        std::lock_guard<std::mutex> lock(removable_disks_mutex);
-        for (std::vector<std::shared_ptr<CDiskFileMediaMailbox> >::iterator it =
-                 removable_disks.begin(); it != removable_disks.end(); ++it)
-        {
-            if (*it == mailbox)
-            {
-                removable_disks.erase(it);
-                break;
-            }
-        }
-    }
-    catch (...)
-    {
-    }
-}
-
-static std::vector<std::shared_ptr<CDiskFileMediaMailbox> >
-snapshot_removable_disks()
-{
-    std::lock_guard<std::mutex> lock(removable_disks_mutex);
-    return removable_disks;
-}
 
 static bool popup_visible()
 {
@@ -645,7 +600,7 @@ void sdl_media_pump() noexcept
         if (!media_popup.parent || !mailbox)
             return;
 
-        media_popup.devices = snapshot_removable_disks();
+        media_popup.devices = disk_file_removable_media();
         media_popup.device_selection = 0;
         for (size_t index = 0; index < media_popup.devices.size(); index++)
             if (media_popup.devices[index] == mailbox)
@@ -883,7 +838,7 @@ void sdl_select_media(SDL_Window* window) noexcept
 
         swallow_parent_pointer_until_release = false;
         media_popup.parent = window;
-        media_popup.devices = snapshot_removable_disks();
+        media_popup.devices = disk_file_removable_media();
         media_popup.mode = MEDIA_POPUP_DEVICES;
         media_popup.selected = 0;
         media_popup.device_selection = 0;
