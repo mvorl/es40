@@ -937,6 +937,9 @@ void bx_sdl_gui_c::specific_init_impl(unsigned x_tilesize, unsigned y_tilesize)
 
 	// SDL3: key repeat is handled by the OS; no SDL_EnableKeyRepeat().
 
+	// Alt+F4 belongs to the guest, as in the native Win32 backend.
+	SDL_SetHintWithPriority(SDL_HINT_WINDOWS_CLOSE_ON_ALT_F4, "0", SDL_HINT_OVERRIDE);
+
 	// Normally prepared before workers start; retain the initialization fallback.
 	application.initialize_keymap();
 

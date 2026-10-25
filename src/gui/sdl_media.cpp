@@ -1183,6 +1183,10 @@ bool sdl_media_handle_event(const SDL_Event* source_event) noexcept
             case SDLK_KP_ENTER:
             case SDLK_SPACE:    activate_selection(); break;
             case SDLK_ESCAPE:   cancel_or_go_back(); break;
+            case SDLK_F4:
+                if (source_event->key.mod & SDL_KMOD_ALT)
+                    close_popup();
+                break;
             default: break;
             }
             return true;
