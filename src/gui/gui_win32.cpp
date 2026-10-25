@@ -80,14 +80,39 @@
 #include "win32_media.h"
 
 class bx_win32_gui_c;
+class win32_application;
 static LRESULT CALLBACK win32_window_proc(HWND, UINT, WPARAM, LPARAM);
 static LRESULT CALLBACK win32_dispatch_proc(HWND, UINT, WPARAM, LPARAM);
+static LRESULT CALLBACK win32_keyboard_proc(int, WPARAM, LPARAM);
+static win32_application* win32_keyboard_application = nullptr;
 static const char win32_window_class[] = "ES40 Display";
 static const char win32_dispatch_class[] = "ES40 Display Dispatcher";
 static constexpr DWORD win32_window_style = WS_OVERLAPPEDWINDOW;
 static constexpr UINT win32_invoke_message = WM_APP + 1;
 static constexpr UINT win32_wake_message = WM_APP + 2;
 static constexpr UINT win32_reconcile_message = WM_APP + 3;
+static constexpr UINT win32_keyboard_message = WM_APP + 4;
+
+static bool win32_grabbed_key(unsigned key)
+{
+	return key == VK_LWIN || key == VK_RWIN || key == VK_LCONTROL ||
+		key == VK_RCONTROL || key == VK_LMENU || key == VK_RMENU ||
+		key == VK_TAB || key == VK_ESCAPE;
+}
+
+struct win32_captured_key
+{
+	HWND window;
+	unsigned key, scan;
+	bool released, repeat;
+};
+
+struct win32_native_key
+{
+	DWORD time;
+	unsigned key;
+	bool released, pending;
+};
 
 struct win32_call
 {
@@ -275,14 +300,6 @@ static win32_hotkey_binding parse_win32_hotkey(CConfigurator* cfg,
 	return binding;
 }
 
-static unsigned win32_host_hotkey_modifiers()
-{
-	return ((GetKeyState(VK_CONTROL) & 0x8000) ? WIN32_HOTKEY_CTRL : 0) |
-		((GetKeyState(VK_MENU) & 0x8000) ? WIN32_HOTKEY_ALT : 0) |
-		((GetKeyState(VK_SHIFT) & 0x8000) ? WIN32_HOTKEY_SHIFT : 0) |
-		(((GetKeyState(VK_LWIN) | GetKeyState(VK_RWIN)) & 0x8000) ? WIN32_HOTKEY_GUI : 0);
-}
-
 static unsigned win32_host_hotkey_key(WPARAM key, unsigned scan)
 {
 	// NumLock changes virtual-key codes; SDL keeps keypad keys distinct.
@@ -408,11 +425,11 @@ public:
 	void exit_displays();
 	void poll_input(unsigned current_key_scan = 512);
 	void pause_input();
-	void resume_input() { input_paused = false; }
-	void detach_input() { keyboard = nullptr; system = nullptr; }
+	void resume_input() { input_paused = false; release_grabbed_keys(); set_keyboard_capture(capture_owner != nullptr); }
+	void detach_input() { keyboard = nullptr; system = nullptr; set_keyboard_capture(false); }
 	void request_shutdown();
 	void record_callback_error() noexcept;
-	void observe_key(unsigned scan, unsigned virtual_key, bool released, bool repeat);
+	void observe_key(unsigned scan, unsigned virtual_key, bool released, bool repeat, bool release_previous_press = true);
 	void send_key(unsigned scan, bool released, unsigned host_key = 0, unsigned virtual_key = 0);
 	bool consume_hotkey_key(unsigned scan, bool released, bool repeat, bool allow_repeat = false);
 	void suppress_hotkey_keys(unsigned scan, unsigned modifiers, bool release_modifiers = true);
@@ -423,6 +440,11 @@ public:
 	void release_input_session();
 	void release_media_input();
 	bool media_key_event(UINT, WPARAM, LPARAM);
+	bool capture_keyboard_event(WPARAM, const KBDLLHOOKSTRUCT&) noexcept;
+	void dispatch_captured_keys();
+	bool consume_native_key(unsigned, unsigned, bool, DWORD);
+	unsigned keyboard_modifiers() const;
+	bool dispatching_captured_key = false;
 	bx_win32_gui_c* window_owner(HWND window) const;
 	bx_keymap_c* keymap() const { return shared_keymap.get(); }
 
@@ -446,6 +468,9 @@ private:
 	bool set_raw_mouse_target(HWND);
 	void discard_raw_mouse_input(HWND);
 	void sync_input();
+	void set_keyboard_capture(bool);
+	void release_grabbed_keys();
+	SHORT keyboard_key_state(unsigned) const;
 	CConfigurator* cfg;
 	std::unique_ptr<bx_keymap_c> shared_keymap;
 	std::vector<std::unique_ptr<bx_win32_gui_c>> displays;
@@ -470,7 +495,19 @@ private:
 	unsigned guest_virtual_key_by_scan[512] = {};
 	bool guest_key_state_ambiguous[512] = {};
 	bool reconciled_key_releases[512] = {};
+	bool pending_keyboard_releases[512] = {};
 	bool swallowed_hotkey_keys[512] = {};
+	HHOOK keyboard_hook = nullptr;
+	bool keyboard_hook_failed = false;
+	bool keyboard_capture_starting = false;
+	bool hook_scan_down[512] = {};
+	bool captured_key_down[256] = {}, pre_hook_key_down[256] = {};
+	// Bounded storage keeps allocation and guest work out of the hook callback.
+	static constexpr unsigned keyboard_queue_capacity = 1024;
+	win32_captured_key captured_keys[keyboard_queue_capacity] = {};
+	unsigned captured_key_first = 0, captured_key_count = 0;
+	win32_native_key native_keys[keyboard_queue_capacity] = {};
+	unsigned next_native_key = 0;
 	std::exception_ptr callback_error;
 };
 
@@ -1023,12 +1060,270 @@ static LRESULT CALLBACK win32_dispatch_proc(HWND hwnd, UINT msg,
 		auto* app = reinterpret_cast<win32_application*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
 		if (app)
 		{
-			try { app->media.close(); }
+			try { app->dispatch_captured_keys(); app->media.close(); }
+			catch (...) { app->record_callback_error(); }
+		}
+		return 0;
+	}
+	if (msg == win32_keyboard_message)
+	{
+		auto* app = reinterpret_cast<win32_application*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
+		if (app)
+		{
+			try { app->dispatch_captured_keys(); }
 			catch (...) { app->record_callback_error(); }
 		}
 		return 0;
 	}
 	return DefWindowProc(hwnd, msg, wparam, lparam);
+}
+
+static LRESULT CALLBACK win32_keyboard_proc(int code, WPARAM msg, LPARAM data)
+{
+	if (code == HC_ACTION && win32_keyboard_application &&
+		win32_keyboard_application->capture_keyboard_event(msg, *reinterpret_cast<KBDLLHOOKSTRUCT*>(data)))
+		return 1;
+	return CallNextHookEx(nullptr, code, msg, data);
+}
+
+void win32_application::set_keyboard_capture(bool enabled)
+{
+	if (enabled)
+	{
+		if (keyboard_hook || keyboard_capture_starting || !keyboard || input_paused || shutting_down || callback_error || media.active() ||
+			!running.load(std::memory_order_acquire)) return;
+		// Finish keys already queued before installing the hook.
+		const unsigned transition = mouse_capture_transition;
+		MSG pending;
+		while (PeekMessage(&pending, nullptr, WM_KEYFIRST, WM_KEYLAST, PM_REMOVE | PM_QS_INPUT))
+		{
+			if (pending.message == WM_QUIT) { request_shutdown(); return; }
+			TranslateMessage(&pending); DispatchMessage(&pending);
+			if (transition != mouse_capture_transition || keyboard_hook || input_paused || shutting_down || media.active()) return;
+		}
+		if (transition != mouse_capture_transition || keyboard_hook || !keyboard || input_paused ||
+			shutting_down || media.active() || !running.load(std::memory_order_acquire) ||
+			!capture_owner || GetFocus() != capture_owner->window ||
+			GetForegroundWindow() != capture_owner->window) return;
+		BYTE state[256];
+		HMODULE module = nullptr;
+		if (!GetKeyboardState(state) ||
+			!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+				reinterpret_cast<LPCSTR>(win32_keyboard_proc), &module))
+		{
+			printf("%%WIN32-W-KEYBOARD: Unable to prepare keyboard capture.\n");
+			return;
+		}
+		std::fill_n(hook_scan_down, 512, false);
+		for (unsigned key = 0; key < 256; ++key)
+		{
+			captured_key_down[key] = pre_hook_key_down[key] = (state[key] & 0x80) != 0;
+			// Shared VKs cannot identify which physical key was already held.
+			if (!pre_hook_key_down[key] || key == VK_SHIFT || key == VK_CONTROL || key == VK_MENU ||
+				key == VK_RETURN || key == VK_CLEAR || (key >= VK_PRIOR && key <= VK_DOWN) ||
+				key == VK_INSERT || key == VK_DELETE) continue;
+			const unsigned native_scan = MapVirtualKeyW(key, MAPVK_VK_TO_VSC_EX);
+			const unsigned scan = (native_scan & 0xff) | ((native_scan & 0xff00) == 0xe000 ? 0x100 : 0);
+			if (scan) hook_scan_down[scan] = true;
+		}
+		for (unsigned scan = 0; scan < 512; ++scan)
+			if (host_virtual_key_by_scan[scan] && pre_hook_key_down[host_virtual_key_by_scan[scan]]) hook_scan_down[scan] = true;
+		keyboard_hook_failed = false;
+		struct starting_guard
+		{
+			bool& starting;
+			starting_guard(bool& value) : starting(value) { starting = true; }
+			~starting_guard() { starting = false; }
+		} guard(keyboard_capture_starting);
+		keyboard_hook = SetWindowsHookExA(WH_KEYBOARD_LL, win32_keyboard_proc, module, 0);
+		if (keyboard_hook) win32_keyboard_application = this;
+		else printf("%%WIN32-W-KEYBOARD: Unable to capture system shortcuts (error %lu).\n", GetLastError());
+		// Close the gap between the first drain and installation.
+		while (keyboard_hook && PeekMessage(&pending, nullptr, WM_KEYFIRST, WM_KEYLAST, PM_REMOVE | PM_QS_INPUT))
+		{
+			if (pending.message == WM_QUIT) { request_shutdown(); set_keyboard_capture(false); return; }
+			TranslateMessage(&pending); DispatchMessage(&pending);
+			if (transition != mouse_capture_transition || input_paused || shutting_down || media.active()) break;
+		}
+		if (transition != mouse_capture_transition || !keyboard || input_paused || shutting_down || media.active() ||
+			!running.load(std::memory_order_acquire) || !capture_owner ||
+			GetFocus() != capture_owner->window || GetForegroundWindow() != capture_owner->window)
+			set_keyboard_capture(false);
+		return;
+	}
+	if (win32_keyboard_application == this) win32_keyboard_application = nullptr;
+	if (!keyboard_hook) return;
+	UnhookWindowsHookEx(keyboard_hook);
+	keyboard_hook = nullptr;
+	// Retired input must not reach the guest.
+	for (unsigned i = 0; i < captured_key_count; ++i)
+	{
+		const auto& event = captured_keys[(captured_key_first + i) % keyboard_queue_capacity];
+		observe_key(event.scan, event.key, event.released, event.repeat, false);
+	}
+	captured_key_first = captured_key_count = 0;
+	// Windows did not see intercepted presses.
+	if (keyboard)
+		for (unsigned scan = 0; scan < 512; ++scan)
+			if (guest_keys[scan] && win32_grabbed_key(guest_virtual_key_by_scan[scan]))
+				pending_keyboard_releases[scan] = true;
+	release_grabbed_keys();
+}
+
+void win32_application::release_grabbed_keys()
+{
+	if (!keyboard || input_paused) return;
+	for (unsigned scan = 0; scan < 512; ++scan)
+		if (pending_keyboard_releases[scan])
+		{
+			send_key(scan, true);
+			host_virtual_key_by_scan[scan] = 0;
+			reconciled_key_releases[scan] = true;
+			pending_keyboard_releases[scan] = false;
+		}
+}
+
+bool win32_application::capture_keyboard_event(WPARAM msg, const KBDLLHOOKSTRUCT& event) noexcept
+{
+	if (!keyboard_hook || keyboard_hook_failed || input_paused || !keyboard || shutting_down || callback_error || media.active() ||
+		!running.load(std::memory_order_acquire)) return false;
+	HWND focus = GetFocus();
+	if (!capture_owner || !window_owner(focus) || GetForegroundWindow() != focus)
+	{
+		PostMessage(dispatcher, win32_keyboard_message, 0, 0);
+		return false;
+	}
+	if (msg != WM_KEYDOWN && msg != WM_SYSKEYDOWN && msg != WM_KEYUP && msg != WM_SYSKEYUP) return false;
+	// Windows adds a synthetic left Control to AltGr; SDL excludes it too.
+	if (event.scanCode == 0x21d) return true;
+	const unsigned scan = (event.scanCode & 0xff) | ((event.flags & LLKHF_EXTENDED) ? 0x100 : 0);
+	const unsigned key = win32_key_state_key(event.vkCode, scan);
+	if (!key) return false;
+	const bool released = msg == WM_KEYUP || msg == WM_SYSKEYUP;
+	const bool pass_native = !win32_grabbed_key(key) ||
+		(released && (keyboard_capture_starting || pre_hook_key_down[key] || !hook_scan_down[scan]));
+	unsigned native_slot = next_native_key;
+	if (pass_native)
+		for (unsigned count = 0; count < keyboard_queue_capacity && native_keys[native_slot].pending; ++count)
+			native_slot = (native_slot + 1) % keyboard_queue_capacity;
+	if (captured_key_count == keyboard_queue_capacity || (pass_native && native_keys[native_slot].pending))
+	{
+		keyboard_hook_failed = true;
+		PostMessage(dispatcher, win32_keyboard_message, 0, 0);
+		return false;
+	}
+	const unsigned slot = (captured_key_first + captured_key_count) % keyboard_queue_capacity;
+	captured_keys[slot] = { focus, key, scan, released, !released && hook_scan_down[scan] };
+	++captured_key_count;
+	if (!PostMessage(dispatcher, win32_keyboard_message, 0, 0))
+	{
+		--captured_key_count;
+		keyboard_hook_failed = true;
+		return false;
+	}
+	if (pass_native)
+	{
+		native_keys[native_slot] = { event.time, key, released, true };
+		next_native_key = (native_slot + 1) % keyboard_queue_capacity;
+	}
+	hook_scan_down[scan] = !released;
+	if (released) pre_hook_key_down[key] = false;
+	return !pass_native;
+}
+
+bool win32_application::consume_native_key(unsigned key, unsigned scan, bool released, DWORD time)
+{
+	key = win32_key_state_key(key, scan);
+	for (auto& event : native_keys)
+	{
+		// Some host keys (ex Print Screen) omit a native message.
+		if (event.pending && (LONG)(time - event.time) > 0) event.pending = false;
+		if (event.pending && event.key == key && event.released == released && event.time == time)
+		{
+			event.pending = false;
+			return true;
+		}
+	}
+	// Input already queued when capture began has no hook duplicate. 
+	if (keyboard_hook && key)
+	{
+		captured_key_down[key] = !released;
+		if (keyboard_capture_starting)
+		{
+			bool newer_event = false;
+			bool queued_release = false;
+			for (unsigned i = 0; i < captured_key_count; ++i)
+			{
+				auto& queued = captured_keys[(captured_key_first + i) % keyboard_queue_capacity];
+				if (queued.scan != scan) continue;
+				if (!newer_event) queued.repeat = !queued.released && !released;
+				newer_event = true;
+				queued_release = queued_release || queued.released;
+			}
+			pre_hook_key_down[key] = !released && !queued_release;
+			if (!newer_event)
+			{
+				hook_scan_down[scan] = !released;
+			}
+		}
+	}
+	return false;
+}
+
+SHORT win32_application::keyboard_key_state(unsigned key) const
+{
+	if (!keyboard_hook || key >= 256) return GetKeyState(key);
+	bool down = captured_key_down[key];
+	if (key == VK_CONTROL) down = captured_key_down[VK_LCONTROL] || captured_key_down[VK_RCONTROL];
+	if (key == VK_MENU) down = captured_key_down[VK_LMENU] || captured_key_down[VK_RMENU];
+	if (key == VK_SHIFT) down = captured_key_down[VK_LSHIFT] || captured_key_down[VK_RSHIFT];
+	return down ? (SHORT)0x8000 : 0;
+}
+
+unsigned win32_application::keyboard_modifiers() const
+{
+	return ((keyboard_key_state(VK_CONTROL) & 0x8000) ? WIN32_HOTKEY_CTRL : 0) |
+		((keyboard_key_state(VK_MENU) & 0x8000) ? WIN32_HOTKEY_ALT : 0) |
+		((keyboard_key_state(VK_SHIFT) & 0x8000) ? WIN32_HOTKEY_SHIFT : 0) |
+		(((keyboard_key_state(VK_LWIN) | keyboard_key_state(VK_RWIN)) & 0x8000) ? WIN32_HOTKEY_GUI : 0);
+}
+
+void win32_application::dispatch_captured_keys()
+{
+	if (dispatching_captured_key || keyboard_capture_starting) return;
+	if (!running.load(std::memory_order_acquire)) { set_keyboard_capture(false); return; }
+	if (keyboard_hook_failed)
+	{
+		set_keyboard_capture(false);
+		keyboard_hook_failed = false;
+		printf("%%WIN32-W-KEYBOARD: Keyboard capture queue failed; system shortcuts released.\n");
+		return;
+	}
+	if (keyboard_hook && !window_owner(GetForegroundWindow())) { release_input_session(); return; }
+	while (keyboard_hook && captured_key_count)
+	{
+		const auto event = captured_keys[captured_key_first];
+		captured_key_first = (captured_key_first + 1) % keyboard_queue_capacity;
+		--captured_key_count;
+		auto* target = window_owner(event.window);
+		if (!target) continue;
+		captured_key_down[event.key] = !event.released;
+		LPARAM flags = 1 | (LPARAM(event.scan) << 16);
+		if (keyboard_modifiers() & WIN32_HOTKEY_ALT) flags |= LPARAM(1) << 29;
+		if (event.repeat || event.released) flags |= LPARAM(1) << 30;
+		if (event.released) flags |= LPARAM(1) << 31;
+		dispatching_captured_key = true;
+		try { target->window_event(event.window, event.released ? WM_KEYUP : WM_KEYDOWN, event.key, flags); }
+		catch (...) { dispatching_captured_key = false; set_keyboard_capture(false); throw; }
+		dispatching_captured_key = false;
+		// SDL lets Alt+Tab escape a captured fullscreen window by minimizing it.
+		if (!event.released && event.key == VK_TAB && target->fullscreen &&
+			(keyboard_modifiers() & WIN32_HOTKEY_ALT))
+		{
+			ShowWindow(event.window, SW_MINIMIZE);
+			release_input_session();
+		}
+	}
 }
 
 void win32_application::pump()
@@ -1041,8 +1336,11 @@ void win32_application::pump()
 			if (msg.message == WM_QUIT) request_shutdown();
 			else { TranslateMessage(&msg); DispatchMessage(&msg); }
 		}
+		try { dispatch_captured_keys(); }
+		catch (...) { record_callback_error(); }
 		MsgWaitForMultipleObjects(0, nullptr, FALSE, 10, QS_ALLINPUT);
 	}
+	set_keyboard_capture(false);
 }
 
 void win32_application::stop()
@@ -1074,7 +1372,9 @@ void win32_application::record_callback_error() noexcept
 void win32_application::poll_input(unsigned current_key_scan)
 {
 	if (callback_error) std::rethrow_exception(callback_error);
+	if (!dispatching_captured_key && current_key_scan == 512) dispatch_captured_keys();
 	if (input_paused) return;
+	release_grabbed_keys();
 	media.reconcile_input();
 	sync_input();
 	if (media.active()) { release_input_session(); return; }
@@ -1096,7 +1396,7 @@ void win32_application::reconcile_keyboard_releases(unsigned current_key_scan)
 		// GetKeyState follows the message queue. Let the current key event finish normally
 		// and then only repair releases missing from the guest stream.
 		if (scan == current_key_scan || !guest_keys[scan] || !key ||
-			guest_key_state_ambiguous[scan] || (GetKeyState(key) & 0x8000)) continue;
+			guest_key_state_ambiguous[scan] || (keyboard_key_state(key) & 0x8000)) continue;
 		send_key(scan, true);
 		host_virtual_key_by_scan[scan] = 0;
 		reconciled_key_releases[scan] = true;
@@ -1118,6 +1418,7 @@ void win32_application::reconcile_mouse_releases()
 void win32_application::pause_input()
 {
 	input_paused = true;
+	set_keyboard_capture(false);
 	media.close();
 	for (const auto& display : displays) display->reset_absolute_mouse_position();
 }
@@ -1138,7 +1439,7 @@ bool win32_application::media_key_event(UINT msg, WPARAM wparam, LPARAM lparam)
 		return true;
 	}
 	const unsigned key = win32_host_hotkey_key(wparam, scan);
-	const unsigned modifiers = win32_host_hotkey_modifiers();
+	const unsigned modifiers = keyboard_modifiers();
 	if (hotkey_media.matches(key, modifiers))
 	{
 		if (!(lparam & (1L << 30)))
@@ -1171,13 +1472,13 @@ static u32 translate_win32_key(unsigned scan)
 	return key || scan == 0x1d ? key : BX_KEY_UNHANDLED;
 }
 
-void win32_application::observe_key(unsigned scan, unsigned virtual_key, bool released, bool repeat)
+void win32_application::observe_key(unsigned scan, unsigned virtual_key, bool released, bool repeat, bool release_previous_press)
 {
 	if (scan >= 512) return;
 	if (released) { host_virtual_key_by_scan[scan] = 0; return; }
 	if (repeat && reconciled_key_releases[scan]) return;
 	// A fresh press proves that an earlier press ended, even if no poll ran between actions
-	if (!repeat && guest_keys[scan]) send_key(scan, true);
+	if (release_previous_press && !repeat && guest_keys[scan]) send_key(scan, true);
 	if (!repeat || !host_virtual_key_by_scan[scan])
 		host_virtual_key_by_scan[scan] = win32_key_state_key(virtual_key, scan);
 	const unsigned key = host_virtual_key_by_scan[scan];
@@ -1272,7 +1573,7 @@ void win32_application::suppress_hotkey_keys(unsigned scan, unsigned modifiers,
 	for (const auto& key : keys)
 	{
 		if ((modifiers & key.modifier) &&
-			(guest_keys[key.scan] || (GetKeyState(key.key) & 0x8000)))
+			(guest_keys[key.scan] || (keyboard_key_state(key.key) & 0x8000)))
 		{
 			swallowed_hotkey_keys[key.scan] = true;
 			send_key(key.scan, true);
@@ -1322,9 +1623,9 @@ void win32_application::send_host_mouse(double dx, double dy, int dz,
 void win32_application::release_input_session()
 {
 	release_guest_keys();
-	std::fill_n(host_virtual_key_by_scan, 512, 0);
 	mouse_remainder_x = mouse_remainder_y = 0.0;
 	set_mouse_capture(nullptr);
+	std::fill_n(host_virtual_key_by_scan, 512, 0);
 }
 
 bool win32_application::set_raw_mouse_target(HWND target)
@@ -1432,6 +1733,7 @@ void win32_application::set_mouse_capture(bx_win32_gui_c* target)
 		mouse_buttons = 0;
 	}
 	if (!capture_owner) set_raw_mouse_target(nullptr);
+	set_keyboard_capture(capture_owner != nullptr);
 	SetCursor(capture_owner ? nullptr : LoadCursor(nullptr, IDC_ARROW));
 	if (keyboard && !input_paused)
 	{
@@ -1793,6 +2095,9 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 		msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP;
 	const bool input_message = key_message || msg == WM_INPUT ||
 		(msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST);
+	if (key_message && !application.dispatching_captured_key &&
+		application.consume_native_key((unsigned)wparam, HIWORD(lparam) & 0x1ff,
+			msg == WM_KEYUP || msg == WM_SYSKEYUP, (DWORD)GetMessageTime())) return 0;
 	if (input_message)
 	{
 		// Keep native alias bookkeeping through a pause; send_key() still
@@ -1808,7 +2113,7 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 	{
 		const unsigned scan = HIWORD(lparam) & 0x1ff;
 		const unsigned key = win32_host_hotkey_key(wparam, scan);
-		const unsigned modifiers = win32_host_hotkey_modifiers();
+		const unsigned modifiers = application.keyboard_modifiers();
 		const bool scale_repeat = application.scale_change_enable &&
 			(application.hotkey_scale_up.matches(key, modifiers) ||
 			 application.hotkey_scale_down.matches(key, modifiers));
@@ -1935,7 +2240,7 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 	{
 		const unsigned scan = HIWORD(lparam) & 0x1ff;
 		const unsigned key = win32_host_hotkey_key(wparam, scan);
-		const unsigned modifiers = win32_host_hotkey_modifiers();
+		const unsigned modifiers = application.keyboard_modifiers();
 		if (application.hotkey_ctrl_alt_delete.matches(key, modifiers))
 		{
 			if (!(lparam & (1L << 30)))
@@ -2062,6 +2367,7 @@ void bx_win32_gui_c::exit()
 void win32_application::exit_displays()
 {
 	shutting_down = true;
+	set_keyboard_capture(false);
 	media.shutdown();
 	for (const auto& display : displays) display->exit_impl();
 	set_raw_mouse_target(nullptr);
