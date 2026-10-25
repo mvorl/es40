@@ -93,13 +93,30 @@ static constexpr UINT win32_wake_message = WM_APP + 2;
 static constexpr UINT win32_reconcile_message = WM_APP + 3;
 static constexpr UINT win32_keyboard_message = WM_APP + 4;
 static constexpr unsigned win32_print_screen_scan = 0x137;
+static constexpr unsigned win32_pause_scan = 0x146;
+
+static unsigned win32_key_scan(unsigned key, unsigned scan, bool extended)
+{
+	// Some virtual keyboards send break codes or omit the scan entirely.
+	extended = extended || (scan & 0xff00) == 0xe000;
+	if (!(scan & 0x7f)) scan = MapVirtualKeyW(key, MAPVK_VK_TO_VSC_EX);
+	const unsigned prefix = scan & 0xff00;
+	const unsigned make = scan & 0x7f;
+	extended = extended || prefix == 0xe000;
+	// Keep Pause/Break's E1 sequence distinct from Control and NumLock.
+	if (key == VK_SNAPSHOT) return win32_print_screen_scan;
+	if (key == VK_NUMLOCK) return 0x145;
+	if (key == VK_PAUSE || key == VK_CANCEL ||
+		(prefix == 0xe100 && make == 0x1d) || (!extended && make == 0x45))
+		return win32_pause_scan;
+	return make | (extended ? 0x100 : 0);
+}
 
 static LPARAM win32_key_flags(WPARAM key, LPARAM flags)
 {
-	// Print Screen also arrives with a zero, break-bit, or SysRq scan code.
-	if (key == VK_SNAPSHOT)
-		flags = (flags & ~(LPARAM(0x1ff) << 16)) | (LPARAM(win32_print_screen_scan) << 16);
-	return flags;
+	const unsigned scan = win32_key_scan((unsigned)key, HIWORD(flags) & 0xff,
+		(HIWORD(flags) & KF_EXTENDED) != 0);
+	return (flags & ~(LPARAM(0x1ff) << 16)) | (LPARAM(scan) << 16);
 }
 
 static bool win32_grabbed_key(unsigned key)
@@ -311,6 +328,8 @@ static win32_hotkey_binding parse_win32_hotkey(CConfigurator* cfg,
 
 static unsigned win32_host_hotkey_key(WPARAM key, unsigned scan)
 {
+	// Ctrl+Break reports VK_CANCEL, but SDL exposes it as the Pause key.
+	if (scan == win32_pause_scan) return win32_named_key | VK_PAUSE;
 	// NumLock changes virtual-key codes; SDL keeps keypad keys distinct.
 	if (scan >= 0x47 && scan <= 0x53)
 	{
@@ -380,6 +399,7 @@ static unsigned win32_host_mapping_key(WPARAM key, unsigned scan)
 	// WM_KEY* uses generic modifier VKs; the scan identifies each side.
 	switch (scan)
 	{
+	case win32_pause_scan: return win32_named_key | VK_PAUSE;
 	case 0x2a: return win32_named_key | VK_LSHIFT;
 	case 0x36: return win32_named_key | VK_RSHIFT;
 	case 0x1d: return win32_named_key | VK_LCONTROL;
@@ -844,7 +864,7 @@ static const u32 win32_to_bx_key[2][0x100] =
 								0,
 								0,
 								BX_KEY_NUM_LOCK,
-								0,
+								BX_KEY_PAUSE,
 								BX_KEY_HOME,
 								BX_KEY_UP,
 								  BX_KEY_PAGE_UP,
@@ -1143,8 +1163,7 @@ void win32_application::set_keyboard_capture(bool enabled)
 			if (!captured_key_down[key] || key == VK_SHIFT || key == VK_CONTROL || key == VK_MENU ||
 				key == VK_RETURN || key == VK_CLEAR || (key >= VK_PRIOR && key <= VK_DOWN) ||
 				key == VK_INSERT || key == VK_DELETE) continue;
-			const unsigned native_scan = MapVirtualKeyW(key, MAPVK_VK_TO_VSC_EX);
-			const unsigned scan = (native_scan & 0xff) | ((native_scan & 0xff00) == 0xe000 ? 0x100 : 0);
+			const unsigned scan = win32_key_scan(key, 0, false);
 			if (scan) hook_scan_down[scan] = true;
 		}
 		for (unsigned scan = 0; scan < 512; ++scan)
@@ -1217,7 +1236,7 @@ bool win32_application::capture_keyboard_event(WPARAM msg, const KBDLLHOOKSTRUCT
 	if (msg != WM_KEYDOWN && msg != WM_SYSKEYDOWN && msg != WM_KEYUP && msg != WM_SYSKEYUP) return false;
 	const bool released = msg == WM_KEYUP || msg == WM_SYSKEYUP;
 	// Windows adds a synthetic left Control to AltGr; SDL excludes it too.
-	if (event.scanCode == 0x21d)
+	if ((event.scanCode & ~0x80u) == 0x21d)
 	{
 		// Balance a synthetic press Windows saw before capture began.
 		if (released && native_altgr_control)
@@ -1228,8 +1247,8 @@ bool win32_application::capture_keyboard_event(WPARAM msg, const KBDLLHOOKSTRUCT
 		}
 		return true;
 	}
-	const unsigned scan = event.vkCode == VK_SNAPSHOT ? win32_print_screen_scan :
-		(event.scanCode & 0xff) | ((event.flags & LLKHF_EXTENDED) ? 0x100 : 0);
+	const unsigned scan = win32_key_scan(event.vkCode, event.scanCode,
+		(event.flags & LLKHF_EXTENDED) != 0);
 	const unsigned key = win32_key_state_key(event.vkCode, scan);
 	if (!key) return false;
 	const bool pass_native = !win32_grabbed_key(key) ||
@@ -1290,7 +1309,8 @@ bool win32_application::filter_native_altgr(UINT msg, WPARAM key, LPARAM flags)
 		const bool matching_message = released ? next.message == WM_KEYUP || next.message == WM_SYSKEYUP :
 			next.message == WM_KEYDOWN || next.message == WM_SYSKEYDOWN;
 		synthetic = matching_message && next.time == time &&
-			(next.wParam == VK_MENU || next.wParam == VK_RMENU) && (HIWORD(next.lParam) & 0x1ff) == 0x138;
+			(next.wParam == VK_MENU || next.wParam == VK_RMENU) &&
+			(HIWORD(win32_key_flags(next.wParam, next.lParam)) & 0x1ff) == 0x138;
 	}
 	if (!synthetic) return false;
 	if (!released && !native_altgr_control && (flags & (LPARAM(1) << 30)))
@@ -1520,9 +1540,10 @@ bool win32_application::media_key_event(UINT msg, WPARAM wparam, LPARAM lparam, 
 	lparam = win32_key_flags(wparam, lparam);
 	const bool released = msg == WM_KEYUP || msg == WM_SYSKEYUP;
 	if (!synthetic_key && filter_native_altgr(msg, wparam, lparam)) return true;
-	// A captured Print Screen can open this popup before its native copy arrives.
-	if (!synthetic_key && wparam == VK_SNAPSHOT &&
-		consume_native_key(VK_SNAPSHOT, win32_print_screen_scan, released, (DWORD)GetMessageTime())) return true;
+	const unsigned scan = HIWORD(lparam) & 0x1ff;
+	// A captured Print Screen or Pause/Break can open the popup before its native copy arrives.
+	if (!synthetic_key && (wparam == VK_SNAPSHOT || scan == win32_pause_scan) &&
+		consume_native_key((unsigned)wparam, scan, released, (DWORD)GetMessageTime())) return true;
 	if (!synthetic_key && wparam == VK_SNAPSHOT && released && needs_print_screen_press())
 	{
 		media_key_event(msg == WM_SYSKEYUP ? WM_SYSKEYDOWN : WM_KEYDOWN,
@@ -1532,7 +1553,6 @@ bool win32_application::media_key_event(UINT msg, WPARAM wparam, LPARAM lparam, 
 	if (wparam == VK_SNAPSHOT || wparam == VK_CONTROL || wparam == VK_LCONTROL)
 		observe_key(HIWORD(lparam) & 0x1ff, (unsigned)wparam, released, (lparam & (1L << 30)) != 0, false);
 	if (input_paused || shutting_down) return true;
-	const unsigned scan = HIWORD(lparam) & 0x1ff;
 	if (msg == WM_KEYUP || msg == WM_SYSKEYUP)
 	{
 		consume_hotkey_key(scan, true, false);
