@@ -92,6 +92,15 @@ static constexpr UINT win32_invoke_message = WM_APP + 1;
 static constexpr UINT win32_wake_message = WM_APP + 2;
 static constexpr UINT win32_reconcile_message = WM_APP + 3;
 static constexpr UINT win32_keyboard_message = WM_APP + 4;
+static constexpr unsigned win32_print_screen_scan = 0x137;
+
+static LPARAM win32_key_flags(WPARAM key, LPARAM flags)
+{
+	// Print Screen also arrives with a zero, break-bit, or SysRq scan code.
+	if (key == VK_SNAPSHOT)
+		flags = (flags & ~(LPARAM(0x1ff) << 16)) | (LPARAM(win32_print_screen_scan) << 16);
+	return flags;
+}
 
 static bool win32_grabbed_key(unsigned key)
 {
@@ -439,7 +448,9 @@ public:
 	void set_mouse_capture(bx_win32_gui_c* target);
 	void release_input_session();
 	void release_media_input();
-	bool media_key_event(UINT, WPARAM, LPARAM);
+	bool media_key_event(UINT, WPARAM, LPARAM, bool synthetic_key = false);
+	bool needs_print_screen_press() const
+		{ return keyboard && !input_paused && !shutting_down && !print_screen_down_seen; }
 	bool capture_keyboard_event(WPARAM, const KBDLLHOOKSTRUCT&) noexcept;
 	void dispatch_captured_keys();
 	bool consume_native_key(unsigned, unsigned, bool, DWORD);
@@ -497,6 +508,8 @@ private:
 	bool reconciled_key_releases[512] = {};
 	bool pending_keyboard_releases[512] = {};
 	bool swallowed_hotkey_keys[512] = {};
+	// Physical press history survives guest releases at focus/dialog barriers.
+	bool print_screen_down_seen = false;
 	HHOOK keyboard_hook = nullptr;
 	bool keyboard_hook_failed = false;
 	bool keyboard_capture_starting = false;
@@ -573,7 +586,7 @@ private:
 		{ if (application.mouse_absolute) mouse_position_valid = false; }
 	bool confine_mouse();
 	void toggle_fullscreen();
-	LRESULT window_event(HWND, UINT, WPARAM, LPARAM);
+	LRESULT window_event(HWND, UINT, WPARAM, LPARAM, bool synthetic_key = false);
 	win32_application& application;
 	HWND window = nullptr;
 	const std::string window_title;
@@ -1196,7 +1209,8 @@ bool win32_application::capture_keyboard_event(WPARAM msg, const KBDLLHOOKSTRUCT
 	if (msg != WM_KEYDOWN && msg != WM_SYSKEYDOWN && msg != WM_KEYUP && msg != WM_SYSKEYUP) return false;
 	// Windows adds a synthetic left Control to AltGr; SDL excludes it too.
 	if (event.scanCode == 0x21d) return true;
-	const unsigned scan = (event.scanCode & 0xff) | ((event.flags & LLKHF_EXTENDED) ? 0x100 : 0);
+	const unsigned scan = event.vkCode == VK_SNAPSHOT ? win32_print_screen_scan :
+		(event.scanCode & 0xff) | ((event.flags & LLKHF_EXTENDED) ? 0x100 : 0);
 	const unsigned key = win32_key_state_key(event.vkCode, scan);
 	if (!key) return false;
 	const bool released = msg == WM_KEYUP || msg == WM_SYSKEYUP;
@@ -1429,8 +1443,21 @@ void win32_application::release_media_input()
 	std::fill_n(swallowed_hotkey_keys, 512, true);
 }
 
-bool win32_application::media_key_event(UINT msg, WPARAM wparam, LPARAM lparam)
+bool win32_application::media_key_event(UINT msg, WPARAM wparam, LPARAM lparam, bool synthetic_key)
 {
+	lparam = win32_key_flags(wparam, lparam);
+	const bool released = msg == WM_KEYUP || msg == WM_SYSKEYUP;
+	// A captured Print Screen can open this popup before its native copy arrives.
+	if (!synthetic_key && wparam == VK_SNAPSHOT &&
+		consume_native_key(VK_SNAPSHOT, win32_print_screen_scan, released, (DWORD)GetMessageTime())) return true;
+	if (!synthetic_key && wparam == VK_SNAPSHOT && released && needs_print_screen_press())
+	{
+		media_key_event(msg == WM_SYSKEYUP ? WM_SYSKEYDOWN : WM_KEYDOWN,
+			wparam, lparam & ~(LPARAM(3) << 30), true);
+		return media_key_event(msg, wparam, lparam, true);
+	}
+	if (wparam == VK_SNAPSHOT)
+		observe_key(win32_print_screen_scan, VK_SNAPSHOT, released, (lparam & (1L << 30)) != 0, false);
 	if (input_paused || shutting_down) return true;
 	const unsigned scan = HIWORD(lparam) & 0x1ff;
 	if (msg == WM_KEYUP || msg == WM_SYSKEYUP)
@@ -1475,6 +1502,8 @@ static u32 translate_win32_key(unsigned scan)
 void win32_application::observe_key(unsigned scan, unsigned virtual_key, bool released, bool repeat, bool release_previous_press)
 {
 	if (scan >= 512) return;
+	if (virtual_key == VK_SNAPSHOT && (released || !repeat || !reconciled_key_releases[scan]))
+		print_screen_down_seen = !released;
 	if (released) { host_virtual_key_by_scan[scan] = 0; return; }
 	if (repeat && reconciled_key_releases[scan]) return;
 	// A fresh press proves that an earlier press ended, even if no poll ran between actions
@@ -2089,15 +2118,25 @@ void bx_win32_gui_c::toggle_fullscreen()
 }
 
 LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
-	WPARAM wparam, LPARAM lparam)
+	WPARAM wparam, LPARAM lparam, bool synthetic_key)
 {
 	const bool key_message = msg == WM_KEYDOWN || msg == WM_KEYUP ||
 		msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP;
+	if (key_message) lparam = win32_key_flags(wparam, lparam);
 	const bool input_message = key_message || msg == WM_INPUT ||
 		(msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST);
-	if (key_message && !application.dispatching_captured_key &&
+	if (key_message && !synthetic_key && !application.dispatching_captured_key &&
 		application.consume_native_key((unsigned)wparam, HIWORD(lparam) & 0x1ff,
 			msg == WM_KEYUP || msg == WM_SYSKEYUP, (DWORD)GetMessageTime())) return 0;
+	if (!synthetic_key && wparam == VK_SNAPSHOT && (msg == WM_KEYUP || msg == WM_SYSKEYUP) &&
+		application.needs_print_screen_press() && !application.media.active() && application.window_owner(GetFocus()))
+	{
+		// SDL repairs release-only Print Screen before mapping or shortcuts.
+		// Run the complete pair so normal barriers and press bookkeeping apply.
+		window_event(hwnd, msg == WM_SYSKEYUP ? WM_SYSKEYDOWN : WM_KEYDOWN,
+			wparam, lparam & ~(LPARAM(3) << 30), true);
+		return window_event(hwnd, msg, wparam, lparam, true);
+	}
 	if (input_message)
 	{
 		// Keep native alias bookkeeping through a pause; send_key() still
