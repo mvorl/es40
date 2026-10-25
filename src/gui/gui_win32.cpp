@@ -453,6 +453,7 @@ public:
 		{ return keyboard && !input_paused && !shutting_down && !print_screen_down_seen; }
 	bool capture_keyboard_event(WPARAM, const KBDLLHOOKSTRUCT&) noexcept;
 	void dispatch_captured_keys();
+	bool filter_native_altgr(UINT, WPARAM, LPARAM);
 	bool consume_native_key(unsigned, unsigned, bool, DWORD);
 	unsigned keyboard_modifiers() const;
 	bool dispatching_captured_key = false;
@@ -510,6 +511,11 @@ private:
 	bool swallowed_hotkey_keys[512] = {};
 	// Physical press history survives guest releases at focus/dialog barriers.
 	bool print_screen_down_seen = false;
+	// Keep physical Control provenance separate from guest/session releases.
+	bool native_altgr_control = false, native_left_control_down = false;
+	bool native_altgr_press_pending = false;
+	bool native_altgr_release_pending = false;
+	DWORD native_altgr_release_time = 0;
 	HHOOK keyboard_hook = nullptr;
 	bool keyboard_hook_failed = false;
 	bool keyboard_capture_starting = false;
@@ -1131,8 +1137,10 @@ void win32_application::set_keyboard_capture(bool enabled)
 		for (unsigned key = 0; key < 256; ++key)
 		{
 			captured_key_down[key] = pre_hook_key_down[key] = (state[key] & 0x80) != 0;
+			if (key == VK_LCONTROL && native_altgr_control)
+				captured_key_down[key] = native_left_control_down;
 			// Shared VKs cannot identify which physical key was already held.
-			if (!pre_hook_key_down[key] || key == VK_SHIFT || key == VK_CONTROL || key == VK_MENU ||
+			if (!captured_key_down[key] || key == VK_SHIFT || key == VK_CONTROL || key == VK_MENU ||
 				key == VK_RETURN || key == VK_CLEAR || (key >= VK_PRIOR && key <= VK_DOWN) ||
 				key == VK_INSERT || key == VK_DELETE) continue;
 			const unsigned native_scan = MapVirtualKeyW(key, MAPVK_VK_TO_VSC_EX);
@@ -1207,13 +1215,23 @@ bool win32_application::capture_keyboard_event(WPARAM msg, const KBDLLHOOKSTRUCT
 		return false;
 	}
 	if (msg != WM_KEYDOWN && msg != WM_SYSKEYDOWN && msg != WM_KEYUP && msg != WM_SYSKEYUP) return false;
+	const bool released = msg == WM_KEYUP || msg == WM_SYSKEYUP;
 	// Windows adds a synthetic left Control to AltGr; SDL excludes it too.
-	if (event.scanCode == 0x21d) return true;
+	if (event.scanCode == 0x21d)
+	{
+		// Balance a synthetic press Windows saw before capture began.
+		if (released && native_altgr_control)
+		{
+			native_altgr_release_pending = true;
+			native_altgr_release_time = event.time;
+			return false;
+		}
+		return true;
+	}
 	const unsigned scan = event.vkCode == VK_SNAPSHOT ? win32_print_screen_scan :
 		(event.scanCode & 0xff) | ((event.flags & LLKHF_EXTENDED) ? 0x100 : 0);
 	const unsigned key = win32_key_state_key(event.vkCode, scan);
 	if (!key) return false;
-	const bool released = msg == WM_KEYUP || msg == WM_SYSKEYUP;
 	const bool pass_native = !win32_grabbed_key(key) ||
 		(released && (keyboard_capture_starting || pre_hook_key_down[key] || !hook_scan_down[scan]));
 	unsigned native_slot = next_native_key;
@@ -1243,6 +1261,45 @@ bool win32_application::capture_keyboard_event(WPARAM msg, const KBDLLHOOKSTRUCT
 	hook_scan_down[scan] = !released;
 	if (released) pre_hook_key_down[key] = false;
 	return !pass_native;
+}
+
+bool win32_application::filter_native_altgr(UINT msg, WPARAM key, LPARAM flags)
+{
+	const bool released = msg == WM_KEYUP || msg == WM_SYSKEYUP;
+	const DWORD time = (DWORD)GetMessageTime();
+	if (native_altgr_release_pending && (LONG)(time - native_altgr_release_time) > 0)
+		native_altgr_release_pending = false;
+	const unsigned scan = HIWORD(flags) & 0x1ff;
+	if ((key == VK_MENU || key == VK_RMENU) && scan == 0x138)
+	{
+		native_altgr_press_pending = false;
+		if (released && native_altgr_control)
+		{
+			// The synthetic Control release can follow the RightAlt release.
+			native_altgr_release_pending = true;
+			native_altgr_release_time = time;
+		}
+	}
+	if ((key != VK_CONTROL && key != VK_LCONTROL) || (scan & 0x100)) return false;
+	if (released && !native_altgr_control && !native_altgr_release_pending) return false;
+	bool synthetic = released && native_altgr_release_pending && native_altgr_release_time == time;
+	MSG next;
+	if (!synthetic && PeekMessage(&next, nullptr, 0, 0, PM_NOREMOVE))
+	{
+		// Like SDL, recognize AltGr's fake Control by its adjacent RightAlt.
+		const bool matching_message = released ? next.message == WM_KEYUP || next.message == WM_SYSKEYUP :
+			next.message == WM_KEYDOWN || next.message == WM_SYSKEYDOWN;
+		synthetic = matching_message && next.time == time &&
+			(next.wParam == VK_MENU || next.wParam == VK_RMENU) && (HIWORD(next.lParam) & 0x1ff) == 0x138;
+	}
+	if (!synthetic) return false;
+	if (!released && !native_altgr_control && (flags & (LPARAM(1) << 30)))
+		native_left_control_down = true; // Genuine Control was already held before this fake press.
+	// A paired fake release must not release a separately held genuine Control.
+	native_altgr_control = !released;
+	native_altgr_press_pending = !released;
+	if (released) native_altgr_release_pending = false;
+	return true;
 }
 
 bool win32_application::consume_native_key(unsigned key, unsigned scan, bool released, DWORD time)
@@ -1286,7 +1343,13 @@ bool win32_application::consume_native_key(unsigned key, unsigned scan, bool rel
 
 SHORT win32_application::keyboard_key_state(unsigned key) const
 {
-	if (!keyboard_hook || key >= 256) return GetKeyState(key);
+	if (!keyboard_hook || key >= 256)
+	{
+		if (native_altgr_control && (key == VK_LCONTROL || key == VK_CONTROL))
+			return native_left_control_down || (key == VK_CONTROL && (GetKeyState(VK_RCONTROL) & 0x8000))
+				? (SHORT)0x8000 : 0;
+		return GetKeyState(key);
+	}
 	bool down = captured_key_down[key];
 	if (key == VK_CONTROL) down = captured_key_down[VK_LCONTROL] || captured_key_down[VK_RCONTROL];
 	if (key == VK_MENU) down = captured_key_down[VK_LMENU] || captured_key_down[VK_RMENU];
@@ -1388,6 +1451,15 @@ void win32_application::poll_input(unsigned current_key_scan)
 	if (callback_error) std::rethrow_exception(callback_error);
 	if (!dispatching_captured_key && current_key_scan == 512) dispatch_captured_keys();
 	if (input_paused) return;
+	if (!keyboard_hook && !native_altgr_release_pending)
+	{
+		if (!(GetKeyState(VK_LCONTROL) & 0x8000))
+			native_altgr_control = native_left_control_down = native_altgr_press_pending = false;
+		// AltGr may end outside our windows before a genuine Control is pressed.
+		// Wait for the paired RightAlt down before using its state to retire the mask.
+		else if (!native_altgr_press_pending && !(GetKeyState(VK_RMENU) & 0x8000))
+			native_altgr_control = false;
+	}
 	release_grabbed_keys();
 	media.reconcile_input();
 	sync_input();
@@ -1447,6 +1519,7 @@ bool win32_application::media_key_event(UINT msg, WPARAM wparam, LPARAM lparam, 
 {
 	lparam = win32_key_flags(wparam, lparam);
 	const bool released = msg == WM_KEYUP || msg == WM_SYSKEYUP;
+	if (!synthetic_key && filter_native_altgr(msg, wparam, lparam)) return true;
 	// A captured Print Screen can open this popup before its native copy arrives.
 	if (!synthetic_key && wparam == VK_SNAPSHOT &&
 		consume_native_key(VK_SNAPSHOT, win32_print_screen_scan, released, (DWORD)GetMessageTime())) return true;
@@ -1456,8 +1529,8 @@ bool win32_application::media_key_event(UINT msg, WPARAM wparam, LPARAM lparam, 
 			wparam, lparam & ~(LPARAM(3) << 30), true);
 		return media_key_event(msg, wparam, lparam, true);
 	}
-	if (wparam == VK_SNAPSHOT)
-		observe_key(win32_print_screen_scan, VK_SNAPSHOT, released, (lparam & (1L << 30)) != 0, false);
+	if (wparam == VK_SNAPSHOT || wparam == VK_CONTROL || wparam == VK_LCONTROL)
+		observe_key(HIWORD(lparam) & 0x1ff, (unsigned)wparam, released, (lparam & (1L << 30)) != 0, false);
 	if (input_paused || shutting_down) return true;
 	const unsigned scan = HIWORD(lparam) & 0x1ff;
 	if (msg == WM_KEYUP || msg == WM_SYSKEYUP)
@@ -1502,6 +1575,8 @@ static u32 translate_win32_key(unsigned scan)
 void win32_application::observe_key(unsigned scan, unsigned virtual_key, bool released, bool repeat, bool release_previous_press)
 {
 	if (scan >= 512) return;
+	if (scan == 0x1d && (virtual_key == VK_CONTROL || virtual_key == VK_LCONTROL))
+		native_left_control_down = !released;
 	if (virtual_key == VK_SNAPSHOT && (released || !repeat || !reconciled_key_releases[scan]))
 		print_screen_down_seen = !released;
 	if (released) { host_virtual_key_by_scan[scan] = 0; return; }
@@ -2125,6 +2200,8 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 	if (key_message) lparam = win32_key_flags(wparam, lparam);
 	const bool input_message = key_message || msg == WM_INPUT ||
 		(msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST);
+	if (key_message && !synthetic_key && !application.dispatching_captured_key &&
+		application.filter_native_altgr(msg, wparam, lparam)) return 0;
 	if (key_message && !synthetic_key && !application.dispatching_captured_key &&
 		application.consume_native_key((unsigned)wparam, HIWORD(lparam) & 0x1ff,
 			msg == WM_KEYUP || msg == WM_SYSKEYUP, (DWORD)GetMessageTime())) return 0;
