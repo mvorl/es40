@@ -621,6 +621,7 @@ private:
 	std::vector<win32_linear_sample> linear_columns;
 	unsigned width = 0, height = 0;
 	int driven_width = 0, driven_height = 0;
+	bool pending_guest_resize = false;
 	int runtime_scale_override = 0;
 	HDC paint_dc = nullptr;
 	HBITMAP paint_bitmap = nullptr;
@@ -1964,11 +1965,20 @@ RECT bx_win32_gui_c::window_rect_for_client(int client_width, int client_height)
 
 void bx_win32_gui_c::resize_window_to_guest()
 {
-	if (!window || fullscreen || IsZoomed(window) || IsIconic(window)) return;
+	if (!window || retired || fullscreen) return;
+	if (IsZoomed(window) || IsIconic(window))
+	{
+		pending_guest_resize = true;
+		return;
+	}
 	RECT rect = window_rect_for_client(driven_width, driven_height);
+	// SetWindowPos can synchronously send WM_SIZE. Consume the request first
+	// so that notification cannot recursively apply the same guest resize.
+	pending_guest_resize = false;
 	// Allow exact guest-driven sizes beyond Windows' interactive tracking limits.
-	SetWindowPos(window, nullptr, 0, 0, rect.right - rect.left,
-		rect.bottom - rect.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSENDCHANGING);
+	if (!SetWindowPos(window, nullptr, 0, 0, rect.right - rect.left,
+		rect.bottom - rect.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSENDCHANGING))
+		pending_guest_resize = true;
 }
 
 void bx_win32_gui_c::reset_window_size()
@@ -2204,11 +2214,14 @@ void bx_win32_gui_c::toggle_fullscreen()
 	}
 	else
 	{
-		fullscreen = false;
+		// Keep intermediate WM_SIZE notifications from consuming a deferred
+		// guest resize before the saved window placement has been restored.
 		SetWindowLongPtr(window, GWL_STYLE, (style & ~WS_POPUP) | win32_window_style);
 		SetWindowPlacement(window, &windowed_placement);
 		SetWindowPos(window, nullptr, 0, 0, 0, 0,
 			SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE);
+		fullscreen = false;
+		if (pending_guest_resize) resize_window_to_guest();
 	}
 }
 
@@ -2313,6 +2326,10 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 		return 0;
 	case WM_SIZE:
 		reset_absolute_mouse_position();
+		// SIZE_RESTORED is also sent during manual resizing. Only apply a
+		// guest size that was deferred while minimized or maximized.
+		if (wparam == SIZE_RESTORED && pending_guest_resize)
+			resize_window_to_guest();
 		update_mouse_geometry();
 		InvalidateRect(hwnd, nullptr, FALSE);
 		return 0;
