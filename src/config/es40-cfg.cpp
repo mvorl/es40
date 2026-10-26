@@ -1125,6 +1125,7 @@ int main(int argc, char* argv[])
 	card_q.addAnswer("lsi scsi", "lsi53c1020",
 		"LSI 53C1020 Fusion-MPT Ultra320 SCSI controller NOT SRM BOOT CAPABLE");
 	card_q.addAnswer("es1370 audio", "es1370", "ES1370 Audio card (works only with Windows NT 4.0)");
+	card_q.addAnswer("es1371 audio", "es1371", "ES1371 Audio card with an AC'97 codec (requires an ES1371 guest driver)");
 
 	/* Loop until there are no more PCI
 	 * cards to add.

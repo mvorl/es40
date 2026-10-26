@@ -2208,6 +2208,7 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release JIT - SSE2|x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="..\src\audio\ES1370.cpp" />
+    <ClCompile Include="..\src\audio\ES1371.cpp" />
     <ClCompile Include="..\src\audio\MPU401.cpp" />
     <ClCompile Include="..\src\config\Configurator.cpp" />
     <ClCompile Include="..\src\network\DEC21143.cpp" />
@@ -2341,6 +2342,7 @@
     <ClInclude Include="..\src\system\DPR.h" />
     <ClInclude Include="..\src\emu\emu.h" />
     <ClInclude Include="..\src\audio\ES1370.h" />
+    <ClInclude Include="..\src\audio\ES1371.h" />
     <ClInclude Include="..\src\es40_debug.h" />
     <ClInclude Include="..\src\es40_endian.h" />
     <ClInclude Include="..\src\network\Ethernet.h" />

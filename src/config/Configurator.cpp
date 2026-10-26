@@ -162,6 +162,7 @@
 #include "storage/Sym53C895.h"
 #include "storage/Sym53C810.h"
 #include "audio/ES1370.h"
+#include "audio/ES1371.h"
 #include "audio/MPU401.h"
 
 #endif // !CONFIGURATION_ONLY
@@ -758,6 +759,7 @@ static const char* const kv_powerstorm[] = {
   "frame_file", 0 };
 static const char* const kv_lsi53c1020[] = { "flash", "rom", "firmware", 0 };
 static const char* const kv_es1370[] = { "latency_ms", 0 };
+static const char* const kv_es1371[] = { "latency_ms", 0 };
 static const char* const kv_dec21143[] = {
   "adapter", "mac", "queue", "crc", "trace_packets",
   "type", "autonegotiate_delay", "drop_privileges",
@@ -813,6 +815,7 @@ classinfo classes[] = {
   {"X11", c_x11, N_P | IS_GUI, kv_gui_x11},
   {"mpu401", c_mpu401, ON_CS, kv_mpu401},
   {"es1370", c_es1370, IS_PCI, kv_es1370},
+  {"es1371", c_es1371, IS_PCI, kv_es1371},
   {0, c_none, 0, 0}
 };
 
@@ -1074,6 +1077,10 @@ void CConfigurator::initialize()
 #if defined(HAVE_SDL)
 	case c_es1370:
 		myDevice = new CES1370(this, (CSystem*)pParent->get_device(), pcibus,
+			pcidev);
+		break;
+	case c_es1371:
+		myDevice = new CES1371(this, (CSystem*)pParent->get_device(), pcibus,
 			pcidev);
 		break;
 #endif

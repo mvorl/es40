@@ -2255,6 +2255,28 @@ void edit_pci_es1370(const char *title)
 
     edit_pcicard(title, "es1370", entry, ARRAY_SIZE(entry));
 }
+
+void validation_audio_latency(EditorField *field)
+{
+    editor_number(field, EditorField::Type::Integer, 1, 10, 500);
+}
+
+// Form for Ensoniq ES1371 PCI card
+void edit_pci_es1371(const char *title)
+{
+    FormEntry_t entry[] = {
+        {"PCI slot", NULL, NULL,
+         "Which PCI slot should the Ensoniq AudioPCI ES1371 sound card be on?\n"
+         "Only free PCI slots are listed.",
+         validation_pcislot},
+        {"Audio latency (ms)", "40", "latency_ms",
+         "How much playback audio should be queued on the host?\n"
+         "Use 10 to 500 milliseconds. The default is 40.",
+         validation_audio_latency}
+    };
+
+    edit_pcicard(title, "es1371", entry, ARRAY_SIZE(entry));
+}
 #endif // HAVE_SDL
 
 // Menu for PCI bus
@@ -2268,7 +2290,8 @@ void edit_pci(const char *title)
         {"Add LSI SCSI", "Add a LSI 53C1020 Fusion-MPT Ultra320 SCSI controller (NOT SRM BOOT CAPABLE!)", edit_pci_lsi53c1020}
 #ifdef HAVE_SDL
         ,
-        {"Add ES1370 Audio", "Add an Ensoniq AudioPCI ES1370 sound card (works only with Windows NT 4.0 guest)", edit_pci_es1370}
+        {"Add ES1370 Audio", "Add an Ensoniq AudioPCI ES1370 sound card (works only with Windows NT 4.0 guest)", edit_pci_es1370},
+        {"Add ES1371 Audio", "Add an Ensoniq AudioPCI ES1371 sound card with an AC'97 codec (requires an ES1371 guest driver)", edit_pci_es1371}
 #endif
     };
     int num_entries = ARRAY_SIZE(entry);

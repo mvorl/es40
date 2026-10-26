@@ -136,7 +136,7 @@ es40 includes the following third-party software.
 4. QEMU ES1370 emulation
    https://www.qemu.org/
 
-   Used in: ES1370
+   Used in: ES1370, ES1371
 
  * QEMU ES1370 emulation
  *

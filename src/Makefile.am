@@ -118,7 +118,7 @@ noinst_HEADERS = config/ConfigEditor.h config/ConfigDocument.h \
        CPU/jit/jitengine.h \
        CPU/jit/jitengine_internal.h
 
-noinst_HEADERS += audio/ES1370.h audio/MPU401.h
+noinst_HEADERS += audio/ES1370.h audio/ES1371.h audio/MPU401.h
 
 noinst_HEADERS += storage/Disk.h \
        storage/DiskController.h \
@@ -230,6 +230,7 @@ es40_SOURCES = chipset/AliM1543C.cpp \
        system/DPR.cpp \
        es40_debug.cpp \
        audio/ES1370.cpp \
+       audio/ES1371.cpp \
        network/Ethernet.cpp \
        system/Flash.cpp \
        storage/FloppyController.cpp \
