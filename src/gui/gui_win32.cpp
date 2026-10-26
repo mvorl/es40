@@ -123,7 +123,7 @@ static bool win32_grabbed_key(unsigned key)
 {
 	return key == VK_LWIN || key == VK_RWIN || key == VK_LCONTROL ||
 		key == VK_RCONTROL || key == VK_LMENU || key == VK_RMENU ||
-		key == VK_TAB || key == VK_ESCAPE;
+		key == VK_TAB || key == VK_ESCAPE || key == VK_SNAPSHOT;
 }
 
 struct win32_captured_key
@@ -138,6 +138,14 @@ struct win32_native_key
 	DWORD time;
 	unsigned key;
 	bool released, pending;
+};
+
+struct win32_raw_mouse_position
+{
+	long long x = 0, y = 0;
+	int screen_width = 0, screen_height = 0, screen_left = 0, screen_top = 0;
+	USHORT mode = 0;
+	bool valid = false;
 };
 
 struct win32_call
@@ -467,6 +475,7 @@ public:
 	void send_mouse(int dx, int dy, int dz, unsigned buttons);
 	void send_host_mouse(double dx, double dy, int dz, unsigned buttons);
 	void set_mouse_capture(bx_win32_gui_c* target);
+	void claim_fullscreen_monitor(bx_win32_gui_c* target);
 	void release_input_session();
 	void release_media_input();
 	bool media_key_event(UINT, WPARAM, LPARAM, bool synthetic_key = false);
@@ -512,6 +521,8 @@ private:
 	HWND dispatcher = nullptr;
 	HWND raw_mouse_target = nullptr;
 	unsigned mouse_capture_transition = 0;
+	bool fullscreen_handoff = false;
+	EXECUTION_STATE previous_execution_state = 0;
 	std::atomic<bool> running{ false };
 	CKeyboard* keyboard = nullptr;
 	CSystem* system = nullptr;
@@ -611,7 +622,7 @@ private:
 	void mouse_event(int, int, int, unsigned, bool motion = false);
 	void raw_mouse_event(HRAWINPUT);
 	void reset_absolute_mouse_position()
-		{ if (application.mouse_absolute) mouse_position_valid = false; }
+		{ mouse_position_valid = false; raw_mouse_positions.clear(); }
 	bool confine_mouse();
 	void toggle_fullscreen();
 	LRESULT window_event(HWND, UINT, WPARAM, LPARAM, bool synthetic_key = false);
@@ -631,10 +642,12 @@ private:
 	int paint_width = 0, paint_height = 0;
 	int mouse_last_x = 0, mouse_last_y = 0;
 	bool mouse_position_valid = false, mouse_tracking = false;
+	std::map<HANDLE, win32_raw_mouse_position> raw_mouse_positions;
 	int wheel_remainder = 0;
 	unsigned ignored_mouse_buttons = 0;
 	bool retired = false;
 	bool fullscreen = false;
+	bool fullscreen_transition = false;
 	WINDOWPLACEMENT windowed_placement = { sizeof(WINDOWPLACEMENT) };
 };
 
@@ -1071,6 +1084,11 @@ void win32_application::initialize()
 	keyboard = theKeyboard;
 	system = theSystem;
 	if (keyboard) keyboard->set_mouse_capture(false);
+	// Match SDL's default: guest video keeps the host display on even when
+	// there is no host input. Restore the caller's thread state at shutdown.
+	previous_execution_state = SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED);
+	if (!previous_execution_state)
+		printf("%%WIN32-W-DISPLAYPOWER: Unable to prevent host display blanking.\n");
 	running.store(true, std::memory_order_release);
 }
 
@@ -1775,7 +1793,7 @@ bool win32_application::set_raw_mouse_target(HWND target)
 	if (raw_mouse_target == target) return true;
 	// Keep legacy buttons and wheel events, and receive motion only while
 	// this application is in the foreground. These APIs predate Windows 7.
-	RAWINPUTDEVICE mouse = { 0x01, 0x02, target ? 0u : RIDEV_REMOVE, target };
+	RAWINPUTDEVICE mouse = { 0x01, 0x02, target ? DWORD(RIDEV_DEVNOTIFY) : DWORD(RIDEV_REMOVE), target };
 	if (!RegisterRawInputDevices(&mouse, 1, sizeof(mouse)))
 	{
 		printf("%%WIN32-W-RAWMOUSE: Unable to %s raw mouse input (error %lu).\n",
@@ -1982,7 +2000,16 @@ RECT bx_win32_gui_c::window_rect_for_client(int client_width, int client_height)
 
 void bx_win32_gui_c::resize_window_to_guest()
 {
-	if (!window || retired || fullscreen) return;
+	if (!window || retired) return;
+	if (fullscreen)
+	{
+		// A mode change while fullscreen must survive the return to a saved
+		// maximized/minimized window. A normal saved rectangle stays manual.
+		if (windowed_placement.showCmd == SW_SHOWMAXIMIZED ||
+			windowed_placement.showCmd == SW_SHOWMINIMIZED)
+			pending_guest_resize = true;
+		return;
+	}
 	if (IsZoomed(window) || IsIconic(window))
 	{
 		pending_guest_resize = true;
@@ -2175,18 +2202,56 @@ bool bx_win32_gui_c::confine_mouse()
 
 void bx_win32_gui_c::raw_mouse_event(HRAWINPUT handle)
 {
-	if (application.mouse_absolute || application.capture_owner != this) return;
+	if (application.mouse_absolute || application.input_paused || application.capture_owner != this) return;
 	RAWINPUT input = {};
 	UINT size = sizeof(input);
 	if (GetRawInputData(handle, RID_INPUT, &input, &size, sizeof(RAWINPUTHEADER)) != sizeof(input) ||
 		input.header.dwSize != sizeof(input) || input.header.dwType != RIM_TYPEMOUSE) return;
 	const RAWMOUSE& mouse = input.data.mouse;
-	// Absolute-device coordinates are not relative counts. Such input uses
-	// the existing mouse.absolute window-coordinate path instead.
-	if (mouse.usFlags & MOUSE_MOVE_ABSOLUTE) return;
-	if (mouse.lLastX || mouse.lLastY)
-		application.send_host_mouse((double)mouse.lLastX, -(double)mouse.lLastY,
-			0, application.mouse_buttons);
+	if (!(mouse.usFlags & MOUSE_MOVE_ABSOLUTE))
+	{
+		// A source can switch modes; relative counts cannot extend its last
+		// absolute position. Other devices keep their independent baselines.
+		raw_mouse_positions.erase(input.header.hDevice);
+		if (mouse.lLastX || mouse.lLastY)
+			application.send_host_mouse((double)mouse.lLastX, -(double)mouse.lLastY,
+				0, application.mouse_buttons);
+		return;
+	}
+
+	// Like SDL, accept local absolute-reporting mice/tablets in relative mode.
+	// Some sources use pixel coordinates (0x40), otherwise Windows normalizes
+	// them to 0..65535 over the primary display or the whole virtual desktop.
+	static constexpr USHORT raw_coordinates = 0x40;
+	const USHORT mode = mouse.usFlags & (MOUSE_VIRTUAL_DESKTOP | raw_coordinates);
+	const bool virtual_desktop = (mode & MOUSE_VIRTUAL_DESKTOP) != 0;
+	const int screen_width = GetSystemMetrics(virtual_desktop ? SM_CXVIRTUALSCREEN : SM_CXSCREEN);
+	const int screen_height = GetSystemMetrics(virtual_desktop ? SM_CYVIRTUALSCREEN : SM_CYSCREEN);
+	const int screen_left = virtual_desktop ? GetSystemMetrics(SM_XVIRTUALSCREEN) : 0;
+	const int screen_top = virtual_desktop ? GetSystemMetrics(SM_YVIRTUALSCREEN) : 0;
+	if (screen_width <= 0 || screen_height <= 0 ||
+		(!(mode & raw_coordinates) && (mouse.lLastX < 0 || mouse.lLastX > 65535 ||
+		 mouse.lLastY < 0 || mouse.lLastY > 65535)))
+	{
+		raw_mouse_positions.erase(input.header.hDevice);
+		return;
+	}
+	const long long x = (mode & raw_coordinates) ? mouse.lLastX :
+		(long long)mouse.lLastX * screen_width / 65535;
+	const long long y = (mode & raw_coordinates) ? mouse.lLastY :
+		(long long)mouse.lLastY * screen_height / 65535;
+	auto& position = raw_mouse_positions[input.header.hDevice];
+	const bool continue_motion = position.valid && !(mouse.usFlags & MOUSE_ATTRIBUTES_CHANGED) &&
+		position.mode == mode && position.screen_width == screen_width &&
+		position.screen_height == screen_height && position.screen_left == screen_left &&
+		position.screen_top == screen_top;
+	const long long dx = x - position.x, dy = y - position.y;
+	position = { x, y, screen_width, screen_height, screen_left, screen_top, mode, true };
+	// Seed a new source/coordinate space, and ignore tablet lift/drop jumps.
+	// Retain the new position after a rejected jump so normal motion resumes.
+	if (!continue_motion || dx < -32 || dx > 32 || dy < -32 || dy > 32) return;
+	if (dx || dy)
+		application.send_host_mouse((double)dx, -(double)dy, 0, application.mouse_buttons);
 }
 
 void bx_win32_gui_c::mouse_event(int x, int y, int z, unsigned flags, bool motion)
@@ -2213,6 +2278,26 @@ void bx_win32_gui_c::mouse_event(int x, int y, int z, unsigned flags, bool motio
 	application.send_host_mouse(dx, dy, z, buttons);
 }
 
+void win32_application::claim_fullscreen_monitor(bx_win32_gui_c* target)
+{
+	if (fullscreen_handoff || !target || !target->window || target->retired ||
+		!target->fullscreen || target->fullscreen_transition || IsIconic(target->window)) return;
+	const HMONITOR monitor = MonitorFromWindow(target->window, MONITOR_DEFAULTTONEAREST);
+	struct handoff_guard
+	{
+		bool& active;
+		explicit handoff_guard(bool& value) : active(value) { active = true; }
+		~handoff_guard() { active = false; }
+	} guard(fullscreen_handoff);
+	// Like SDL, one visible fullscreen output owns each host monitor. Keep
+	// the other output's fullscreen state so restoring it can claim it back.
+	for (const auto& display : displays)
+		if (display.get() != target && display->window && !display->retired &&
+			display->fullscreen && !display->fullscreen_transition && !IsIconic(display->window) &&
+			MonitorFromWindow(display->window, MONITOR_DEFAULTTONEAREST) == monitor)
+			ShowWindow(display->window, SW_MINIMIZE);
+}
+
 void bx_win32_gui_c::toggle_fullscreen()
 {
 	const LONG_PTR style = GetWindowLongPtr(window, GWL_STYLE);
@@ -2221,6 +2306,7 @@ void bx_win32_gui_c::toggle_fullscreen()
 		MONITORINFO monitor = { sizeof(MONITORINFO) };
 		if (!GetMonitorInfo(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor)) return;
 		if (!GetWindowPlacement(window, &windowed_placement)) return;
+		fullscreen_transition = true;
 		fullscreen = true;
 		SetWindowLongPtr(window, GWL_STYLE,
 			(style & ~(win32_window_style | WS_MAXIMIZE | WS_MINIMIZE)) | WS_POPUP);
@@ -2228,16 +2314,20 @@ void bx_win32_gui_c::toggle_fullscreen()
 			monitor.rcMonitor.right - monitor.rcMonitor.left,
 			monitor.rcMonitor.bottom - monitor.rcMonitor.top,
 			SWP_FRAMECHANGED | SWP_NOZORDER);
+		fullscreen_transition = false;
+		application.claim_fullscreen_monitor(this);
 	}
 	else
 	{
 		// Keep intermediate WM_SIZE notifications from consuming a deferred
 		// guest resize before the saved window placement has been restored.
+		fullscreen_transition = true;
 		SetWindowLongPtr(window, GWL_STYLE, (style & ~WS_POPUP) | win32_window_style);
 		SetWindowPlacement(window, &windowed_placement);
 		SetWindowPos(window, nullptr, 0, 0, 0, 0,
 			SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE);
 		fullscreen = false;
+		fullscreen_transition = false;
 		if (pending_guest_resize) resize_window_to_guest();
 	}
 }
@@ -2303,9 +2393,18 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 		if (GET_RAWINPUT_CODE_WPARAM(wparam) == RIM_INPUT)
 			raw_mouse_event((HRAWINPUT)lparam);
 		return 0;
+	case WM_INPUT_DEVICE_CHANGE:
+		raw_mouse_positions.erase((HANDLE)lparam);
+		return 0;
 	case WM_CLOSE:
 		application.request_shutdown();
 		return 0;
+	case WM_SYSCOMMAND:
+		// SetThreadExecutionState handles display power; screen savers also
+		// require suppressing their window command, as in SDL's Windows driver.
+		if ((wparam & 0xfff0) == SC_SCREENSAVE || (wparam & 0xfff0) == SC_MONITORPOWER)
+			return 0;
+		break;
 	case WM_SETFOCUS:
 		reset_absolute_mouse_position();
 		if (application.capture_owner && application.capture_owner != this)
@@ -2335,14 +2434,18 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 		application.poll_input();
 		return 0;
 	case WM_DISPLAYCHANGE:
+		reset_absolute_mouse_position();
+		application.claim_fullscreen_monitor(this);
 		update_mouse_geometry();
 		return 0;
 	case WM_MOVE:
 		reset_absolute_mouse_position();
+		application.claim_fullscreen_monitor(this);
 		update_mouse_geometry();
 		return 0;
 	case WM_SIZE:
 		reset_absolute_mouse_position();
+		if (wparam != SIZE_MINIMIZED) application.claim_fullscreen_monitor(this);
 		// SIZE_RESTORED is also sent during manual resizing. Only apply a
 		// guest size that was deferred while minimized or maximized.
 		if (wparam == SIZE_RESTORED && pending_guest_resize)
@@ -2541,6 +2644,11 @@ void bx_win32_gui_c::exit()
 void win32_application::exit_displays()
 {
 	shutting_down = true;
+	if (previous_execution_state)
+	{
+		SetThreadExecutionState(previous_execution_state | ES_CONTINUOUS);
+		previous_execution_state = 0;
+	}
 	set_keyboard_capture(false);
 	media.shutdown();
 	for (const auto& display : displays) display->exit_impl();

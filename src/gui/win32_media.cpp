@@ -494,6 +494,12 @@ struct win32_media_selector::state : std::enable_shared_from_this<state>
             }
             return 0;
         }
+        case WM_SYSCOMMAND:
+            // The focused media popup needs the same display-power policy as
+            // guest windows; the application owns the execution-state request.
+            if ((wparam & 0xfff0) == SC_SCREENSAVE || (wparam & 0xfff0) == SC_MONITORPOWER)
+                return 0;
+            break;
         case WM_CLOSE: close_popup(); return 0;
         case WM_KILLFOCUS:
             swallow_pointer = swallow_pointer || pointer_down();
