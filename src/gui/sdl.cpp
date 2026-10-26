@@ -256,6 +256,7 @@ private:
 	void           unregister_window() noexcept;
 	// Main-thread lookup; the result borrows the display's existing lifetime.
 	static bx_sdl_gui_c* find_window_owner(SDL_WindowID window_id);
+	bool           set_fullscreen(bool enabled);
 	void           reset_window_size();
 	void           adjust_window_scale(int delta);
 	void           load_hotkeys();
@@ -443,6 +444,7 @@ struct sdl_keyboard_input_state
 	u32 guest_key_by_scancode[SDL_SCANCODE_COUNT] = {};
 	bool guest_key_pressed[SDL_SCANCODE_COUNT] = {};
 	bool swallowed_hotkey_releases[SDL_SCANCODE_COUNT] = {};
+	bool fullscreen_hotkey_pressed[SDL_SCANCODE_COUNT] = {};
 	bool reconciled_key_releases[SDL_SCANCODE_COUNT] = {};
 };
 static sdl_keyboard_input_state sdl_keyboard_input;
@@ -1181,6 +1183,8 @@ void sdl_event_dispatcher::clear_hotkey_release_state()
 {
 	memset(sdl_keyboard_input.swallowed_hotkey_releases, 0,
 		sizeof(sdl_keyboard_input.swallowed_hotkey_releases));
+	memset(sdl_keyboard_input.fullscreen_hotkey_pressed, 0,
+		sizeof(sdl_keyboard_input.fullscreen_hotkey_pressed));
 }
 
 void sdl_event_dispatcher::reconcile_hotkey_release_state()
@@ -1192,7 +1196,10 @@ void sdl_event_dispatcher::reconcile_hotkey_release_state()
 	for (int i = 0; i < SDL_SCANCODE_COUNT; i++)
 	{
 		if (sdl_keyboard_input.swallowed_hotkey_releases[i] && !keys[i])
+		{
 			sdl_keyboard_input.swallowed_hotkey_releases[i] = false;
+			sdl_keyboard_input.fullscreen_hotkey_pressed[i] = false;
+		}
 	}
 }
 
@@ -1349,6 +1356,7 @@ void sdl_event_dispatcher::dispatch(const SDL_Event& event)
 			 sdl_keyboard_input.reconciled_key_releases[event.key.scancode]))
 		{
 			sdl_keyboard_input.swallowed_hotkey_releases[event.key.scancode] = false;
+			sdl_keyboard_input.fullscreen_hotkey_pressed[event.key.scancode] = false;
 			sdl_keyboard_input.reconciled_key_releases[event.key.scancode] = false;
 			return;
 		}
@@ -1420,6 +1428,8 @@ void sdl_event_dispatcher::dispatch(const SDL_Event& event)
 	case SDL_EVENT_WINDOW_MOVED:
 	case SDL_EVENT_WINDOW_RESIZED:
 	case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+	case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+	case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
 	{
 		bx_sdl_gui_c* owner = bx_sdl_gui_c::find_window_owner(event.window.windowID);
 		if (owner)
@@ -1544,10 +1554,12 @@ void bx_sdl_gui_c::handle_keyboard_event_impl(const SDL_Event& event)
 	switch (event.type)
 	{
 	case SDL_EVENT_KEY_DOWN:
-		// A queued repeat cannot restart a press already released from SDL state.
+		// A queued repeat cannot restart a reconciled press or turn a held
+		// fullscreen trigger into guest input/another shortcut after Alt is up.
 		if (event.key.repeat && event.key.scancode > SDL_SCANCODE_UNKNOWN &&
 			event.key.scancode < SDL_SCANCODE_COUNT &&
-			sdl_keyboard_input.reconciled_key_releases[event.key.scancode])
+			(sdl_keyboard_input.reconciled_key_releases[event.key.scancode] ||
+			 sdl_keyboard_input.fullscreen_hotkey_pressed[event.key.scancode]))
 			break;
 		if (hotkey_ctrl_alt_delete.matches(event.key))
 		{
@@ -1596,6 +1608,25 @@ void bx_sdl_gui_c::handle_keyboard_event_impl(const SDL_Event& event)
 				sdl_event_dispatcher::suppress_hotkey_releases(event.key,
 					hotkey_mouse_capture, true);
 				set_mouse_capture_impl(!sdl_mouse_input.captured);
+			}
+			break;
+		}
+
+		// Match Win32's Alt+Enter desktop-fullscreen shortcut, after the
+		// configurable bindings so an explicit user binding takes precedence.
+		if ((event.key.key == SDLK_RETURN || event.key.key == SDLK_KP_ENTER) &&
+			(event.key.mod & SDL_KMOD_ALT))
+		{
+			if (!event.key.repeat)
+			{
+				if (event.key.scancode > SDL_SCANCODE_UNKNOWN &&
+					event.key.scancode < SDL_SCANCODE_COUNT)
+				{
+					sdl_event_dispatcher::release_guest_key(event.key.scancode);
+					sdl_keyboard_input.swallowed_hotkey_releases[event.key.scancode] = true;
+					sdl_keyboard_input.fullscreen_hotkey_pressed[event.key.scancode] = true;
+				}
+				set_fullscreen(!(SDL_GetWindowFlags(sdl_window) & SDL_WINDOW_FULLSCREEN));
 			}
 			break;
 		}
@@ -1789,6 +1820,17 @@ void bx_sdl_gui_c::handle_display_event_impl(const SDL_Event& event)
 		redraw_impl();
 		break;
 	case SDL_EVENT_WINDOW_RESTORED:
+		// Entering fullscreen from a maximized window can emit RESTORED.
+		// SDL owns that transition and the saved windowed geometry.
+		if (SDL_GetWindowFlags(sdl_window) & SDL_WINDOW_FULLSCREEN)
+		{
+			reset_absolute_mouse_position();
+			redraw_impl();
+			break;
+		}
+		if (res_x > 0 && res_y > 0)
+			dimension_update(res_x, res_y);
+		break;
 	case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
 		if (res_x > 0 && res_y > 0)
 			dimension_update(res_x, res_y);
@@ -1798,6 +1840,8 @@ void bx_sdl_gui_c::handle_display_event_impl(const SDL_Event& event)
 	case SDL_EVENT_WINDOW_MOVED:
 	case SDL_EVENT_WINDOW_RESIZED:
 	case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+	case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+	case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
 		// Host window changes invalidate local coordinates, not the guest mode
 		// or the one shared mouse stream's accumulated movement.
 		reset_absolute_mouse_position();
@@ -1910,7 +1954,11 @@ void bx_sdl_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheigh
 	}
 	else
 	{
-		SDL_SetWindowSize(sdl_window, (int)scaled_x, (int)scaled_y);
+		// SDL remembers the windowed geometry across fullscreen transitions.
+		// Guest mode/scale changes still update the texture and reset size,
+		// but must not overwrite that geometry while fullscreen.
+		if (!(SDL_GetWindowFlags(sdl_window) & SDL_WINDOW_FULLSCREEN))
+			SDL_SetWindowSize(sdl_window, (int)scaled_x, (int)scaled_y);
 		SDL_SetRenderLogicalPresentation(sdl_renderer,
 			(int)x, (int)y,
 			SDL_LOGICAL_PRESENTATION_LETTERBOX);
@@ -1948,6 +1996,24 @@ void bx_sdl_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheigh
 	last_driven_h = (int)scaled_y;
 }
 
+bool bx_sdl_gui_c::set_fullscreen(bool enabled)
+{
+	if (!sdl_window)
+		return false;
+
+	// A null display mode selects borderless desktop fullscreen, retaining
+	// the monitor's resolution and SDL's saved windowed size/position.
+	if ((enabled && !SDL_SetWindowFullscreenMode(sdl_window, NULL)) ||
+		!SDL_SetWindowFullscreen(sdl_window, enabled))
+	{
+		printf("%%SDL-W-FULLSCREEN: Unable to %s fullscreen: %s\n",
+			enabled ? "enter" : "leave", SDL_GetError());
+		return false;
+	}
+	reset_absolute_mouse_position();
+	return true;
+}
+
 void bx_sdl_gui_c::reset_window_size()
 {
 	if (!sdl_window || last_driven_w == 0 || last_driven_h == 0)
@@ -1955,8 +2021,11 @@ void bx_sdl_gui_c::reset_window_size()
 
 	reset_absolute_mouse_position();
 	SDL_WindowFlags flags = SDL_GetWindowFlags(sdl_window);
-	if (flags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN))
+	// In fullscreen, RestoreWindow also clears a saved maximized state.
+	if (flags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_MINIMIZED | SDL_WINDOW_FULLSCREEN))
 		SDL_RestoreWindow(sdl_window);
+	if ((flags & SDL_WINDOW_FULLSCREEN) && !set_fullscreen(false))
+		return;
 
 	SDL_SetWindowSize(sdl_window, last_driven_w, last_driven_h);
 }
@@ -1979,15 +2048,19 @@ void bx_sdl_gui_c::adjust_window_scale(int delta)
 	if (next > runtime_scale_max) next = runtime_scale_max;
 	if (next == runtime_scale_override) return;  // no change
 
-	runtime_scale_override = next;
-
 	if (sdl_window && res_x > 0 && res_y > 0)
 	{
 		SDL_WindowFlags flags = SDL_GetWindowFlags(sdl_window);
-		if (flags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN))
+		if (flags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_MINIMIZED | SDL_WINDOW_FULLSCREEN))
 			SDL_RestoreWindow(sdl_window);
+		if ((flags & SDL_WINDOW_FULLSCREEN) && !set_fullscreen(false))
+			return;
+		runtime_scale_override = next;
 		dimension_update(res_x, res_y);
+		reset_window_size();
 	}
+	else
+		runtime_scale_override = next;
 }
 
 void bx_sdl_gui_c::mouse_enabled_changed_specific(bool val)
