@@ -462,6 +462,7 @@ public:
 	void send_key(unsigned scan, bool released, unsigned host_key = 0, unsigned virtual_key = 0);
 	bool consume_hotkey_key(unsigned scan, bool released, bool repeat, bool allow_repeat = false);
 	void suppress_hotkey_keys(unsigned scan, unsigned modifiers, bool release_modifiers = true);
+	void suppress_fullscreen_key(unsigned scan);
 	void send_ctrl_alt_delete();
 	void send_mouse(int dx, int dy, int dz, unsigned buttons);
 	void send_host_mouse(double dx, double dy, int dz, unsigned buttons);
@@ -529,6 +530,7 @@ private:
 	bool reconciled_key_releases[512] = {};
 	bool pending_keyboard_releases[512] = {};
 	bool swallowed_hotkey_keys[512] = {};
+	bool fullscreen_hotkey_pressed[512] = {};
 	// Physical press history survives guest releases at focus/dialog barriers.
 	bool print_screen_down_seen = false;
 	// Keep physical Control provenance separate from guest/session releases.
@@ -1669,7 +1671,15 @@ bool win32_application::consume_hotkey_key(unsigned scan, bool released, bool re
 	if (!released && !repeat)
 	{
 		swallowed_hotkey_keys[scan] = false;
+		fullscreen_hotkey_pressed[scan] = false;
 		reconciled_key_releases[scan] = false;
+	}
+	// Fullscreen owns the whole press, even if releasing Alt makes a scale
+	// shortcut match. Keep this state across focus changes and output windows.
+	if (fullscreen_hotkey_pressed[scan])
+	{
+		if (released) fullscreen_hotkey_pressed[scan] = false;
+		return true;
 	}
 	// A delayed key-up or repeat must not revive a repaired press.
 	if (reconciled_key_releases[scan]) return true;
@@ -1677,6 +1687,13 @@ bool win32_application::consume_hotkey_key(unsigned scan, bool released, bool re
 	if (!released && repeat && allow_repeat) return false;
 	if (released) swallowed_hotkey_keys[scan] = false;
 	return true;
+}
+
+void win32_application::suppress_fullscreen_key(unsigned scan)
+{
+	if (input_paused || scan >= 512) return;
+	send_key(scan, true);
+	fullscreen_hotkey_pressed[scan] = true;
 }
 
 void win32_application::suppress_hotkey_keys(unsigned scan, unsigned modifiers,
@@ -2435,7 +2452,11 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 		}
 		if (wparam == VK_RETURN && (HIWORD(lparam) & KF_ALTDOWN))
 		{
-			if (!(lparam & (1L << 30))) toggle_fullscreen();
+			if (!(lparam & (1L << 30)))
+			{
+				application.suppress_fullscreen_key(scan);
+				toggle_fullscreen();
+			}
 			return 0;
 		}
 		application.send_key(scan, false, win32_host_mapping_key(wparam, scan), (unsigned)wparam);

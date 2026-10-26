@@ -108,6 +108,7 @@ struct win32_media_selector::state : std::enable_shared_from_this<state>
         window = nullptr;
         page = mode::closed;
         devices.clear(); device.reset(); pending_path.clear(); rows.clear();
+        message.clear(); reset_button = {};
         pending_eject = false;
         if (old)
         {
@@ -116,6 +117,15 @@ struct win32_media_selector::state : std::enable_shared_from_this<state>
             if (release_input) release_input();
             if (restore_focus && had_focus && IsWindow(parent)) SetFocus(parent);
         }
+    }
+
+    void failed_popup(const char* reason) noexcept
+    {
+        printf("%%WIN32-W-MEDIA: Could not open the removable-media selector: %s\n", reason);
+        // Setup can fail after the native window exists. Retire it and the
+        // selection before returning to the guest, so the next toggle can retry.
+        try { close_popup(); }
+        catch (...) { printf("%%WIN32-W-MEDIA: Could not release media-selector input.\n"); }
     }
 
     void close()
@@ -160,7 +170,7 @@ struct win32_media_selector::state : std::enable_shared_from_this<state>
                          (std::max)(0, ((int)bounds.bottom - height) / 2) };
         ClientToScreen(parent, &origin);
         SetWindowPos(window, nullptr, origin.x, origin.y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
-        InvalidateRect(window, nullptr, FALSE);
+        if (window) InvalidateRect(window, nullptr, FALSE);
     }
 
     void create_popup()
@@ -169,15 +179,20 @@ struct win32_media_selector::state : std::enable_shared_from_this<state>
         WNDCLASSA wc = {};
         wc.lpfnWndProc = window_proc; wc.hInstance = GetModuleHandle(nullptr);
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW); wc.lpszClassName = media_class;
-        if (!RegisterClassA(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
-            FAILURE(Win32, "Unable to register media selector window class");
+        if (!RegisterClassA(&wc))
+        {
+            const DWORD error = GetLastError();
+            if (error != ERROR_CLASS_ALREADY_EXISTS)
+                FAILURE_1(Win32, "Unable to register media selector window class (error %lu)", error);
+        }
         layout();
         window = CreateWindowExA(WS_EX_TOOLWINDOW, media_class, "ES40 Media", WS_POPUP,
             0, 0, width, height, parent, nullptr, wc.hInstance, this);
-        if (!window) FAILURE(Win32, "Unable to create media selector window");
+        if (!window) FAILURE_1(Win32, "Unable to create media selector window (error %lu)", GetLastError());
         update();
-        ShowWindow(window, SW_SHOW);
-        SetFocus(window);
+        // Native callbacks can already have dismissed a failed popup.
+        if (window) ShowWindow(window, SW_SHOW);
+        if (window) SetFocus(window);
     }
 
     void show_message(const std::string& text)
@@ -390,7 +405,8 @@ struct win32_media_selector::state : std::enable_shared_from_this<state>
         case mode::locked:
             title = "CD-ROM media locked";
             subtitle = pending_eject ? "The guest locked this CD-ROM; eject requires an override." :
-                (!pending_path.empty() ? "The guest locked this CD-ROM while the file selector was open." : "The selected CD-ROM is locked by the guest.");
+                (!pending_path.empty() ? "The guest locked this CD-ROM while the file selector was open." :
+                    (device ? device->label() + " is locked by the guest." : "The selected CD-ROM is locked by the guest."));
             break;
         default: subtitle = message; break;
         }
@@ -565,12 +581,18 @@ void win32_media_selector::toggle(HWND parent)
 {
     if (impl->stopping || impl->dialog_open) return;
     if (impl->window) { impl->close_popup(); return; }
-    impl->parent = parent;
-    impl->devices = disk_file_removable_media();
-    impl->page = state::mode::devices;
-    impl->selected = impl->device_selection = impl->first_visible = 0;
-    impl->swallow_pointer = false;
-    impl->create_popup();
+    try
+    {
+        impl->parent = parent;
+        impl->devices = disk_file_removable_media();
+        impl->page = state::mode::devices;
+        impl->selected = impl->device_selection = impl->first_visible = 0;
+        impl->swallow_pointer = false;
+        impl->create_popup();
+    }
+    catch (const CException& error) { impl->failed_popup(error.message().c_str()); }
+    catch (const std::exception& error) { impl->failed_popup(error.what()); }
+    catch (...) { impl->failed_popup("Unknown media-selector error."); }
 }
 
 bool win32_media_selector::filter_message(UINT msg, WPARAM, LPARAM)
