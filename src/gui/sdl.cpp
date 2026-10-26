@@ -218,6 +218,10 @@ private:
 	unsigned       res_x = 0, res_y = 0;
 	unsigned       half_res_x = 0, half_res_y = 0;
 	int            last_driven_w = 0, last_driven_h = 0;
+	bool           pending_guest_resize = false;
+	bool           fullscreen_requested = false;
+	bool           fullscreen_transition_pending = false;
+	bool           fullscreen_windowed_deferred = false;
 	int            runtime_scale_override = 0;  // 0 = use the configured/display scale
 	unsigned int   vid_scale = 0;
 	bool           vid_linear = true;
@@ -257,6 +261,8 @@ private:
 	// Main-thread lookup; the result borrows the display's existing lifetime.
 	static bx_sdl_gui_c* find_window_owner(SDL_WindowID window_id);
 	bool           set_fullscreen(bool enabled);
+	bool           restore_window_for_resize();
+	void           resize_window_to_guest();
 	void           reset_window_size();
 	void           adjust_window_scale(int delta);
 	void           load_hotkeys();
@@ -1626,7 +1632,9 @@ void bx_sdl_gui_c::handle_keyboard_event_impl(const SDL_Event& event)
 					sdl_keyboard_input.swallowed_hotkey_releases[event.key.scancode] = true;
 					sdl_keyboard_input.fullscreen_hotkey_pressed[event.key.scancode] = true;
 				}
-				set_fullscreen(!(SDL_GetWindowFlags(sdl_window) & SDL_WINDOW_FULLSCREEN));
+				const bool fullscreen = fullscreen_transition_pending ? fullscreen_requested :
+					(SDL_GetWindowFlags(sdl_window) & SDL_WINDOW_FULLSCREEN) != 0;
+				set_fullscreen(!fullscreen);
 			}
 			break;
 		}
@@ -1820,28 +1828,36 @@ void bx_sdl_gui_c::handle_display_event_impl(const SDL_Event& event)
 		redraw_impl();
 		break;
 	case SDL_EVENT_WINDOW_RESTORED:
-		// Entering fullscreen from a maximized window can emit RESTORED.
-		// SDL owns that transition and the saved windowed geometry.
-		if (SDL_GetWindowFlags(sdl_window) & SDL_WINDOW_FULLSCREEN)
-		{
-			reset_absolute_mouse_position();
-			redraw_impl();
-			break;
-		}
-		if (res_x > 0 && res_y > 0)
-			dimension_update(res_x, res_y);
+		// Preserve manual geometry and the existing texture on an ordinary
+		// restore. Only a deferred guest/scale change requests a new size.
+		reset_absolute_mouse_position();
+		resize_window_to_guest();
+		redraw_impl();
 		break;
 	case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
 		if (res_x > 0 && res_y > 0)
 			dimension_update(res_x, res_y);
 		break;
+	case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+	case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
+	{
+		// Events can be queued behind a newer fullscreen request. Consult the
+		// current flags before releasing its resize barrier.
+		const bool fullscreen = (SDL_GetWindowFlags(sdl_window) & SDL_WINDOW_FULLSCREEN) != 0;
+		if (!fullscreen_transition_pending)
+			fullscreen_requested = fullscreen;
+		else if ((event.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN) == fullscreen_requested &&
+			fullscreen == fullscreen_requested)
+			fullscreen_transition_pending = false;
+		resize_window_to_guest();
+		reset_absolute_mouse_position();
+		break;
+	}
 	case SDL_EVENT_WINDOW_MOUSE_ENTER:
 	case SDL_EVENT_WINDOW_MOUSE_LEAVE:
 	case SDL_EVENT_WINDOW_MOVED:
 	case SDL_EVENT_WINDOW_RESIZED:
 	case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
-	case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
-	case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
 		// Host window changes invalidate local coordinates, not the guest mode
 		// or the one shared mouse stream's accumulated movement.
 		reset_absolute_mouse_position();
@@ -1921,6 +1937,9 @@ void bx_sdl_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheigh
 
 	scaled_x = x * content_scale;
 	scaled_y = y * content_scale;
+	const bool existing_window = sdl_window != NULL;
+	const bool target_changed = x != res_x || y != res_y ||
+		(int)scaled_x != last_driven_w || (int)scaled_y != last_driven_h;
 
 	// Keep first-time resources local until the complete display is ready.
 	// Failure unwinds on this main thread and leaves creation retryable.
@@ -1954,11 +1973,6 @@ void bx_sdl_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheigh
 	}
 	else
 	{
-		// SDL remembers the windowed geometry across fullscreen transitions.
-		// Guest mode/scale changes still update the texture and reset size,
-		// but must not overwrite that geometry while fullscreen.
-		if (!(SDL_GetWindowFlags(sdl_window) & SDL_WINDOW_FULLSCREEN))
-			SDL_SetWindowSize(sdl_window, (int)scaled_x, (int)scaled_y);
 		SDL_SetRenderLogicalPresentation(sdl_renderer,
 			(int)x, (int)y,
 			SDL_LOGICAL_PRESENTATION_LETTERBOX);
@@ -1982,6 +1996,10 @@ void bx_sdl_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheigh
 		register_window(new_window.get());
 		sdl_window = new_window.release();
 		sdl_renderer = new_renderer.release();
+		pending_guest_resize = false;
+		fullscreen_requested = false;
+		fullscreen_transition_pending = false;
+		fullscreen_windowed_deferred = false;
 	}
 	sdl_texture = new_texture.release();
 
@@ -1990,28 +2008,82 @@ void bx_sdl_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheigh
 	half_res_x = x / 2;
 	half_res_y = y / 2;
 
-	// Remember the actual OS-pixel size we just drove the window to,
-	// so the reset-window hotkey can snap back here after a manual resize.
+	// Remember the requested size even while fullscreen or maximized.
 	last_driven_w = (int)scaled_x;
 	last_driven_h = (int)scaled_y;
+	if (existing_window && target_changed)
+	{
+		const bool in_fullscreen = fullscreen_requested ||
+			(SDL_GetWindowFlags(sdl_window) & SDL_WINDOW_FULLSCREEN);
+		// A normal-window fullscreen roundtrip preserves its saved rectangle.
+		// A maximized/minimized origin still owes a resize on normal restore.
+		if (!in_fullscreen || fullscreen_windowed_deferred)
+			pending_guest_resize = true;
+	}
+	resize_window_to_guest();
 }
 
 bool bx_sdl_gui_c::set_fullscreen(bool enabled)
 {
 	if (!sdl_window)
 		return false;
+	const SDL_WindowFlags flags = SDL_GetWindowFlags(sdl_window);
+	const bool was_requested = fullscreen_requested;
+	const bool was_transition_pending = fullscreen_transition_pending;
+	const bool was_windowed_deferred = fullscreen_windowed_deferred;
+	if (enabled && !fullscreen_requested && !(flags & SDL_WINDOW_FULLSCREEN))
+		fullscreen_windowed_deferred = (flags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_MINIMIZED)) != 0;
+	// Guard synchronous callbacks as well as platforms that complete later.
+	fullscreen_requested = enabled;
+	fullscreen_transition_pending = true;
 
 	// A null display mode selects borderless desktop fullscreen, retaining
 	// the monitor's resolution and SDL's saved windowed size/position.
 	if ((enabled && !SDL_SetWindowFullscreenMode(sdl_window, NULL)) ||
 		!SDL_SetWindowFullscreen(sdl_window, enabled))
 	{
+		fullscreen_requested = was_requested;
+		fullscreen_transition_pending = was_transition_pending;
+		fullscreen_windowed_deferred = was_windowed_deferred;
 		printf("%%SDL-W-FULLSCREEN: Unable to %s fullscreen: %s\n",
 			enabled ? "enter" : "leave", SDL_GetError());
 		return false;
 	}
+	fullscreen_transition_pending =
+		!!(SDL_GetWindowFlags(sdl_window) & SDL_WINDOW_FULLSCREEN) != enabled;
 	reset_absolute_mouse_position();
+	resize_window_to_guest();
 	return true;
+}
+
+bool bx_sdl_gui_c::restore_window_for_resize()
+{
+	const SDL_WindowFlags flags = SDL_GetWindowFlags(sdl_window);
+	// In fullscreen, RestoreWindow also clears SDL's saved maximized state.
+	if ((fullscreen_requested ||
+		(flags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_MINIMIZED | SDL_WINDOW_FULLSCREEN))) &&
+		!SDL_RestoreWindow(sdl_window))
+	{
+		printf("%%SDL-W-RESTORE: Unable to restore window: %s\n", SDL_GetError());
+		return false;
+	}
+	if ((fullscreen_requested || (flags & SDL_WINDOW_FULLSCREEN)) && !set_fullscreen(false))
+		return false;
+	return true;
+}
+
+void bx_sdl_gui_c::resize_window_to_guest()
+{
+	if (!sdl_window || !pending_guest_resize || fullscreen_requested ||
+		fullscreen_transition_pending || last_driven_w == 0 || last_driven_h == 0)
+		return;
+	if (SDL_GetWindowFlags(sdl_window) &
+		(SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED | SDL_WINDOW_MINIMIZED))
+		return;
+	// Consume before calling SDL, which can synchronously dispatch events.
+	pending_guest_resize = false;
+	if (!SDL_SetWindowSize(sdl_window, last_driven_w, last_driven_h))
+		pending_guest_resize = true;
 }
 
 void bx_sdl_gui_c::reset_window_size()
@@ -2020,14 +2092,10 @@ void bx_sdl_gui_c::reset_window_size()
 		return;
 
 	reset_absolute_mouse_position();
-	SDL_WindowFlags flags = SDL_GetWindowFlags(sdl_window);
-	// In fullscreen, RestoreWindow also clears a saved maximized state.
-	if (flags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_MINIMIZED | SDL_WINDOW_FULLSCREEN))
-		SDL_RestoreWindow(sdl_window);
-	if ((flags & SDL_WINDOW_FULLSCREEN) && !set_fullscreen(false))
+	pending_guest_resize = true;
+	if (!restore_window_for_resize())
 		return;
-
-	SDL_SetWindowSize(sdl_window, last_driven_w, last_driven_h);
+	resize_window_to_guest();
 }
 
 void bx_sdl_gui_c::adjust_window_scale(int delta)
@@ -2050,14 +2118,11 @@ void bx_sdl_gui_c::adjust_window_scale(int delta)
 
 	if (sdl_window && res_x > 0 && res_y > 0)
 	{
-		SDL_WindowFlags flags = SDL_GetWindowFlags(sdl_window);
-		if (flags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_MINIMIZED | SDL_WINDOW_FULLSCREEN))
-			SDL_RestoreWindow(sdl_window);
-		if ((flags & SDL_WINDOW_FULLSCREEN) && !set_fullscreen(false))
+		if (!restore_window_for_resize())
 			return;
 		runtime_scale_override = next;
+		pending_guest_resize = true;
 		dimension_update(res_x, res_y);
-		reset_window_size();
 	}
 	else
 		runtime_scale_override = next;
