@@ -62,6 +62,8 @@
 #include "config/Configurator.h"
 #include "../graphics/VGA.h"
 #include "io/Keyboard.h"
+#include "system/System.h"
+#include "x11_dispatch.h"
 #include <limits>
 
 extern "C"
@@ -83,7 +85,7 @@ class bx_x11_gui_c : public bx_gui_c
       bx_keymap = new bx_keymap_c(cfg);
     };
 
-    ~bx_x11_gui_c() override { exit(); }
+    ~bx_x11_gui_c() override { try { exit(); } catch(...) {} }
 
     virtual void                  specific_init(unsigned x_tilesize,
                                                 unsigned y_tilesize);
@@ -106,9 +108,13 @@ class bx_x11_gui_c : public bx_gui_c
                                                    unsigned bpp = 8);
     virtual void                  mouse_enabled_changed_specific(bool val);
     virtual void                  exit(void);
-    // The legacy event loop runs on the graphics worker; this hook is called
-    // only after all workers have stopped.
-    void main_thread_stop() override { exit(); }
+    bool requires_main_thread() override { return true; }
+    void main_thread_init() override;
+    void main_thread_pump() override;
+    void main_thread_stop() override { dispatcher.stop(); }
+    void pause_guest_input() override;
+    void resume_guest_input() override;
+    void detach_guest_input() override;
     virtual bx_svga_tileinfo_t*   graphics_tile_info(bx_svga_tileinfo_t* info);
     virtual u8*                   graphics_tile_get(unsigned x, unsigned y,
                                                     unsigned*  w, unsigned*  h);
@@ -123,6 +129,32 @@ class bx_x11_gui_c : public bx_gui_c
     XImage* frame_image = nullptr;
     bool frame_active = false;
     void present_frame();
+    x11_dispatcher dispatcher;
+    CKeyboard* guest_keyboard = nullptr;
+    CSystem* guest_system = nullptr;
+    bool input_paused = false, input_detached = false, retired = false;
+    bool legacy_redraw_pending = false;
+    std::exception_ptr event_error;
+
+    void invoke(std::function<void()> fn);
+    void pump_events(bool process_input = false) noexcept;
+    void poll_events(bool process_input);
+    void keypress(KeySym keysym, int press_release);
+    void specific_init_impl(unsigned tilewidth, unsigned tileheight);
+    void text_update_impl(u8* old_text, u8* new_text, unsigned long cursor_x,
+                          unsigned long cursor_y, bx_vga_tminfo_t tm_info, unsigned rows,
+                          const unsigned* palette_indices);
+    void graphics_tile_update_impl(u8* snapshot, unsigned x, unsigned y);
+    void graphics_frame_update_impl(const u32* pixels, unsigned width, unsigned height);
+    void clear_screen_impl();
+    bool palette_change_impl(unsigned index, unsigned red, unsigned green, unsigned blue);
+    void dimension_update_impl(unsigned x, unsigned y, unsigned fheight,
+                               unsigned fwidth, unsigned bpp);
+    void mouse_enabled_changed_impl(bool val);
+    void exit_impl();
+    bx_svga_tileinfo_t* graphics_tile_info_impl(bx_svga_tileinfo_t* info);
+    u8* graphics_tile_get_impl(unsigned x, unsigned y, unsigned* w, unsigned* h);
+    void graphics_tile_update_in_place_impl(unsigned x, unsigned y, unsigned w, unsigned h);
 };
 
 // declare one instance of the gui object and call macro to insert the
@@ -157,16 +189,16 @@ static unsigned       imDepth, imWide, imBPP;
 static Cursor         hidden_cursor = None;
 static Atom           wm_delete_window = None, wm_protocols = None;
 static XErrorHandler  previous_x_error_handler = nullptr;
-static Display*       startup_display = nullptr;
-static int            startup_x_error = 0;
+static Display*       error_display = nullptr;
+static int            x_error = 0;
 
-// XIDs may be returned before the server rejects a request. Record startup
-// errors in the C callback, then report them from ordinary C++ after XSync.
-static int record_x11_startup_error(Display* display, XErrorEvent* event)
+// XIDs may be returned before the server rejects a request. Never throw through
+// Xlib's C callback: report the first error at a synchronous worker boundary.
+static int record_x11_error(Display* display, XErrorEvent* event)
 {
-  if(display == startup_display)
+  if(display == error_display)
   {
-    if(!startup_x_error) startup_x_error = event->error_code;
+    if(!x_error) x_error = event->error_code;
     return 0;
   }
   return previous_x_error_handler ? previous_x_error_handler(display, event) : 0;
@@ -174,10 +206,17 @@ static int record_x11_startup_error(Display* display, XErrorEvent* event)
 
 static void restore_x11_error_handler()
 {
-  if(startup_display)
+  if(error_display)
     XSetErrorHandler(previous_x_error_handler);
-  startup_display = nullptr;
+  error_display = nullptr;
   previous_x_error_handler = nullptr;
+  x_error = 0;
+}
+
+static void check_x11_error()
+{
+  if(x_error)
+    FAILURE_1(Runtime, "X11 display request failed (X error %d)", x_error);
 }
 
 // current cursor coordinates
@@ -382,7 +421,6 @@ u32                   ascii_to_key_event[0x5f] = {
 extern u8             graphics_snapshot[32 * 1024];
 
 static void           create_internal_vga_font(void);
-static void           xkeypress(KeySym keysym, int press_release);
 
 // extern "C" void select_visual(void);
 #define ROUNDUP(nbytes, pad)  ((((nbytes) + ((pad) - 1)) / (pad)) * ((pad) >> 3))
@@ -441,7 +479,172 @@ static bool test_alloc_colors(Colormap cmap, u32 n_tries)
   return(n_allocated == n_tries);
 }
 
-void bx_x11_gui_c::specific_init(unsigned tilewidth, unsigned tileheight)
+// Callers often hold guiMutex while waiting here. Owner-thread callbacks must
+// never acquire that mutex or wait for a graphics worker.
+void bx_x11_gui_c::invoke(std::function<void()> fn)
+{
+  if(!dispatcher.invoke(std::move(fn)))
+    FAILURE(Runtime, "The X11 application thread is not running");
+}
+
+void bx_x11_gui_c::main_thread_init()
+{
+  if(retired || !dispatcher.start())
+    FAILURE(Runtime, "Invalid X11 application initialization");
+  guest_keyboard = theKeyboard;
+  guest_system = theSystem;
+}
+
+void bx_x11_gui_c::main_thread_pump()
+{
+  dispatcher.pump([this] { pump_events(); });
+}
+
+void bx_x11_gui_c::pause_guest_input()
+{
+  invoke([this] { input_paused = true; });
+}
+
+void bx_x11_gui_c::resume_guest_input()
+{
+  invoke([this] { input_paused = false; });
+}
+
+void bx_x11_gui_c::detach_guest_input()
+{
+  invoke([this] {
+    input_detached = true;
+    guest_keyboard = nullptr;
+    guest_system = nullptr;
+    legacy_redraw_pending = false;
+  });
+}
+
+void bx_x11_gui_c::pump_events(bool process_input) noexcept
+{
+  if(event_error || retired) return;
+  try
+  {
+    poll_events(process_input);
+    if(bx_x_display) XFlush(bx_x_display);
+    check_x11_error();
+  }
+  catch(...)
+  {
+    event_error = std::current_exception();
+    if(guest_system) guest_system->RequestShutdown();
+  }
+}
+
+void bx_x11_gui_c::handle_events()
+{
+  unsigned redraw_width = 0, redraw_height = 0;
+  invoke([&] {
+    // Guest input is driven by a live graphics worker, as in SDL. Native paint
+    // and close events continue on main while workers stop for save/restore.
+    pump_events(true);
+    if(event_error) std::rethrow_exception(event_error);
+    if(legacy_redraw_pending && !input_paused && !input_detached)
+    {
+      redraw_width = dimension_x;
+      redraw_height = dimension_y;
+      legacy_redraw_pending = false;
+    }
+  });
+  // Legacy VGA state belongs to this graphics caller, not the native pump.
+  if(redraw_width && redraw_height && theVGA)
+    theVGA->redraw_area(0, 0, redraw_width, redraw_height);
+}
+
+void bx_x11_gui_c::specific_init(unsigned width, unsigned height)
+{
+  invoke([&] {
+    if(retired) FAILURE(Runtime, "Cannot initialize a retired X11 display");
+    specific_init_impl(width, height);
+  });
+}
+
+void bx_x11_gui_c::text_update(u8* old_text, u8* new_text,
+    unsigned long cursor_x, unsigned long cursor_y, bx_vga_tminfo_t tm_info, unsigned rows)
+{
+  // Device palette access may take a bus lock already held by this producer.
+  // Read it here; main must only work with the supplied text and host palette.
+  if(!theVGA) FAILURE(Runtime, "X11 legacy text requires a VGA source");
+  unsigned palette_indices[16];
+  for(unsigned i = 0; i < 16; ++i)
+    palette_indices[i] = theVGA->get_actl_palette_idx(i);
+  invoke([&] { text_update_impl(old_text, new_text, cursor_x, cursor_y, tm_info,
+                               rows, palette_indices); });
+}
+
+void bx_x11_gui_c::graphics_tile_update(u8* pixels, unsigned x, unsigned y)
+{
+  invoke([&] { graphics_tile_update_impl(pixels, x, y); });
+}
+
+void bx_x11_gui_c::graphics_frame_update(const u32* pixels, unsigned width, unsigned height)
+{
+  // The producer retains its pixels until this synchronous call completes.
+  invoke([&] { graphics_frame_update_impl(pixels, width, height); });
+}
+
+void bx_x11_gui_c::clear_screen()
+{
+  invoke([this] { clear_screen_impl(); });
+}
+
+bool bx_x11_gui_c::palette_change(unsigned index, unsigned red, unsigned green, unsigned blue)
+{
+  bool changed = false;
+  invoke([&] { changed = palette_change_impl(index, red, green, blue); });
+  return changed;
+}
+
+void bx_x11_gui_c::dimension_update(unsigned x, unsigned y, unsigned fheight,
+                                  unsigned fwidth, unsigned bpp)
+{
+  invoke([&] { dimension_update_impl(x, y, fheight, fwidth, bpp); });
+}
+
+void bx_x11_gui_c::mouse_enabled_changed_specific(bool val)
+{
+  invoke([&] { if(bx_x_display && !input_detached) mouse_enabled_changed_impl(val); });
+}
+
+bx_svga_tileinfo_t* bx_x11_gui_c::graphics_tile_info(bx_svga_tileinfo_t* info)
+{
+  bx_svga_tileinfo_t* result = nullptr;
+  invoke([&] { result = graphics_tile_info_impl(info); });
+  return result;
+}
+
+u8* bx_x11_gui_c::graphics_tile_get(unsigned x, unsigned y, unsigned* w, unsigned* h)
+{
+  u8* result = nullptr;
+  // The tile remains producer-owned until update_in_place; the event pump only
+  // paints the separate retained frame and never reallocates tile storage.
+  invoke([&] { result = graphics_tile_get_impl(x, y, w, h); });
+  return result;
+}
+
+void bx_x11_gui_c::graphics_tile_update_in_place(unsigned x, unsigned y,
+                                               unsigned w, unsigned h)
+{
+  invoke([&] { graphics_tile_update_in_place_impl(x, y, w, h); });
+}
+
+void bx_x11_gui_c::exit()
+{
+  invoke([this] {
+    retired = true;
+    guest_keyboard = nullptr;
+    guest_system = nullptr;
+    input_detached = true;
+    exit_impl();
+  });
+}
+
+void bx_x11_gui_c::specific_init_impl(unsigned tilewidth, unsigned tileheight)
 try
 {
   if(x_init_done) { new_gfx_api = 1; return; }
@@ -471,9 +674,9 @@ try
   {
     FAILURE(Runtime, "Unable to connect to the X11 display");
   }
-  startup_display = bx_x_display;
-  startup_x_error = 0;
-  previous_x_error_handler = XSetErrorHandler(record_x11_startup_error);
+  error_display = bx_x_display;
+  x_error = 0;
+  previous_x_error_handler = XSetErrorHandler(record_x11_error);
 
   /* get screen size from display structure macro */
   bx_x_screen_num = DefaultScreen(bx_x_display);
@@ -665,16 +868,13 @@ try
   // before the window manager mapped the window. Do not consume input here.
   XMapWindow(bx_x_display, win);
   XSync(bx_x_display, False);
-  if(startup_x_error)
-    FAILURE_1(Runtime, "X11 display initialization failed (X error %d)", startup_x_error);
-  restore_x11_error_handler();
+  check_x11_error();
   new_gfx_api = 1;
   x_init_done = true;
 }
 catch(...)
 {
-  exit();
-  restore_x11_error_handler();
+  exit_impl();
   throw;
 }
 
@@ -683,7 +883,7 @@ catch(...)
 // bitmap or pressing the middle button, or from the configuration interface.
 
 // In all those cases, setting the parameter value will get you here.
-void bx_x11_gui_c::mouse_enabled_changed_specific(bool val)
+void bx_x11_gui_c::mouse_enabled_changed_impl(bool val)
 {
   BX_DEBUG(("mouse_enabled=%d, x11 specific code", val ? 1 : 0));
   if(val)
@@ -724,9 +924,25 @@ void create_internal_vga_font(void)
   }
 }
 
-void bx_x11_gui_c::handle_events(void)
+// While paused, keep input (including releases) queued, but still allow the
+// window to repaint and close. This Xlib predicate cannot throw or touch guests.
+static Bool x11_lifecycle_event(Display*, XEvent* event, XPointer)
+{
+  switch(event->type)
+  {
+  case KeyPress: case KeyRelease:
+  case ButtonPress: case ButtonRelease:
+  case MotionNotify: case EnterNotify: case LeaveNotify:
+    return False;
+  default:
+    return True;
+  }
+}
+
+void bx_x11_gui_c::poll_events(bool process_input)
 {
   if(!bx_x_display) return;
+  check_x11_error();
   XEvent                report;
   XKeyEvent*            key_event;
   KeySym                keysym;
@@ -735,22 +951,29 @@ void bx_x11_gui_c::handle_events(void)
   int                   bufsize = MAX_MAPPED_STRING_LENGTH;
   int                   charcount;
   bool                  mouse_update;
-  int                   y;
-  int                   height;
 
   XPointerMovedEvent*   pointer_event;
   XEnterWindowEvent*    enter_event;
   XLeaveWindowEvent*    leave_event;
   XButtonEvent*         button_event;
-  XExposeEvent*         expose_event;
 
   //current_x = -1;
   //current_y = -1;
   mouse_update = 0;
 
-  while(XPending(bx_x_display) > 0)
+  // Bound each batch so sustained input cannot starve barriers or worker calls.
+  for(unsigned count = 0; count < 256; ++count)
   {
-    XNextEvent(bx_x_display, &report);
+    if(!process_input || input_paused || input_detached)
+    {
+      if(!XCheckIfEvent(bx_x_display, &report, x11_lifecycle_event, nullptr)) break;
+    }
+    else
+    {
+      if(!XPending(bx_x_display)) break;
+      XNextEvent(bx_x_display, &report);
+    }
+    if(report.xany.window != win) continue;
     current_z = 0;
     switch(report.type)
     {
@@ -760,21 +983,7 @@ void bx_x11_gui_c::handle_events(void)
         if(report.xexpose.count == 0) present_frame();
         break;
       }
-      expose_event = &report.xexpose;
-
-      /* Adjust y.*/
-      y = expose_event->y;
-      height = expose_event->height;
-      if(y < 0)
-      {
-        height += y;
-        y = 0;
-      }
-
-      if(theVGA)
-        theVGA->redraw_area((unsigned) expose_event->x, y,
-                            (unsigned) expose_event->width, height);
-
+      legacy_redraw_pending = true;
       break;
 
     case ConfigureNotify:
@@ -860,13 +1069,13 @@ void bx_x11_gui_c::handle_events(void)
     case KeyPress:
       key_event = (XKeyEvent*) &report;
       charcount = XLookupString(key_event, buffer, bufsize, &keysym, &compose);
-      xkeypress(keysym, 0);
+      keypress(keysym, 0);
       break;
 
     case KeyRelease:
       key_event = (XKeyEvent*) &report;
       charcount = XLookupString(key_event, buffer, bufsize, &keysym, &compose);
-      xkeypress(keysym, 1);
+      keypress(keysym, 1);
       break;
 
     case MotionNotify:
@@ -890,6 +1099,7 @@ void bx_x11_gui_c::handle_events(void)
 
     case MapNotify:
       if(frame_active) present_frame();
+      else legacy_redraw_pending = true;
 
       /* screen needs redraw, since X would have tossed previous
        * requests before window mapped
@@ -902,10 +1112,13 @@ void bx_x11_gui_c::handle_events(void)
       if(report.xclient.message_type == wm_protocols && report.xclient.format == 32 &&
          (Atom)report.xclient.data.l[0] == wm_delete_window)
       {
-        FAILURE(Graceful,"Emulator stopped from X");
-
-        //bx_stop_simulation();
+        if(guest_system) guest_system->RequestShutdown();
       }
+      break;
+
+    case DestroyNotify:
+      if(report.xdestroywindow.window == win && guest_system)
+        guest_system->RequestShutdown();
       break;
 
     default:
@@ -924,6 +1137,7 @@ void bx_x11_gui_c::handle_events(void)
     BX_DEBUG(("handle_events(): send mouse status"));
     send_keyboard_mouse_status();
   }
+  check_x11_error();
 }
 
 void send_keyboard_mouse_status(void)
@@ -966,12 +1180,16 @@ void send_keyboard_mouse_status(void)
 
 void bx_x11_gui_c::flush(void)
 {
-  if(bx_x_display)
-    XFlush(bx_x_display);
+  invoke([this] {
+    if(event_error) std::rethrow_exception(event_error);
+    if(bx_x_display) XFlush(bx_x_display);
+    check_x11_error();
+  });
 }
 
-void xkeypress(KeySym keysym, int press_release)
+void bx_x11_gui_c::keypress(KeySym keysym, int press_release)
 {
+  if(!guest_keyboard || input_paused || input_detached) return;
   u32 key_event;
 
   if((keysym == XK_Control_L) || (keysym == XK_Control_R))
@@ -1294,10 +1512,10 @@ void xkeypress(KeySym keysym, int press_release)
   if(press_release)
     key_event |= BX_KEY_RELEASED;
 
-  theKeyboard->gen_scancode(key_event);
+  guest_keyboard->gen_scancode(key_event);
 }
 
-void bx_x11_gui_c::clear_screen(void)
+void bx_x11_gui_c::clear_screen_impl(void)
 {
   if(!bx_x_display) return;
   if(frame_active && frame_image)
@@ -1310,9 +1528,10 @@ void bx_x11_gui_c::clear_screen(void)
   XClearArea(bx_x_display, win, 0, 0, dimension_x, dimension_y, 0);
 }
 
-void bx_x11_gui_c::text_update(u8*  old_text, u8*  new_text,
+void bx_x11_gui_c::text_update_impl(u8*  old_text, u8*  new_text,
                                unsigned long cursor_x, unsigned long cursor_y,
-                               bx_vga_tminfo_t tm_info, unsigned nrows)
+                               bx_vga_tminfo_t tm_info, unsigned nrows,
+                               const unsigned* palette_indices)
 {
   frame_active = false;
   u8*           old_line;
@@ -1392,7 +1611,7 @@ void bx_x11_gui_c::text_update(u8*  old_text, u8*  new_text,
 
   for(i = 0; i < 16; i++)
   {
-    text_palette[i] = col_vals[theVGA->get_actl_palette_idx(i)];
+    text_palette[i] = col_vals[palette_indices[i]];
   }
 
   if((tm_info.h_panning != h_panning) || (tm_info.v_panning != v_panning))
@@ -1606,7 +1825,7 @@ void bx_x11_gui_c::text_update(u8*  old_text, u8*  new_text,
   XFlush(bx_x_display);
 }
 
-void bx_x11_gui_c::graphics_tile_update(u8* tile, unsigned x0, unsigned y0)
+void bx_x11_gui_c::graphics_tile_update_impl(u8* tile, unsigned x0, unsigned y0)
 {
   frame_active = false;
   unsigned  x;
@@ -1728,7 +1947,7 @@ void bx_x11_gui_c::present_frame()
               frame_image->width, frame_image->height);
 }
 
-void bx_x11_gui_c::graphics_frame_update(const u32* pixels,
+void bx_x11_gui_c::graphics_frame_update_impl(const u32* pixels,
                                         unsigned width, unsigned height)
 {
   if(!x_init_done) FAILURE(Runtime, "X11 display is not initialized");
@@ -1746,7 +1965,7 @@ void bx_x11_gui_c::graphics_frame_update(const u32* pixels,
   present_frame();
 }
 
-bx_svga_tileinfo_t* bx_x11_gui_c::graphics_tile_info(bx_svga_tileinfo_t* info)
+bx_svga_tileinfo_t* bx_x11_gui_c::graphics_tile_info_impl(bx_svga_tileinfo_t* info)
 {
   if(!info)
   {
@@ -1845,7 +2064,7 @@ bx_svga_tileinfo_t* bx_x11_gui_c::graphics_tile_info(bx_svga_tileinfo_t* info)
   return info;
 }
 
-u8* bx_x11_gui_c::graphics_tile_get(unsigned x0, unsigned y0, unsigned*  w,
+u8* bx_x11_gui_c::graphics_tile_get_impl(unsigned x0, unsigned y0, unsigned*  w,
                                     unsigned*  h)
 {
   if(x0 + x_tilesize > dimension_x)
@@ -1869,14 +2088,14 @@ u8* bx_x11_gui_c::graphics_tile_get(unsigned x0, unsigned y0, unsigned*  w,
   return (u8*) ximage->data + ximage->xoffset * ximage->bits_per_pixel / 8;
 }
 
-void bx_x11_gui_c::graphics_tile_update_in_place(unsigned x0, unsigned y0,
+void bx_x11_gui_c::graphics_tile_update_in_place_impl(unsigned x0, unsigned y0,
                                                  unsigned w, unsigned h)
 {
   frame_active = false;
   XPutImage(bx_x_display, win, gc, ximage, 0, 0, x0, y0, w, h);
 }
 
-bool bx_x11_gui_c::palette_change(unsigned index, unsigned red, unsigned green,
+bool bx_x11_gui_c::palette_change_impl(unsigned index, unsigned red, unsigned green,
                                   unsigned blue)
 {
   if(index >= MAX_VGA_COLORS || red > 255 || green > 255 || blue > 255)
@@ -1913,7 +2132,7 @@ bool bx_x11_gui_c::palette_change(unsigned index, unsigned red, unsigned green,
   }
 }
 
-void bx_x11_gui_c::dimension_update(unsigned x, unsigned y, unsigned fheight,
+void bx_x11_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheight,
                                     unsigned fwidth, unsigned bpp)
 {
   if(!x_init_done) FAILURE(Runtime, "X11 display is not initialized");
@@ -1966,7 +2185,7 @@ void bx_x11_gui_c::dimension_update(unsigned x, unsigned y, unsigned fheight,
   }
 }
 
-void bx_x11_gui_c::exit(void)
+void bx_x11_gui_c::exit_impl(void)
 {
   if(frame_image) { XDestroyImage(frame_image); frame_image = nullptr; }
   if(ximage) { XDestroyImage(ximage); ximage = nullptr; }
@@ -1978,6 +2197,7 @@ void bx_x11_gui_c::exit(void)
     if(gc_inv) XFreeGC(bx_x_display, gc_inv);
     XCloseDisplay(bx_x_display);
   }
+  restore_x11_error_handler();
   bx_x_display = nullptr;
   default_visual = nullptr;
   default_cmap = None;
@@ -1994,6 +2214,7 @@ void bx_x11_gui_c::exit(void)
   current_z = warp_dx = warp_dy = 0;
   mouse_button_state = 0;
   CTRL_pressed = false;
+  legacy_redraw_pending = false;
 }
 
 static void warp_cursor(int dx, int dy)
