@@ -62,6 +62,7 @@
 #include "config/Configurator.h"
 #include "../graphics/VGA.h"
 #include "io/Keyboard.h"
+#include <limits>
 
 extern "C"
 {
@@ -82,6 +83,8 @@ class bx_x11_gui_c : public bx_gui_c
       bx_keymap = new bx_keymap_c(cfg);
     };
 
+    ~bx_x11_gui_c() override { exit(); }
+
     virtual void                  specific_init(unsigned x_tilesize,
                                                 unsigned y_tilesize);
     virtual void                  text_update(u8*  old_text, u8*  new_text,
@@ -91,6 +94,7 @@ class bx_x11_gui_c : public bx_gui_c
                                               unsigned rows);
     virtual void                  graphics_tile_update(u8*  snapshot, unsigned x,
                                                        unsigned y);
+    void graphics_frame_update(const u32* pixels, unsigned width, unsigned height) override;
     virtual void                  handle_events(void);
     virtual void                  flush(void);
     virtual void                  clear_screen(void);
@@ -102,6 +106,9 @@ class bx_x11_gui_c : public bx_gui_c
                                                    unsigned bpp = 8);
     virtual void                  mouse_enabled_changed_specific(bool val);
     virtual void                  exit(void);
+    // The legacy event loop runs on the graphics worker; this hook is called
+    // only after all workers have stopped.
+    void main_thread_stop() override { exit(); }
     virtual bx_svga_tileinfo_t*   graphics_tile_info(bx_svga_tileinfo_t* info);
     virtual u8*                   graphics_tile_get(unsigned x, unsigned y,
                                                     unsigned*  w, unsigned*  h);
@@ -113,6 +120,9 @@ class bx_x11_gui_c : public bx_gui_c
                                                    u16*  bpp);
   private:
     CConfigurator*  myCfg;
+    XImage* frame_image = nullptr;
+    bool frame_active = false;
+    void present_frame();
 };
 
 // declare one instance of the gui object and call macro to insert the
@@ -130,7 +140,7 @@ static Visual*        default_visual;
 static Colormap       default_cmap;
 static unsigned long  white_pixel = 0, black_pixel = 0;
 
-static char*          progname; /* name this program was invoked by */
+static char           progname[] = "es40";
 
 static unsigned int   text_rows = 25, text_cols = 80;
 static u8             h_panning = 0, v_panning = 0;
@@ -144,6 +154,31 @@ static unsigned       vga_bpp = 8;
 
 static XImage*        ximage = NULL;
 static unsigned       imDepth, imWide, imBPP;
+static Cursor         hidden_cursor = None;
+static Atom           wm_delete_window = None, wm_protocols = None;
+static XErrorHandler  previous_x_error_handler = nullptr;
+static Display*       startup_display = nullptr;
+static int            startup_x_error = 0;
+
+// XIDs may be returned before the server rejects a request. Record startup
+// errors in the C callback, then report them from ordinary C++ after XSync.
+static int record_x11_startup_error(Display* display, XErrorEvent* event)
+{
+  if(display == startup_display)
+  {
+    if(!startup_x_error) startup_x_error = event->error_code;
+    return 0;
+  }
+  return previous_x_error_handler ? previous_x_error_handler(display, event) : 0;
+}
+
+static void restore_x11_error_handler()
+{
+  if(startup_display)
+    XSetErrorHandler(previous_x_error_handler);
+  startup_display = nullptr;
+  previous_x_error_handler = nullptr;
+}
 
 // current cursor coordinates
 static int            prev_x = -1, prev_y = -1;
@@ -175,6 +210,53 @@ static void           send_keyboard_mouse_status(void);
 
 static bool           x_keymapping;
 static bool           x_private_colormap;
+
+// Window dimensions and XPutImage destination coordinates must fit X11's
+// protocol, including the offsets used when Xlib splits a large image request.
+static void validate_x11_dimensions(unsigned width, unsigned height)
+{
+  if(!width || !height || width > 32767 || height > 32767 ||
+     (size_t)width > (std::numeric_limits<size_t>::max)() / sizeof(u32) / height)
+    FAILURE(Configuration, "Invalid X11 display dimensions");
+}
+
+static XImage* create_x11_image(unsigned width, unsigned height)
+{
+  validate_x11_dimensions(width, height);
+  XImage* image = XCreateImage(bx_x_display, default_visual,
+      DefaultDepth(bx_x_display, bx_x_screen_num), ZPixmap, 0, nullptr,
+      width, height, 32, 0);
+  if(!image)
+    FAILURE(OutOfMemory, "Unable to create X11 image");
+  if(image->bytes_per_line <= 0 || image->bits_per_pixel < image->depth ||
+     (size_t)image->bytes_per_line > (std::numeric_limits<size_t>::max)() / height)
+  {
+    XDestroyImage(image);
+    FAILURE(Configuration, "Invalid X11 image layout");
+  }
+  image->data = (char*)calloc(height, (size_t)image->bytes_per_line);
+  if(!image->data)
+  {
+    XDestroyImage(image);
+    FAILURE(OutOfMemory, "Unable to allocate X11 image pixels");
+  }
+  return image;
+}
+
+static unsigned long x11_color_component(unsigned value, unsigned long mask)
+{
+  if(!mask) return 0;
+  unsigned shift = 0;
+  while(!(mask & 1)) { mask >>= 1; ++shift; }
+  return (unsigned long)(((u64)value * mask + 127) / 255) << shift;
+}
+
+static unsigned long x11_rgb(unsigned red, unsigned green, unsigned blue)
+{
+  return x11_color_component(red, default_visual->red_mask) |
+         x11_color_component(green, default_visual->green_mask) |
+         x11_color_component(blue, default_visual->blue_mask);
+}
 
 u32                   ascii_to_key_event[0x5f] = {
   //  !"#$%&'
@@ -360,22 +442,24 @@ static bool test_alloc_colors(Colormap cmap, u32 n_tries)
 }
 
 void bx_x11_gui_c::specific_init(unsigned tilewidth, unsigned tileheight)
+try
 {
+  if(x_init_done) { new_gfx_api = 1; return; }
+  validate_x11_dimensions(tilewidth, tileheight);
   unsigned              i;
   int                   x;
   int                   y;  /* window position */
   unsigned int          border_width = 4;         /* four pixels */
   const char*           window_name = "ES40 Emulator";
   const char*           icon_name = "ES40";
-  XSizeHints            size_hints;
+  XSizeHints            size_hints = {};
   char*                 display_name = NULL;
 
   /* create GC for text and drawing */
   unsigned long         valuemask = 0;            /* ignore XGCvalues and use defaults */
-  XGCValues             values;
+  XGCValues             values = {};
   int                   default_depth;
-  XEvent                report;
-  XSetWindowAttributes  win_attr;
+  XSetWindowAttributes  win_attr = {};
   unsigned long         plane_masks_return[1];
   XColor                color;
 
@@ -385,9 +469,11 @@ void bx_x11_gui_c::specific_init(unsigned tilewidth, unsigned tileheight)
   /* connect to X server */
   if((bx_x_display = XOpenDisplay(display_name)) == NULL)
   {
-    BX_PANIC(("%s: cannot connect to X server %s", progname, XDisplayName(
-               display_name)));
+    FAILURE(Runtime, "Unable to connect to the X11 display");
   }
+  startup_display = bx_x_display;
+  startup_x_error = 0;
+  previous_x_error_handler = XSetErrorHandler(record_x11_startup_error);
 
   /* get screen size from display structure macro */
   bx_x_screen_num = DefaultScreen(bx_x_display);
@@ -400,6 +486,8 @@ void bx_x11_gui_c::specific_init(unsigned tilewidth, unsigned tileheight)
   // Temporary values so we can create the window
   font_width = 8;
   font_height = 16;
+  text_cols = 80;
+  text_rows = 25;
 
   dimension_x = text_cols * font_width;
   dimension_y = text_rows * font_height;
@@ -410,6 +498,7 @@ void bx_x11_gui_c::specific_init(unsigned tilewidth, unsigned tileheight)
                             dimension_x, dimension_y, border_width,
                             BlackPixel(bx_x_display, bx_x_screen_num),
                             BlackPixel(bx_x_display, bx_x_screen_num));
+  if(!win) FAILURE(Runtime, "Unable to create the X11 window");
 
   // (attempt to) enable backing store
   win_attr.save_under = 1;
@@ -420,7 +509,10 @@ void bx_x11_gui_c::specific_init(unsigned tilewidth, unsigned tileheight)
   default_depth = DefaultDepth(bx_x_display, bx_x_screen_num);
   default_visual = DefaultVisual(bx_x_display, bx_x_screen_num);
 
-  x_private_colormap = myCfg->get_bool_value("private_colormap", true);
+  // TrueColor pixels encode RGB directly and cannot have writable palette cells.
+  const bool writable_visual = default_visual->c_class == PseudoColor ||
+                               default_visual->c_class == GrayScale;
+  x_private_colormap = myCfg->get_bool_value("private_colormap", true) && writable_visual;
   if(!x_private_colormap)
   {
 
@@ -431,7 +523,7 @@ void bx_x11_gui_c::specific_init(unsigned tilewidth, unsigned tileheight)
     // then switch to private colormap despite the user setting.  There
     // are too many cases when no colors are available and ES40 Emulator
     // simply draws everything in black on black.
-    if(!test_alloc_colors(default_cmap, 16))
+    if(writable_visual && !test_alloc_colors(default_cmap, 16))
     {
       printf("xxx: I can't allocate 16 colors\n");
       x_private_colormap = true;
@@ -457,7 +549,7 @@ void bx_x11_gui_c::specific_init(unsigned tilewidth, unsigned tileheight)
     if(XAllocColorCells(bx_x_display, default_cmap, False, plane_masks_return,
        0, col_vals, MAX_VGA_COLORS) == 0)
     {
-      BX_PANIC(("XAllocColorCells returns error. Maybe your screen does not support a private colormap?"));
+      FAILURE(Runtime, "Unable to allocate the X11 private colormap");
     }
 
     win_attr.colormap = default_cmap;
@@ -467,7 +559,7 @@ void bx_x11_gui_c::specific_init(unsigned tilewidth, unsigned tileheight)
 
     for(i = 0; i < MAX_VGA_COLORS; i++)
     {
-      color.pixel = i;
+      color.pixel = col_vals[i];
       if(i == 15)
       {
         color.red = 0xffff;
@@ -488,6 +580,7 @@ void bx_x11_gui_c::specific_init(unsigned tilewidth, unsigned tileheight)
   // convenience variables which hold the black & white color indeces
   black_pixel = col_vals[0];
   white_pixel = col_vals[15];
+  XSetWindowBackground(bx_x_display, win, black_pixel);
 
   BX_INFO(("font %u wide x %u high, display depth = %d", (unsigned) font_width,
             (unsigned) font_height, default_depth));
@@ -509,44 +602,25 @@ void bx_x11_gui_c::specific_init(unsigned tilewidth, unsigned tileheight)
   size_hints.max_width = size_hints.min_width = dimension_x;
   size_hints.max_height = size_hints.min_height = dimension_y;
   {
-    XWMHints      wm_hints;
-    XClassHint    class_hints;
-
-    /* format of the window name and icon name
-     * arguments has changed in R4 
-     */
-    XTextProperty windowName;
-
-    /* format of the window name and icon name
-     * arguments has changed in R4 
-     */
-    XTextProperty iconName;
-
-    /* These calls store window_name and icon_name into
-   * XTextProperty structures and set their other
-   * fields properly. */
-    if(XStringListToTextProperty((char**) &window_name, 1, &windowName) == 0)
-    {
-      BX_PANIC(("%s: structure allocation for windowName failed.", progname));
-    }
-
-    if(XStringListToTextProperty((char**) &icon_name, 1, &iconName) == 0)
-    {
-      BX_PANIC(("%s: structure allocation for iconName failed.", progname));
-    }
-
+    XWMHints      wm_hints = {};
+    XClassHint    class_hints = {};
+    wm_hints.flags = StateHint | InputHint;
     wm_hints.initial_state = NormalState;
     wm_hints.input = True;
     class_hints.res_name = progname;
     class_hints.res_class = (char*) "ES40 Emulator";
 
-    XSetWMProperties(bx_x_display, win, &windowName, &iconName, NULL /*argv*/,
-                     0 /*argc*/, &size_hints, &wm_hints, &class_hints);
-    XFree(windowName.value);
-    XFree(iconName.value);
+    XStoreName(bx_x_display, win, window_name);
+    XSetIconName(bx_x_display, win, icon_name);
+    XSetWMNormalHints(bx_x_display, win, &size_hints);
+    XSetWMHints(bx_x_display, win, &wm_hints);
+    XSetClassHint(bx_x_display, win, &class_hints);
 
-    Atom  wm_delete = XInternAtom(bx_x_display, "WM_DELETE_WINDOW", 1);
-    XSetWMProtocols(bx_x_display, win, &wm_delete, 1);
+    wm_delete_window = XInternAtom(bx_x_display, "WM_DELETE_WINDOW", False);
+    wm_protocols = XInternAtom(bx_x_display, "WM_PROTOCOLS", False);
+    if(!wm_delete_window || !wm_protocols ||
+       !XSetWMProtocols(bx_x_display, win, &wm_delete_window, 1))
+      FAILURE(Runtime, "Unable to register X11 window protocols");
   }
 
   /* Select event types wanted */
@@ -557,57 +631,18 @@ void bx_x11_gui_c::specific_init(unsigned tilewidth, unsigned tileheight)
   /* Create default Graphics Context */
   gc = XCreateGC(bx_x_display, win, valuemask, &values);
   gc_inv = XCreateGC(bx_x_display, win, valuemask, &values);
+  if(!gc || !gc_inv) FAILURE(OutOfMemory, "Unable to create X11 graphics contexts");
 
   XSetState(bx_x_display, gc, white_pixel, black_pixel, GXcopy, AllPlanes);
 
   XSetState(bx_x_display, gc_inv, black_pixel, white_pixel, GXinvert, AllPlanes);
 
-  /* Display window */
-  XMapWindow(bx_x_display, win);
-  XSync(bx_x_display, /* no discard */ 0);
-
-  BX_DEBUG(("waiting for MapNotify"));
-  while(1)
-  {
-    XNextEvent(bx_x_display, &report);
-    if(report.type == MapNotify)
-      break;
-  }
-
-  BX_DEBUG(("MapNotify found."));
-
   // Create the VGA font
   create_internal_vga_font();
-  {
-    char*   imagedata;
-
-    ximage = XCreateImage(bx_x_display, default_visual,
-                          default_depth,          // depth of image (bitplanes)
-                          ZPixmap, 0,             // offset
-                          NULL,                   // malloc() space after
-                          x_tilesize, y_tilesize, // x & y size of image
-                          32, // # bits of padding
-                          0); // bytes_per_line, let X11 calculate
-    if(!ximage)
-      BX_PANIC(("vga: couldn't XCreateImage()"));
-
-    imDepth = default_depth;
-    imWide = ximage->bytes_per_line;
-    imBPP = ximage->bits_per_pixel;
-
-    imagedata = (char*) malloc((size_t) (ximage->bytes_per_line * y_tilesize));
-    if(!imagedata)
-      BX_PANIC(("imagedata: malloc returned error"));
-
-    ximage->data = imagedata;
-
-    if(imBPP < imDepth)
-    {
-      BX_PANIC(("vga_x: bits_per_pixel < depth ?"));
-    }
-
-    x_init_done = true;
-  }
+  ximage = create_x11_image(x_tilesize, y_tilesize);
+  imDepth = default_depth;
+  imWide = ximage->bytes_per_line;
+  imBPP = ximage->bits_per_pixel;
 
   curr_background = 0;
   XSetBackground(bx_x_display, gc, col_vals[curr_background]);
@@ -616,7 +651,6 @@ void bx_x11_gui_c::specific_init(unsigned tilewidth, unsigned tileheight)
 
   //XGrabPointer( bx_x_display, win, True, 0, GrabModeAsync, GrabModeAsync,
   //  win, None, CurrentTime );
-  XFlush(bx_x_display);
 
   // loads keymap for x11
   x_keymapping = myCfg->get_bool_value("keyboard.use_mapping", false);
@@ -627,7 +661,21 @@ void bx_x11_gui_c::specific_init(unsigned tilewidth, unsigned tileheight)
     bx_keymap->loadKeymap(convertStringToXKeysym);
   }
 
+  // Exposure events repaint the retained frame even if the first frame arrived
+  // before the window manager mapped the window. Do not consume input here.
+  XMapWindow(bx_x_display, win);
+  XSync(bx_x_display, False);
+  if(startup_x_error)
+    FAILURE_1(Runtime, "X11 display initialization failed (X error %d)", startup_x_error);
+  restore_x11_error_handler();
   new_gfx_api = 1;
+  x_init_done = true;
+}
+catch(...)
+{
+  exit();
+  restore_x11_error_handler();
+  throw;
 }
 
 // This is called whenever the mouse_enabled parameter changes.  It
@@ -672,12 +720,13 @@ void create_internal_vga_font(void)
                                        (const char*) bx_vgafont[i].data,
                                        font_width, font_height);
     if(vgafont[i] == None)
-      BX_PANIC(("Can't create vga font [%d]", i));
+      FAILURE(OutOfMemory, "Unable to create X11 VGA font");
   }
 }
 
 void bx_x11_gui_c::handle_events(void)
 {
+  if(!bx_x_display) return;
   XEvent                report;
   XKeyEvent*            key_event;
   KeySym                keysym;
@@ -706,6 +755,11 @@ void bx_x11_gui_c::handle_events(void)
     switch(report.type)
     {
     case Expose:
+      if(frame_active)
+      {
+        if(report.xexpose.count == 0) present_frame();
+        break;
+      }
       expose_event = &report.xexpose;
 
       /* Adjust y.*/
@@ -717,8 +771,9 @@ void bx_x11_gui_c::handle_events(void)
         y = 0;
       }
 
-      theVGA->redraw_area((unsigned) expose_event->x, y,
-                          (unsigned) expose_event->width, height);
+      if(theVGA)
+        theVGA->redraw_area((unsigned) expose_event->x, y,
+                            (unsigned) expose_event->width, height);
 
       break;
 
@@ -834,6 +889,7 @@ void bx_x11_gui_c::handle_events(void)
       break;
 
     case MapNotify:
+      if(frame_active) present_frame();
 
       /* screen needs redraw, since X would have tossed previous
        * requests before window mapped
@@ -843,8 +899,8 @@ void bx_x11_gui_c::handle_events(void)
       break;
 
     case ClientMessage:
-      if(!strcmp(XGetAtomName(bx_x_display, report.xclient.message_type),
-         "WM_PROTOCOLS"))
+      if(report.xclient.message_type == wm_protocols && report.xclient.format == 32 &&
+         (Atom)report.xclient.data.l[0] == wm_delete_window)
       {
         FAILURE(Graceful,"Emulator stopped from X");
 
@@ -1243,6 +1299,14 @@ void xkeypress(KeySym keysym, int press_release)
 
 void bx_x11_gui_c::clear_screen(void)
 {
+  if(!bx_x_display) return;
+  if(frame_active && frame_image)
+  {
+    memset(frame_image->data, 0,
+           (size_t)frame_image->bytes_per_line * frame_image->height);
+    present_frame();
+    return;
+  }
   XClearArea(bx_x_display, win, 0, 0, dimension_x, dimension_y, 0);
 }
 
@@ -1250,6 +1314,7 @@ void bx_x11_gui_c::text_update(u8*  old_text, u8*  new_text,
                                unsigned long cursor_x, unsigned long cursor_y,
                                bx_vga_tminfo_t tm_info, unsigned nrows)
 {
+  frame_active = false;
   u8*           old_line;
 
   u8 *new_line;
@@ -1543,6 +1608,7 @@ void bx_x11_gui_c::text_update(u8*  old_text, u8*  new_text,
 
 void bx_x11_gui_c::graphics_tile_update(u8* tile, unsigned x0, unsigned y0)
 {
+  frame_active = false;
   unsigned  x;
 
   unsigned  y;
@@ -1653,6 +1719,31 @@ void bx_x11_gui_c::graphics_tile_update(u8* tile, unsigned x0, unsigned y0)
   }
 
   XPutImage(bx_x_display, win, gc, ximage, 0, 0, x0, y0, x_tilesize, y_size);
+}
+
+void bx_x11_gui_c::present_frame()
+{
+  if(bx_x_display && frame_image && frame_active)
+    XPutImage(bx_x_display, win, gc, frame_image, 0, 0, 0, 0,
+              frame_image->width, frame_image->height);
+}
+
+void bx_x11_gui_c::graphics_frame_update(const u32* pixels,
+                                        unsigned width, unsigned height)
+{
+  if(!x_init_done) FAILURE(Runtime, "X11 display is not initialized");
+  if(!pixels) FAILURE(Configuration, "Missing X11 framebuffer pixels");
+  dimension_update(width, height, 0, 0, 32);
+  for(unsigned y = 0; y < height; ++y)
+    for(unsigned x = 0; x < width; ++x)
+    {
+      const u32 pixel = pixels[(size_t)y * width + x];
+      // XPutPixel handles host byte order, pixel packing and padded scanlines.
+      XPutPixel(frame_image, x, y, x11_rgb((pixel >> 16) & 255,
+                                          (pixel >> 8) & 255, pixel & 255));
+    }
+  frame_active = true;
+  present_frame();
 }
 
 bx_svga_tileinfo_t* bx_x11_gui_c::graphics_tile_info(bx_svga_tileinfo_t* info)
@@ -1781,12 +1872,20 @@ u8* bx_x11_gui_c::graphics_tile_get(unsigned x0, unsigned y0, unsigned*  w,
 void bx_x11_gui_c::graphics_tile_update_in_place(unsigned x0, unsigned y0,
                                                  unsigned w, unsigned h)
 {
+  frame_active = false;
   XPutImage(bx_x_display, win, gc, ximage, 0, 0, x0, y0, w, h);
 }
 
 bool bx_x11_gui_c::palette_change(unsigned index, unsigned red, unsigned green,
                                   unsigned blue)
 {
+  if(index >= MAX_VGA_COLORS || red > 255 || green > 255 || blue > 255)
+    FAILURE(Configuration, "Invalid X11 palette color");
+  if(default_visual->c_class == TrueColor)
+  {
+    col_vals[index] = x11_rgb(red, green, blue);
+    return true;
+  }
 
   // returns: 0=no screen update needed (color map change has direct effect)
   //          1=screen updated needed (redraw using current colormap)
@@ -1801,14 +1900,14 @@ bool bx_x11_gui_c::palette_change(unsigned index, unsigned red, unsigned green,
   {
 
     //if (SIM->get_param_bool(BXPN_PRIVATE_COLORMAP)->get()) {
-    color.pixel = index;
+    color.pixel = col_vals[index];
     XStoreColor(bx_x_display, default_cmap, &color);
     return(0);    // no screen update needed
   }
   else
   {
-    XAllocColor(bx_x_display, DefaultColormap(bx_x_display, bx_x_screen_num),
-                &color);
+    if(!XAllocColor(bx_x_display, default_cmap, &color))
+      FAILURE(Runtime, "Unable to allocate X11 palette color");
     col_vals[index] = color.pixel;
     return(1);    // screen update needed
   }
@@ -1817,14 +1916,28 @@ bool bx_x11_gui_c::palette_change(unsigned index, unsigned red, unsigned green,
 void bx_x11_gui_c::dimension_update(unsigned x, unsigned y, unsigned fheight,
                                     unsigned fwidth, unsigned bpp)
 {
-  if((bpp == 8) || (bpp == 15) || (bpp == 16) || (bpp == 24) || (bpp == 32))
+  if(!x_init_done) FAILURE(Runtime, "X11 display is not initialized");
+  validate_x11_dimensions(x, y);
+  if((bpp != 8 && bpp != 15 && bpp != 16 && bpp != 24 && bpp != 32) ||
+     (fheight && !fwidth))
+    FAILURE(Configuration, "Invalid X11 display mode");
+
+  if(bpp == 32)
   {
-    vga_bpp = bpp;
+    if(default_visual->c_class != TrueColor)
+      FAILURE(Configuration, "X11 full-frame display requires a TrueColor visual");
+    if(!frame_image || frame_image->width != (int)x || frame_image->height != (int)y)
+    {
+      // Leave the old frame and dimensions intact if allocation fails.
+      XImage* replacement = create_x11_image(x, y);
+      if(frame_image) XDestroyImage(frame_image);
+      frame_image = replacement;
+      frame_active = true;
+    }
   }
   else
-  {
-    BX_PANIC(("%d bpp graphics mode not supported", bpp));
-  }
+    frame_active = false;
+  vga_bpp = bpp;
 
   if(fheight > 0)
   {
@@ -1855,20 +1968,32 @@ void bx_x11_gui_c::dimension_update(unsigned x, unsigned y, unsigned fheight,
 
 void bx_x11_gui_c::exit(void)
 {
-  if(!x_init_done)
-    return;
-
-  // Delete the font bitmaps
-  for(int i = 0; i < 256; i++)
-  {
-
-    //if (vgafont[i] != NULL)
-    XFreePixmap(bx_x_display, vgafont[i]);
-  }
-
+  if(frame_image) { XDestroyImage(frame_image); frame_image = nullptr; }
+  if(ximage) { XDestroyImage(ximage); ximage = nullptr; }
+  // GCs also own client-side storage; the connection owns the remaining
+  // server-side windows, colormaps, cursors and font pixmaps.
   if(bx_x_display)
+  {
+    if(gc) XFreeGC(bx_x_display, gc);
+    if(gc_inv) XFreeGC(bx_x_display, gc_inv);
     XCloseDisplay(bx_x_display);
-  BX_INFO(("Exit."));
+  }
+  bx_x_display = nullptr;
+  default_visual = nullptr;
+  default_cmap = None;
+  win = None;
+  gc = gc_inv = nullptr;
+  hidden_cursor = None;
+  wm_delete_window = wm_protocols = None;
+  memset(vgafont, 0, sizeof(vgafont));
+  x_init_done = frame_active = false;
+  dimension_x = dimension_y = 0;
+  imDepth = imWide = imBPP = 0;
+  vga_bpp = 8;
+  prev_x = prev_y = current_x = current_y = -1;
+  current_z = warp_dx = warp_dy = 0;
+  mouse_button_state = 0;
+  CTRL_pressed = false;
 }
 
 static void warp_cursor(int dx, int dy)
@@ -1883,8 +2008,6 @@ static void warp_cursor(int dx, int dy)
 
 static void disable_cursor()
 {
-  static Cursor   cursor;
-  static unsigned cursor_created = 0;
 
   static int      shape_width = 16;
   static int      shape_height = 16;
@@ -1900,7 +2023,7 @@ static void disable_cursor()
     0x00000000, 0x00000000, 0x00000000, 0x00000000,
   };
 
-  if(!cursor_created)
+  if(hidden_cursor == None)
   {
     Pixmap  shape;
 
@@ -1917,11 +2040,12 @@ static void disable_cursor()
                                          mask_height, 1, 0, 1);
     XParseColor(bx_x_display, default_cmap, "black", &black);
     XParseColor(bx_x_display, default_cmap, "white", &white);
-    cursor = XCreatePixmapCursor(bx_x_display, shape, mask, &white, &black, 1, 1);
-    cursor_created = 1;
+    hidden_cursor = XCreatePixmapCursor(bx_x_display, shape, mask, &white, &black, 1, 1);
+    XFreePixmap(bx_x_display, shape);
+    XFreePixmap(bx_x_display, mask);
   }
 
-  XDefineCursor(bx_x_display, win, cursor);
+  XDefineCursor(bx_x_display, win, hidden_cursor);
 }
 
 static void enable_cursor()
