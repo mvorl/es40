@@ -304,6 +304,22 @@ static bool detach_gui_guest_input()
  **/
 int main(int argc, char* argv[])
 {
+#if defined(_WIN32)
+	// Strip --run before normal argument handling.
+	const bool direct_run = argc > 1 && strcmp(argv[1], "--run") == 0;
+	if (direct_run)
+	{
+		for (int i = 1; i < argc; ++i) argv[i] = argv[i + 1];
+		--argc;
+		const char* host = getenv("ES40_MANAGER_HOST");
+		if (host && *host)
+		{
+			setvbuf(stdout, nullptr, _IONBF, 0);
+			setvbuf(stderr, nullptr, _IONBF, 0);
+		}
+	}
+#endif
+
 	if (argc == 2 &&
 		(strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-v") == 0))
 	{

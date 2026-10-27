@@ -509,6 +509,31 @@ CConfigurator::CConfigurator(class CConfigurator* parent, char* name,
 	if (parent == 0)
 	{
 		myFlags = 0;
+#if defined(_WIN32) && !defined(CONFIGURATION_ONLY)
+		// Serial-only children still need a shutdown endpoint.
+		const char* managed_gui = getenv("ES40_GUI");
+		if (managed_gui && !strcmp(managed_gui, "win32"))
+		{
+			bool has_gui = false;
+			for (i = 0; i < iNumChildren; ++i)
+			{
+				const char* value = pChildren[i]->get_myValue();
+				if (!strcmp(value, "sdl") || !strcmp(value, "win32") || !strcmp(value, "X11"))
+					has_gui = true;
+			}
+			if (!has_gui)
+			{
+				if (iNumChildren >= CFG_MAX_CHILDREN)
+					FAILURE(Configuration, "No room for the managed GUI configuration");
+				// Names must outlive the parsed configuration.
+				static char gui_name[] = "gui", gui_value[] = "win32";
+				auto* gui = new CConfigurator(this, gui_name, gui_value, nullptr, 0);
+				for (i = iNumChildren; i > 0; --i) pChildren[i] = pChildren[i - 1];
+				pChildren[0] = gui;
+				++iNumChildren;
+			}
+		}
+#endif
 		for (i = 0; i < iNumChildren; i++)
 		{
 			pChildren[i]->initialize();
@@ -825,6 +850,11 @@ classinfo classes[] = {
 
 const char* CConfigurator::get_gui_name() const
 {
+#if defined(_WIN32) && !defined(CONFIGURATION_ONLY)
+    // Audio follows the active GUI.
+    const char* requested_gui = getenv("ES40_GUI");
+    if (requested_gui && !strcmp(requested_gui, "win32")) return "win32";
+#endif
     const CConfigurator* root = this;
     while (root->pParent) root = root->pParent;
     for (int i = 0; i < root->iNumChildren; ++i) {
@@ -865,6 +895,18 @@ void CConfigurator::initialize()
 
 	if (myClassId == c_none)
 		FAILURE_2(Configuration, "Class %s for %s not known", myValue, myName);
+
+#if defined(_WIN32) && !defined(CONFIGURATION_ONLY)
+	// Override the GUI in memory.
+	const char* requested_gui = getenv("ES40_GUI");
+	if ((myFlags & IS_GUI) && requested_gui && !strcmp(requested_gui, "win32"))
+	{
+		for (i = 0; classes[i].id != c_none; ++i)
+			if (classes[i].id == c_win32) break;
+		myClassId = classes[i].id;
+		myFlags = classes[i].flags;
+	}
+#endif
 
 	// Warn about configuration values this device class does not read;
 	// they have no effect and should be removed from the config file.
