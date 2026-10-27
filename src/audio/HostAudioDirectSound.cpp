@@ -31,6 +31,8 @@
 #define NOMINMAX
 #endif
 #include "HostAudioBackend.h"
+// The Windows 8.1 SDK uses IUnknown before declaring it under C++20.
+struct IUnknown;
 #include <windows.h>
 #include <dsound.h>
 #include <algorithm>

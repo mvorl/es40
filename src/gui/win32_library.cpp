@@ -22,6 +22,8 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+// The Windows 8.1 SDK uses IUnknown before declaring it under C++20.
+struct IUnknown;
 #include <windows.h>
 #include "win32_library.h"
 #include <algorithm>

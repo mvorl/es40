@@ -21,6 +21,8 @@
 #pragma once
 
 #if defined(_WIN32)
+// The Windows 8.1 SDK uses IUnknown before declaring it under C++20.
+struct IUnknown;
 #include <windows.h>
 
 // Accept only HWNDs from managed children.
