@@ -26,7 +26,7 @@
  * THE SOFTWARE.
  */
 // Straight port to es40 by Cacodemon345.
-#ifdef HAVE_SDL
+#if defined(HAVE_SDL) || defined(_WIN32)
 #include "ES1370.h"
 
 #include <algorithm>
@@ -111,34 +111,38 @@ CES1370::CES1370(CConfigurator* cfg, class CSystem* c, int pcibus, int pcidev) :
 	memset((void*)&state, 0, sizeof(state));
     const u64 latency = cfg->get_num_value("latency_ms", true, 40);
     m_latency_ms = (unsigned)(std::min)((std::max)(latency, (u64)10), (u64)500);
-    if (!host_audio::initialize()) {
-		FAILURE_1(SDL, "Failed to initialize SDL audio: %s", host_audio::error());
+    m_audio_backend = host_audio::backend_for_gui(cfg->get_gui_name());
+    host_audio::SetupGuard setup(m_audio_backend, {&state.audio_be_in, &state.audio_be_out},
+        {&state.adc_voice, &state.dac_voice[0], &state.dac_voice[1]});
+    if (!host_audio::initialize(m_audio_backend)) {
+		HOST_AUDIO_FAILURE(m_audio_backend, "Failed to initialize %s audio");
     }
-    // ~10ms host pulls; the SDL_AUDIO_DEVICE_SAMPLE_FRAMES env var still wins.
-    host_audio::set_sample_frames_hint("512");
-	state.audio_be_in = host_audio::open_input_device();
+    // Request ~10ms host periods; SDL environment overrides still apply.
+    host_audio::set_sample_frames_hint("512", m_audio_backend);
+	state.audio_be_in = host_audio::open_input_device(m_audio_backend);
     if (!state.audio_be_in) {
-        FAILURE_1(SDL, "Failed to initialize SDL audio input: %s", host_audio::error());
+        HOST_AUDIO_FAILURE(m_audio_backend, "Failed to initialize %s audio input");
     }
-    state.audio_be_out = host_audio::open_output_device();
+    state.audio_be_out = host_audio::open_output_device(m_audio_backend);
     if (!state.audio_be_out) {
-        FAILURE_1(SDL, "Failed to initialize SDL audio output: %s", host_audio::error());
+        HOST_AUDIO_FAILURE(m_audio_backend, "Failed to initialize %s audio output");
     }
     {
         int out_freq = 0;
         int out_frames = 0;
         if (!host_audio::output_device_format(state.audio_be_out, &out_freq, &out_frames))
-            FAILURE_1(SDL, "Failed to query SDL audio output: %s", host_audio::error());
+            HOST_AUDIO_FAILURE(m_audio_backend, "Failed to query %s audio output");
         m_out_freq = out_freq > 0 ? out_freq : 48000;
         m_out_period_frames = out_frames > 0 ? out_frames : 512;
     }
-    host_audio::create_stream(state.adc_voice, nullptr, &as);
-	host_audio::create_stream(state.dac_voice[0], &as, nullptr);
-    host_audio::create_stream(state.dac_voice[1], &as, nullptr);
+    host_audio::create_stream(state.adc_voice, nullptr, &as, m_audio_backend);
+	host_audio::create_stream(state.dac_voice[0], &as, nullptr, m_audio_backend);
+    host_audio::create_stream(state.dac_voice[1], &as, nullptr, m_audio_backend);
 
 	host_audio::set_input_callback(state.adc_voice, es1370_dac_callback_adc, this);
     host_audio::set_output_callback(state.dac_voice[0], es1370_dac_callback_dac1, this);
     host_audio::set_output_callback(state.dac_voice[1], es1370_dac_callback_dac2, this);
+    setup.complete();
 }
 
 CES1370::~CES1370()
@@ -167,15 +171,14 @@ void CES1370::unbind_voices()
     host_audio::unbind_stream(state.dac_voice[1]);
 }
 
-// All callers acquire the bus before a stream lock. SDL callbacks acquire
-// neither the bus nor the worker's wait mutex.
+// Lock the bus before streams; callbacks only wake the worker.
 class CES1370StreamLock
 {
 public:
     explicit CES1370StreamLock(host_audio::Stream& stream) : m_stream(stream)
     {
         if (!host_audio::lock_stream(m_stream))
-            FAILURE_1(SDL, "Unable to lock audio stream: %s", host_audio::error());
+            HOST_AUDIO_FAILURE(m_stream.backend, "Unable to lock audio stream");
     }
     ~CES1370StreamLock() { host_audio::unlock_stream(m_stream); }
 private:
@@ -191,7 +194,7 @@ void CES1370::reset_audio_request(size_t channel, bool enabled, bool clear)
     state.chan[channel].credit_q16 = 0;
     state.chan[channel].pace_last = std::chrono::steady_clock::now();
     if (clear && !host_audio::clear_stream(voice))
-        FAILURE_1(SDL, "Unable to clear audio stream: %s", host_audio::error());
+        HOST_AUDIO_FAILURE(m_audio_backend, "Unable to clear audio stream");
     m_audio_enabled[channel].store(enabled);
 }
 
@@ -301,7 +304,7 @@ CES1370::ServiceResult CES1370::service_audio_channel(size_t channel,
     {
         const int avail = host_audio::available(voice);
         if (avail < 0)
-            FAILURE_1(SDL, "Unable to query audio stream: %s", host_audio::error());
+            HOST_AUDIO_FAILURE(m_audio_backend, "Unable to query audio stream");
         if (avail <= 0)
             return SERVICE_IDLE;
         const int moved = es1370_run_channel(&state, channel, (std::min)(avail, 4096));
@@ -313,7 +316,7 @@ CES1370::ServiceResult CES1370::service_audio_channel(size_t channel,
         return SERVICE_IDLE;
     const int queued = host_audio::queued(voice);
     if (queued < 0)
-        FAILURE_1(SDL, "Unable to query audio stream: %s", host_audio::error());
+        HOST_AUDIO_FAILURE(m_audio_backend, "Unable to query audio stream");
     const int lead = dac_lead_bytes(channel, rate);
     const int deficit = lead - queued;
 
@@ -582,7 +585,7 @@ void CES1370::es1370_update_voices(ES1370State* s, uint32_t ctl, uint32_t sctl,
 
                 host_audio::Stream& voice = i == ADC_CHANNEL ? s->adc_voice : s->dac_voice[i];
                 if (!host_audio::set_format(voice, &as, &as) && force)
-                    FAILURE_1(SDL, "Unable to restore audio format: %s", host_audio::error());
+                    HOST_AUDIO_FAILURE(m_audio_backend, "Unable to restore audio format");
 			}
 		}
 
@@ -593,7 +596,7 @@ void CES1370::es1370_update_voices(ES1370State* s, uint32_t ctl, uint32_t sctl,
 			if (i == ADC_CHANNEL) {
 				if (on) {
 					if (!host_audio::bind_stream(s->audio_be_in, s->adc_voice) && force)
-                        FAILURE_1(SDL, "Unable to resume audio capture: %s", host_audio::error());
+                        HOST_AUDIO_FAILURE(m_audio_backend, "Unable to resume audio capture");
 				}
 				else {
 					host_audio::unbind_stream(s->adc_voice);
@@ -601,7 +604,7 @@ void CES1370::es1370_update_voices(ES1370State* s, uint32_t ctl, uint32_t sctl,
 			} else {
 				if (on) {
 					if (!host_audio::bind_stream(s->audio_be_out, s->dac_voice[i]) && force)
-                        FAILURE_1(SDL, "Unable to resume audio playback: %s", host_audio::error());
+                        HOST_AUDIO_FAILURE(m_audio_backend, "Unable to resume audio playback");
 				}
 				else {
 					host_audio::unbind_stream(s->dac_voice[i]);
@@ -947,4 +950,4 @@ void CES1370::es1370_dac_callback_adc(void* userdata)
     CES1370* dev = (CES1370*)userdata;
     dev->request_audio(ADC_CHANNEL);
 }
-#endif /* HAVE_SDL */
+#endif // HAVE_SDL || _WIN32

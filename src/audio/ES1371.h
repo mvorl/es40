@@ -28,7 +28,7 @@
 // ES1371 adaptation of the ES1370 port to ES40 by Cacodemon345.
 #ifndef ES40_ES1371_H
 #define ES40_ES1371_H
-#ifdef HAVE_SDL
+#if defined(HAVE_SDL) || defined(_WIN32)
 #include "StdAfx.h"
 #include "system/System.h"
 #include "emu/SystemComponent.h"
@@ -100,11 +100,12 @@ private:
   std::mutex m_audio_wait_mutex;
   std::condition_variable m_audio_wait;
 
-  // Host playback device: one SDL pull is m_out_period_frames at m_out_freq Hz.
+  // Host period: m_out_period_frames at m_out_freq Hz.
   int m_out_freq = 0;
   int m_out_period_frames = 0;
-  // Playback lead kept queued in SDL (config "latency_ms").
+  // Queued playback lead (config "latency_ms").
   unsigned m_latency_ms = 40;
+  host_audio::Backend m_audio_backend{};
 
   enum ServiceResult { SERVICE_IDLE, SERVICE_MORE, SERVICE_BUSY };
 
@@ -160,6 +161,6 @@ private:
   static void es1371_dac_callback_dac2(void* userdata);
   static void es1371_dac_callback_adc(void* userdata);
 };
-#endif /* HAVE_SDL */
+#endif // HAVE_SDL || _WIN32
 
 #endif // ES40_ES1371_H
