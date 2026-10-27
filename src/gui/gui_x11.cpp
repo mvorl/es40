@@ -192,8 +192,7 @@ static XErrorHandler  previous_x_error_handler = nullptr;
 static Display*       error_display = nullptr;
 static int            x_error = 0;
 
-// XIDs may be returned before the server rejects a request. Never throw through
-// Xlib's C callback: report the first error at a synchronous worker boundary.
+// Report Xlib errors on the caller; never throw from this callback.
 static int record_x11_error(Display* display, XErrorEvent* event)
 {
   if(display == error_display)
@@ -250,8 +249,7 @@ static void           send_keyboard_mouse_status(void);
 static bool           x_keymapping;
 static bool           x_private_colormap;
 
-// Window dimensions and XPutImage destination coordinates must fit X11's
-// protocol, including the offsets used when Xlib splits a large image request.
+// X11 split-image offsets must fit signed 16-bit coordinates.
 static void validate_x11_dimensions(unsigned width, unsigned height)
 {
   if(!width || !height || width > 32767 || height > 32767 ||
@@ -479,8 +477,7 @@ static bool test_alloc_colors(Colormap cmap, u32 n_tries)
   return(n_allocated == n_tries);
 }
 
-// Callers often hold guiMutex while waiting here. Owner-thread callbacks must
-// never acquire that mutex or wait for a graphics worker.
+// Callers may hold guiMutex; never acquire it on the main thread.
 void bx_x11_gui_c::invoke(std::function<void()> fn)
 {
   if(!dispatcher.invoke(std::move(fn)))
@@ -540,8 +537,7 @@ void bx_x11_gui_c::handle_events()
 {
   unsigned redraw_width = 0, redraw_height = 0;
   invoke([&] {
-    // Guest input is driven by a live graphics worker, as in SDL. Native paint
-    // and close events continue on main while workers stop for save/restore.
+    // Only a live graphics worker may deliver guest input.
     pump_events(true);
     if(event_error) std::rethrow_exception(event_error);
     if(legacy_redraw_pending && !input_paused && !input_detached)
@@ -551,7 +547,7 @@ void bx_x11_gui_c::handle_events()
       legacy_redraw_pending = false;
     }
   });
-  // Legacy VGA state belongs to this graphics caller, not the native pump.
+  // Keep guest VGA mutations on the graphics worker.
   if(redraw_width && redraw_height && theVGA)
     theVGA->redraw_area(0, 0, redraw_width, redraw_height);
 }
@@ -567,8 +563,7 @@ void bx_x11_gui_c::specific_init(unsigned width, unsigned height)
 void bx_x11_gui_c::text_update(u8* old_text, u8* new_text,
     unsigned long cursor_x, unsigned long cursor_y, bx_vga_tminfo_t tm_info, unsigned rows)
 {
-  // Device palette access may take a bus lock already held by this producer.
-  // Read it here; main must only work with the supplied text and host palette.
+  // Read on the producer to avoid crossing an already-held device bus lock.
   if(!theVGA) FAILURE(Runtime, "X11 legacy text requires a VGA source");
   unsigned palette_indices[16];
   for(unsigned i = 0; i < 16; ++i)
@@ -584,7 +579,6 @@ void bx_x11_gui_c::graphics_tile_update(u8* pixels, unsigned x, unsigned y)
 
 void bx_x11_gui_c::graphics_frame_update(const u32* pixels, unsigned width, unsigned height)
 {
-  // The producer retains its pixels until this synchronous call completes.
   invoke([&] { graphics_frame_update_impl(pixels, width, height); });
 }
 
@@ -621,8 +615,7 @@ bx_svga_tileinfo_t* bx_x11_gui_c::graphics_tile_info(bx_svga_tileinfo_t* info)
 u8* bx_x11_gui_c::graphics_tile_get(unsigned x, unsigned y, unsigned* w, unsigned* h)
 {
   u8* result = nullptr;
-  // The tile remains producer-owned until update_in_place; the event pump only
-  // paints the separate retained frame and never reallocates tile storage.
+  // The producer owns this tile until update_in_place.
   invoke([&] { result = graphics_tile_get_impl(x, y, w, h); });
   return result;
 }
@@ -864,8 +857,6 @@ try
     bx_keymap->loadKeymap(convertStringToXKeysym);
   }
 
-  // Exposure events repaint the retained frame even if the first frame arrived
-  // before the window manager mapped the window. Do not consume input here.
   XMapWindow(bx_x_display, win);
   XSync(bx_x_display, False);
   check_x11_error();
@@ -924,8 +915,7 @@ void create_internal_vga_font(void)
   }
 }
 
-// While paused, keep input (including releases) queued, but still allow the
-// window to repaint and close. This Xlib predicate cannot throw or touch guests.
+// Leave input queued during pause while allowing repaint and close events.
 static Bool x11_lifecycle_event(Display*, XEvent* event, XPointer)
 {
   switch(event->type)
@@ -961,7 +951,7 @@ void bx_x11_gui_c::poll_events(bool process_input)
   //current_y = -1;
   mouse_update = 0;
 
-  // Bound each batch so sustained input cannot starve barriers or worker calls.
+  // Bound polling so worker calls and barriers cannot starve.
   for(unsigned count = 0; count < 256; ++count)
   {
     if(!process_input || input_paused || input_detached)
@@ -2189,8 +2179,7 @@ void bx_x11_gui_c::exit_impl(void)
 {
   if(frame_image) { XDestroyImage(frame_image); frame_image = nullptr; }
   if(ximage) { XDestroyImage(ximage); ximage = nullptr; }
-  // GCs also own client-side storage; the connection owns the remaining
-  // server-side windows, colormaps, cursors and font pixmaps.
+  // XCloseDisplay frees server resources, but GCs also need client cleanup.
   if(bx_x_display)
   {
     if(gc) XFreeGC(bx_x_display, gc);
