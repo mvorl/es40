@@ -24,11 +24,19 @@
 #define ES40_HOST_AUDIO_H
 
 #include <cstdint>
+#include <initializer_list>
+#include <vector>
 
 // Devices retain scheduling, error policy, lifetime and lock scope.
 namespace host_audio
 {
-using DeviceId = std::uint32_t;
+enum class Backend { sdl, dsound };
+struct DeviceId
+{
+    std::uintptr_t native;
+    Backend backend;
+    explicit operator bool() const { return native != 0; }
+};
 enum class SampleFormat { u8, s16_le };
 struct Format
 {
@@ -45,19 +53,41 @@ struct Stream
     void* native;
     Callback callback;
     void* userdata;
+    Backend backend;
     explicit operator bool() const { return native != nullptr; }
 };
 
-bool initialize();
-bool set_sample_frames_hint(const char* frames);
-DeviceId open_input_device();
-DeviceId open_output_device();
+// Release partial native setup while retaining legacy SDL failure behavior.
+class SetupGuard
+{
+public:
+    SetupGuard(Backend backend, std::initializer_list<DeviceId*> devices,
+        std::initializer_list<Stream*> streams);
+    ~SetupGuard();
+    SetupGuard(const SetupGuard&) = delete;
+    SetupGuard& operator=(const SetupGuard&) = delete;
+    void complete();
+private:
+    Backend backend_;
+    bool active_;
+    std::vector<DeviceId*> devices_;
+    std::vector<Stream*> streams_;
+};
+
+Backend backend_for_gui(const char* gui);
+bool initialize(Backend backend = Backend::sdl);
+bool set_sample_frames_hint(const char* frames, Backend backend = Backend::sdl);
+DeviceId open_input_device(Backend backend = Backend::sdl);
+DeviceId open_output_device(Backend backend = Backend::sdl);
 bool output_device_format(DeviceId device, int* frequency, int* sample_frames);
 void close_device(DeviceId device);
-const char* error();
+const char* error(Backend backend = Backend::sdl);
+[[noreturn]] void fail(Backend backend, const char* context, const char* file,
+    int line, const char* function);
 
 // Null formats preserve the host side chosen when the stream is bound.
-void create_stream(Stream& stream, const Format* source, const Format* target);
+void create_stream(Stream& stream, const Format* source, const Format* target,
+    Backend backend = Backend::sdl);
 void destroy_stream(Stream& stream);
 bool set_input_callback(Stream& stream, Callback callback, void* userdata);
 bool set_output_callback(Stream& stream, Callback callback, void* userdata);
@@ -74,5 +104,13 @@ int queued(Stream& stream);
 int read(Stream& stream, void* data, int bytes);
 bool write(Stream& stream, const void* data, int bytes);
 }
+
+#ifdef HAVE___FUNCTION__
+#define HOST_AUDIO_FAILURE(backend, context) \
+    host_audio::fail(backend, context, __FILE__, __LINE__, __FUNCTION__)
+#else
+#define HOST_AUDIO_FAILURE(backend, context) \
+    host_audio::fail(backend, context, __FILE__, __LINE__, nullptr)
+#endif
 
 #endif
