@@ -2181,7 +2181,7 @@ void edit_pci_lsi53c1020(const char *title)
         check_pci_lsi53c1020_settings, set_pci_lsi53c1020_values, add_pci_sym53c810_disks);
 }
 
-#ifdef HAVE_SDL
+#if defined(HAVE_SDL) || defined(_WIN32)
 // Form for Ensoniq ES1370 PCI card
 void edit_pci_es1370(const char *title)
 {
@@ -2216,7 +2216,7 @@ void edit_pci_es1371(const char *title)
 
     edit_pcicard(title, "es1371", entry, ARRAY_SIZE(entry));
 }
-#endif // HAVE_SDL
+#endif // HAVE_SDL || _WIN32
 
 // Menu for PCI bus
 void edit_pci(const char *title)
@@ -2227,7 +2227,7 @@ void edit_pci(const char *title)
         {"Add NIC", "Add a DEC 21143 Network Interface Card", edit_pci_dec21143},
         {"Add Symbios SCSI", "Add a Symbios 53C810 narrow SCSI controller (most tested/proven for OS boot/install)", edit_pci_sym53c810},
         {"Add LSI SCSI", "Add a LSI 53C1020 Fusion-MPT Ultra320 SCSI controller (NOT SRM BOOT CAPABLE!)", edit_pci_lsi53c1020}
-#ifdef HAVE_SDL
+#if defined(HAVE_SDL) || defined(_WIN32)
         ,
         {"Add ES1370 Audio", "Add an Ensoniq AudioPCI ES1370 sound card (works only with Windows NT 4.0 guest)", edit_pci_es1370},
         {"Add ES1371 Audio", "Add an Ensoniq AudioPCI ES1371 sound card with an AC'97 codec (requires an ES1371 guest driver)", edit_pci_es1371}

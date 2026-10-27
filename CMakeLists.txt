@@ -8,7 +8,8 @@ if (NOT ES40_MULTI_CONFIG AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type (Debug, Release, RelWithDebInfo, MinSizeRel)" FORCE)
 endif()
 
-option(ES40_DISABLE_SDL "Disable SDL for headless builds" OFF)
+option(ES40_DISABLE_SDL "Disable SDL support" OFF)
+option(ES40_DISABLE_X11 "Disable the native X11 GUI" OFF)
 option(ES40_DISABLE_NETWORKING "Disable PCap/networking for networkless builds" OFF)
 option(ES40_DISABLE_TAP "Disable TAP networking even on platforms that support it (Linux/FreeBSD/NetBSD)" OFF)
 option(ES40_DISABLE_VMNET "Disable vmnet networking on macOS" OFF)
@@ -46,6 +47,16 @@ if (NOT ES40_DISABLE_SDL)
         set(SDL3_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../SDL3/cmake")
     endif()
     find_package(SDL3 3.2.0 REQUIRED)
+endif()
+
+# X11 is an optional native frontend, independent of SDL. Require both its
+# headers and library before exposing the backend to any configuration tool.
+set(HAVE_X11 FALSE)
+if (NOT WIN32 AND NOT ES40_DISABLE_X11)
+    find_package(X11 QUIET)
+    if (X11_FOUND)
+        set(HAVE_X11 TRUE)
+    endif()
 endif()
 
 set(ES40_HAVE_PCAP FALSE)
@@ -224,7 +235,6 @@ if (NOT WIN32)
     check_symbol_exists(_strdup "string.h" HAVE__STRDUP)
     check_symbol_exists(_stricasecmp "string.h" HAVE__STRICASECMP)
     check_symbol_exists(_stricmp "string.h" HAVE__STRICMP)
-    check_include_file("X11/X.h" HAVE_X11)
 
     set(PACKAGE \"${PROJECT_NAME}\")
     set(PACKAGE_BUGREPORT "\"https://github.com/ES40-Emu/es40/issues/new\"")
@@ -437,6 +447,8 @@ list(APPEND ES40_SOURCES
     src/es40_debug.cpp
     src/audio/ES1370.cpp
     src/audio/ES1371.cpp
+    src/audio/HostAudio.cpp
+    src/audio/HostAudioDirectSound.cpp
     src/audio/HostAudioSDL.cpp
     src/network/Ethernet.cpp
     src/system/Flash.cpp
@@ -479,7 +491,7 @@ list(APPEND ES40_SOURCES
     )
 
 if (WIN32)
-    list(APPEND ES40_LIBRARIES ws2_32)
+    list(APPEND ES40_LIBRARIES ws2_32 dsound dxguid)
 endif()
 
 if (NOT ES40_DISABLE_SDL)
@@ -492,11 +504,12 @@ if (NOT ES40_DISABLE_SDL)
         src/gui/sdl_media.h
         )
 
-    if (NOT WIN32)
-        list(APPEND ES40_SOURCES
-            src/gui/gui_x11.cpp
-            )
-    endif()
+endif()
+
+if (HAVE_X11)
+    list(APPEND ES40_DEFINITIONS HAVE_X11)
+    list(APPEND ES40_SOURCES src/gui/gui_x11.cpp)
+    list(APPEND ES40_LIBRARIES X11::X11)
 endif()
 
 # The native Win32 GUI is independent of SDL, and defines the win32 plugin
@@ -507,6 +520,7 @@ if (WIN32)
         src/gui/gui_win32.cpp
         src/gui/win32_media.cpp
         src/gui/win32_media.h
+        src/gui/win32_manager.h
         )
     list(APPEND ES40_LIBRARIES winmm comdlg32)
 endif()

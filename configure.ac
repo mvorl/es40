@@ -305,16 +305,25 @@ AS_IF([test "x$enable_pcap" != "xno" -a "x$have_pcap" = "xno" \
   AC_MSG_FAILURE([libpcap >= 0.8 is required on this platform unless --disable-pcap is used (or, on Linux/FreeBSD/NetBSD, TAP support can be used instead: don't pass --disable-tap; alternatively install cargo for the slirp backend)])
 ])
 
-# Use our own method to search for X11
-AM_PATH_X11([], [:])
+# The native X11 frontend can be built independently of SDL.
+AC_ARG_ENABLE([x11],
+  [AS_HELP_STRING([--disable-x11],[Disable the native X11 GUI])],
+  [],
+  [enable_x11=yes])
+AS_IF([test "x$enable_x11" != "xno"], [
+  AM_PATH_X11([
+    AC_DEFINE([HAVE_X11],[1],[Use the native X11 GUI])
+    CPPFLAGS="$CPPFLAGS $X11_CFLAGS"
+    LIBS="$LIBS $X11_LIBS"
+  ], [:])
+])
 
-if test "x$X11_CFLAGS" != xnope && test "x$X11_LIBS" != xnope; then
-  CPPFLAGS="$CPPFLAGS $X11_CFLAGS"
-  CXXFLAGS="$CXXFLAGS -DHAVE_X11"
-  LIBS="$LIBS $X11_LIBS"
-fi
+# Allow disabling SDL independently of native frontends.
+# Native Windows audio remains available when SDL is disabled.
+case "$host_os" in
+  mingw*|msys*) LIBS="$LIBS -ldsound -ldxguid" ;;
+esac
 
-# Allow disabling SDL for no-screen builds.
 AC_ARG_ENABLE([sdl],
   [AS_HELP_STRING([--disable-sdl],[Disable SDL support])],
   [],

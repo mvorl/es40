@@ -331,6 +331,12 @@
     <ClCompile Include="..\src\audio\HostAudioSDL.cpp">
       <Filter>Source Files\audio</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\audio\HostAudio.cpp">
+      <Filter>Source Files\audio</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\audio\HostAudioDirectSound.cpp">
+      <Filter>Source Files\audio</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\CPU\jit\jitengine.cpp">
       <Filter>Source Files\CPU\jit</Filter>
     </ClCompile>
@@ -648,6 +654,9 @@
     <ClInclude Include="..\src\gui\win32_media.h">
       <Filter>Header Files\gui</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\gui\win32_manager.h">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\gui\sdl_fonts.h">
       <Filter>Header Files\gui</Filter>
     </ClInclude>
@@ -694,6 +703,9 @@
       <Filter>Header Files\audio</Filter>
     </ClInclude>
     <ClInclude Include="..\src\audio\HostAudio.h">
+      <Filter>Header Files\audio</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\audio\HostAudioBackend.h">
       <Filter>Header Files\audio</Filter>
     </ClInclude>
     <ClInclude Include="..\src\CPU\jit\jitengine.h">

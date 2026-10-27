@@ -135,6 +135,7 @@ typedef enum
 class CConfigurator
 {
 public:
+  const char* get_gui_name() const;
   std::string get_device_path() const
   {
     std::string path = pParent ? pParent->get_device_path() : std::string();

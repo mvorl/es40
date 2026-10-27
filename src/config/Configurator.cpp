@@ -823,6 +823,19 @@ classinfo classes[] = {
   {0, c_none, 0, 0}
 };
 
+const char* CConfigurator::get_gui_name() const
+{
+    const CConfigurator* root = this;
+    while (root->pParent) root = root->pParent;
+    for (int i = 0; i < root->iNumChildren; ++i) {
+        const CConfigurator* child = root->pChildren[i];
+        for (const auto& entry : classes)
+            if ((entry.flags & IS_GUI) && child->myValue &&
+                !strcmp(child->myValue, entry.name)) return child->myValue;
+    }
+    return nullptr;
+}
+
 /**
  * Determine what device this configurator represents, and instantiate it;
  * then call initialize for our children.
@@ -1078,7 +1091,7 @@ void CConfigurator::initialize()
 //		myDevice = new CCirrus(this, (CSystem*)pParent->get_device(), pcibus,
 //			pcidev);
 //		break;
-#if defined(HAVE_SDL)
+#if defined(HAVE_SDL) || defined(_WIN32)
 	case c_es1370:
 		myDevice = new CES1370(this, (CSystem*)pParent->get_device(), pcibus,
 			pcidev);

@@ -2183,6 +2183,11 @@
     <ES40GitCommit Condition="'$(ES40GitCommit)' == '' and '$(GITHUB_SHA)' != ''">$(GITHUB_SHA)</ES40GitCommit>
   </PropertyGroup>
   <Import Project="es40-slirp.props" />
+  <ItemDefinitionGroup>
+    <Link>
+      <AdditionalDependencies>dsound.lib;dxguid.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\src\chipset\AliM1543C.cpp" />
     <ClCompile Include="..\src\chipset\AliM1543C_ide.cpp" />
@@ -2209,6 +2214,8 @@
     </ClCompile>
     <ClCompile Include="..\src\audio\ES1370.cpp" />
     <ClCompile Include="..\src\audio\ES1371.cpp" />
+    <ClCompile Include="..\src\audio\HostAudio.cpp" />
+    <ClCompile Include="..\src\audio\HostAudioDirectSound.cpp" />
     <ClCompile Include="..\src\audio\HostAudioSDL.cpp" />
     <ClCompile Include="..\src\audio\MPU401.cpp" />
     <ClCompile Include="..\src\config\Configurator.cpp" />
@@ -2345,6 +2352,7 @@
     <ClInclude Include="..\src\audio\ES1370.h" />
     <ClInclude Include="..\src\audio\ES1371.h" />
     <ClInclude Include="..\src\audio\HostAudio.h" />
+    <ClInclude Include="..\src\audio\HostAudioBackend.h" />
     <ClInclude Include="..\src\es40_debug.h" />
     <ClInclude Include="..\src\es40_endian.h" />
     <ClInclude Include="..\src\network\Ethernet.h" />
@@ -2385,6 +2393,7 @@
     <ClInclude Include="..\src\gui\sdlkeys.h" />
     <ClInclude Include="..\src\gui\sdl_media.h" />
     <ClInclude Include="..\src\gui\win32_media.h" />
+    <ClInclude Include="..\src\gui\win32_manager.h" />
     <ClInclude Include="..\src\io\Serial.h" />
     <ClInclude Include="..\src\io\SerialListenAddress.h" />
     <ClInclude Include="..\src\StdAfx.h" />
