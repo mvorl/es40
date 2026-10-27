@@ -285,6 +285,10 @@ if (NOT ES40_DISABLE_SDL)
     list(APPEND ES40_CFG_DEFINITIONS HAVE_SDL)
 endif()
 
+if (HAVE_X11)
+    list(APPEND ES40_CFG_DEFINITIONS HAVE_X11)
+endif()
+
 add_executable(es40-cfg 
     ${ES40_CFG_SOURCES}
     )
@@ -303,9 +307,9 @@ set_property(TARGET es40-cfg PROPERTY CXX_STANDARD 17)
 
 ######################## Configuration editors ########################
 
-# The option/workflow library has no curses or SDL dependency. Both editors
+# The option/workflow library has no curses or SDL dependency. All editors
 # inherit exactly the same feature defines and configuration implementation.
-if (ES40_ENABLE_CFG_TUI OR (ES40_ENABLE_CFG_SDL AND NOT ES40_DISABLE_SDL))
+if (WIN32 OR ES40_ENABLE_CFG_TUI OR (ES40_ENABLE_CFG_SDL AND NOT ES40_DISABLE_SDL))
     add_library(es40_config_editor STATIC
         src/config/ConfigEditor.cpp src/config/ConfigDocument.cpp src/config/Configurator.cpp src/base/Exception.cpp)
     target_include_directories(es40_config_editor PUBLIC src/)
@@ -326,6 +330,18 @@ if (ES40_ENABLE_CFG_TUI OR (ES40_ENABLE_CFG_SDL AND NOT ES40_DISABLE_SDL))
         find_library(ES40_CFG_PCAP_LIBRARY wpcap HINTS "${NPCAP_DIR}/lib/x64" "C:/dev/npcap-sdk/lib/x64" REQUIRED)
         target_include_directories(es40_config_editor PRIVATE "${ES40_CFG_PCAP_INCLUDE}")
         target_link_libraries(es40_config_editor PUBLIC "${ES40_CFG_PCAP_LIBRARY}")
+    endif()
+endif()
+
+if (WIN32)
+    add_executable(es40_cfg_win32 src/config/es40-cfg-win32.cpp)
+    set_target_properties(es40_cfg_win32 PROPERTIES OUTPUT_NAME "es40-cfg-win32")
+    target_compile_definitions(es40_cfg_win32 PRIVATE WINVER=0x0601 _WIN32_WINNT=0x0601)
+    target_link_libraries(es40_cfg_win32 PRIVATE es40_config_editor
+        user32 gdi32 comctl32 shell32)
+    if (MSVC AND ES40_HAVE_PCAP)
+        target_link_libraries(es40_cfg_win32 PRIVATE delayimp)
+        target_link_options(es40_cfg_win32 PRIVATE "/DELAYLOAD:wpcap.dll")
     endif()
 endif()
 

@@ -6,6 +6,7 @@ REM  ES40 Windows build script
 REM
 REM    es40.exe       SDL3 graphics + Rust "slirp" networking   (CMake)
 REM    es40-cfg.exe   CLI configuration generator               (CMake)
+REM    es40-cfg-win32 Native Win32 configuration editor          (CMake)
 REM    es40-cfg-tui   curses TUI configuration generator        (MSBuild)
 REM
 REM  Overridable environment variables:
@@ -81,12 +82,12 @@ if "%ES40_BUILD_TUI%"=="1" (
     popd
 )
 
-REM ---- 1) CMake: es40 (graphics + slirp) and es40-cfg --------------------
+REM ---- 1) CMake: es40 (graphics + slirp) and configuration tools --------
 echo.
-echo [1/2] CMake: configure and build es40, es40-cfg, es40_cfg_sdl
+echo [1/2] CMake: configure and build es40, es40-cfg, es40_cfg_sdl, es40_cfg_win32
 cmake -S "%ROOT%" -B "%BUILD_DIR%" -G Ninja -DCMAKE_BUILD_TYPE=Release -DSDL3_DIR="%SDL3_DIR%" -DES40_ENABLE_CFG_TUI=OFF
 if errorlevel 1 goto :fail
-cmake --build "%BUILD_DIR%" --target es40 es40-cfg es40_cfg_sdl -j
+cmake --build "%BUILD_DIR%" --target es40 es40-cfg es40_cfg_sdl es40_cfg_win32 -j
 if errorlevel 1 goto :fail
 
 for %%i in ("%SDL3_DIR%\..\lib\x64\SDL3.dll") do set "SDL3_DLL=%%~fi"
@@ -110,6 +111,7 @@ echo ============================================================
 echo  Done.
 echo    es40.exe      : %BUILD_DIR%\es40.exe
 echo    es40-cfg.exe  : %BUILD_DIR%\es40-cfg.exe
+echo    es40-cfg-win32: %BUILD_DIR%\es40-cfg-win32.exe
 if "%ES40_BUILD_TUI%"=="1" echo    es40-cfg-tui  : %ROOT%\Visual Studio\x64\%ES40_VS_CONFIG%\es40-cfg-tui.exe
 echo ============================================================
 endlocal

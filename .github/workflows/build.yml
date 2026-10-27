@@ -531,6 +531,11 @@ jobs:
           $configDir = Join-Path $PWD "Visual Studio/x64/${{ matrix.configuration }}"
           $artifactDir = Join-Path $env:RUNNER_TEMP "windows-${{ matrix.configuration }}"
 
+          # The native editor is built and packaged in every Windows configuration, including NS/NN.
+          if (-not (Test-Path -LiteralPath (Join-Path $configDir "es40-cfg-win32.exe") -PathType Leaf)) {
+            throw "Native configuration editor missing from $configDir"
+          }
+
           Remove-Item -Recurse -Force $artifactDir -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
 
