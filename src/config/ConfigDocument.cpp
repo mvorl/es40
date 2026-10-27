@@ -37,32 +37,30 @@
 #include <unistd.h>
 #endif
 
-namespace
-{
 namespace fs = std::filesystem;
-struct Token
+struct ConfigDocumentToken
 {
     size_t begin = 0, end = 0;
     char kind = 0;
     std::string value;
 };
-struct Entry
+struct ConfigDocumentEntry
 {
-    Token name, value;
+    ConfigDocumentToken name, value;
     size_t end = 0, close = 0;
     bool block = false;
     CConfigurator *original = nullptr;
-    std::vector<Entry> entries;
+    std::vector<ConfigDocumentEntry> entries;
 };
-struct Patch { size_t begin, end; std::string text; };
+struct ConfigDocumentPatch { size_t begin, end; std::string text; };
 
-bool bare(const std::string& value)
+static bool bare(const std::string& value)
 {
     return !value.empty() && std::all_of(value.begin(), value.end(), [](unsigned char c)
         { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
                  (c >= '0' && c <= '9') || c == '_' || c == '.'; });
 }
-std::string encode_value(const std::string& value)
+static std::string encode_value(const std::string& value)
 {
     std::string result = "\"";
     for (char c : value)
@@ -74,19 +72,19 @@ std::string encode_value(const std::string& value)
     }
     return result + "\"";
 }
-std::string replacement(const Token& old, const std::string& value, const std::string& source)
+static std::string replacement(const ConfigDocumentToken& old, const std::string& value, const std::string& source)
 {
     return source[old.begin] != '"' && bare(value) ? value : encode_value(value);
 }
-class Parser
+class ConfigDocumentParser
 {
     const std::string& source;
     size_t pos = 0;
     bool line_has_content = false;
-    Token token;
+    ConfigDocumentToken token;
     [[noreturn]] void fail() const
     { throw std::runtime_error("Invalid configuration syntax near byte " + std::to_string(pos)); }
-    Token next()
+    ConfigDocumentToken next()
     {
         for (;;)
         {
@@ -109,7 +107,7 @@ class Parser
             }
             break;
         }
-        Token t; t.begin = pos;
+        ConfigDocumentToken t; t.begin = pos;
         const char c = source[pos++];
         line_has_content = true;
         if (c == '=' || c == ';' || c == '{' || c == '}') t.kind = c;
@@ -136,13 +134,13 @@ class Parser
         return t;
     }
     void advance() { token = next(); }
-    void entries(Entry& parent, int depth)
+    void entries(ConfigDocumentEntry& parent, int depth)
     {
         if (depth > 64) fail();
         int values = 0, children = 0;
         while (token.kind && token.kind != '}')
         {
-            Entry entry; entry.name = token;
+            ConfigDocumentEntry entry; entry.name = token;
             if (token.kind != 'v' || !bare(token.value) || source[token.begin] == '"') fail();
             advance(); if (token.kind != '=') fail();
             advance(); if (token.kind != 'v') fail();
@@ -164,18 +162,18 @@ class Parser
         }
     }
 public:
-    explicit Parser(const std::string& text) : source(text)
+    explicit ConfigDocumentParser(const std::string& text) : source(text)
     {
         if (source.compare(0, 3, "\xef\xbb\xbf") == 0) pos = 3;
     }
-    Entry parse()
+    ConfigDocumentEntry parse()
     {
-        Entry root; root.block = true; root.close = root.end = source.size();
+        ConfigDocumentEntry root; root.block = true; root.close = root.end = source.size();
         advance(); entries(root, 0); if (token.kind) fail(); return root;
     }
 };
 
-void populate(const Entry& entry, CConfigurator *config)
+static void populate(const ConfigDocumentEntry& entry, CConfigurator *config)
 {
     for (const auto& child : entry.entries)
         if (child.block)
@@ -186,7 +184,7 @@ void populate(const Entry& entry, CConfigurator *config)
         else config->add_value(strdup(child.name.value.c_str()), strdup(child.value.value.c_str()));
 }
 
-void bind_entries(Entry& entry, CConfigurator *config)
+static void bind_entries(ConfigDocumentEntry& entry, CConfigurator *config)
 {
     entry.original = config;
     std::set<int> used;
@@ -202,7 +200,7 @@ void bind_entries(Entry& entry, CConfigurator *config)
         }
 }
 
-FILE *open_file(const fs::path& path, const char *mode)
+static FILE *open_file(const fs::path& path, const char *mode)
 {
 #ifdef _WIN32
     std::wstring wide_mode; while (*mode) wide_mode += *mode++;
@@ -211,11 +209,11 @@ FILE *open_file(const fs::path& path, const char *mode)
     return fopen(path.c_str(), mode);
 #endif
 }
-struct TemporaryFile
+struct ConfigDocumentTemporaryFile
 {
     fs::path path;
     FILE *file = nullptr;
-    explicit TemporaryFile(const fs::path& target)
+    explicit ConfigDocumentTemporaryFile(const fs::path& target)
     {
         std::random_device random;
         for (int i = 0; i < 100; ++i)
@@ -236,7 +234,7 @@ struct TemporaryFile
         }
         throw std::runtime_error("Could not create a temporary file beside " + target.string());
     }
-    ~TemporaryFile()
+    ~ConfigDocumentTemporaryFile()
     {
         if (file) fclose(file);
         std::error_code ignored; fs::remove(path, ignored);
@@ -255,7 +253,7 @@ struct TemporaryFile
         if (fclose(closing)) throw std::runtime_error("Failed closing temporary configuration file");
     }
 };
-void replace_file(const fs::path& from, const fs::path& to)
+static void replace_file(const fs::path& from, const fs::path& to)
 {
 #ifdef _WIN32
     if (!MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
@@ -264,13 +262,12 @@ void replace_file(const fs::path& from, const fs::path& to)
     fs::rename(from, to);
 #endif
 }
-} // namespace
 
 struct ConfigDocument::Impl
 {
     std::string text, newline;
-    Entry root;
-    explicit Impl(std::string source) : text(std::move(source)), root(Parser(text).parse())
+    ConfigDocumentEntry root;
+    explicit Impl(std::string source) : text(std::move(source)), root(ConfigDocumentParser(text).parse())
     {
         size_t pos = text.find_first_of("\r\n");
         newline = pos == std::string::npos ? "\n" :
@@ -283,7 +280,7 @@ struct ConfigDocument::Impl
         size_t end = start; while (end < position && (text[end] == ' ' || text[end] == '\t')) ++end;
         return text.substr(start, end - start);
     }
-    std::string child_indent(const Entry& entry) const
+    std::string child_indent(const ConfigDocumentEntry& entry) const
     {
         for (const auto& child : entry.entries)
         {
@@ -301,7 +298,7 @@ struct ConfigDocument::Impl
         for (int i = 0; i < node->editor_child_count(); ++i) result += serialize(node->editor_child(i), padding + "  ");
         return result + padding + "}" + newline;
     }
-    void insert(const Entry& entry, const std::string& content, std::vector<Patch>& patches) const
+    void insert(const ConfigDocumentEntry& entry, const std::string& content, std::vector<ConfigDocumentPatch>& patches) const
     {
         if (content.empty()) return;
         size_t position = entry.close;
@@ -314,7 +311,7 @@ struct ConfigDocument::Impl
         if (&entry != &root && !own_line) added += indent(entry.name.begin);
         patches.push_back({position, position, added});
     }
-    void render(const Entry& entry, CConfigurator *node, std::vector<Patch>& patches) const
+    void render(const ConfigDocumentEntry& entry, CConfigurator *node, std::vector<ConfigDocumentPatch>& patches) const
     {
         if (&entry != &root)
         {
@@ -368,7 +365,7 @@ struct ConfigDocument::Impl
                 if (&entry == &root && std::string(child->get_myName()) == "gui")
                 {
                     // The emulator initializes top-level devices in file order.
-                    auto system = std::find_if(entry.entries.begin(), entry.entries.end(), [](const Entry& e) { return e.block && e.name.value == "sys0"; });
+                    auto system = std::find_if(entry.entries.begin(), entry.entries.end(), [](const ConfigDocumentEntry& e) { return e.block && e.name.value == "sys0"; });
                     if (system != entry.entries.end())
                     {
                         const size_t position = system->name.begin - indent(system->name.begin).size();
@@ -395,8 +392,8 @@ CConfigurator *ConfigDocument::configuration()
 void ConfigDocument::bind(CConfigurator *configuration) { bind_entries(impl->root, configuration); }
 std::string ConfigDocument::render(CConfigurator *configuration) const
 {
-    std::vector<Patch> patches; impl->render(impl->root, configuration, patches);
-    std::stable_sort(patches.begin(), patches.end(), [](const Patch& a, const Patch& b) { return a.begin < b.begin || (a.begin == b.begin && a.end < b.end); });
+    std::vector<ConfigDocumentPatch> patches; impl->render(impl->root, configuration, patches);
+    std::stable_sort(patches.begin(), patches.end(), [](const ConfigDocumentPatch& a, const ConfigDocumentPatch& b) { return a.begin < b.begin || (a.begin == b.begin && a.end < b.end); });
     std::string result; size_t cursor = 0;
     for (const auto& patch : patches)
     {
@@ -444,12 +441,12 @@ void save_config_file(const ConfigFileSnapshot& expected, const std::string& tex
     if (current.exists && current.text == text) return;
     if (current.exists && (fs::status(current.path).permissions() & (fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write)) == fs::perms::none)
         throw std::runtime_error("Configuration is read-only: " + current.path.string());
-    TemporaryFile output(expected.path); output.write(text);
+    ConfigDocumentTemporaryFile output(expected.path); output.write(text);
     fs::path backup = expected.path; backup += ".bak";
     if (current.exists)
     {
         fs::permissions(output.path, fs::status(current.path).permissions());
-        TemporaryFile copy(backup); copy.write(current.text);
+        ConfigDocumentTemporaryFile copy(backup); copy.write(current.text);
         fs::permissions(copy.path, fs::status(current.path).permissions());
         unchanged();
         replace_file(copy.path, backup);

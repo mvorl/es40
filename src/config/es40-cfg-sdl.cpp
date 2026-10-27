@@ -31,27 +31,25 @@
 #include <cstring>
 #include <stdexcept>
 
-namespace
-{
-constexpr int WIDTH = 1100, HEIGHT = 760;
-constexpr int TOP = 88, BOTTOM = 560, ROW = 36, FORM_ROW = 64;
-constexpr SDL_Color BACKGROUND{18, 24, 35, 255}, PANEL{28, 37, 52, 255};
-constexpr SDL_Color INK{228, 234, 244, 255}, MUTED{157, 174, 195, 255};
-constexpr SDL_Color ACCENT{67, 123, 186, 255}, INPUT{12, 19, 30, 255};
+static constexpr int WIDTH = 1100, HEIGHT = 760;
+static constexpr int TOP = 88, BOTTOM = 560, ROW = 36, FORM_ROW = 64;
+static constexpr SDL_Color BACKGROUND{18, 24, 35, 255}, PANEL{28, 37, 52, 255};
+static constexpr SDL_Color INK{228, 234, 244, 255}, MUTED{157, 174, 195, 255};
+static constexpr SDL_Color ACCENT{67, 123, 186, 255}, INPUT{12, 19, 30, 255};
 
-size_t previous_char(const std::string& value, size_t pos)
+static size_t previous_char(const std::string& value, size_t pos)
 {
     if (pos) --pos;
     while (pos && (static_cast<unsigned char>(value[pos]) & 0xc0) == 0x80) --pos;
     return pos;
 }
-size_t next_char(const std::string& value, size_t pos)
+static size_t next_char(const std::string& value, size_t pos)
 {
     if (pos < value.size()) ++pos;
     while (pos < value.size() && (static_cast<unsigned char>(value[pos]) & 0xc0) == 0x80) ++pos;
     return pos;
 }
-std::vector<std::string> wrap_text(const std::string& body, size_t width)
+static std::vector<std::string> wrap_text(const std::string& body, size_t width)
 {
     std::vector<std::string> lines;
     size_t start = 0;
@@ -73,7 +71,7 @@ std::vector<std::string> wrap_text(const std::string& body, size_t width)
     return lines;
 }
 
-class SdlUI final : public EditorUI
+class ES40SdlConfigEditorUI final : public EditorUI
 {
     SDL_Window *window = nullptr;
     SDL_Renderer *renderer = nullptr;
@@ -405,10 +403,9 @@ public:
         }
     }
 };
-} // namespace
 
 int main(int argc, char **argv)
 {
-    SdlUI ui;
+    ES40SdlConfigEditorUI ui;
     return run_config_editor(argc, argv, ui);
 }
