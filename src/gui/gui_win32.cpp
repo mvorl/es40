@@ -78,6 +78,7 @@
 #include "keymap.h"
 #include "gui.h"
 #include "win32_media.h"
+#include "win32_manager.h"
 
 class bx_win32_gui_c;
 class win32_application;
@@ -94,6 +95,13 @@ static constexpr UINT win32_reconcile_message = WM_APP + 3;
 static constexpr UINT win32_keyboard_message = WM_APP + 4;
 static constexpr unsigned win32_print_screen_scan = 0x137;
 static constexpr unsigned win32_pause_scan = 0x146;
+
+// Embedded displays use the manager's foreground window.
+static bool win32_display_active(HWND window)
+{
+	return window && IsWindowVisible(window) && GetFocus() == window &&
+		GetForegroundWindow() == GetAncestor(window, GA_ROOT);
+}
 
 static unsigned win32_key_scan(unsigned key, unsigned scan, bool extended)
 {
@@ -476,6 +484,7 @@ public:
 	void send_host_mouse(double dx, double dy, int dz, unsigned buttons);
 	void set_mouse_capture(bx_win32_gui_c* target);
 	void claim_fullscreen_monitor(bx_win32_gui_c* target);
+	void show_secondary_displays();
 	void release_input_session();
 	void release_media_input();
 	bool media_key_event(UINT, WPARAM, LPARAM, bool synthetic_key = false);
@@ -489,6 +498,7 @@ public:
 	bool dispatching_captured_key = false;
 	bx_win32_gui_c* window_owner(HWND window) const;
 	bx_keymap_c* keymap() const { return shared_keymap.get(); }
+	HWND manager_host() const { return managed_host; }
 
 	// Accessed only on the application thread, including callbacks.
 	std::map<HWND, bx_win32_gui_c*> windows;
@@ -519,6 +529,9 @@ private:
 	std::map<std::pair<std::string, unsigned>, bx_win32_gui_c*> outputs;
 	const DWORD owner_thread = GetCurrentThreadId();
 	HWND dispatcher = nullptr;
+	HWND managed_host = nullptr;
+	HANDLE manager_process = nullptr;
+	DWORD manager_pid = 0;
 	HWND raw_mouse_target = nullptr;
 	unsigned mouse_capture_transition = 0;
 	bool fullscreen_handoff = false;
@@ -567,7 +580,7 @@ class bx_win32_gui_c : public bx_gui_c
 {
 public:
 	bx_win32_gui_c(win32_application& app, std::size_t ordinal)
-		: application(app), window_title("ES40 - Output " + std::to_string(ordinal)) {}
+		: application(app), window_title("ES40 - Output " + std::to_string(ordinal)), primary(ordinal == 0) {}
 	void specific_init(unsigned, unsigned) override;
 	// GPU renderers submit complete ARGB frames, including VGA text, as with SDL.
 	void text_update(u8*, u8*, unsigned long, unsigned long,
@@ -629,6 +642,8 @@ private:
 	win32_application& application;
 	HWND window = nullptr;
 	const std::string window_title;
+	const bool primary;
+	HWND embedded_host = nullptr;
 	std::vector<u32> pixels;
 	std::vector<u32> filtered_pixels;
 	std::vector<win32_linear_sample> linear_columns;
@@ -1090,6 +1105,31 @@ void win32_application::initialize()
 	if (!previous_execution_state)
 		printf("%%WIN32-W-DISPLAYPOWER: Unable to prevent host display blanking.\n");
 	running.store(true, std::memory_order_release);
+	const char* host_value = getenv("ES40_MANAGER_HOST");
+	if (host_value && *host_value)
+	{
+		char* end = nullptr;
+		const unsigned long long host_number = _strtoui64(host_value, &end, 10);
+		if (!end || *end || !host_number || host_number > UINTPTR_MAX)
+			FAILURE(Win32, "Invalid machine manager host window");
+		managed_host = reinterpret_cast<HWND>(static_cast<UINT_PTR>(host_number));
+		const char* pid_value = getenv("ES40_MANAGER_PID");
+		const unsigned long long pid_number = pid_value ? _strtoui64(pid_value, &end, 10) : 0;
+		if (!pid_number || !end || *end || pid_number > MAXDWORD)
+			FAILURE(Win32, "Invalid machine manager process");
+		manager_pid = static_cast<DWORD>(pid_number);
+		wchar_t host_class[64] = {};
+		DWORD host_pid = 0;
+		GetWindowThreadProcessId(managed_host, &host_pid);
+		if (host_pid != manager_pid || manager_pid == GetCurrentProcessId() ||
+			!GetClassNameW(managed_host, host_class, 64) || wcscmp(host_class, win32_manager_host_class))
+			FAILURE(Win32, "Machine manager host is no longer available");
+		manager_process = OpenProcess(SYNCHRONIZE, FALSE, manager_pid);
+		if (!manager_process || WaitForSingleObject(manager_process, 0) != WAIT_TIMEOUT)
+			FAILURE(Win32, "Machine manager process is no longer available");
+		// Allow stop and media commands without a GPU.
+		if (!displays.empty()) displays.front()->initialize_window();
+	}
 }
 
 void win32_application::invoke(std::function<void()> fn)
@@ -1163,8 +1203,7 @@ void win32_application::set_keyboard_capture(bool enabled)
 		}
 		if (transition != mouse_capture_transition || keyboard_hook || !keyboard || input_paused ||
 			shutting_down || media.active() || !running.load(std::memory_order_acquire) ||
-			!capture_owner || GetFocus() != capture_owner->window ||
-			GetForegroundWindow() != capture_owner->window) return;
+			!capture_owner || !win32_display_active(capture_owner->window)) return;
 		BYTE state[256];
 		HMODULE module = nullptr;
 		if (!GetKeyboardState(state) ||
@@ -1208,7 +1247,7 @@ void win32_application::set_keyboard_capture(bool enabled)
 		}
 		if (transition != mouse_capture_transition || !keyboard || input_paused || shutting_down || media.active() ||
 			!running.load(std::memory_order_acquire) || !capture_owner ||
-			GetFocus() != capture_owner->window || GetForegroundWindow() != capture_owner->window)
+			!win32_display_active(capture_owner->window))
 			set_keyboard_capture(false);
 		return;
 	}
@@ -1249,7 +1288,7 @@ bool win32_application::capture_keyboard_event(WPARAM msg, const KBDLLHOOKSTRUCT
 	if (!keyboard_hook || keyboard_hook_failed || input_paused || !keyboard || shutting_down || callback_error || media.active() ||
 		!running.load(std::memory_order_acquire)) return false;
 	HWND focus = GetFocus();
-	if (!capture_owner || !window_owner(focus) || GetForegroundWindow() != focus)
+	if (!capture_owner || !window_owner(focus) || !win32_display_active(focus))
 	{
 		PostMessage(dispatcher, win32_keyboard_message, 0, 0);
 		return false;
@@ -1417,7 +1456,8 @@ void win32_application::dispatch_captured_keys()
 		printf("%%WIN32-W-KEYBOARD: Keyboard capture queue failed; system shortcuts released.\n");
 		return;
 	}
-	if (keyboard_hook && !window_owner(GetForegroundWindow())) { release_input_session(); return; }
+	if (keyboard_hook && (!window_owner(GetFocus()) || !win32_display_active(GetFocus())))
+		{ release_input_session(); return; }
 	while (keyboard_hook && captured_key_count)
 	{
 		const auto event = captured_keys[captured_key_first];
@@ -1448,6 +1488,13 @@ void win32_application::pump()
 {
 	while (running.load(std::memory_order_acquire))
 	{
+		if (managed_host)
+		{
+			DWORD host_pid = 0;
+			GetWindowThreadProcessId(managed_host, &host_pid);
+			if (host_pid != manager_pid || WaitForSingleObject(manager_process, 0) != WAIT_TIMEOUT)
+				request_shutdown();
+		}
 		MSG msg;
 		while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
 		{
@@ -1506,7 +1553,7 @@ void win32_application::poll_input(unsigned current_key_scan)
 	sync_input();
 	if (media.active()) { release_input_session(); return; }
 	auto* focus = window_owner(GetFocus());
-	if (!focus) release_input_session();
+	if (!focus || !win32_display_active(focus->window)) release_input_session();
 	else if (capture_owner && capture_owner != focus) set_mouse_capture(focus);
 	else if (capture_owner && !mouse_absolute && GetCapture() != capture_owner->window)
 		set_mouse_capture(nullptr);
@@ -1819,7 +1866,7 @@ void win32_application::set_mouse_capture(bx_win32_gui_c* target)
 {
 	if (target && (input_paused || media.active())) return;
 	if (target && (!target->window || target->retired ||
-		GetActiveWindow() != target->window)) return;
+		!win32_display_active(target->window))) return;
 	if (capture_owner == target) return;
 	const unsigned transition = ++mouse_capture_transition;
 	if (!mouse_absolute)
@@ -1832,7 +1879,7 @@ void win32_application::set_mouse_capture(bx_win32_gui_c* target)
 		// request or display retirement takes precedence over this request.
 		if (transition != mouse_capture_transition ||
 			(target && (shutting_down || !target->window || target->retired ||
-			 GetActiveWindow() != target->window)))
+			 !win32_display_active(target->window))))
 		{
 			if (capture_owner && !raw_mouse_target &&
 				!set_raw_mouse_target(capture_owner->window)) set_mouse_capture(nullptr);
@@ -1914,16 +1961,24 @@ void bx_win32_gui_c::initialize_window()
 		FAILURE(Win32, "Cannot initialize a retired display");
 	if (window) return;
 	if (width == 0 || height == 0) dimension_update_impl(640, 480);
-	const DWORD style = win32_window_style;
+	embedded_host = primary ? application.manager_host() : nullptr;
+	const DWORD style = embedded_host ? WS_CHILD | WS_CLIPSIBLINGS : win32_window_style;
 	RECT rect = window_rect_for_client(driven_width, driven_height);
+	if (embedded_host && !GetClientRect(embedded_host, &rect))
+		FAILURE(Win32, "Unable to size managed display");
 	HWND created = CreateWindowEx(0, win32_window_class, window_title.c_str(),
-		style, CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left,
-		rect.bottom - rect.top, nullptr, nullptr, GetModuleHandle(nullptr), this);
+		style, embedded_host ? 0 : CW_USEDEFAULT, embedded_host ? 0 : CW_USEDEFAULT,
+		rect.right - rect.left, rect.bottom - rect.top, embedded_host, nullptr, GetModuleHandle(nullptr), this);
 	if (!created)
 		FAILURE(Win32, "Unable to create display window");
 	resize_window_to_guest();
 	update_title();
-	ShowWindow(window, SW_SHOW);
+	ShowWindow(window, embedded_host ? SW_SHOWNA : SW_SHOW);
+	if (embedded_host)
+	{
+		PostMessage(embedded_host, win32_manager_display_ready, (WPARAM)window, GetCurrentProcessId());
+		PostMessage(embedded_host, win32_manager_display_size, width, height);
+	}
 }
 
 void bx_win32_gui_c::update_title()
@@ -1967,6 +2022,7 @@ void bx_win32_gui_c::dimension_update_impl(unsigned x, unsigned y)
 	update_driven_size();
 	resize_window_to_guest();
 	update_mouse_geometry();
+	if (embedded_host) PostMessage(embedded_host, win32_manager_display_size, width, height);
 }
 
 int bx_win32_gui_c::window_scale() const
@@ -2001,6 +2057,15 @@ RECT bx_win32_gui_c::window_rect_for_client(int client_width, int client_height)
 void bx_win32_gui_c::resize_window_to_guest()
 {
 	if (!window || retired) return;
+	if (embedded_host && !fullscreen)
+	{
+		RECT rect = {};
+		pending_guest_resize = false;
+		if (GetClientRect(embedded_host, &rect))
+			SetWindowPos(window, nullptr, 0, 0, rect.right, rect.bottom,
+				SWP_NOZORDER | SWP_NOACTIVATE);
+		return;
+	}
 	if (fullscreen)
 	{
 		// A mode change while fullscreen must survive the return to a saved
@@ -2298,8 +2363,17 @@ void win32_application::claim_fullscreen_monitor(bx_win32_gui_c* target)
 			ShowWindow(display->window, SW_MINIMIZE);
 }
 
+void win32_application::show_secondary_displays()
+{
+	for (const auto& display : displays)
+		if (!display->primary && display->window && !display->retired)
+			ShowWindow(display->window, IsIconic(display->window) ? SW_RESTORE : SW_SHOW);
+}
+
 void bx_win32_gui_c::toggle_fullscreen()
 {
+	if (!window || retired) return;
+	if (embedded_host) application.release_input_session();
 	const LONG_PTR style = GetWindowLongPtr(window, GWL_STYLE);
 	if (!fullscreen)
 	{
@@ -2309,19 +2383,54 @@ void bx_win32_gui_c::toggle_fullscreen()
 		fullscreen_transition = true;
 		fullscreen = true;
 		SetWindowLongPtr(window, GWL_STYLE,
-			(style & ~(win32_window_style | WS_MAXIMIZE | WS_MINIMIZE)) | WS_POPUP);
+			(style & ~(win32_window_style | WS_MAXIMIZE | WS_MINIMIZE | WS_CHILD)) | WS_POPUP);
+		if (embedded_host)
+		{
+			SetLastError(0);
+			if (!SetParent(window, nullptr) && GetLastError())
+			{
+				SetWindowLongPtr(window, GWL_STYLE, style);
+				fullscreen = fullscreen_transition = false;
+				return;
+			}
+		}
 		SetWindowPos(window, nullptr, monitor.rcMonitor.left, monitor.rcMonitor.top,
 			monitor.rcMonitor.right - monitor.rcMonitor.left,
 			monitor.rcMonitor.bottom - monitor.rcMonitor.top,
 			SWP_FRAMECHANGED | SWP_NOZORDER);
 		fullscreen_transition = false;
 		application.claim_fullscreen_monitor(this);
+		if (embedded_host) { SetForegroundWindow(window); SetFocus(window); }
 	}
 	else
 	{
 		// Keep intermediate WM_SIZE notifications from consuming a deferred
 		// guest resize before the saved window placement has been restored.
 		fullscreen_transition = true;
+		if (embedded_host)
+		{
+			if (!IsWindow(embedded_host))
+			{
+				fullscreen_transition = false;
+				application.request_shutdown();
+				return;
+			}
+			SetWindowLongPtr(window, GWL_STYLE, WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE);
+			SetLastError(0);
+			if (!SetParent(window, embedded_host) && GetLastError())
+			{
+				SetWindowLongPtr(window, GWL_STYLE, style);
+				fullscreen_transition = false;
+				return;
+			}
+			fullscreen = fullscreen_transition = false;
+			resize_window_to_guest();
+			SetWindowPos(window, nullptr, 0, 0, 0, 0,
+				SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE);
+			SetForegroundWindow(GetAncestor(embedded_host, GA_ROOT));
+			SetFocus(window);
+			return;
+		}
 		SetWindowLongPtr(window, GWL_STYLE, (style & ~WS_POPUP) | win32_window_style);
 		SetWindowPlacement(window, &windowed_placement);
 		SetWindowPos(window, nullptr, 0, 0, 0, 0,
@@ -2335,6 +2444,8 @@ void bx_win32_gui_c::toggle_fullscreen()
 LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 	WPARAM wparam, LPARAM lparam, bool synthetic_key)
 {
+	// Focus the child before filtering input.
+	if (embedded_host && msg == WM_LBUTTONDOWN && IsWindowVisible(hwnd)) SetFocus(hwnd);
 	const bool key_message = msg == WM_KEYDOWN || msg == WM_KEYUP ||
 		msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP;
 	if (key_message) lparam = win32_key_flags(wparam, lparam);
@@ -2389,6 +2500,32 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 	if (input_message && application.media.filter_message(msg, wparam, lparam)) return 0;
 	switch (msg)
 	{
+	case win32_manager_command:
+		if (!application.manager_host()) return 0;
+		switch (wparam)
+		{
+		case win32_manager_shutdown: application.request_shutdown(); break;
+		case win32_manager_capture:
+			SetFocus(hwnd);
+			application.set_mouse_capture(this);
+			break;
+		case win32_manager_release: application.release_input_session(); break;
+		case win32_manager_ctrl_alt_delete:
+			application.release_input_session();
+			application.send_ctrl_alt_delete();
+			break;
+		case win32_manager_media:
+			application.release_media_input();
+			application.media.toggle(hwnd);
+			break;
+		case win32_manager_fullscreen: toggle_fullscreen(); break;
+		case win32_manager_reset_size: reset_window_size(); break;
+		case win32_manager_show_displays: application.show_secondary_displays(); break;
+		}
+		return 0;
+	case WM_SHOWWINDOW:
+		if (!wparam && application.capture_owner == this) application.release_input_session();
+		break;
 	case WM_INPUT:
 		if (GET_RAWINPUT_CODE_WPARAM(wparam) == RIM_INPUT)
 			raw_mouse_event((HRAWINPUT)lparam);
@@ -2397,7 +2534,12 @@ LRESULT bx_win32_gui_c::window_event(HWND hwnd, UINT msg,
 		raw_mouse_positions.erase((HANDLE)lparam);
 		return 0;
 	case WM_CLOSE:
-		application.request_shutdown();
+		if (application.manager_host() && !primary)
+		{
+			application.release_input_session();
+			ShowWindow(hwnd, SW_HIDE);
+		}
+		else application.request_shutdown();
 		return 0;
 	case WM_SYSCOMMAND:
 		// SetThreadExecutionState handles display power; screen savers also
@@ -2654,6 +2796,8 @@ void win32_application::exit_displays()
 	for (const auto& display : displays) display->exit_impl();
 	set_raw_mouse_target(nullptr);
 	if (dispatcher) { DestroyWindow(dispatcher); dispatcher = nullptr; }
+	if (manager_process) { CloseHandle(manager_process); manager_process = nullptr; }
+	managed_host = nullptr;
 }
 
 void bx_win32_gui_c::exit_application()
