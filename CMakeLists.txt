@@ -522,6 +522,8 @@ if (WIN32)
         src/gui/win32_media.cpp
         src/gui/win32_media.h
         src/gui/win32_manager.h
+        src/gui/win32_session.cpp
+        src/gui/win32_session.h
         )
     list(APPEND ES40_LIBRARIES winmm comdlg32)
 endif()

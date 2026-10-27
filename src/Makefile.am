@@ -201,7 +201,8 @@ EXTRA_DIST = \
 	network/slirp-rs/src/icmp.rs
 
 # Native Windows builds use CMake or Visual Studio.
-EXTRA_DIST += gui/win32_media.cpp gui/win32_media.h gui/win32_manager.h config/es40-cfg-win32.cpp
+EXTRA_DIST += gui/win32_media.cpp gui/win32_media.h gui/win32_manager.h \
+       gui/win32_session.cpp gui/win32_session.h config/es40-cfg-win32.cpp
 
 #       graphics/Cirrus.cpp  - readd this to the sources line below when it's fixed
 
