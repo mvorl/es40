@@ -41,4 +41,6 @@ enum win32_manager_action : WPARAM
     win32_manager_show_displays = 8
 };
 
+int win32_manager_main();
+
 #endif

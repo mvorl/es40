@@ -205,6 +205,9 @@
 
 #include "network/lockstep.h"
 #include "gui/gui.h"
+#if defined(_WIN32)
+#include "gui/win32_manager.h"
+#endif
 
 #include <thread>
 
@@ -351,6 +354,18 @@ int main(int argc, char* argv[])
 		printf("\n");
 		return 0;
 	}
+
+#if defined(_WIN32)
+	if (!direct_run && argc > 1 && strcmp(argv[1], "--manager") == 0)
+	{
+#if defined(IDB)
+		fprintf(stderr, "The machine manager requires a non-IDB emulator build.\n");
+		return 1;
+#else
+		return win32_manager_main();
+#endif
+	}
+#endif
 
 	print_es40_banner("AlphaServer ES40 emulator");
 

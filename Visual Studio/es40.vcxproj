@@ -2185,7 +2185,7 @@
   <Import Project="es40-slirp.props" />
   <ItemDefinitionGroup>
     <Link>
-      <AdditionalDependencies>dsound.lib;dxguid.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dsound.lib;dxguid.lib;shell32.lib;ole32.lib;uuid.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -2252,6 +2252,7 @@
     <ClCompile Include="..\src\gui\gui.cpp" />
     <ClCompile Include="..\src\gui\gui_win32.cpp" />
     <ClCompile Include="..\src\gui\win32_media.cpp" />
+    <ClCompile Include="..\src\gui\win32_manager.cpp" />
     <ClCompile Include="..\src\gui\win32_session.cpp" />
     <ClCompile Include="..\src\system\i2c_spd.cpp" />
     <ClCompile Include="..\src\graphics\ibm8514a.cpp" />

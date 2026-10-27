@@ -310,6 +310,9 @@
     <ClCompile Include="..\src\gui\win32_media.cpp">
       <Filter>Source Files\gui</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\gui\win32_manager.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\gui\win32_session.cpp">
       <Filter>Source Files\gui</Filter>
     </ClCompile>

@@ -521,11 +521,12 @@ if (WIN32)
         src/gui/gui_win32.cpp
         src/gui/win32_media.cpp
         src/gui/win32_media.h
+        src/gui/win32_manager.cpp
         src/gui/win32_manager.h
         src/gui/win32_session.cpp
         src/gui/win32_session.h
         )
-    list(APPEND ES40_LIBRARIES winmm comdlg32)
+    list(APPEND ES40_LIBRARIES winmm comdlg32 shell32 ole32 uuid)
 endif()
 
 if (NOT ES40_DISABLE_NETWORKING)
