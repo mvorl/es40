@@ -548,9 +548,9 @@ int main(int argc, char* argv[])
 #if defined(HAVE_SDL)
 	gui_q.addAnswer("SDL", "sdl", "Simple Directmedia Layer. Preferred GUI mechanism.");
 #endif
-//#if defined(HAVE_X11)
-//	gui_q.addAnswer("X11", "X11", "Unix X-Windows GUI support.");
-//#endif
+#if defined(HAVE_X11)
+	gui_q.addAnswer("X11", "X11", "Unix X-Windows GUI support.");
+#endif
 #if defined(_WIN32)
 	gui_q.addAnswer("win32", "win32", "Windows 32 GUI support.");
 #endif
@@ -572,16 +572,44 @@ int main(int argc, char* argv[])
 	if (gui_q.getAnswer() != "")
 	{
 		const bool win32_gui = gui_q.getAnswer() == "win32";
+		const bool x11_gui = gui_q.getAnswer() == "X11";
+		const char* gui_label = win32_gui ? "Win32" : (x11_gui ? "X11" : "SDL");
 		/* Yes, we have a GUI.
 		 */
 		os << "gui = " << gui_q.getAnswer() << "\n";
 		os << "{\n";
 
+		MultipleChoiceQuestion keyboard_mapping_q;
+		keyboard_mapping_q.setQuestion("Use a keyboard mapping file?");
+		keyboard_mapping_q.setExplanation("Choose yes to configure a file that maps host keys to guest keys.");
+		keyboard_mapping_q.addAnswer("no", "false", "Use the default keyboard mapping.");
+		keyboard_mapping_q.addAnswer("yes", "true", "Use the specified keyboard mapping file.");
+		keyboard_mapping_q.setDefault("no");
+		os << "  keyboard.use_mapping = " << keyboard_mapping_q.ask() << ";\n";
+		if (keyboard_mapping_q.getAnswer() == "true")
+		{
+			FreeTextQuestion keyboard_map_q;
+			keyboard_map_q.setQuestion("Which keyboard mapping file should be used?");
+			keyboard_map_q.setExplanation("Enter the path to the keyboard mapping file, without surrounding quotes.");
+			keyboard_map_q.setDefault("keys.map");
+			for (;;)
+			{
+				const string path = trim_answer(keyboard_map_q.ask());
+				if (!path.empty() && path.find('"') == string::npos)
+				{
+					os << "  keyboard.map = \"" << path << "\";\n";
+					break;
+				}
+				cout << "\nEnter a nonempty file path without double quotes.\n\n";
+			}
+		}
+
 		MultipleChoiceQuestion vid_scale_q;
 		vid_scale_q.setQuestion("Do you want to set a custom scale ratio for the display output?");
 		vid_scale_q.setExplanation(win32_gui ?
 			"Native Win32 uses a 1x scale by default. Choose yes to set an integer scale factor." :
-			"SDL uses the OS display scale (DPI) by default. Choose yes to set an integer scale factor.");
+			(x11_gui ? "Choose yes to save an integer display scale factor in the configuration." :
+			"SDL uses the OS display scale (DPI) by default. Choose yes to set an integer scale factor."));
 		vid_scale_q.addAnswer("no", "no", "Use the default display scale ratio.");
 		vid_scale_q.addAnswer("yes", "yes", "Set a custom display scale ratio.");
 		vid_scale_q.setDefault("no");
@@ -627,8 +655,36 @@ int main(int argc, char* argv[])
 
 		os << "  video.scale_change_enable = " << vid_scale_change_enable_q.ask() << ";\n";
 
-		if (gui_q.getAnswer() == "sdl" || win32_gui)
+		if (gui_q.getAnswer() == "sdl" || win32_gui || x11_gui)
 		{
+			FreeTextQuestion mouse_speed_q;
+			mouse_speed_q.setQuestion("What mouse speed multiplier should be used?");
+			mouse_speed_q.setExplanation("Enter a number greater than 0 and at most 10; 1.0 keeps the default speed.");
+			mouse_speed_q.setDefault("1.0");
+			for (;;)
+			{
+				const string answer = trim_answer(mouse_speed_q.ask());
+				istringstream value(answer);
+				double speed;
+				char extra;
+				if ((value >> speed) && !(value >> extra) && speed > 0.0 && speed <= 10.0)
+				{
+					os << "  mouse.speed = " << answer << ";\n";
+					break;
+				}
+				cout << "\nEnter a number greater than 0 and at most 10.\n\n";
+			}
+			for (const char* axis : { "x", "y" })
+			{
+				MultipleChoiceQuestion mouse_invert_q;
+				mouse_invert_q.setQuestion(string("Invert mouse movement on the ") + axis + " axis?");
+				mouse_invert_q.setExplanation("Choose yes to reverse movement on this axis.");
+				mouse_invert_q.addAnswer("no", "false", "Keep the normal direction.");
+				mouse_invert_q.addAnswer("yes", "true", "Reverse the direction.");
+				mouse_invert_q.setDefault("no");
+				os << "  mouse.invert_" << axis << " = " << mouse_invert_q.ask() << ";\n";
+			}
+
 			MultipleChoiceQuestion mouse_absolute_q;
 			mouse_absolute_q.setQuestion(
 				"Use absolute pointer input? (normal desktop: no)");
@@ -648,7 +704,7 @@ int main(int argc, char* argv[])
 			mouse_absolute_q.setDefault("no");
 			os << "  mouse.absolute = " << mouse_absolute_q.ask() << ";\n";
 
-			cout << "\n" << (win32_gui ? "Win32" : "SDL") << " GUI runtime hotkey defaults:\n";
+			cout << "\n" << gui_label << " GUI runtime hotkey defaults:\n";
 			for (size_t i = 0;
 				i < sizeof(gui_hotkey_prompts) / sizeof(gui_hotkey_prompts[0]); i++)
 			{
@@ -659,7 +715,7 @@ int main(int argc, char* argv[])
 
 			MultipleChoiceQuestion customize_hotkeys_q;
 			customize_hotkeys_q.setQuestion(string("Would you like to customize the ") +
-				(win32_gui ? "Win32" : "SDL") + " GUI keyboard shortcuts?");
+				gui_label + " GUI keyboard shortcuts?");
 			customize_hotkeys_q.setExplanation(
 				"Choose 'yes' to enter optional overrides. At each hotkey prompt, "
 				"leave the answer blank to keep the built-in default or enter "
@@ -681,6 +737,16 @@ int main(int argc, char* argv[])
 					}
 				}
 			}
+		}
+		if (x11_gui)
+		{
+			MultipleChoiceQuestion private_colormap_q;
+			private_colormap_q.setQuestion("Use a private X11 colormap?");
+			private_colormap_q.setExplanation("Choose yes to request a private colormap, or no to prefer the default colormap.");
+			private_colormap_q.addAnswer("yes", "true", "Use a private colormap.");
+			private_colormap_q.addAnswer("no", "false", "Prefer the default colormap.");
+			private_colormap_q.setDefault("yes");
+			os << "  private_colormap = " << private_colormap_q.ask() << ";\n";
 		}
 		os << "\n";
 

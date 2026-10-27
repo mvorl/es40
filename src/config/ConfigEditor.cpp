@@ -859,7 +859,7 @@ void add_scsi_disks(const char *title, const int max_scsi_id, CConfigurator *par
  * GUI configuration
  **/
 
-#if defined(HAVE_SDL) || defined(_WIN32)
+#if defined(HAVE_SDL) || defined(_WIN32) || defined(HAVE_X11)
 void validation_hotkey(EditorField *field)
 {
     // TODO: I found no way to match case-insensitively?!
@@ -896,7 +896,7 @@ bool check_gui_keyboard(FormEntry_t entry[], int num_entries, FormValues_t value
     return true;
 }
 
-// Shared SDL/Win32 keyboard and general hotkey settings.
+// Shared GUI keyboard and general hotkey settings.
 void edit_gui_keyboard(const char *title)
 {
     FormEntry_t entry[] = {
@@ -950,7 +950,7 @@ void validation_gui_mousespeed(EditorField *field)
     editor_number(field, EditorField::Type::Number, 1, 0.1, 10.0);
 }
 
-// Shared SDL/Win32 mouse settings.
+// Shared GUI mouse settings.
 void edit_gui_mouse(const char *title)
 {
     FormEntry_t entry[] = {
@@ -1023,10 +1023,10 @@ void validation_gui_scaleratio(EditorField *field)
     editor_number(field, EditorField::Type::Integer, 1, 0, 10);
 }
 
-// Shared SDL/Win32 video settings.
+// Shared GUI video settings.
 void edit_gui_video(const char *title)
 {
-    FormEntry_t entry[] = {
+    vector<FormEntry_t> entry = {
         {"video linear", STR_YES, "video.linear",
          "Filtering used when the guest display is scaled to the window size:\n"
          "true = linear (smooth), false = nearest neighbor (sharp pixels).",
@@ -1034,7 +1034,7 @@ void edit_gui_video(const char *title)
         {"video scale ratio", "0", "video.scale_ratio",
          "Integer scale factor for the emulator window (1 - 10). For example, "
          "2 renders the guest's 640x480 display in a 1280x960 window. The default\n"
-         "is 0: native Win32 uses 1x; SDL uses the OS display scale (DPI).",
+         "is 0, which selects the backend's default scale.",
          validation_gui_scaleratio},
         {"video scale change enable?", STR_NO, "video.scale_change_enable",
          "If enabled, the display scale ratio can be adjusted on the fly\n"
@@ -1052,11 +1052,14 @@ void edit_gui_video(const char *title)
         {"hotkey.reset_window", "Ctrl+Alt+Home", "hotkey.reset_window",
          "Host key combination used to reset window size.\n" HOTKEY_HELP,
          validation_hotkey}};
-    const int num_entries = ARRAY_SIZE(entry);
     CConfigurator *c;
     FormValues_t preset;
 
     c = theConfig->find_child("gui");
+    if (c != nullptr && !strcmp(c->get_myValue(), "X11"))
+        entry.push_back({"private colormap?", STR_YES, "private_colormap",
+                         "Use a private X11 colormap.", validation_yes_no});
+    const int num_entries = static_cast<int>(entry.size());
     preset = (FormValues_t)calloc(num_entries, sizeof(char *));
 
     for (int i = 0; i < num_entries; ++i)
@@ -1068,7 +1071,7 @@ void edit_gui_video(const char *title)
             preset[i] = (char *)entry[i].preset;
     }
 
-    FormValues_t values = show_form(title, entry, preset, num_entries, NULL);
+    FormValues_t values = show_form(title, entry.data(), preset, num_entries, NULL);
 
     if (values != NULL)
     {
@@ -1100,74 +1103,10 @@ void edit_gui_sdl(const char *title) { edit_gui_settings(title, "sdl"); }
 #if defined(_WIN32)
 void edit_gui_win32(const char *title) { edit_gui_settings(title, "win32"); }
 #endif
-#endif // HAVE_SDL || _WIN32
-
-#if 0 && defined(HAVE_X11)
-bool check_gui_x11(FormEntry_t entry[], int num_entries, FormValues_t values)
-{
-    if (!strcmp(values[fentry_index(entry, num_entries, "keyboard use mapping?")], STR_YES) &&
-        !strcmp(values[fentry_index(entry, num_entries, "keyboard map")], ""))
-    {
-        show_text("Error", "No keyboard map has been specified.");
-        return false;
-    }
-    return true;
-}
-
-// Form for X11 GUI
-void edit_gui_x11(const char *title)
-{
-    FormEntry_t entry[] = {
-        {"keyboard use mapping?", STR_NO, "keyboard.use_mapping?",
-         "Use a keymap file to translate host keys to guest scancodes.\n"
-         "Enable this if you use a non-US keyboard layout.\n"
-         "If set to 'yes', keyboard.map must be filled out.",
-         validation_yes_no},
-        {"keyboard map", "keys.map", "keyboard.map",
-         "The keymap file to use when keyboard.use_mapping is enabled.",
-         validation_file},
-        {"private colormap?", STR_NO, "private_colormap",
-         "Use a private colormap?",
-         validation_yes_no}};
-    const int num_entries = ARRAY_SIZE(entry);
-    CConfigurator *c;
-    FormValues_t preset;
-
-    c = theConfig->find_child("gui");
-    if (c != nullptr && strcmp(c->get_myValue(), "x11"))
-    {
-        theConfig->remove_child(c->get_myName());
-        c = nullptr;
-    }
-    if (c == nullptr)
-        c = new CConfigurator(theConfig, (char*)"gui", (char*)"x11");
-
-    preset = (FormValues_t)calloc(num_entries, sizeof(char *));
-
-    for (int i = 0; i < num_entries; ++i)
-    {
-        char *p;
-        if (entry[i].name != NULL && c != nullptr && (p = c->get_text_value(entry[i].name)) != NULL)
-            preset[i] = p;
-        else
-            preset[i] = (char *)entry[i].preset;
-    }
-
-    FormValues_t values = show_form(title, entry, preset, num_entries, check_gui_x11);
-
-    if (values != NULL)
-    {
-        for (int i = 0; i < num_entries; ++i)
-            set_form_value(c, i, entry[i].name, values[i]);
-
-        // Clean up
-        for (int i = 0; i < num_entries; ++i)
-            free(values[i]);
-        free(values);
-    }
-    free(preset);
-}
+#if defined(HAVE_X11)
+void edit_gui_x11(const char *title) { edit_gui_settings(title, "X11"); }
 #endif // HAVE_X11
+#endif // HAVE_SDL || _WIN32 || HAVE_X11
 
 // Menu for GUI
 void edit_gui(const char *title)
@@ -1178,7 +1117,7 @@ void edit_gui(const char *title)
         ,
         {"sdl", "Simple Directmedia Layer. Preferred GUI mechanism.", edit_gui_sdl}
 #endif
-#if 0 && defined(HAVE_X11)
+#if defined(HAVE_X11)
         ,
         {"X11", "Unix X-Windows GUI support.", edit_gui_x11}
 #endif
