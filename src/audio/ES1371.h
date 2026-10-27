@@ -34,7 +34,7 @@
 #include "emu/SystemComponent.h"
 #include "emu/PCIDevice.h"
 
-#include <SDL3/SDL.h>
+#include "HostAudio.h"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -74,11 +74,11 @@ private:
   };
 
   struct ES1371State {
-    SDL_AudioDeviceID audio_be_out;
-    SDL_AudioDeviceID audio_be_in;
+    host_audio::DeviceId audio_be_out;
+    host_audio::DeviceId audio_be_in;
     struct chan chan[3];
-    SDL_AudioStream* dac_voice[2];
-    SDL_AudioStream* adc_voice;
+    host_audio::Stream dac_voice[2];
+    host_audio::Stream adc_voice;
 
     uint32_t ctl;
     uint32_t status;
@@ -156,9 +156,9 @@ private:
   int es1371_transfer_audio(ES1371State* s, struct chan* d, int loop_sel, int max, bool* irq);
   int es1371_run_channel(ES1371State* s, size_t chan, int free_or_avail);
 
-  static void es1371_dac_callback_dac1(void* userdata, SDL_AudioStream* stream, int additional_amount, int total_amount);
-  static void es1371_dac_callback_dac2(void* userdata, SDL_AudioStream* stream, int additional_amount, int total_amount);
-  static void es1371_dac_callback_adc(void* userdata, SDL_AudioStream* stream, int additional_amount, int total_amount);
+  static void es1371_dac_callback_dac1(void* userdata);
+  static void es1371_dac_callback_dac2(void* userdata);
+  static void es1371_dac_callback_adc(void* userdata);
 };
 #endif /* HAVE_SDL */
 

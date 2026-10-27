@@ -190,55 +190,55 @@ static u32 es1371_cfg_mask[64] = {
 
 CES1371::CES1371(CConfigurator* cfg, class CSystem* c, int pcibus, int pcidev) : CPCIDevice(cfg, c, pcibus, pcidev)
 {
-    SDL_AudioSpec as;
+    host_audio::Format as;
 
     as.freq = 44100;
     as.channels = 2;
-    as.format = SDL_AUDIO_S16LE;
+    as.format = host_audio::SampleFormat::s16_le;
 	memset((void*)&state, 0, sizeof(state));
     const u64 latency = cfg->get_num_value("latency_ms", true, 40);
     m_latency_ms = (unsigned)(std::min)((std::max)(latency, (u64)10), (u64)500);
-    if (!SDL_Init(SDL_INIT_AUDIO)) {
-		FAILURE_1(SDL, "Failed to initialize SDL audio: %s", SDL_GetError());
+    if (!host_audio::initialize()) {
+		FAILURE_1(SDL, "Failed to initialize SDL audio: %s", host_audio::error());
     }
     // ~10ms host pulls; the SDL_AUDIO_DEVICE_SAMPLE_FRAMES env var still wins.
-    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
-	state.audio_be_in = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_RECORDING, nullptr);
+    host_audio::set_sample_frames_hint("512");
+	state.audio_be_in = host_audio::open_input_device();
     if (!state.audio_be_in) {
-        FAILURE_1(SDL, "Failed to initialize SDL audio input: %s", SDL_GetError());
+        FAILURE_1(SDL, "Failed to initialize SDL audio input: %s", host_audio::error());
     }
-    state.audio_be_out = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, nullptr);
+    state.audio_be_out = host_audio::open_output_device();
     if (!state.audio_be_out) {
-        FAILURE_1(SDL, "Failed to initialize SDL audio output: %s", SDL_GetError());
+        FAILURE_1(SDL, "Failed to initialize SDL audio output: %s", host_audio::error());
     }
     {
-        SDL_AudioSpec out_spec;
+        int out_freq = 0;
         int out_frames = 0;
-        if (!SDL_GetAudioDeviceFormat(state.audio_be_out, &out_spec, &out_frames))
-            FAILURE_1(SDL, "Failed to query SDL audio output: %s", SDL_GetError());
-        m_out_freq = out_spec.freq > 0 ? out_spec.freq : 48000;
+        if (!host_audio::output_device_format(state.audio_be_out, &out_freq, &out_frames))
+            FAILURE_1(SDL, "Failed to query SDL audio output: %s", host_audio::error());
+        m_out_freq = out_freq > 0 ? out_freq : 48000;
         m_out_period_frames = out_frames > 0 ? out_frames : 512;
     }
-    state.adc_voice = SDL_CreateAudioStream(NULL, &as);
-	state.dac_voice[0] = SDL_CreateAudioStream(&as, NULL);
-    state.dac_voice[1] = SDL_CreateAudioStream(&as, NULL);
+    host_audio::create_stream(state.adc_voice, nullptr, &as);
+	host_audio::create_stream(state.dac_voice[0], &as, nullptr);
+    host_audio::create_stream(state.dac_voice[1], &as, nullptr);
 
     if (!state.adc_voice || !state.dac_voice[0] || !state.dac_voice[1])
-        FAILURE_1(SDL, "Failed to initialize ES1371 audio streams: %s", SDL_GetError());
+        FAILURE_1(SDL, "Failed to initialize ES1371 audio streams: %s", host_audio::error());
 
-	SDL_SetAudioStreamPutCallback(state.adc_voice, es1371_dac_callback_adc, this);
-    SDL_SetAudioStreamGetCallback(state.dac_voice[0], es1371_dac_callback_dac1, this);
-    SDL_SetAudioStreamGetCallback(state.dac_voice[1], es1371_dac_callback_dac2, this);
+	host_audio::set_input_callback(state.adc_voice, es1371_dac_callback_adc, this);
+    host_audio::set_output_callback(state.dac_voice[0], es1371_dac_callback_dac1, this);
+    host_audio::set_output_callback(state.dac_voice[1], es1371_dac_callback_dac2, this);
 }
 
 CES1371::~CES1371()
 {
     stop_threads();
-    SDL_DestroyAudioStream(state.adc_voice);
-    SDL_DestroyAudioStream(state.dac_voice[0]);
-    SDL_DestroyAudioStream(state.dac_voice[1]);
-    SDL_CloseAudioDevice(state.audio_be_in);
-    SDL_CloseAudioDevice(state.audio_be_out);
+    host_audio::destroy_stream(state.adc_voice);
+    host_audio::destroy_stream(state.dac_voice[0]);
+    host_audio::destroy_stream(state.dac_voice[1]);
+    host_audio::close_device(state.audio_be_in);
+    host_audio::close_device(state.audio_be_out);
 }
 
 void CES1371::init()
@@ -272,9 +272,9 @@ void CES1371::config_write_custom(int func, u32 address, int dsize,
 
 void CES1371::unbind_voices()
 {
-    SDL_UnbindAudioStream(state.adc_voice);
-    SDL_UnbindAudioStream(state.dac_voice[0]);
-    SDL_UnbindAudioStream(state.dac_voice[1]);
+    host_audio::unbind_stream(state.adc_voice);
+    host_audio::unbind_stream(state.dac_voice[0]);
+    host_audio::unbind_stream(state.dac_voice[1]);
 }
 
 // All callers acquire the bus before a stream lock. SDL callbacks acquire
@@ -282,31 +282,31 @@ void CES1371::unbind_voices()
 class CES1371StreamLock
 {
 public:
-    explicit CES1371StreamLock(SDL_AudioStream* stream) : m_stream(stream)
+    explicit CES1371StreamLock(host_audio::Stream& stream) : m_stream(&stream)
     {
-        if (!SDL_LockAudioStream(m_stream))
-            FAILURE_1(SDL, "Unable to lock audio stream: %s", SDL_GetError());
+        if (!host_audio::lock_stream(*m_stream))
+            FAILURE_1(SDL, "Unable to lock audio stream: %s", host_audio::error());
     }
     ~CES1371StreamLock() { unlock(); }
     void unlock()
     {
-        if (m_stream) SDL_UnlockAudioStream(m_stream);
+        if (m_stream) host_audio::unlock_stream(*m_stream);
         m_stream = nullptr;
     }
 private:
-    SDL_AudioStream* m_stream;
+    host_audio::Stream* m_stream;
 };
 
 void CES1371::reset_audio_request(size_t channel, bool enabled, bool clear)
 {
-    SDL_AudioStream* voice = channel == ADC_CHANNEL
+    host_audio::Stream& voice = channel == ADC_CHANNEL
         ? state.adc_voice : state.dac_voice[channel];
     CES1371StreamLock stream_lock(voice);
     m_audio_enabled[channel].store(false);
     state.chan[channel].credit_q16 = 0;
     state.chan[channel].pace_last = std::chrono::steady_clock::now();
-    if (clear && !SDL_ClearAudioStream(voice))
-        FAILURE_1(SDL, "Unable to clear audio stream: %s", SDL_GetError());
+    if (clear && !host_audio::clear_stream(voice))
+        FAILURE_1(SDL, "Unable to clear audio stream: %s", host_audio::error());
     m_audio_enabled[channel].store(enabled);
 }
 
@@ -403,30 +403,30 @@ CES1371::ServiceResult CES1371::service_audio_channel(size_t channel,
         return SERVICE_IDLE;
 
     struct chan* d = &state.chan[channel];
-    SDL_AudioStream* voice = channel == ADC_CHANNEL
+    host_audio::Stream& voice = channel == ADC_CHANNEL
         ? state.adc_voice : state.dac_voice[channel];
     CES1371StreamLock stream_lock(voice);
 
     if (channel == ADC_CHANNEL)
     {
-        const int avail = SDL_GetAudioStreamAvailable(voice);
+        const int avail = host_audio::available(voice);
         if (avail < 0)
-            FAILURE_1(SDL, "Unable to query audio stream: %s", SDL_GetError());
+            FAILURE_1(SDL, "Unable to query audio stream: %s", host_audio::error());
         if (avail <= 0)
             return SERVICE_IDLE;
         const int moved = es1371_run_channel(&state, channel, (std::min)(avail, 4096));
         // Release the stream lock before unbinding to preserve SDL's lock order.
         stream_lock.unlock();
-        if (d->halted) SDL_UnbindAudioStream(voice);
+        if (d->halted) host_audio::unbind_stream(voice);
         return moved > 0 && moved < avail ? SERVICE_MORE : SERVICE_IDLE;
     }
 
     const uint32_t rate = chan_rate_bps(channel);
     if (!rate)
         return SERVICE_IDLE;
-    const int queued_output = SDL_GetAudioStreamQueued(voice);
+    const int queued_output = host_audio::queued(voice);
     if (queued_output < 0)
-        FAILURE_1(SDL, "Unable to query audio stream: %s", SDL_GetError());
+        FAILURE_1(SDL, "Unable to query audio stream: %s", host_audio::error());
     // Convert queued stereo-S16 bytes back to guest bytes for pacing.
     const int queued = (queued_output / 4) << d->shift;
     const int lead = dac_lead_bytes(channel, rate);
@@ -654,10 +654,10 @@ void CES1371::es1371_reset(ES1371State* s)
 		d->leftover = 0;
         d->frame_addr = d->frame_cnt = d->halted = d->freq = 0;
 		if (i == ADC_CHANNEL) {
-			SDL_UnbindAudioStream(s->adc_voice);
+			host_audio::unbind_stream(s->adc_voice);
 		}
 		else {
-			SDL_UnbindAudioStream(s->dac_voice[i]);
+			host_audio::unbind_stream(s->dac_voice[i]);
 		}
 	}
 	do_pci_interrupt(0, 0);
@@ -744,25 +744,25 @@ void CES1371::es1371_update_voices(ES1371State* s, uint32_t ctl, uint32_t sctl,
         if (!(audio_running || force) || !changed)
             continue;
         reset_audio_request(i, false, format_changed);
-        SDL_AudioStream* voice = i == ADC_CHANNEL ? s->adc_voice : s->dac_voice[i];
+        host_audio::Stream& voice = i == ADC_CHANNEL ? s->adc_voice : s->dac_voice[i];
         // SDL rejects rebinding; unbind first without holding the stream lock.
-        SDL_UnbindAudioStream(voice);
+        host_audio::unbind_stream(voice);
         if (format_changed && freq) {
-            SDL_AudioSpec spec;
+            host_audio::Format spec;
             spec.freq = freq;
             spec.channels = i == ADC_CHANNEL ? 1 << (fmt & 1) : 2;
-            spec.format = i == ADC_CHANNEL && !(fmt & 2) ? SDL_AUDIO_U8 : SDL_AUDIO_S16LE;
+            spec.format = i == ADC_CHANNEL && !(fmt & 2) ? host_audio::SampleFormat::u8 : host_audio::SampleFormat::s16_le;
             // Preserve SDL's host end of the stream when changing guest format.
-            if (!SDL_SetAudioStreamFormat(voice,
+            if (!host_audio::set_format(voice,
                     i == ADC_CHANNEL ? nullptr : &spec,
                     i == ADC_CHANNEL ? &spec : nullptr))
-                FAILURE_1(SDL, "Unable to set ES1371 audio format: %s", SDL_GetError());
+                FAILURE_1(SDL, "Unable to set ES1371 audio format: %s", host_audio::error());
         }
         if (enabled) {
-            if (!SDL_BindAudioStream(i == ADC_CHANNEL ? s->audio_be_in : s->audio_be_out, voice))
-                FAILURE_1(SDL, "Unable to bind ES1371 audio stream: %s", SDL_GetError());
+            if (!host_audio::bind_stream(i == ADC_CHANNEL ? s->audio_be_in : s->audio_be_out, voice))
+                FAILURE_1(SDL, "Unable to bind ES1371 audio stream: %s", host_audio::error());
         } else {
-            SDL_UnbindAudioStream(voice);
+            host_audio::unbind_stream(voice);
         }
         reset_audio_request(i, enabled, false);
     }
@@ -1072,14 +1072,14 @@ int CES1371::es1371_transfer_audio(ES1371State* s, struct chan* d, int loop_sel,
             const int to_copy = MIN(target - transferred, 4096);
             int copied;
             if (index == ADC_CHANNEL) {
-                copied = SDL_GetAudioStreamData(s->adc_voice, tmpbuf, to_copy);
+                copied = host_audio::read(s->adc_voice, tmpbuf, to_copy);
                 if (copied <= 0) break;
                 apply_volume(index, tmpbuf, copied);
                 do_pci_write(addr, tmpbuf, 1, copied);
             } else {
                 do_pci_read(addr, tmpbuf, 1, to_copy);
                 const int output_bytes = apply_volume(index, tmpbuf, to_copy);
-                copied = SDL_PutAudioStreamData(s->dac_voice[index], tmpbuf, output_bytes) ? to_copy : 0;
+                copied = host_audio::write(s->dac_voice[index], tmpbuf, output_bytes) ? to_copy : 0;
                 if (!copied) break;
             }
             addr += copied;
@@ -1154,19 +1154,19 @@ void CES1371::request_audio(size_t channel)
     m_audio_wait.notify_one();
 }
 
-void CES1371::es1371_dac_callback_dac1(void* userdata, SDL_AudioStream* stream, int additional_amount, int total_amount)
+void CES1371::es1371_dac_callback_dac1(void* userdata)
 {
     CES1371* dev = (CES1371*)userdata;
     dev->request_audio(DAC1_CHANNEL);
 }
 
-void CES1371::es1371_dac_callback_dac2(void* userdata, SDL_AudioStream* stream, int additional_amount, int total_amount)
+void CES1371::es1371_dac_callback_dac2(void* userdata)
 {
     CES1371* dev = (CES1371*)userdata;
     dev->request_audio(DAC2_CHANNEL);
 }
 
-void CES1371::es1371_dac_callback_adc(void* userdata, SDL_AudioStream* stream, int additional_amount, int total_amount)
+void CES1371::es1371_dac_callback_adc(void* userdata)
 {
     CES1371* dev = (CES1371*)userdata;
     dev->request_audio(ADC_CHANNEL);

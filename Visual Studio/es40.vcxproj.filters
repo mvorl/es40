@@ -328,6 +328,9 @@
     <ClCompile Include="..\src\audio\ES1371.cpp">
       <Filter>Source Files\audio</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\audio\HostAudioSDL.cpp">
+      <Filter>Source Files\audio</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\CPU\jit\jitengine.cpp">
       <Filter>Source Files\CPU\jit</Filter>
     </ClCompile>
@@ -688,6 +691,9 @@
       <Filter>Header Files\audio</Filter>
     </ClInclude>
     <ClInclude Include="..\src\audio\ES1371.h">
+      <Filter>Header Files\audio</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\audio\HostAudio.h">
       <Filter>Header Files\audio</Filter>
     </ClInclude>
     <ClInclude Include="..\src\CPU\jit\jitengine.h">

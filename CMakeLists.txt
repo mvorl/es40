@@ -437,6 +437,7 @@ list(APPEND ES40_SOURCES
     src/es40_debug.cpp
     src/audio/ES1370.cpp
     src/audio/ES1371.cpp
+    src/audio/HostAudioSDL.cpp
     src/network/Ethernet.cpp
     src/system/Flash.cpp
     src/storage/FloppyController.cpp
