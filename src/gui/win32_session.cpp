@@ -309,4 +309,98 @@ bool win32_session::poll()
     impl->clear();
     return true;
 }
+
+struct win32_settings_session::state
+{
+    unique_ptr<win32_configuration_lock> config_lock;
+    win32_session_handle process;
+    DWORD pid = 0, exit_code = 0;
+};
+
+win32_settings_session::win32_settings_session() : impl(make_unique<state>()) {}
+win32_settings_session::~win32_settings_session() = default;
+bool win32_settings_session::running() const { return !!impl->process; }
+DWORD win32_settings_session::exit_code() const { return impl->exit_code; }
+
+void win32_settings_session::start(const filesystem::path& executable,
+    const filesystem::path& configuration)
+{
+    if (running()) { activate(); return; }
+    const filesystem::path program = filesystem::absolute(executable).lexically_normal();
+    const filesystem::path config = filesystem::absolute(configuration).lexically_normal();
+    const filesystem::path directory = config.parent_path();
+    if (!filesystem::is_regular_file(program)) throw runtime_error("The native configuration editor is missing.");
+    if (!filesystem::is_regular_file(config)) throw runtime_error("The configuration file is missing.");
+    session_check_path(config.wstring());
+    auto config_lock = make_unique<win32_configuration_lock>(config);
+    win32_session_handle child_lock;
+    if (!DuplicateHandle(GetCurrentProcess(), config_lock->handle, GetCurrentProcess(),
+        &child_lock.value, 0, TRUE, DUPLICATE_SAME_ACCESS))
+        session_error("Unable to inherit the settings configuration lock");
+    STARTUPINFOEXW startup = {};
+    startup.StartupInfo.cb = sizeof(startup);
+    SIZE_T bytes = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &bytes);
+    vector<unsigned char> attributes(bytes);
+    startup.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributes.data());
+    if (!InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &bytes))
+        session_error("Unable to initialize settings process attributes");
+    struct attribute_guard
+    {
+        LPPROC_THREAD_ATTRIBUTE_LIST list;
+        ~attribute_guard() { DeleteProcThreadAttributeList(list); }
+    } attribute_cleanup{startup.lpAttributeList};
+    HANDLE handles[] = { child_lock.value };
+    if (!UpdateProcThreadAttribute(startup.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+        handles, sizeof(handles), nullptr, nullptr))
+        session_error("Unable to isolate settings process handles");
+    const wstring config_argument = session_quote(config.wstring());
+    wstring command = session_quote(program.wstring()) + L" " + config_argument + L" " + config_argument;
+    PROCESS_INFORMATION information = {};
+    if (!CreateProcessW(program.c_str(), command.data(), nullptr, nullptr, TRUE,
+        CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, nullptr, directory.c_str(),
+        &startup.StartupInfo, &information))
+        session_error("Unable to open machine settings");
+    win32_session_handle child(information.hProcess), thread(information.hThread);
+    impl->config_lock = move(config_lock);
+    impl->process.reset(child.release());
+    impl->pid = information.dwProcessId;
+    impl->exit_code = 0;
+}
+
+void win32_settings_session::activate()
+{
+    if (!running() || WaitForSingleObject(impl->process.value, 0) != WAIT_TIMEOUT) return;
+    struct window_search { DWORD pid; HWND window; } found{impl->pid, nullptr};
+    EnumWindows([](HWND window, LPARAM parameter) -> BOOL
+    {
+        auto& search = *reinterpret_cast<window_search*>(parameter);
+        DWORD pid = 0;
+        GetWindowThreadProcessId(window, &pid);
+        if (pid != search.pid || !IsWindowVisible(window)) return TRUE;
+        search.window = window;
+        return FALSE;
+    }, reinterpret_cast<LPARAM>(&found));
+    if (!found.window) return;
+    HWND popup = GetLastActivePopup(found.window);
+    DWORD popup_pid = 0;
+    if (popup && IsWindowVisible(popup) && GetWindowThreadProcessId(popup, &popup_pid) && popup_pid == impl->pid)
+        found.window = popup;
+    ShowWindow(found.window, IsIconic(found.window) ? SW_RESTORE : SW_SHOW);
+    SetForegroundWindow(found.window);
+}
+
+bool win32_settings_session::poll()
+{
+    if (!running()) return false;
+    const DWORD status = WaitForSingleObject(impl->process.value, 0);
+    if (status == WAIT_FAILED) session_error("Unable to check the settings editor");
+    if (status == WAIT_TIMEOUT) return false;
+    if (!GetExitCodeProcess(impl->process.value, &impl->exit_code))
+        session_error("Unable to read the settings editor exit code");
+    impl->process.reset();
+    impl->config_lock.reset();
+    impl->pid = 0;
+    return true;
+}
 #endif

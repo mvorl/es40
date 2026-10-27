@@ -37,7 +37,7 @@
 using namespace std;
 
 static constexpr wchar_t manager_class[] = L"ES40.Workstation";
-enum win32_manager_control { manager_add = 100, manager_start, manager_stop, manager_remove, manager_library };
+enum win32_manager_control { manager_add = 100, manager_start, manager_stop, manager_remove, manager_library, manager_settings };
 
 static wstring manager_text(const string& text)
 {
@@ -96,12 +96,14 @@ struct win32_manager_machine
     filesystem::path configuration, log;
     HWND host = nullptr;
     win32_session session;
+    win32_settings_session settings;
     wstring failure;
 
     ~win32_manager_machine() { if (IsWindow(host)) DestroyWindow(host); }
 
     const wchar_t* state() const
     {
+        if (settings.running()) return L"Editing settings";
         if (session.stopping()) return L"Stopping";
         if (session.running()) return session.display() ? L"Running" : L"Starting";
         return failure.empty() ? L"Powered off" : L"Error";
@@ -111,7 +113,7 @@ struct win32_manager_machine
 class win32_manager_window
 {
     HWND window = nullptr, library = nullptr, library_label = nullptr, empty = nullptr;
-    HWND add_button = nullptr, remove_button = nullptr, start_button = nullptr;
+    HWND add_button = nullptr, remove_button = nullptr, settings_button = nullptr, start_button = nullptr;
     HWND stop_button = nullptr, config_text = nullptr, status = nullptr, output = nullptr, output_label = nullptr;
     filesystem::path executable, store;
     vector<unique_ptr<win32_manager_machine>> machines;
@@ -155,7 +157,8 @@ class win32_manager_window
         const int width = max(880L, bounds.right), height = max(440L, bounds.bottom);
         const int left = 284, content_width = width - left - 12;
         MoveWindow(add_button, 12, 12, 80, 28, TRUE);
-        MoveWindow(remove_button, 102, 12, 90, 28, TRUE);
+        MoveWindow(remove_button, 102, 12, 80, 28, TRUE);
+        MoveWindow(settings_button, 192, 12, 80, 28, TRUE);
         MoveWindow(library_label, 12, 49, 260, 22, TRUE);
         MoveWindow(library, 12, 78, 260, height - 90, TRUE);
         MoveWindow(config_text, left, 12, content_width - 180, 28, TRUE);
@@ -179,8 +182,9 @@ class win32_manager_window
         if (!window) return;
         const auto* item = selected();
         EnableWindow(add_button, !closing);
-        EnableWindow(remove_button, item && !item->session.running() && !closing);
-        EnableWindow(start_button, item && !item->session.running() && !closing);
+        EnableWindow(remove_button, item && !item->session.running() && !item->settings.running() && !closing);
+        EnableWindow(start_button, item && !item->session.running() && !item->settings.running() && !closing);
+        EnableWindow(settings_button, item && !item->session.running() && !closing);
         EnableWindow(stop_button, item && item->session.running() && !item->session.stopping());
         const wchar_t* state = closing ? L"Stopping before close..." :
             item ? item->state() : L"Add an existing configuration.";
@@ -286,7 +290,7 @@ class win32_manager_window
     void remove_configuration()
     {
         auto* item = selected();
-        if (!item || item->session.running() || closing) return;
+        if (!item || item->session.running() || item->settings.running() || closing) return;
         release_input();
         if (MessageBoxW(window, L"Remove this machine from the library? Its files will remain on disk.",
             L"Remove machine", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
@@ -314,7 +318,7 @@ class win32_manager_window
     void start()
     {
         auto* item = selected();
-        if (!item || item->session.running() || closing) return;
+        if (!item || item->session.running() || item->settings.running() || closing) return;
         item->failure.clear(); item->log.clear();
         try
         {
@@ -332,8 +336,28 @@ class win32_manager_window
         refresh(); update_output();
     }
 
+    void edit_settings()
+    {
+        auto* item = selected();
+        if (!item || item->session.running() || closing) return;
+        release_input();
+        if (item->settings.running()) { item->settings.activate(); return; }
+        item->settings.start(executable.parent_path() / L"es40-cfg-win32.exe", item->configuration);
+        item->failure.clear();
+        refresh(); update_output();
+    }
+
     void close()
     {
+        for (const auto& item : machines)
+        {
+            if (!item->settings.running()) continue;
+            release_input();
+            MessageBoxW(window, L"Save or cancel the open machine settings before closing ES40 Workstation.",
+                L"Machine settings are open", MB_OK | MB_ICONINFORMATION);
+            item->settings.activate();
+            return;
+        }
         if (!running()) { DestroyWindow(window); return; }
         release_input();
         if (closing)
@@ -365,6 +389,7 @@ class win32_manager_window
             {
             case manager_add: choose_configuration(); break;
             case manager_remove: remove_configuration(); break;
+            case manager_settings: edit_settings(); break;
             case manager_start: start(); break;
             case manager_stop:
                 if (auto* item = selected()) item->session.stop();
@@ -396,10 +421,18 @@ class win32_manager_window
             bool changed = false;
             for (const auto& item : machines)
             {
-                if (!item->session.poll()) continue;
-                if (item->session.exit_code())
-                    item->failure = L"Emulator exited with code " + to_wstring(item->session.exit_code()) + L".";
-                changed = true;
+                if (item->session.poll())
+                {
+                    if (item->session.exit_code())
+                        item->failure = L"Emulator exited with code " + to_wstring(item->session.exit_code()) + L".";
+                    changed = true;
+                }
+                if (item->settings.poll())
+                {
+                    if (item->settings.exit_code())
+                        item->failure = L"Settings editor exited with code " + to_wstring(item->settings.exit_code()) + L".";
+                    changed = true;
+                }
             }
             if (changed) refresh();
             update_output();
@@ -408,6 +441,7 @@ class win32_manager_window
         }
         case WM_CLOSE: close(); return 0;
         case WM_QUERYENDSESSION:
+            for (const auto& item : machines) if (item->settings.running()) return FALSE;
             for (const auto& item : machines) item->session.stop();
             return TRUE;
         case WM_DESTROY:
@@ -517,15 +551,16 @@ public:
         if (!window) throw runtime_error("Unable to create the manager window.");
         add_button = control(L"BUTTON", L"&Add...", WS_TABSTOP | BS_PUSHBUTTON, manager_add);
         remove_button = control(L"BUTTON", L"&Remove", WS_TABSTOP | BS_PUSHBUTTON, manager_remove);
+        settings_button = control(L"BUTTON", L"S&ettings...", WS_TABSTOP | BS_PUSHBUTTON, manager_settings);
         library_label = control(L"STATIC", L"Machines", SS_LEFT);
         library = control(WC_LISTVIEWW, L"", WS_BORDER | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL |
             LVS_SHOWSELALWAYS, manager_library);
         ListView_SetExtendedListViewStyle(library, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
         LVCOLUMNW column = {};
-        column.mask = LVCF_TEXT | LVCF_WIDTH; column.cx = 150;
+        column.mask = LVCF_TEXT | LVCF_WIDTH; column.cx = 130;
         column.pszText = const_cast<LPWSTR>(L"Machine");
         SendMessageW(library, LVM_INSERTCOLUMNW, 0, (LPARAM)&column);
-        column.cx = 100; column.pszText = const_cast<LPWSTR>(L"State");
+        column.cx = 120; column.pszText = const_cast<LPWSTR>(L"State");
         SendMessageW(library, LVM_INSERTCOLUMNW, 1, (LPARAM)&column);
         config_text = control(L"EDIT", L"", WS_BORDER | ES_READONLY | ES_AUTOHSCROLL);
         start_button = control(L"BUTTON", L"&Start", WS_TABSTOP | BS_PUSHBUTTON, manager_start);

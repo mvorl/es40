@@ -569,6 +569,9 @@ list(APPEND ES40_INCLUDES
     )
 
 add_executable(es40 ${ES40_SOURCES})
+if (WIN32)
+    add_dependencies(es40 es40_cfg_win32)
+endif()
 # The Rust slirp static library must exist before any target links against it.
 if (ES40_HAVE_SLIRP)
     add_dependencies(es40 es40_slirp_rust)

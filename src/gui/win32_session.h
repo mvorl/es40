@@ -34,6 +34,7 @@ public:
     win32_configuration_lock& operator=(const win32_configuration_lock&) = delete;
 private:
     friend class win32_session;
+    friend class win32_settings_session;
     HANDLE handle = nullptr;
 };
 
@@ -60,6 +61,26 @@ public:
     DWORD process_id() const;
     DWORD exit_code() const;
     HWND display() const;
+private:
+    struct state;
+    std::unique_ptr<state> impl;
+};
+
+// Destruction leaves the editor process and its inherited lock alive.
+class win32_settings_session
+{
+public:
+    win32_settings_session();
+    ~win32_settings_session();
+    win32_settings_session(const win32_settings_session&) = delete;
+    win32_settings_session& operator=(const win32_settings_session&) = delete;
+
+    void start(const std::filesystem::path& executable,
+        const std::filesystem::path& configuration);
+    void activate();
+    bool running() const;
+    bool poll();
+    DWORD exit_code() const;
 private:
     struct state;
     std::unique_ptr<state> impl;
