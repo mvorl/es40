@@ -39,6 +39,7 @@ const detail::Driver* driver(Backend backend)
 #ifdef _WIN32
     case Backend::dsound: return &detail::dsound_driver();
 #endif
+    case Backend::null: return &detail::null_driver();
     default: return nullptr;
     }
 }
@@ -73,13 +74,14 @@ void SetupGuard::complete()
 
 Backend backend_for_gui(const char* gui)
 {
-    if (gui) return std::strcmp(gui, "win32") == 0 ? Backend::dsound : Backend::sdl;
+    if (gui && std::strcmp(gui, "win32") == 0) return Backend::dsound;
+    if (gui && std::strcmp(gui, "sdl") == 0) return Backend::sdl;
 #ifdef HAVE_SDL
     return Backend::sdl;
 #elif defined(_WIN32)
-    return Backend::dsound;
+    return gui ? Backend::null : Backend::dsound;
 #else
-    return Backend::sdl;
+    return Backend::null;
 #endif
 }
 
@@ -131,13 +133,15 @@ const char* error(Backend backend)
     std::string message(context);
     const auto position = message.find("%s");
     if (position != std::string::npos)
-        message.replace(position, 2, backend == Backend::sdl ? "SDL" : "DirectSound");
+        message.replace(position, 2, backend == Backend::sdl ? "SDL" :
+            backend == Backend::dsound ? "DirectSound" : "null");
     message += ": ";
     message += error(backend);
     std::string where = std::string(file) + ", line " + std::to_string(line);
     if (function) where += std::string(", function '") + function + "'";
     if (backend == Backend::sdl) throw CSDLException(message, where);
-    throw CWin32Exception(message, where);
+    if (backend == Backend::dsound) throw CWin32Exception(message, where);
+    throw CRuntimeException(message, where);
 }
 
 void create_stream(Stream& stream, const Format* source, const Format* target,

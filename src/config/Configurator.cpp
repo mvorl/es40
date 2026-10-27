@@ -1091,7 +1091,6 @@ void CConfigurator::initialize()
 //		myDevice = new CCirrus(this, (CSystem*)pParent->get_device(), pcibus,
 //			pcidev);
 //		break;
-#if defined(HAVE_SDL) || defined(_WIN32)
 	case c_es1370:
 		myDevice = new CES1370(this, (CSystem*)pParent->get_device(), pcibus,
 			pcidev);
@@ -1100,7 +1099,6 @@ void CConfigurator::initialize()
 		myDevice = new CES1371(this, (CSystem*)pParent->get_device(), pcibus,
 			pcidev);
 		break;
-#endif
 
 #if defined(HAVE_PCAP) || defined(HAVE_TAP_NET) || defined(HAVE_SLIRP)
 

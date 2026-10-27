@@ -28,7 +28,6 @@
 // ES1371 adaptation of the ES1370 port to ES40 by Cacodemon345.
 #ifndef ES40_ES1371_H
 #define ES40_ES1371_H
-#if defined(HAVE_SDL) || defined(_WIN32)
 #include "StdAfx.h"
 #include "system/System.h"
 #include "emu/SystemComponent.h"
@@ -161,6 +160,5 @@ private:
   static void es1371_dac_callback_dac2(void* userdata);
   static void es1371_dac_callback_adc(void* userdata);
 };
-#endif // HAVE_SDL || _WIN32
 
 #endif // ES40_ES1371_H

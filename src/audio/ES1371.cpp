@@ -26,7 +26,6 @@
  * THE SOFTWARE.
  */
 // ES1371 adaptation of the ES1370 port to ES40 by Cacodemon345 from qemu.
-#if defined(HAVE_SDL) || defined(_WIN32)
 #include "ES1371.h"
 
 #include <algorithm>
@@ -1174,4 +1173,3 @@ void CES1371::es1371_dac_callback_adc(void* userdata)
     CES1371* dev = (CES1371*)userdata;
     dev->request_audio(ADC_CHANNEL);
 }
-#endif // HAVE_SDL || _WIN32

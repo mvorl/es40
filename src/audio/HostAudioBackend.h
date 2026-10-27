@@ -59,6 +59,7 @@ const Driver& sdl_driver();
 #ifdef _WIN32
 const Driver& dsound_driver();
 #endif
+const Driver& null_driver();
 }
 }
 #endif

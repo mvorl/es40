@@ -337,6 +337,9 @@
     <ClCompile Include="..\src\audio\HostAudioDirectSound.cpp">
       <Filter>Source Files\audio</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\audio\HostAudioNull.cpp">
+      <Filter>Source Files\audio</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\CPU\jit\jitengine.cpp">
       <Filter>Source Files\CPU\jit</Filter>
     </ClCompile>

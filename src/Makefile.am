@@ -234,6 +234,7 @@ es40_SOURCES = chipset/AliM1543C.cpp \
        audio/ES1371.cpp \
        audio/HostAudio.cpp \
        audio/HostAudioDirectSound.cpp \
+       audio/HostAudioNull.cpp \
        audio/HostAudioSDL.cpp \
        network/Ethernet.cpp \
        system/Flash.cpp \

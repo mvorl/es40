@@ -30,7 +30,7 @@
 // Devices retain scheduling, error policy, lifetime and lock scope.
 namespace host_audio
 {
-enum class Backend { sdl, dsound };
+enum class Backend { sdl, dsound, null };
 struct DeviceId
 {
     std::uintptr_t native;
@@ -57,7 +57,7 @@ struct Stream
     explicit operator bool() const { return native != nullptr; }
 };
 
-// Release partial native setup while retaining legacy SDL failure behavior.
+// Release partial setup while retaining legacy SDL failure behavior.
 class SetupGuard
 {
 public:

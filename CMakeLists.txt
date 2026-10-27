@@ -449,6 +449,7 @@ list(APPEND ES40_SOURCES
     src/audio/ES1371.cpp
     src/audio/HostAudio.cpp
     src/audio/HostAudioDirectSound.cpp
+    src/audio/HostAudioNull.cpp
     src/audio/HostAudioSDL.cpp
     src/network/Ethernet.cpp
     src/system/Flash.cpp
