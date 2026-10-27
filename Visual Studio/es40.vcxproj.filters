@@ -310,6 +310,9 @@
     <ClCompile Include="..\src\gui\win32_media.cpp">
       <Filter>Source Files\gui</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\gui\win32_library.cpp">
+      <Filter>Source Files\gui</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\gui\win32_manager.cpp">
       <Filter>Source Files\gui</Filter>
     </ClCompile>
@@ -661,6 +664,9 @@
       <Filter>Header Files\gui</Filter>
     </ClInclude>
     <ClInclude Include="..\src\gui\win32_media.h">
+      <Filter>Header Files\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\gui\win32_library.h">
       <Filter>Header Files\gui</Filter>
     </ClInclude>
     <ClInclude Include="..\src\gui\win32_manager.h">

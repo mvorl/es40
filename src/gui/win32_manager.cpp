@@ -23,6 +23,8 @@
 #define NOMINMAX
 #endif
 #include "win32_session.h"
+#include "win32_library.h"
+#include <commctrl.h>
 #include <commdlg.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -35,7 +37,7 @@
 using namespace std;
 
 static constexpr wchar_t manager_class[] = L"ES40.Workstation";
-enum win32_manager_control { manager_open = 100, manager_start, manager_stop };
+enum win32_manager_control { manager_add = 100, manager_start, manager_stop, manager_remove, manager_library };
 
 static wstring manager_text(const string& text)
 {
@@ -48,15 +50,13 @@ static wstring manager_text(const string& text)
     return result;
 }
 
-static filesystem::path manager_log_directory()
+static filesystem::path manager_store_directory()
 {
     PWSTR raw = nullptr;
     if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &raw)))
         throw runtime_error("Unable to locate the local application data folder.");
     unique_ptr<wchar_t, decltype(&CoTaskMemFree)> folder(raw, CoTaskMemFree);
-    filesystem::path directory = filesystem::path(folder.get()) / L"ES40" / L"Workstation" / L"logs";
-    filesystem::create_directories(directory);
-    return directory;
+    return filesystem::path(folder.get()) / L"ES40" / L"Workstation";
 }
 
 static wstring manager_read_log(const filesystem::path& path)
@@ -88,15 +88,46 @@ static wstring manager_read_log(const filesystem::path& path)
     return text;
 }
 
+class win32_manager_window;
+
+struct win32_manager_machine
+{
+    win32_manager_window* owner = nullptr;
+    filesystem::path configuration, log;
+    HWND host = nullptr;
+    win32_session session;
+    wstring failure;
+
+    ~win32_manager_machine() { if (IsWindow(host)) DestroyWindow(host); }
+
+    const wchar_t* state() const
+    {
+        if (session.stopping()) return L"Stopping";
+        if (session.running()) return session.display() ? L"Running" : L"Starting";
+        return failure.empty() ? L"Powered off" : L"Error";
+    }
+};
+
 class win32_manager_window
 {
-    HWND window = nullptr, host = nullptr, open_button = nullptr, start_button = nullptr;
+    HWND window = nullptr, library = nullptr, library_label = nullptr, empty = nullptr;
+    HWND add_button = nullptr, remove_button = nullptr, start_button = nullptr;
     HWND stop_button = nullptr, config_text = nullptr, status = nullptr, output = nullptr, output_label = nullptr;
-    filesystem::path executable, configuration, log;
-    win32_session session;
-    wstring failure, last_output;
+    filesystem::path executable, store;
+    vector<unique_ptr<win32_manager_machine>> machines;
+    wstring last_output;
+    int selection = -1;
     unsigned sequence = 0;
-    bool closing = false;
+    bool closing = false, changing_selection = false;
+
+    win32_manager_machine* selected() const
+    { return selection >= 0 && selection < (int)machines.size() ? machines[selection].get() : nullptr; }
+
+    bool running() const
+    { return any_of(machines.begin(), machines.end(), [](const auto& item) { return item->session.running(); }); }
+
+    void release_input()
+    { for (const auto& item : machines) item->session.send(win32_manager_release); }
 
     HWND control(const wchar_t* type, const wchar_t* text, DWORD style, int id = 0)
     {
@@ -107,51 +138,73 @@ class win32_manager_window
         return result;
     }
 
-    void fit_display()
+    void fit_display(win32_manager_machine& item)
     {
-        HWND display = session.display();
-        if (!display || GetParent(display) != host) return;
+        HWND display = item.session.display();
+        if (!display || GetParent(display) != item.host) return;
         RECT bounds = {};
-        if (GetClientRect(host, &bounds))
+        if (GetClientRect(item.host, &bounds))
             SetWindowPos(display, nullptr, 0, 0, bounds.right, bounds.bottom, SWP_NOZORDER | SWP_NOACTIVATE);
     }
 
     void layout()
     {
-        if (!host) return;
+        if (!library || !empty) return;
         RECT bounds = {};
         GetClientRect(window, &bounds);
-        const int width = max(640L, bounds.right), height = max(440L, bounds.bottom);
-        MoveWindow(open_button, 12, 12, 80, 28, TRUE);
-        MoveWindow(config_text, 104, 12, width - 296, 28, TRUE);
+        const int width = max(880L, bounds.right), height = max(440L, bounds.bottom);
+        const int left = 284, content_width = width - left - 12;
+        MoveWindow(add_button, 12, 12, 80, 28, TRUE);
+        MoveWindow(remove_button, 102, 12, 90, 28, TRUE);
+        MoveWindow(library_label, 12, 49, 260, 22, TRUE);
+        MoveWindow(library, 12, 78, 260, height - 90, TRUE);
+        MoveWindow(config_text, left, 12, content_width - 180, 28, TRUE);
         MoveWindow(start_button, width - 180, 12, 78, 28, TRUE);
         MoveWindow(stop_button, width - 90, 12, 78, 28, TRUE);
-        MoveWindow(status, 12, 49, width - 24, 22, TRUE);
-        MoveWindow(host, 12, 78, width - 24, height - 246, TRUE);
-        MoveWindow(output_label, 12, height - 158, width - 24, 20, TRUE);
-        MoveWindow(output, 12, height - 134, width - 24, 122, TRUE);
-        fit_display();
+        MoveWindow(status, left, 49, content_width, 22, TRUE);
+        MoveWindow(empty, left, 96, content_width, 60, TRUE);
+        ShowWindow(empty, selected() ? SW_HIDE : SW_SHOWNA);
+        for (const auto& item : machines)
+        {
+            MoveWindow(item->host, left, 78, content_width, height - 246, TRUE);
+            ShowWindow(item->host, item.get() == selected() ? SW_SHOWNA : SW_HIDE);
+            fit_display(*item);
+        }
+        MoveWindow(output_label, left, height - 158, content_width, 20, TRUE);
+        MoveWindow(output, left, height - 134, content_width, 122, TRUE);
     }
 
     void refresh()
     {
         if (!window) return;
-        EnableWindow(open_button, !session.running() && !closing);
-        EnableWindow(start_button, !configuration.empty() && !session.running() && !closing);
-        EnableWindow(stop_button, session.running() && !session.stopping());
+        const auto* item = selected();
+        EnableWindow(add_button, !closing);
+        EnableWindow(remove_button, item && !item->session.running() && !closing);
+        EnableWindow(start_button, item && !item->session.running() && !closing);
+        EnableWindow(stop_button, item && item->session.running() && !item->session.stopping());
         const wchar_t* state = closing ? L"Stopping before close..." :
-            session.stopping() ? L"Stopping..." : session.running() ?
-            (session.display() ? L"Running" : L"Starting...") : !failure.empty() ? L"Error" :
-            configuration.empty() ? L"Choose an existing configuration." : L"Powered off";
+            item ? item->state() : L"Add an existing configuration.";
         SetWindowTextW(status, state);
-        InvalidateRect(host, nullptr, TRUE);
+        SetWindowTextW(config_text, item ? item->configuration.c_str() : L"");
+        for (size_t i = 0; i < machines.size(); ++i)
+        {
+            LVITEMW row = {};
+            row.iItem = (int)i; row.iSubItem = 1;
+            row.pszText = const_cast<LPWSTR>(machines[i]->state());
+            SendMessageW(library, LVM_SETITEMTEXTW, i, (LPARAM)&row);
+            InvalidateRect(machines[i]->host, nullptr, TRUE);
+        }
     }
 
     void update_output()
     {
-        wstring text = failure;
-        if (!text.empty()) text += L"\r\n";
-        text += manager_read_log(log);
+        wstring text;
+        if (const auto* item = selected())
+        {
+            text = item->failure;
+            if (!text.empty()) text += L"\r\n";
+            text += manager_read_log(item->log);
+        }
         if (text == last_output) return;
         last_output = text;
         SetWindowTextW(output, text.c_str());
@@ -161,62 +214,139 @@ class win32_manager_window
 
     void report(const char* message) noexcept
     {
-        session.send(win32_manager_release);
-        try { failure = manager_text(message); refresh(); update_output(); } catch (...) {}
-        MessageBoxW(window, failure.empty() ? L"An unexpected manager error occurred." : failure.c_str(),
-            L"ES40 Workstation", MB_OK | MB_ICONERROR);
+        release_input();
+        try { MessageBoxW(window, manager_text(message).c_str(), L"ES40 Workstation", MB_OK | MB_ICONERROR); }
+        catch (...) { MessageBoxW(window, L"An unexpected manager error occurred.", L"ES40 Workstation", MB_OK | MB_ICONERROR); }
     }
 
-    void select_configuration(const filesystem::path& path)
+    void rebuild_library()
     {
-        if (session.running() || closing) return;
-        filesystem::path selected = filesystem::absolute(path).lexically_normal();
-        if (!filesystem::is_regular_file(selected)) throw runtime_error("The configuration file is missing.");
-        configuration = selected;
-        failure.clear(); log.clear();
-        SetWindowTextW(config_text, configuration.c_str());
-        refresh(); update_output();
+        changing_selection = true;
+        struct rebuild_guard
+        {
+            bool& changing;
+            HWND list;
+            ~rebuild_guard() { SendMessageW(list, WM_SETREDRAW, TRUE, 0); InvalidateRect(list, nullptr, TRUE); changing = false; }
+        } guard{changing_selection, library};
+        SendMessageW(library, WM_SETREDRAW, FALSE, 0);
+        ListView_DeleteAllItems(library);
+        for (size_t i = 0; i < machines.size(); ++i)
+        {
+            const wstring name = machines[i]->configuration.stem().wstring();
+            LVITEMW row = {};
+            row.mask = LVIF_TEXT; row.iItem = (int)i;
+            row.pszText = const_cast<LPWSTR>(name.c_str());
+            if (SendMessageW(library, LVM_INSERTITEMW, 0, (LPARAM)&row) < 0)
+                throw runtime_error("Unable to display the machine library.");
+        }
+        if (selection >= 0)
+            ListView_SetItemState(library, selection, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
     }
 
-    void open_configuration()
+    void select(int index)
     {
-        if (session.running() || closing) return;
+        if (auto* old = selected()) old->session.send(win32_manager_release);
+        selection = index >= 0 && index < (int)machines.size() ? index : -1;
+        changing_selection = true;
+        ListView_SetItemState(library, -1, 0, LVIS_SELECTED | LVIS_FOCUSED);
+        if (selection >= 0)
+        {
+            ListView_SetItemState(library, selection, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+            ListView_EnsureVisible(library, selection, FALSE);
+        }
+        changing_selection = false;
+        layout(); refresh(); update_output();
+    }
+
+    void add_configuration(const filesystem::path& path, bool save = true)
+    {
+        if (closing) return;
+        const filesystem::path configuration = filesystem::absolute(path).lexically_normal();
+        if (save && !filesystem::is_regular_file(configuration)) throw runtime_error("The configuration file is missing.");
+        for (size_t i = 0; i < machines.size(); ++i)
+        {
+            if (!win32_library_same_configuration(machines[i]->configuration, configuration)) continue;
+            if (save) win32_library_update(store, configuration, true);
+            select((int)i);
+            return;
+        }
+        auto item = make_unique<win32_manager_machine>();
+        item->owner = this; item->configuration = configuration;
+        item->host = CreateWindowExW(0, win32_manager_host_class, L"", WS_CHILD | WS_TABSTOP |
+            WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 1, 1, window, nullptr, GetModuleHandleW(nullptr), item.get());
+        if (!item->host) throw runtime_error("Unable to create the console host.");
+        machines.reserve(machines.size() + 1);
+        if (save) win32_library_update(store, configuration, true);
+        if (auto* old = selected()) old->session.send(win32_manager_release);
+        machines.push_back(move(item));
+        selection = (int)machines.size() - 1;
+        rebuild_library(); select(selection);
+    }
+
+    void remove_configuration()
+    {
+        auto* item = selected();
+        if (!item || item->session.running() || closing) return;
+        release_input();
+        if (MessageBoxW(window, L"Remove this machine from the library? Its files will remain on disk.",
+            L"Remove machine", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
+        win32_library_update(store, item->configuration, false);
+        machines.erase(machines.begin() + selection);
+        selection = machines.empty() ? -1 : min(selection, (int)machines.size() - 1);
+        rebuild_library(); select(selection);
+    }
+
+    void choose_configuration()
+    {
+        if (closing) return;
+        release_input();
         vector<wchar_t> path(32768, 0);
         OPENFILENAMEW dialog = { sizeof(dialog) };
         dialog.hwndOwner = window;
-        dialog.lpstrTitle = L"Open machine configuration";
+        dialog.lpstrTitle = L"Add machine configuration";
         dialog.lpstrFilter = L"ES40 configuration (*.cfg)\0*.cfg\0All files\0*.*\0";
         dialog.lpstrFile = path.data(); dialog.nMaxFile = (DWORD)path.size();
         dialog.Flags = OFN_EXPLORER | OFN_NOCHANGEDIR | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-        if (GetOpenFileNameW(&dialog)) select_configuration(path.data());
+        if (GetOpenFileNameW(&dialog)) add_configuration(path.data());
         else if (CommDlgExtendedError()) throw runtime_error("Unable to open the file chooser.");
     }
 
     void start()
     {
-        if (configuration.empty() || session.running() || closing) return;
-        failure.clear();
-        log = manager_log_directory() / (L"session-" + to_wstring(GetCurrentProcessId()) + L"-" +
-            to_wstring(GetTickCount64()) + L"-" + to_wstring(++sequence) + L".log");
-        session.start(executable, configuration, log, host);
+        auto* item = selected();
+        if (!item || item->session.running() || closing) return;
+        item->failure.clear(); item->log.clear();
+        try
+        {
+            filesystem::create_directories(store / L"logs");
+            item->log = store / L"logs" / (L"session-" + to_wstring(GetCurrentProcessId()) + L"-" +
+                to_wstring(GetTickCount64()) + L"-" + to_wstring(++sequence) + L".log");
+            item->session.start(executable, item->configuration, item->log, item->host);
+        }
+        catch (const exception& error)
+        {
+            item->failure = manager_text(error.what());
+            refresh(); update_output();
+            throw;
+        }
         refresh(); update_output();
     }
 
     void close()
     {
-        if (!session.running()) { DestroyWindow(window); return; }
-        session.send(win32_manager_release);
+        if (!running()) { DestroyWindow(window); return; }
+        release_input();
         if (closing)
         {
-            if (MessageBoxW(window, L"The machine is still stopping. Force it to exit? Unsaved guest data may be lost.",
+            if (MessageBoxW(window, L"Machines are still stopping. Force them to exit? Unsaved guest data may be lost.",
                 L"Close ES40 Workstation", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES)
-                session.force_stop();
+                for (const auto& item : machines) item->session.force_stop();
             return;
         }
-        if (MessageBoxW(window, L"Stop the running machine and close ES40 Workstation?",
+        if (MessageBoxW(window, L"Stop all running machines and close ES40 Workstation?",
             L"Close ES40 Workstation", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
         closing = true;
-        session.stop();
+        for (const auto& item : machines) item->session.stop();
         refresh();
     }
 
@@ -225,30 +355,61 @@ class win32_manager_window
         switch (message)
         {
         case WM_SIZE:
-            if (wparam == SIZE_MINIMIZED) session.send(win32_manager_release);
+            if (wparam == SIZE_MINIMIZED) release_input();
             layout(); return 0;
-        case WM_ENTERSIZEMOVE: session.send(win32_manager_release); return 0;
+        case WM_ENTERSIZEMOVE: release_input(); return 0;
         case WM_GETMINMAXINFO:
-            reinterpret_cast<MINMAXINFO*>(lparam)->ptMinTrackSize = { 680, 490 }; return 0;
+            reinterpret_cast<MINMAXINFO*>(lparam)->ptMinTrackSize = { 920, 490 }; return 0;
         case WM_COMMAND:
             switch (LOWORD(wparam))
             {
-            case manager_open: open_configuration(); break;
+            case manager_add: choose_configuration(); break;
+            case manager_remove: remove_configuration(); break;
             case manager_start: start(); break;
-            case manager_stop: session.stop(); refresh(); break;
+            case manager_stop:
+                if (auto* item = selected()) item->session.stop();
+                refresh(); break;
             }
             return 0;
-        case WM_TIMER:
-            if (session.poll())
+        case WM_NOTIFY:
+        {
+            const auto* notice = reinterpret_cast<NMHDR*>(lparam);
+            if (notice->idFrom != manager_library || changing_selection) break;
+            if (notice->code == LVN_ITEMCHANGED)
             {
-                if (session.exit_code()) failure = L"Emulator exited with code " + to_wstring(session.exit_code()) + L".";
-                refresh();
+                const auto* change = reinterpret_cast<NMLISTVIEW*>(lparam);
+                if ((change->uChanged & LVIF_STATE) && ((change->uNewState ^ change->uOldState) & LVIS_SELECTED))
+                {
+                    const int index = ListView_GetNextItem(library, -1, LVNI_SELECTED);
+                    if (index != selection) select(index);
+                }
             }
-            update_output();
-            if (closing && !session.running()) DestroyWindow(hwnd);
+            else if (notice->code == NM_DBLCLK)
+            {
+                const int index = reinterpret_cast<NMITEMACTIVATE*>(lparam)->iItem;
+                if (index >= 0 && index < (int)machines.size()) { select(index); start(); }
+            }
             return 0;
+        }
+        case WM_TIMER:
+        {
+            bool changed = false;
+            for (const auto& item : machines)
+            {
+                if (!item->session.poll()) continue;
+                if (item->session.exit_code())
+                    item->failure = L"Emulator exited with code " + to_wstring(item->session.exit_code()) + L".";
+                changed = true;
+            }
+            if (changed) refresh();
+            update_output();
+            if (closing && !running()) DestroyWindow(hwnd);
+            return 0;
+        }
         case WM_CLOSE: close(); return 0;
-        case WM_QUERYENDSESSION: session.stop(); return TRUE;
+        case WM_QUERYENDSESSION:
+            for (const auto& item : machines) item->session.stop();
+            return TRUE;
         case WM_DESTROY:
             KillTimer(hwnd, 1); window = nullptr; PostQuitMessage(0); return 0;
         }
@@ -273,27 +434,28 @@ class win32_manager_window
 
     static LRESULT CALLBACK host_procedure(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
     {
-        auto* self = reinterpret_cast<win32_manager_window*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        auto* item = reinterpret_cast<win32_manager_machine*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
         if (message == WM_NCCREATE)
         {
-            self = static_cast<win32_manager_window*>(reinterpret_cast<CREATESTRUCTW*>(lparam)->lpCreateParams);
-            self->host = hwnd;
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)self);
+            item = static_cast<win32_manager_machine*>(reinterpret_cast<CREATESTRUCTW*>(lparam)->lpCreateParams);
+            item->host = hwnd;
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)item);
         }
-        if (!self) return DefWindowProcW(hwnd, message, wparam, lparam);
+        if (!item) return DefWindowProcW(hwnd, message, wparam, lparam);
+        auto* self = item->owner;
         try
         {
             switch (message)
             {
             case win32_manager_display_ready:
-                if (self->session.attach_display((HWND)wparam, (DWORD)lparam))
-                { self->fit_display(); self->refresh(); }
+                if (item->session.attach_display((HWND)wparam, (DWORD)lparam))
+                { self->fit_display(*item); self->refresh(); }
                 return 0;
             case win32_manager_display_size: return 0;
-            case WM_SIZE: self->fit_display(); return 0;
+            case WM_SIZE: self->fit_display(*item); return 0;
             case WM_SETFOCUS:
-                if (self->session.display() && GetParent(self->session.display()) == hwnd)
-                    SetFocus(self->session.display());
+                if (item->session.display() && GetParent(item->session.display()) == hwnd)
+                    SetFocus(item->session.display());
                 return 0;
             case WM_ERASEBKGND: return 1;
             case WM_PAINT:
@@ -304,11 +466,11 @@ class win32_manager_window
                 FillRect(dc, &bounds, (HBRUSH)GetStockObject(BLACK_BRUSH));
                 SetBkMode(dc, TRANSPARENT); SetTextColor(dc, RGB(190, 190, 190));
                 HGDIOBJ old = SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
-                const wchar_t* text = self->session.running() ? L"Starting machine..." : L"Machine is powered off";
+                const wchar_t* text = item->session.running() ? L"Starting machine..." : L"Machine is powered off";
                 DrawTextW(dc, text, -1, &bounds, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
                 SelectObject(dc, old); EndPaint(hwnd, &paint); return 0;
             }
-            case WM_NCDESTROY: self->host = nullptr; break;
+            case WM_NCDESTROY: item->host = nullptr; break;
             }
         }
         catch (const exception& error) { self->report(error.what()); return 0; }
@@ -327,6 +489,7 @@ public:
         DWORD length = GetModuleFileNameW(nullptr, path.data(), (DWORD)path.size());
         if (!length || length >= path.size()) throw runtime_error("Unable to locate the emulator executable.");
         executable = path.data();
+        store = manager_store_directory();
         int argc = 0;
         struct arguments_guard
         {
@@ -335,6 +498,8 @@ public:
         } arguments{CommandLineToArgvW(GetCommandLineW(), &argc)};
         if (!arguments.values || argc < 2 || argc > 3)
             throw runtime_error("Usage: es40.exe --manager [configuration.cfg]");
+        INITCOMMONCONTROLSEX controls = { sizeof(controls), ICC_LISTVIEW_CLASSES };
+        if (!InitCommonControlsEx(&controls)) throw runtime_error("Unable to initialize the machine list.");
         for (const auto& definition : { pair<const wchar_t*, WNDPROC>(manager_class, procedure),
             {win32_manager_host_class, host_procedure} })
         {
@@ -348,22 +513,38 @@ public:
                 throw runtime_error("Unable to register the manager window.");
         }
         window = CreateWindowExW(0, manager_class, L"ES40 Workstation", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
-            CW_USEDEFAULT, CW_USEDEFAULT, 1000, 760, nullptr, nullptr, GetModuleHandleW(nullptr), this);
+            CW_USEDEFAULT, CW_USEDEFAULT, 1160, 760, nullptr, nullptr, GetModuleHandleW(nullptr), this);
         if (!window) throw runtime_error("Unable to create the manager window.");
-        open_button = control(L"BUTTON", L"&Open...", WS_TABSTOP | BS_PUSHBUTTON, manager_open);
+        add_button = control(L"BUTTON", L"&Add...", WS_TABSTOP | BS_PUSHBUTTON, manager_add);
+        remove_button = control(L"BUTTON", L"&Remove", WS_TABSTOP | BS_PUSHBUTTON, manager_remove);
+        library_label = control(L"STATIC", L"Machines", SS_LEFT);
+        library = control(WC_LISTVIEWW, L"", WS_BORDER | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL |
+            LVS_SHOWSELALWAYS, manager_library);
+        ListView_SetExtendedListViewStyle(library, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+        LVCOLUMNW column = {};
+        column.mask = LVCF_TEXT | LVCF_WIDTH; column.cx = 150;
+        column.pszText = const_cast<LPWSTR>(L"Machine");
+        SendMessageW(library, LVM_INSERTCOLUMNW, 0, (LPARAM)&column);
+        column.cx = 100; column.pszText = const_cast<LPWSTR>(L"State");
+        SendMessageW(library, LVM_INSERTCOLUMNW, 1, (LPARAM)&column);
         config_text = control(L"EDIT", L"", WS_BORDER | ES_READONLY | ES_AUTOHSCROLL);
         start_button = control(L"BUTTON", L"&Start", WS_TABSTOP | BS_PUSHBUTTON, manager_start);
         stop_button = control(L"BUTTON", L"S&top", WS_TABSTOP | BS_PUSHBUTTON, manager_stop);
         status = control(L"STATIC", L"", SS_LEFT);
         output_label = control(L"STATIC", L"Session output", SS_LEFT);
         output = control(L"EDIT", L"", WS_BORDER | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL);
-        host = CreateWindowExW(0, win32_manager_host_class, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-            WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 1, 1, window, nullptr, GetModuleHandleW(nullptr), this);
-        if (!host || !SetTimer(window, 1, 250, nullptr)) throw runtime_error("Unable to initialize the console host.");
+        empty = control(L"STATIC", L"Add an existing configuration to the machine library.", SS_CENTER);
+        if (!SetTimer(window, 1, 250, nullptr)) throw runtime_error("Unable to initialize session updates.");
         layout(); refresh(); ShowWindow(window, SW_SHOWNORMAL); UpdateWindow(window);
+        try
+        {
+            for (const auto& configuration : win32_library_load(store)) add_configuration(configuration, false);
+            if (!machines.empty()) select(0);
+        }
+        catch (const exception& error) { report(error.what()); }
         if (argc == 3)
         {
-            try { select_configuration(arguments.values[2]); }
+            try { add_configuration(arguments.values[2]); }
             catch (const exception& error) { report(error.what()); }
         }
         MSG message = {};

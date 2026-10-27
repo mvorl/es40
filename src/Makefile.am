@@ -202,6 +202,7 @@ EXTRA_DIST = \
 
 # Native Windows builds use CMake or Visual Studio.
 EXTRA_DIST += gui/win32_media.cpp gui/win32_media.h gui/win32_manager.cpp gui/win32_manager.h \
+       gui/win32_library.cpp gui/win32_library.h \
        gui/win32_session.cpp gui/win32_session.h config/es40-cfg-win32.cpp
 
 #       graphics/Cirrus.cpp  - readd this to the sources line below when it's fixed
@@ -282,6 +283,7 @@ es40_SOURCES = chipset/AliM1543C.cpp \
 	base/ThreadTLS.cpp \
        gui/gui.cpp \
        gui/gui_x11.cpp \
+       gui/x11_dispatch.h \
        gui/keymap.cpp \
        gui/scancodes.cpp \
        gui/sdl.cpp \

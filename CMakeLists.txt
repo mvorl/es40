@@ -509,7 +509,7 @@ endif()
 
 if (HAVE_X11)
     list(APPEND ES40_DEFINITIONS HAVE_X11)
-    list(APPEND ES40_SOURCES src/gui/gui_x11.cpp)
+    list(APPEND ES40_SOURCES src/gui/gui_x11.cpp src/gui/x11_dispatch.h)
     list(APPEND ES40_LIBRARIES X11::X11)
 endif()
 
@@ -521,12 +521,14 @@ if (WIN32)
         src/gui/gui_win32.cpp
         src/gui/win32_media.cpp
         src/gui/win32_media.h
+        src/gui/win32_library.cpp
+        src/gui/win32_library.h
         src/gui/win32_manager.cpp
         src/gui/win32_manager.h
         src/gui/win32_session.cpp
         src/gui/win32_session.h
         )
-    list(APPEND ES40_LIBRARIES winmm comdlg32 shell32 ole32 uuid)
+    list(APPEND ES40_LIBRARIES winmm comdlg32 comctl32 shell32 ole32 uuid)
 endif()
 
 if (NOT ES40_DISABLE_NETWORKING)
