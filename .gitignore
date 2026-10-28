@@ -448,6 +448,7 @@ build/*
 
 # Local state and build outputs for the root Visual Studio solution
 /Visual Studio/.vs/
+/Visual Studio/es40.cfg
 /Visual Studio/asmjit/
 /Visual Studio/packages/
 /Visual Studio/x64/
