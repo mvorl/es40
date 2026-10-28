@@ -40,7 +40,10 @@ using namespace std;
 
 static constexpr wchar_t manager_class[] = L"ES40.Workstation";
 enum win32_manager_control
-{ manager_add = 100, manager_start, manager_stop, manager_remove, manager_library, manager_settings, manager_new, manager_copy };
+{
+    manager_add = 100, manager_start, manager_stop, manager_remove, manager_library,
+    manager_settings, manager_new, manager_copy, manager_restart, manager_force_stop
+};
 static constexpr wchar_t manager_config_filter[] = L"ES40 configuration (*.cfg)\0*.cfg\0All files\0*.*\0";
 static constexpr wchar_t manager_rom_filter[] = L"Firmware images (*.exe;*.rom;*.bin)\0*.exe;*.rom;*.bin\0All files\0*.*\0";
 
@@ -230,12 +233,14 @@ struct win32_manager_machine
     win32_session session;
     win32_settings_session settings;
     wstring failure;
+    bool restart = false;
 
     ~win32_manager_machine() { if (IsWindow(host)) DestroyWindow(host); }
 
     const wchar_t* state() const
     {
         if (settings.running()) return L"Editing settings";
+        if (restart) return L"Restarting";
         if (session.stopping()) return L"Stopping";
         if (session.running()) return session.display() ? L"Running" : L"Starting";
         return failure.empty() ? L"Powered off" : L"Error";
@@ -247,6 +252,7 @@ class win32_manager_window
     HWND window = nullptr, library = nullptr, library_label = nullptr, empty = nullptr;
     HWND new_button = nullptr, add_button = nullptr, remove_button = nullptr, settings_button = nullptr, start_button = nullptr;
     HWND copy_button = nullptr, stop_button = nullptr, config_text = nullptr, status = nullptr, output = nullptr, output_label = nullptr;
+    HWND restart_button = nullptr, force_stop_button = nullptr;
     filesystem::path executable, store;
     vector<unique_ptr<win32_manager_machine>> machines;
     wstring last_output;
@@ -295,10 +301,12 @@ class win32_manager_window
         MoveWindow(copy_button, 12, 84, 260, 28, TRUE);
         MoveWindow(library_label, 12, 121, 260, 22, TRUE);
         MoveWindow(library, 12, 150, 260, height - 162, TRUE);
-        MoveWindow(config_text, left, 12, content_width - 180, 28, TRUE);
-        MoveWindow(start_button, width - 180, 12, 78, 28, TRUE);
-        MoveWindow(stop_button, width - 90, 12, 78, 28, TRUE);
-        MoveWindow(status, left, 49, content_width, 22, TRUE);
+        MoveWindow(config_text, left, 12, content_width - 212, 28, TRUE);
+        MoveWindow(start_button, width - 212, 12, 94, 28, TRUE);
+        MoveWindow(stop_button, width - 106, 12, 94, 28, TRUE);
+        MoveWindow(restart_button, width - 212, 46, 94, 28, TRUE);
+        MoveWindow(force_stop_button, width - 106, 46, 94, 28, TRUE);
+        MoveWindow(status, left, 49, content_width - 212, 22, TRUE);
         MoveWindow(empty, left, 96, content_width, 60, TRUE);
         ShowWindow(empty, selected() ? SW_HIDE : SW_SHOWNA);
         for (const auto& item : machines)
@@ -321,7 +329,9 @@ class win32_manager_window
         EnableWindow(remove_button, item && !item->session.running() && !item->settings.running() && !closing);
         EnableWindow(start_button, item && !item->session.running() && !item->settings.running() && !closing);
         EnableWindow(settings_button, item && !item->session.running() && !closing);
-        EnableWindow(stop_button, item && item->session.running() && !item->session.stopping());
+        EnableWindow(stop_button, item && item->session.running() && (!item->session.stopping() || item->restart));
+        EnableWindow(restart_button, item && item->session.running() && !item->session.stopping() && !closing);
+        EnableWindow(force_stop_button, item && item->session.running());
         const wchar_t* state = closing ? L"Stopping before close..." :
             item ? item->state() : L"Create a machine or add an existing configuration.";
         SetWindowTextW(status, state);
@@ -518,25 +528,53 @@ class win32_manager_window
         add_created_configuration(configuration, L"Copy configuration");
     }
 
-    void start()
+    void start(win32_manager_machine& item)
     {
-        auto* item = selected();
-        if (!item || item->session.running() || item->settings.running() || closing) return;
-        item->failure.clear(); item->log.clear();
+        if (item.session.running() || item.settings.running() || closing) return;
+        item.restart = false;
+        item.failure.clear(); item.log.clear();
         try
         {
             filesystem::create_directories(store / L"logs");
-            item->log = store / L"logs" / (L"session-" + to_wstring(GetCurrentProcessId()) + L"-" +
+            item.log = store / L"logs" / (L"session-" + to_wstring(GetCurrentProcessId()) + L"-" +
                 to_wstring(GetTickCount64()) + L"-" + to_wstring(++sequence) + L".log");
-            item->session.start(executable, item->configuration, item->log, item->host);
+            item.session.start(executable, item.configuration, item.log, item.host);
         }
         catch (const exception& error)
         {
-            item->failure = manager_text(error.what());
+            item.failure = manager_text(error.what());
             refresh(); update_output();
             throw;
         }
         refresh(); update_output();
+    }
+
+    void start()
+    { if (auto* item = selected()) start(*item); }
+
+    void stop(bool restart = false)
+    {
+        auto* item = selected();
+        if (!item || !item->session.running() || (restart && (item->session.stopping() || closing))) return;
+        item->restart = restart;
+        item->session.stop();
+        refresh();
+    }
+
+    void force_stop()
+    {
+        auto* item = selected();
+        if (!item || !item->session.running()) return;
+        const DWORD pid = item->session.process_id();
+        const auto log = item->log;
+        release_input();
+        if (MessageBoxW(window, L"Force stop this machine? Unsaved guest data may be lost. Use this if Stop does not complete.",
+            L"Force Stop", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
+        if (!item->session.running() || item->session.process_id() != pid || item->log != log) return;
+        item->restart = false;
+        refresh();
+        item->session.force_stop();
+        refresh();
     }
 
     void edit_settings()
@@ -573,7 +611,7 @@ class win32_manager_window
         if (MessageBoxW(window, L"Stop all running machines and close ES40 Workstation?",
             L"Close ES40 Workstation", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
         closing = true;
-        for (const auto& item : machines) item->session.stop();
+        for (const auto& item : machines) { item->restart = false; item->session.stop(); }
         refresh();
     }
 
@@ -596,9 +634,9 @@ class win32_manager_window
             case manager_remove: remove_configuration(); break;
             case manager_settings: edit_settings(); break;
             case manager_start: start(); break;
-            case manager_stop:
-                if (auto* item = selected()) item->session.stop();
-                refresh(); break;
+            case manager_stop: stop(); break;
+            case manager_restart: stop(true); break;
+            case manager_force_stop: force_stop(); break;
             }
             return 0;
         case WM_NOTIFY:
@@ -628,8 +666,15 @@ class win32_manager_window
             {
                 if (item->session.poll())
                 {
+                    const bool restart = item->restart;
+                    item->restart = false;
                     if (item->session.exit_code())
                         item->failure = L"Emulator exited with code " + to_wstring(item->session.exit_code()) + L".";
+                    if (restart && !closing)
+                    {
+                        try { start(*item); }
+                        catch (const exception& error) { item->failure = manager_text(error.what()); }
+                    }
                     changed = true;
                 }
                 if (item->settings.poll())
@@ -647,7 +692,7 @@ class win32_manager_window
         case WM_CLOSE: close(); return 0;
         case WM_QUERYENDSESSION:
             for (const auto& item : machines) if (item->settings.running()) return FALSE;
-            for (const auto& item : machines) item->session.stop();
+            for (const auto& item : machines) { item->restart = false; item->session.stop(); }
             return TRUE;
         case WM_DESTROY:
             KillTimer(hwnd, 1); window = nullptr; PostQuitMessage(0); return 0;
@@ -772,6 +817,8 @@ public:
         config_text = control(L"EDIT", L"", WS_BORDER | ES_READONLY | ES_AUTOHSCROLL);
         start_button = control(L"BUTTON", L"&Start", WS_TABSTOP | BS_PUSHBUTTON, manager_start);
         stop_button = control(L"BUTTON", L"S&top", WS_TABSTOP | BS_PUSHBUTTON, manager_stop);
+        restart_button = control(L"BUTTON", L"Restart", WS_TABSTOP | BS_PUSHBUTTON, manager_restart);
+        force_stop_button = control(L"BUTTON", L"&Force Stop", WS_TABSTOP | BS_PUSHBUTTON, manager_force_stop);
         status = control(L"STATIC", L"", SS_LEFT);
         output_label = control(L"STATIC", L"Session output", SS_LEFT);
         output = control(L"EDIT", L"", WS_BORDER | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL);
