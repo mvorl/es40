@@ -42,7 +42,9 @@ static constexpr wchar_t manager_class[] = L"ES40.Workstation";
 enum win32_manager_control
 {
     manager_add = 100, manager_start, manager_stop, manager_remove, manager_library,
-    manager_settings, manager_new, manager_copy, manager_restart, manager_force_stop
+    manager_settings, manager_new, manager_copy, manager_restart, manager_force_stop,
+    manager_media, manager_capture, manager_release, manager_ctrl_alt_delete,
+    manager_fullscreen, manager_fit, manager_displays, manager_exit
 };
 static constexpr wchar_t manager_config_filter[] = L"ES40 configuration (*.cfg)\0*.cfg\0All files\0*.*\0";
 static constexpr wchar_t manager_rom_filter[] = L"Firmware images (*.exe;*.rom;*.bin)\0*.exe;*.rom;*.bin\0All files\0*.*\0";
@@ -269,6 +271,75 @@ class win32_manager_window
     void release_input()
     { for (const auto& item : machines) item->session.send(win32_manager_release); }
 
+    bool console_ready() const
+    {
+        const auto* item = selected();
+        return item && item->session.running() && item->session.display() && !item->session.stopping() && !closing;
+    }
+
+    void console_command(win32_manager_action action)
+    {
+        if (!console_ready()) return;
+        auto* item = selected();
+        if (action == win32_manager_capture)
+        {
+            const HWND display = item->session.display();
+            DWORD pid = 0;
+            if (!GetWindowThreadProcessId(display, &pid) || pid != item->session.process_id()) return;
+            const HWND root = GetAncestor(display, GA_ROOT);
+            if (IsIconic(root)) ShowWindow(root, SW_RESTORE);
+            SetForegroundWindow(root);
+            SetFocus(display);
+        }
+        if (!item->session.send(action)) throw runtime_error("Unable to send the command to the machine console.");
+    }
+
+    void create_menus()
+    {
+        struct menu_guard
+        {
+            HMENU value = CreateMenu();
+            ~menu_guard() { if (value) DestroyMenu(value); }
+        } menu;
+        if (!menu.value) throw runtime_error("Unable to create the manager menu.");
+        const auto popup = [&](const wchar_t* title)
+        {
+            HMENU child = CreatePopupMenu();
+            if (!child) throw runtime_error("Unable to create a manager submenu.");
+            if (!AppendMenuW(menu.value, MF_POPUP, (UINT_PTR)child, title))
+            { DestroyMenu(child); throw runtime_error("Unable to attach a manager submenu."); }
+            return child;
+        };
+        const auto entry = [](HMENU menu, UINT id, const wchar_t* text)
+        {
+            if (!AppendMenuW(menu, text ? MF_STRING : MF_SEPARATOR, id, text))
+                throw runtime_error("Unable to add a manager menu item.");
+        };
+        const HMENU file = popup(L"&File"), machine = popup(L"&Machine"), view = popup(L"&View");
+        entry(file, manager_new, L"&New machine...");
+        entry(file, manager_add, L"&Add configuration...");
+        entry(file, manager_copy, L"&Copy configuration...");
+        entry(file, manager_remove, L"&Remove from library");
+        entry(file, 0, nullptr);
+        entry(file, manager_exit, L"E&xit");
+        entry(machine, manager_start, L"&Start");
+        entry(machine, manager_stop, L"S&top");
+        entry(machine, manager_restart, L"&Restart");
+        entry(machine, manager_force_stop, L"&Force Stop...");
+        entry(machine, 0, nullptr);
+        entry(machine, manager_settings, L"Machine s&ettings...");
+        entry(machine, manager_media, L"Removable &media...");
+        entry(machine, 0, nullptr);
+        entry(machine, manager_capture, L"Capture &input");
+        entry(machine, manager_release, L"Re&lease input");
+        entry(machine, manager_ctrl_alt_delete, L"Send Ctrl+Alt+&Delete");
+        entry(view, manager_fullscreen, L"&Full screen");
+        entry(view, manager_fit, L"Fit console to &window");
+        entry(view, manager_displays, L"Show &additional displays");
+        if (!SetMenu(window, menu.value)) throw runtime_error("Unable to attach the manager menu.");
+        menu.value = nullptr;
+    }
+
     HWND control(const wchar_t* type, const wchar_t* text, DWORD style, int id = 0)
     {
         HWND result = CreateWindowExW(0, type, text, WS_CHILD | WS_VISIBLE | style,
@@ -323,15 +394,25 @@ class win32_manager_window
     {
         if (!window) return;
         const auto* item = selected();
-        EnableWindow(new_button, !closing);
-        EnableWindow(add_button, !closing);
-        EnableWindow(copy_button, item && !item->session.running() && !item->settings.running() && !closing);
-        EnableWindow(remove_button, item && !item->session.running() && !item->settings.running() && !closing);
-        EnableWindow(start_button, item && !item->session.running() && !item->settings.running() && !closing);
-        EnableWindow(settings_button, item && !item->session.running() && !closing);
-        EnableWindow(stop_button, item && item->session.running() && (!item->session.stopping() || item->restart));
-        EnableWindow(restart_button, item && item->session.running() && !item->session.stopping() && !closing);
-        EnableWindow(force_stop_button, item && item->session.running());
+        const HMENU menu = GetMenu(window);
+        const auto enabled = [&](int id, bool value)
+        {
+            if (HWND button = GetDlgItem(window, id)) EnableWindow(button, value);
+            if (menu) EnableMenuItem(menu, id, MF_BYCOMMAND | (value ? MF_ENABLED : MF_GRAYED));
+        };
+        enabled(manager_new, !closing);
+        enabled(manager_add, !closing);
+        enabled(manager_copy, item && !item->session.running() && !item->settings.running() && !closing);
+        enabled(manager_remove, item && !item->session.running() && !item->settings.running() && !closing);
+        enabled(manager_start, item && !item->session.running() && !item->settings.running() && !closing);
+        enabled(manager_settings, item && !item->session.running() && !closing);
+        enabled(manager_stop, item && item->session.running() && (!item->session.stopping() || item->restart));
+        enabled(manager_restart, item && item->session.running() && !item->session.stopping() && !closing);
+        enabled(manager_force_stop, item && item->session.running());
+        const bool ready = console_ready();
+        for (int id : {manager_media, manager_capture, manager_release, manager_ctrl_alt_delete,
+            manager_fullscreen, manager_fit, manager_displays}) enabled(id, ready);
+        DrawMenuBar(window);
         const wchar_t* state = closing ? L"Stopping before close..." :
             item ? item->state() : L"Create a machine or add an existing configuration.";
         SetWindowTextW(status, state);
@@ -623,8 +704,18 @@ class win32_manager_window
             if (wparam == SIZE_MINIMIZED) release_input();
             layout(); return 0;
         case WM_ENTERSIZEMOVE: release_input(); return 0;
+        case WM_ENTERMENULOOP: release_input(); return 0;
+        case WM_INITMENUPOPUP: refresh(); return 0;
         case WM_GETMINMAXINFO:
-            reinterpret_cast<MINMAXINFO*>(lparam)->ptMinTrackSize = { 920, 490 }; return 0;
+        {
+            RECT bounds = { 0, 0, 880, 440 };
+            auto& size = reinterpret_cast<MINMAXINFO*>(lparam)->ptMinTrackSize;
+            size = { 920, 490 };
+            if (AdjustWindowRectEx(&bounds, (DWORD)GetWindowLongPtrW(hwnd, GWL_STYLE), GetMenu(hwnd) != nullptr,
+                (DWORD)GetWindowLongPtrW(hwnd, GWL_EXSTYLE)))
+                size = { max(size.x, bounds.right - bounds.left), max(size.y, bounds.bottom - bounds.top) };
+            return 0;
+        }
         case WM_COMMAND:
             switch (LOWORD(wparam))
             {
@@ -637,6 +728,14 @@ class win32_manager_window
             case manager_stop: stop(); break;
             case manager_restart: stop(true); break;
             case manager_force_stop: force_stop(); break;
+            case manager_media: console_command(win32_manager_media); break;
+            case manager_capture: console_command(win32_manager_capture); break;
+            case manager_release: console_command(win32_manager_release); break;
+            case manager_ctrl_alt_delete: console_command(win32_manager_ctrl_alt_delete); break;
+            case manager_fullscreen: console_command(win32_manager_fullscreen); break;
+            case manager_fit: console_command(win32_manager_reset_size); break;
+            case manager_displays: console_command(win32_manager_show_displays); break;
+            case manager_exit: close(); break;
             }
             return 0;
         case WM_NOTIFY:
@@ -818,11 +917,12 @@ public:
         start_button = control(L"BUTTON", L"&Start", WS_TABSTOP | BS_PUSHBUTTON, manager_start);
         stop_button = control(L"BUTTON", L"S&top", WS_TABSTOP | BS_PUSHBUTTON, manager_stop);
         restart_button = control(L"BUTTON", L"Restart", WS_TABSTOP | BS_PUSHBUTTON, manager_restart);
-        force_stop_button = control(L"BUTTON", L"&Force Stop", WS_TABSTOP | BS_PUSHBUTTON, manager_force_stop);
+        force_stop_button = control(L"BUTTON", L"Force Stop", WS_TABSTOP | BS_PUSHBUTTON, manager_force_stop);
         status = control(L"STATIC", L"", SS_LEFT);
         output_label = control(L"STATIC", L"Session output", SS_LEFT);
         output = control(L"EDIT", L"", WS_BORDER | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL);
         empty = control(L"STATIC", L"Create a new machine or add an existing configuration to the library.", SS_CENTER);
+        create_menus();
         if (!SetTimer(window, 1, 250, nullptr)) throw runtime_error("Unable to initialize session updates.");
         layout(); refresh(); ShowWindow(window, SW_SHOWNORMAL); UpdateWindow(window);
         try
@@ -842,6 +942,14 @@ public:
         {
             // Guest keystrokes bypass manager dialog navigation.
             DWORD focus_pid = 0; GetWindowThreadProcessId(GetFocus(), &focus_pid);
+            if (focus_pid == GetCurrentProcessId() && message.message == WM_SYSCHAR &&
+                (message.wParam == L'f' || message.wParam == L'F' ||
+                 message.wParam == L'm' || message.wParam == L'M' ||
+                 message.wParam == L'v' || message.wParam == L'V'))
+            {
+                SendMessageW(window, WM_SYSCOMMAND, SC_KEYMENU, message.wParam);
+                continue;
+            }
             if (focus_pid != GetCurrentProcessId() || !IsDialogMessageW(window, &message))
             { TranslateMessage(&message); DispatchMessageW(&message); }
         }
