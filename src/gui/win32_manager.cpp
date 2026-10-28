@@ -29,15 +29,20 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <algorithm>
+#include <climits>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
 using namespace std;
 
 static constexpr wchar_t manager_class[] = L"ES40.Workstation";
-enum win32_manager_control { manager_add = 100, manager_start, manager_stop, manager_remove, manager_library, manager_settings };
+enum win32_manager_control
+{ manager_add = 100, manager_start, manager_stop, manager_remove, manager_library, manager_settings, manager_new };
+static constexpr wchar_t manager_config_filter[] = L"ES40 configuration (*.cfg)\0*.cfg\0All files\0*.*\0";
+static constexpr wchar_t manager_rom_filter[] = L"Firmware images (*.exe;*.rom;*.bin)\0*.exe;*.rom;*.bin\0All files\0*.*\0";
 
 static wstring manager_text(const string& text)
 {
@@ -57,6 +62,107 @@ static filesystem::path manager_store_directory()
         throw runtime_error("Unable to locate the local application data folder.");
     unique_ptr<wchar_t, decltype(&CoTaskMemFree)> folder(raw, CoTaskMemFree);
     return filesystem::path(folder.get()) / L"ES40" / L"Workstation";
+}
+
+static filesystem::path manager_choose_file(HWND owner, const wchar_t* title, const wchar_t* filter,
+    bool save = false)
+{
+    vector<wchar_t> path(32768, 0);
+    if (save) wcscpy_s(path.data(), path.size(), L"AlphaServer.cfg");
+    OPENFILENAMEW dialog = { sizeof(dialog) };
+    dialog.hwndOwner = owner; dialog.lpstrTitle = title; dialog.lpstrFilter = filter;
+    dialog.lpstrFile = path.data(); dialog.nMaxFile = (DWORD)path.size();
+    dialog.lpstrDefExt = save ? L"cfg" : nullptr;
+    dialog.Flags = OFN_EXPLORER | OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST |
+        (save ? OFN_NOTESTFILECREATE : OFN_FILEMUSTEXIST);
+    if (save ? GetSaveFileNameW(&dialog) : GetOpenFileNameW(&dialog))
+        return filesystem::absolute(path.data()).lexically_normal();
+    const DWORD error = CommDlgExtendedError();
+    if (error) throw runtime_error("Unable to open the file chooser (code " + to_string(error) + ").");
+    return {};
+}
+
+static string manager_config_bytes(const wstring& text)
+{
+    if (text.empty()) return {};
+    if (text.size() > INT_MAX) throw runtime_error("The configuration is too large.");
+    const bool unicode = GetACP() == CP_UTF8;
+    const DWORD flags = unicode ? WC_ERR_INVALID_CHARS : WC_NO_BEST_FIT_CHARS;
+    BOOL substituted = FALSE;
+    BOOL* fallback = unicode ? nullptr : &substituted;
+    const int count = WideCharToMultiByte(CP_ACP, flags, text.data(), (int)text.size(), nullptr, 0, nullptr, fallback);
+    string bytes(count, '\0');
+    if (!count || !WideCharToMultiByte(CP_ACP, flags, text.data(), (int)text.size(),
+        bytes.data(), count, nullptr, fallback) || substituted)
+        throw runtime_error("Choose paths representable in the active Windows code page.");
+    return bytes;
+}
+
+static void manager_require_new_paths(const filesystem::path& configuration)
+{
+    const auto unused = [](const filesystem::path& path)
+    {
+        if (filesystem::exists(filesystem::symlink_status(path)))
+            throw filesystem::filesystem_error("Choose a different machine filename or folder; this path already exists",
+                path, make_error_code(errc::file_exists));
+    };
+    unused(configuration);
+    const wstring base = configuration.stem().wstring();
+    for (const auto* suffix : { L".img", L"-flash.rom", L"-dpr.rom", L"-toy.rom" })
+    {
+        const filesystem::path path = configuration.parent_path() / (base + suffix);
+        if (win32_library_same_configuration(configuration, path))
+            throw runtime_error("The configuration filename conflicts with its disk or state files. Choose a .cfg filename.");
+        unused(path);
+    }
+}
+
+static void manager_write_new_configuration(const filesystem::path& configuration, const string& bytes)
+{
+    manager_require_new_paths(configuration);
+    struct temporary_file
+    {
+        filesystem::path path;
+        HANDLE handle = INVALID_HANDLE_VALUE;
+        bool created = false;
+        ~temporary_file()
+        {
+            if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+            if (created) DeleteFileW(path.c_str());
+        }
+    } temporary;
+    const auto fail = [](const char* message, DWORD error)
+    { throw system_error((int)error, system_category(), message); };
+    const wstring stem = configuration.filename().wstring() + L".manager-" +
+        to_wstring(GetCurrentProcessId()) + L"-" + to_wstring(GetTickCount64());
+    for (unsigned attempt = 0; attempt < 100; ++attempt)
+    {
+        temporary.path = configuration.parent_path() / (stem + L"-" + to_wstring(attempt) + L".tmp");
+        temporary.handle = CreateFileW(temporary.path.c_str(), GENERIC_WRITE, 0,
+            nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (temporary.handle != INVALID_HANDLE_VALUE) { temporary.created = true; break; }
+        const DWORD error = GetLastError();
+        if (error != ERROR_FILE_EXISTS && error != ERROR_ALREADY_EXISTS)
+            fail("Unable to create the machine configuration", error);
+    }
+    if (!temporary.created) throw runtime_error("Unable to choose a temporary configuration filename.");
+    size_t offset = 0;
+    while (offset < bytes.size())
+    {
+        DWORD written = 0;
+        if (!WriteFile(temporary.handle, bytes.data() + offset, (DWORD)(bytes.size() - offset), &written, nullptr))
+            fail("Unable to write the machine configuration", GetLastError());
+        if (!written) fail("Unable to write the machine configuration", ERROR_WRITE_FAULT);
+        offset += written;
+    }
+    if (!FlushFileBuffers(temporary.handle)) fail("Unable to flush the machine configuration", GetLastError());
+    if (!CloseHandle(temporary.handle)) fail("Unable to close the machine configuration", GetLastError());
+    temporary.handle = INVALID_HANDLE_VALUE;
+    // Recheck companion files before publishing the configuration.
+    manager_require_new_paths(configuration);
+    if (!MoveFileExW(temporary.path.c_str(), configuration.c_str(), MOVEFILE_WRITE_THROUGH))
+        fail("Unable to save the new machine configuration", GetLastError());
+    temporary.created = false;
 }
 
 static wstring manager_read_log(const filesystem::path& path)
@@ -113,7 +219,7 @@ struct win32_manager_machine
 class win32_manager_window
 {
     HWND window = nullptr, library = nullptr, library_label = nullptr, empty = nullptr;
-    HWND add_button = nullptr, remove_button = nullptr, settings_button = nullptr, start_button = nullptr;
+    HWND new_button = nullptr, add_button = nullptr, remove_button = nullptr, settings_button = nullptr, start_button = nullptr;
     HWND stop_button = nullptr, config_text = nullptr, status = nullptr, output = nullptr, output_label = nullptr;
     filesystem::path executable, store;
     vector<unique_ptr<win32_manager_machine>> machines;
@@ -156,11 +262,12 @@ class win32_manager_window
         GetClientRect(window, &bounds);
         const int width = max(880L, bounds.right), height = max(440L, bounds.bottom);
         const int left = 284, content_width = width - left - 12;
-        MoveWindow(add_button, 12, 12, 80, 28, TRUE);
-        MoveWindow(remove_button, 102, 12, 80, 28, TRUE);
-        MoveWindow(settings_button, 192, 12, 80, 28, TRUE);
-        MoveWindow(library_label, 12, 49, 260, 22, TRUE);
-        MoveWindow(library, 12, 78, 260, height - 90, TRUE);
+        MoveWindow(new_button, 12, 12, 125, 28, TRUE);
+        MoveWindow(add_button, 147, 12, 125, 28, TRUE);
+        MoveWindow(remove_button, 12, 48, 125, 28, TRUE);
+        MoveWindow(settings_button, 147, 48, 125, 28, TRUE);
+        MoveWindow(library_label, 12, 85, 260, 22, TRUE);
+        MoveWindow(library, 12, 114, 260, height - 126, TRUE);
         MoveWindow(config_text, left, 12, content_width - 180, 28, TRUE);
         MoveWindow(start_button, width - 180, 12, 78, 28, TRUE);
         MoveWindow(stop_button, width - 90, 12, 78, 28, TRUE);
@@ -181,13 +288,14 @@ class win32_manager_window
     {
         if (!window) return;
         const auto* item = selected();
+        EnableWindow(new_button, !closing);
         EnableWindow(add_button, !closing);
         EnableWindow(remove_button, item && !item->session.running() && !item->settings.running() && !closing);
         EnableWindow(start_button, item && !item->session.running() && !item->settings.running() && !closing);
         EnableWindow(settings_button, item && !item->session.running() && !closing);
         EnableWindow(stop_button, item && item->session.running() && !item->session.stopping());
         const wchar_t* state = closing ? L"Stopping before close..." :
-            item ? item->state() : L"Add an existing configuration.";
+            item ? item->state() : L"Create a machine or add an existing configuration.";
         SetWindowTextW(status, state);
         SetWindowTextW(config_text, item ? item->configuration.c_str() : L"");
         for (size_t i = 0; i < machines.size(); ++i)
@@ -304,15 +412,54 @@ class win32_manager_window
     {
         if (closing) return;
         release_input();
-        vector<wchar_t> path(32768, 0);
-        OPENFILENAMEW dialog = { sizeof(dialog) };
-        dialog.hwndOwner = window;
-        dialog.lpstrTitle = L"Add machine configuration";
-        dialog.lpstrFilter = L"ES40 configuration (*.cfg)\0*.cfg\0All files\0*.*\0";
-        dialog.lpstrFile = path.data(); dialog.nMaxFile = (DWORD)path.size();
-        dialog.Flags = OFN_EXPLORER | OFN_NOCHANGEDIR | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-        if (GetOpenFileNameW(&dialog)) add_configuration(path.data());
-        else if (CommDlgExtendedError()) throw runtime_error("Unable to open the file chooser.");
+        const auto path = manager_choose_file(window, L"Add machine configuration", manager_config_filter);
+        if (!path.empty() && IsWindow(window)) add_configuration(path);
+    }
+
+    void new_machine()
+    {
+        if (closing) return;
+        release_input();
+        const auto configuration = manager_choose_file(window, L"New machine - choose its configuration file",
+            manager_config_filter, true);
+        if (configuration.empty() || closing || !IsWindow(window)) return;
+        manager_config_bytes(configuration.wstring());
+        manager_require_new_paths(configuration);
+        const auto firmware = manager_choose_file(window, L"Choose the AlphaServer ES40 SRM firmware", manager_rom_filter);
+        if (firmware.empty() || closing || !IsWindow(window)) return;
+        const auto video_rom = manager_choose_file(window, L"Choose the S3 VGA BIOS", manager_rom_filter);
+        if (video_rom.empty() || closing || !IsWindow(window)) return;
+        if (!filesystem::is_regular_file(firmware) || !filesystem::is_regular_file(video_rom))
+            throw runtime_error("A selected firmware image is no longer available.");
+        const auto quote = [](const wstring& value)
+        {
+            wstring result = L"\"";
+            for (wchar_t c : value) { if (c == L'"') result += L'"'; result += c; }
+            return result + L'"';
+        };
+        const wstring base = configuration.stem().wstring();
+        const wstring text = L"// Created by ES40 Workstation. Paths resolve relative to this file.\r\n"
+            L"gui = win32 { video.linear = true; }\r\n"
+            L"sys0 = tsunami\r\n{\r\n  memory.bits = 29;\r\n  rom.srm = " + quote(firmware.wstring()) +
+            L";\r\n  rom.flash = " + quote(base + L"-flash.rom") + L";\r\n  rom.dpr = " + quote(base + L"-dpr.rom") +
+            L";\r\n  rom.toy = " + quote(base + L"-toy.rom") +
+            L";\r\n  cpu0 = ev68cb { speed = 500M; }\r\n"
+            L"  pci0.7 = ali { vga_console = true; }\r\n  pci0.19 = ali_usb {}\r\n  pci0.17 = ali_pmu {}\r\n"
+            L"  pci0.2 = s3 { rom = " + quote(video_rom.wstring()) + L"; }\r\n"
+            L"  pci0.15 = ali_ide\r\n  {\r\n    disk0.0 = file { file = " + quote(base + L".img") +
+            L"; autocreate_size = 2G; }\r\n    disk1.0 = file { cdrom = true; }\r\n  }\r\n}\r\n";
+        manager_write_new_configuration(configuration, manager_config_bytes(text));
+        try { add_configuration(configuration); }
+        catch (const exception& error)
+        {
+            const wstring message = L"The configuration was created at:\r\n" + configuration.wstring() +
+                L"\r\n\r\nUnable to finish adding it to the library. Use Add to select it.\r\n\r\n" + manager_text(error.what());
+            MessageBoxW(window, message.c_str(), L"New machine", MB_OK | MB_ICONERROR);
+            return;
+        }
+        MessageBoxW(window, L"Machine created: one CPU, 512 MB RAM, S3 graphics, a 2 GB disk, and an empty CD-ROM drive.\n\n"
+            L"The disk is created on first start. Use Settings to change the hardware.",
+            L"New machine", MB_OK | MB_ICONINFORMATION);
     }
 
     void start()
@@ -387,6 +534,7 @@ class win32_manager_window
         case WM_COMMAND:
             switch (LOWORD(wparam))
             {
+            case manager_new: new_machine(); break;
             case manager_add: choose_configuration(); break;
             case manager_remove: remove_configuration(); break;
             case manager_settings: edit_settings(); break;
@@ -549,6 +697,7 @@ public:
         window = CreateWindowExW(0, manager_class, L"ES40 Workstation", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
             CW_USEDEFAULT, CW_USEDEFAULT, 1160, 760, nullptr, nullptr, GetModuleHandleW(nullptr), this);
         if (!window) throw runtime_error("Unable to create the manager window.");
+        new_button = control(L"BUTTON", L"&New...", WS_TABSTOP | BS_PUSHBUTTON, manager_new);
         add_button = control(L"BUTTON", L"&Add...", WS_TABSTOP | BS_PUSHBUTTON, manager_add);
         remove_button = control(L"BUTTON", L"&Remove", WS_TABSTOP | BS_PUSHBUTTON, manager_remove);
         settings_button = control(L"BUTTON", L"S&ettings...", WS_TABSTOP | BS_PUSHBUTTON, manager_settings);
@@ -568,7 +717,7 @@ public:
         status = control(L"STATIC", L"", SS_LEFT);
         output_label = control(L"STATIC", L"Session output", SS_LEFT);
         output = control(L"EDIT", L"", WS_BORDER | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL);
-        empty = control(L"STATIC", L"Add an existing configuration to the machine library.", SS_CENTER);
+        empty = control(L"STATIC", L"Create a new machine or add an existing configuration to the library.", SS_CENTER);
         if (!SetTimer(window, 1, 250, nullptr)) throw runtime_error("Unable to initialize session updates.");
         layout(); refresh(); ShowWindow(window, SW_SHOWNORMAL); UpdateWindow(window);
         try
