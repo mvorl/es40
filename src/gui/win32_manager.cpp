@@ -40,7 +40,7 @@ using namespace std;
 
 static constexpr wchar_t manager_class[] = L"ES40.Workstation";
 enum win32_manager_control
-{ manager_add = 100, manager_start, manager_stop, manager_remove, manager_library, manager_settings, manager_new };
+{ manager_add = 100, manager_start, manager_stop, manager_remove, manager_library, manager_settings, manager_new, manager_copy };
 static constexpr wchar_t manager_config_filter[] = L"ES40 configuration (*.cfg)\0*.cfg\0All files\0*.*\0";
 static constexpr wchar_t manager_rom_filter[] = L"Firmware images (*.exe;*.rom;*.bin)\0*.exe;*.rom;*.bin\0All files\0*.*\0";
 
@@ -65,10 +65,10 @@ static filesystem::path manager_store_directory()
 }
 
 static filesystem::path manager_choose_file(HWND owner, const wchar_t* title, const wchar_t* filter,
-    bool save = false)
+    bool save = false, const wchar_t* initial = L"AlphaServer.cfg")
 {
     vector<wchar_t> path(32768, 0);
-    if (save) wcscpy_s(path.data(), path.size(), L"AlphaServer.cfg");
+    if (save) wcscpy_s(path.data(), path.size(), initial);
     OPENFILENAMEW dialog = { sizeof(dialog) };
     dialog.hwndOwner = owner; dialog.lpstrTitle = title; dialog.lpstrFilter = filter;
     dialog.lpstrFile = path.data(); dialog.nMaxFile = (DWORD)path.size();
@@ -98,28 +98,53 @@ static string manager_config_bytes(const wstring& text)
     return bytes;
 }
 
+static void manager_require_unused_path(const filesystem::path& path)
+{
+    if (filesystem::exists(filesystem::symlink_status(path)))
+        throw filesystem::filesystem_error("Choose a different machine filename or folder; this path already exists",
+            path, make_error_code(errc::file_exists));
+}
+
 static void manager_require_new_paths(const filesystem::path& configuration)
 {
-    const auto unused = [](const filesystem::path& path)
-    {
-        if (filesystem::exists(filesystem::symlink_status(path)))
-            throw filesystem::filesystem_error("Choose a different machine filename or folder; this path already exists",
-                path, make_error_code(errc::file_exists));
-    };
-    unused(configuration);
+    manager_require_unused_path(configuration);
     const wstring base = configuration.stem().wstring();
     for (const auto* suffix : { L".img", L"-flash.rom", L"-dpr.rom", L"-toy.rom" })
     {
         const filesystem::path path = configuration.parent_path() / (base + suffix);
         if (win32_library_same_configuration(configuration, path))
             throw runtime_error("The configuration filename conflicts with its disk or state files. Choose a .cfg filename.");
-        unused(path);
+        manager_require_unused_path(path);
     }
 }
 
-static void manager_write_new_configuration(const filesystem::path& configuration, const string& bytes)
+static string manager_read_configuration(const filesystem::path& path)
 {
-    manager_require_new_paths(configuration);
+    if (!filesystem::is_regular_file(path)) throw runtime_error("The source configuration file is missing.");
+    struct file_guard
+    {
+        HANDLE value;
+        ~file_guard() { if (value != INVALID_HANDLE_VALUE) CloseHandle(value); }
+    } file{CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)};
+    if (file.value == INVALID_HANDLE_VALUE)
+        throw system_error((int)GetLastError(), system_category(), "Unable to read the source configuration");
+    string bytes;
+    char buffer[8192];
+    for (;;)
+    {
+        DWORD count = 0;
+        if (!ReadFile(file.value, buffer, sizeof(buffer), &count, nullptr))
+            throw system_error((int)GetLastError(), system_category(), "Unable to read the source configuration");
+        if (!count) return bytes;
+        if (bytes.size() > (size_t)INT_MAX - count) throw runtime_error("The source configuration is too large.");
+        bytes.append(buffer, count);
+    }
+}
+
+static void manager_write_configuration(const filesystem::path& configuration, const string& bytes, bool check_companions)
+{
+    if (check_companions) manager_require_new_paths(configuration);
+    else manager_require_unused_path(configuration);
     struct temporary_file
     {
         filesystem::path path;
@@ -158,8 +183,9 @@ static void manager_write_new_configuration(const filesystem::path& configuratio
     if (!FlushFileBuffers(temporary.handle)) fail("Unable to flush the machine configuration", GetLastError());
     if (!CloseHandle(temporary.handle)) fail("Unable to close the machine configuration", GetLastError());
     temporary.handle = INVALID_HANDLE_VALUE;
-    // Recheck companion files before publishing the configuration.
-    manager_require_new_paths(configuration);
+    // Recheck paths before publishing the configuration.
+    if (check_companions) manager_require_new_paths(configuration);
+    else manager_require_unused_path(configuration);
     if (!MoveFileExW(temporary.path.c_str(), configuration.c_str(), MOVEFILE_WRITE_THROUGH))
         fail("Unable to save the new machine configuration", GetLastError());
     temporary.created = false;
@@ -220,7 +246,7 @@ class win32_manager_window
 {
     HWND window = nullptr, library = nullptr, library_label = nullptr, empty = nullptr;
     HWND new_button = nullptr, add_button = nullptr, remove_button = nullptr, settings_button = nullptr, start_button = nullptr;
-    HWND stop_button = nullptr, config_text = nullptr, status = nullptr, output = nullptr, output_label = nullptr;
+    HWND copy_button = nullptr, stop_button = nullptr, config_text = nullptr, status = nullptr, output = nullptr, output_label = nullptr;
     filesystem::path executable, store;
     vector<unique_ptr<win32_manager_machine>> machines;
     wstring last_output;
@@ -266,8 +292,9 @@ class win32_manager_window
         MoveWindow(add_button, 147, 12, 125, 28, TRUE);
         MoveWindow(remove_button, 12, 48, 125, 28, TRUE);
         MoveWindow(settings_button, 147, 48, 125, 28, TRUE);
-        MoveWindow(library_label, 12, 85, 260, 22, TRUE);
-        MoveWindow(library, 12, 114, 260, height - 126, TRUE);
+        MoveWindow(copy_button, 12, 84, 260, 28, TRUE);
+        MoveWindow(library_label, 12, 121, 260, 22, TRUE);
+        MoveWindow(library, 12, 150, 260, height - 162, TRUE);
         MoveWindow(config_text, left, 12, content_width - 180, 28, TRUE);
         MoveWindow(start_button, width - 180, 12, 78, 28, TRUE);
         MoveWindow(stop_button, width - 90, 12, 78, 28, TRUE);
@@ -290,6 +317,7 @@ class win32_manager_window
         const auto* item = selected();
         EnableWindow(new_button, !closing);
         EnableWindow(add_button, !closing);
+        EnableWindow(copy_button, item && !item->session.running() && !item->settings.running() && !closing);
         EnableWindow(remove_button, item && !item->session.running() && !item->settings.running() && !closing);
         EnableWindow(start_button, item && !item->session.running() && !item->settings.running() && !closing);
         EnableWindow(settings_button, item && !item->session.running() && !closing);
@@ -408,6 +436,18 @@ class win32_manager_window
         rebuild_library(); select(selection);
     }
 
+    bool add_created_configuration(const filesystem::path& configuration, const wchar_t* title)
+    {
+        try { add_configuration(configuration); return true; }
+        catch (const exception& error)
+        {
+            const wstring message = L"The configuration was created at:\r\n" + configuration.wstring() +
+                L"\r\n\r\nUnable to finish adding it to the library. Use Add to select it.\r\n\r\n" + manager_text(error.what());
+            MessageBoxW(window, message.c_str(), title, MB_OK | MB_ICONERROR);
+            return false;
+        }
+    }
+
     void choose_configuration()
     {
         if (closing) return;
@@ -448,18 +488,34 @@ class win32_manager_window
             L"  pci0.2 = s3 { rom = " + quote(video_rom.wstring()) + L"; }\r\n"
             L"  pci0.15 = ali_ide\r\n  {\r\n    disk0.0 = file { file = " + quote(base + L".img") +
             L"; autocreate_size = 2G; }\r\n    disk1.0 = file { cdrom = true; }\r\n  }\r\n}\r\n";
-        manager_write_new_configuration(configuration, manager_config_bytes(text));
-        try { add_configuration(configuration); }
-        catch (const exception& error)
-        {
-            const wstring message = L"The configuration was created at:\r\n" + configuration.wstring() +
-                L"\r\n\r\nUnable to finish adding it to the library. Use Add to select it.\r\n\r\n" + manager_text(error.what());
-            MessageBoxW(window, message.c_str(), L"New machine", MB_OK | MB_ICONERROR);
-            return;
-        }
+        manager_write_configuration(configuration, manager_config_bytes(text), true);
+        if (!add_created_configuration(configuration, L"New machine")) return;
         MessageBoxW(window, L"Machine created: one CPU, 512 MB RAM, S3 graphics, a 2 GB disk, and an empty CD-ROM drive.\n\n"
             L"The disk is created on first start. Use Settings to change the hardware.",
             L"New machine", MB_OK | MB_ICONINFORMATION);
+    }
+
+    void copy_configuration()
+    {
+        const auto* item = selected();
+        if (!item || item->session.running() || item->settings.running() || closing) return;
+        release_input();
+        const filesystem::path source = item->configuration;
+        win32_configuration_lock lock(source);
+        const auto configuration = manager_choose_file(window, L"Copy configuration (disk images are not copied)",
+            manager_config_filter, true, L"Copy.cfg");
+        if (configuration.empty() || closing || !IsWindow(window)) return;
+        manager_config_bytes(configuration.wstring());
+        if (win32_library_same_configuration(source, configuration))
+            throw runtime_error("Choose a new filename for the configuration copy.");
+        manager_require_unused_path(configuration);
+        if (MessageBoxW(window, L"This copies only the configuration. Disks and firmware/state files are not copied.\n\n"
+            L"Saved paths stay unchanged. Relative paths resolve from the destination folder and may refer to different files. "
+            L"Review storage and state paths in Settings before running both machines.\n\nCopy the configuration?",
+            L"Copy configuration", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
+        if (closing || !IsWindow(window)) return;
+        manager_write_configuration(configuration, manager_read_configuration(source), false);
+        add_created_configuration(configuration, L"Copy configuration");
     }
 
     void start()
@@ -535,6 +591,7 @@ class win32_manager_window
             switch (LOWORD(wparam))
             {
             case manager_new: new_machine(); break;
+            case manager_copy: copy_configuration(); break;
             case manager_add: choose_configuration(); break;
             case manager_remove: remove_configuration(); break;
             case manager_settings: edit_settings(); break;
@@ -701,6 +758,7 @@ public:
         add_button = control(L"BUTTON", L"&Add...", WS_TABSTOP | BS_PUSHBUTTON, manager_add);
         remove_button = control(L"BUTTON", L"&Remove", WS_TABSTOP | BS_PUSHBUTTON, manager_remove);
         settings_button = control(L"BUTTON", L"S&ettings...", WS_TABSTOP | BS_PUSHBUTTON, manager_settings);
+        copy_button = control(L"BUTTON", L"&Copy configuration...", WS_TABSTOP | BS_PUSHBUTTON, manager_copy);
         library_label = control(L"STATIC", L"Machines", SS_LEFT);
         library = control(WC_LISTVIEWW, L"", WS_BORDER | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL |
             LVS_SHOWSELALWAYS, manager_library);

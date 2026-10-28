@@ -102,7 +102,7 @@ win32_configuration_lock::win32_configuration_lock(const filesystem::path& confi
     const DWORD error = GetLastError();
     if (!candidate) session_error("Unable to lock the machine configuration", error);
     if (error == ERROR_ALREADY_EXISTS)
-        throw std::runtime_error("This machine is already running or its settings are open.");
+        throw std::runtime_error("This machine is already running or its configuration is in use.");
     handle = candidate.release();
 }
 
