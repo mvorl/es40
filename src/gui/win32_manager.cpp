@@ -44,7 +44,8 @@ enum win32_manager_control
     manager_add = 100, manager_start, manager_stop, manager_remove, manager_library,
     manager_settings, manager_new, manager_copy, manager_restart, manager_force_stop,
     manager_media, manager_capture, manager_release, manager_ctrl_alt_delete,
-    manager_fullscreen, manager_fit, manager_displays, manager_exit
+    manager_fullscreen, manager_fit, manager_displays, manager_exit,
+    manager_tabs, manager_folder, manager_open_log
 };
 static constexpr wchar_t manager_config_filter[] = L"ES40 configuration (*.cfg)\0*.cfg\0All files\0*.*\0";
 static constexpr wchar_t manager_rom_filter[] = L"Firmware images (*.exe;*.rom;*.bin)\0*.exe;*.rom;*.bin\0All files\0*.*\0";
@@ -225,6 +226,33 @@ static wstring manager_read_log(const filesystem::path& path)
     return text;
 }
 
+static wstring manager_configuration_preview(const filesystem::path& path)
+{
+    struct file_guard
+    {
+        HANDLE value;
+        ~file_guard() { if (value != INVALID_HANDLE_VALUE) CloseHandle(value); }
+    } file{CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)};
+    if (file.value == INVALID_HANDLE_VALUE) return L"Unable to read the configuration file.";
+    const DWORD limit = 128 * 1024;
+    string bytes(limit + 1, '\0');
+    DWORD read = 0;
+    if (!ReadFile(file.value, bytes.data(), (DWORD)bytes.size(), &read, nullptr))
+        return L"Unable to read the configuration file.";
+    const int length = (int)min(read, limit);
+    const int count = MultiByteToWideChar(CP_ACP, 0, bytes.data(), length, nullptr, 0);
+    wstring decoded(count, L'\0'), text;
+    if (count) MultiByteToWideChar(CP_ACP, 0, bytes.data(), length, decoded.data(), count);
+    for (size_t i = 0; i < decoded.size(); ++i)
+    {
+        if (decoded[i] == L'\n' && (!i || decoded[i - 1] != L'\r')) text += L'\r';
+        text += decoded[i];
+    }
+    if (read > limit) text += L"\r\n[Configuration preview truncated]";
+    return text;
+}
+
 class win32_manager_window;
 
 struct win32_manager_machine
@@ -235,7 +263,7 @@ struct win32_manager_machine
     win32_session session;
     win32_settings_session settings;
     wstring failure;
-    bool restart = false;
+    bool restart = false, completed = false;
 
     ~win32_manager_machine() { if (IsWindow(host)) DestroyWindow(host); }
 
@@ -253,14 +281,15 @@ class win32_manager_window
 {
     HWND window = nullptr, library = nullptr, library_label = nullptr, empty = nullptr;
     HWND new_button = nullptr, add_button = nullptr, remove_button = nullptr, settings_button = nullptr, start_button = nullptr;
-    HWND copy_button = nullptr, stop_button = nullptr, config_text = nullptr, status = nullptr, output = nullptr, output_label = nullptr;
+    HWND copy_button = nullptr, stop_button = nullptr, config_text = nullptr, status = nullptr, output = nullptr;
     HWND restart_button = nullptr, force_stop_button = nullptr;
+    HWND tabs = nullptr, details = nullptr;
     filesystem::path executable, store;
     vector<unique_ptr<win32_manager_machine>> machines;
-    wstring last_output;
-    int selection = -1;
+    wstring last_output, last_details, config_preview;
+    int selection = -1, page = 0;
     unsigned sequence = 0;
-    bool closing = false, changing_selection = false;
+    bool closing = false, changing_selection = false, preview_dirty = true;
 
     win32_manager_machine* selected() const
     { return selection >= 0 && selection < (int)machines.size() ? machines[selection].get() : nullptr; }
@@ -281,6 +310,8 @@ class win32_manager_window
     {
         if (!console_ready()) return;
         auto* item = selected();
+        if (action == win32_manager_capture || action == win32_manager_media ||
+            action == win32_manager_fullscreen || action == win32_manager_reset_size) select_page(0);
         if (action == win32_manager_capture)
         {
             const HWND display = item->session.display();
@@ -320,6 +351,9 @@ class win32_manager_window
         entry(file, manager_add, L"&Add configuration...");
         entry(file, manager_copy, L"&Copy configuration...");
         entry(file, manager_remove, L"&Remove from library");
+        entry(file, 0, nullptr);
+        entry(file, manager_folder, L"Open machine &folder");
+        entry(file, manager_open_log, L"Open session &log");
         entry(file, 0, nullptr);
         entry(file, manager_exit, L"E&xit");
         entry(machine, manager_start, L"&Start");
@@ -378,16 +412,64 @@ class win32_manager_window
         MoveWindow(restart_button, width - 212, 46, 94, 28, TRUE);
         MoveWindow(force_stop_button, width - 106, 46, 94, 28, TRUE);
         MoveWindow(status, left, 49, content_width - 212, 22, TRUE);
-        MoveWindow(empty, left, 96, content_width, 60, TRUE);
+        SetWindowPos(tabs, HWND_BOTTOM, left, 78, content_width, height - 90, SWP_NOACTIVATE);
+        RECT content = {};
+        GetClientRect(tabs, &content);
+        TabCtrl_AdjustRect(tabs, FALSE, &content);
+        MapWindowPoints(tabs, window, reinterpret_cast<POINT*>(&content), 2);
+        const int page_width = content.right - content.left, page_height = content.bottom - content.top;
+        MoveWindow(empty, content.left, content.top + 18, page_width, 60, TRUE);
         ShowWindow(empty, selected() ? SW_HIDE : SW_SHOWNA);
         for (const auto& item : machines)
         {
-            MoveWindow(item->host, left, 78, content_width, height - 246, TRUE);
-            ShowWindow(item->host, item.get() == selected() ? SW_SHOWNA : SW_HIDE);
+            MoveWindow(item->host, content.left, content.top, page_width, page_height, TRUE);
+            ShowWindow(item->host, item.get() == selected() && page == 0 ? SW_SHOWNA : SW_HIDE);
             fit_display(*item);
         }
-        MoveWindow(output_label, left, height - 158, content_width, 20, TRUE);
-        MoveWindow(output, left, height - 134, content_width, 122, TRUE);
+        MoveWindow(details, content.left, content.top, page_width, page_height, TRUE);
+        MoveWindow(output, content.left, content.top, page_width, page_height, TRUE);
+        ShowWindow(details, selected() && page == 1 ? SW_SHOWNA : SW_HIDE);
+        ShowWindow(output, selected() && page == 2 ? SW_SHOWNA : SW_HIDE);
+    }
+
+    void select_page(int index)
+    {
+        if (index < 0 || index > 2) return;
+        if (page != index)
+        {
+            if (auto* item = selected()) item->session.send(win32_manager_release);
+            SetFocus(tabs);
+        }
+        page = index;
+        TabCtrl_SetCurSel(tabs, page);
+        preview_dirty = true;
+        layout(); update_details(); update_output();
+    }
+
+    void update_details()
+    {
+        if (page != 1) return;
+        wstring text;
+        if (const auto* item = selected())
+        {
+            if (preview_dirty)
+            {
+                config_preview = manager_configuration_preview(item->configuration);
+                preview_dirty = false;
+            }
+            text = L"Machine: " + item->configuration.stem().wstring() + L"\r\nState: " + item->state() +
+                L"\r\nConfiguration: " + item->configuration.wstring() +
+                L"\r\nWorking folder: " + item->configuration.parent_path().wstring() +
+                L"\r\n\r\nGraphics: Native Win32\r\nDisplay #0: Embedded console\r\nAdditional displays: Separate windows\r\n";
+            if (item->session.running()) text += L"\r\nProcess ID: " + to_wstring(item->session.process_id()) + L"\r\n";
+            else if (item->completed) text += L"\r\nLast exit code: " + to_wstring(item->session.exit_code()) + L"\r\n";
+            if (!item->failure.empty()) text += L"\r\n" + item->failure + L"\r\n";
+            if (!item->log.empty()) text += L"\r\nSession log: " + item->log.wstring() + L"\r\n";
+            text += L"\r\nConfiguration preview (use Settings to edit):\r\n\r\n" + config_preview;
+        }
+        if (text == last_details) return;
+        last_details = text;
+        SetWindowTextW(details, text.c_str());
     }
 
     void refresh()
@@ -409,6 +491,9 @@ class win32_manager_window
         enabled(manager_stop, item && item->session.running() && (!item->session.stopping() || item->restart));
         enabled(manager_restart, item && item->session.running() && !item->session.stopping() && !closing);
         enabled(manager_force_stop, item && item->session.running());
+        enabled(manager_folder, item != nullptr);
+        error_code log_error;
+        enabled(manager_open_log, item && !item->log.empty() && filesystem::is_regular_file(item->log, log_error));
         const bool ready = console_ready();
         for (int id : {manager_media, manager_capture, manager_release, manager_ctrl_alt_delete,
             manager_fullscreen, manager_fit, manager_displays}) enabled(id, ready);
@@ -425,22 +510,40 @@ class win32_manager_window
             SendMessageW(library, LVM_SETITEMTEXTW, i, (LPARAM)&row);
             InvalidateRect(machines[i]->host, nullptr, TRUE);
         }
+        update_details();
     }
 
     void update_output()
     {
+        if (page != 2) return;
         wstring text;
         if (const auto* item = selected())
         {
             text = item->failure;
             if (!text.empty()) text += L"\r\n";
             text += manager_read_log(item->log);
+            if (text.empty()) text = item->session.running() ? L"Waiting for session output..." :
+                item->log.empty() ? L"Start this machine to create a session log." : L"No session output is available.";
         }
         if (text == last_output) return;
         last_output = text;
         SetWindowTextW(output, text.c_str());
         SendMessageW(output, EM_SETSEL, (WPARAM)text.size(), (LPARAM)text.size());
         SendMessageW(output, EM_SCROLLCARET, 0, 0);
+    }
+
+    void open_machine_path(bool log)
+    {
+        const auto* item = selected();
+        if (!item) return;
+        release_input();
+        const auto path = log ? item->log : item->configuration.parent_path();
+        if (log && (path.empty() || !filesystem::is_regular_file(path)))
+            throw runtime_error("No session log is available for this machine.");
+        const wstring argument = L"\"" + path.wstring() + L"\"";
+        const auto result = ShellExecuteW(window, L"open", log ? L"notepad.exe" : path.c_str(),
+            log ? argument.c_str() : nullptr, nullptr, SW_SHOWNORMAL);
+        if ((INT_PTR)result <= 32) throw runtime_error(log ? "Unable to open the session log." : "Unable to open the machine folder.");
     }
 
     void report(const char* message) noexcept
@@ -486,6 +589,7 @@ class win32_manager_window
             ListView_EnsureVisible(library, selection, FALSE);
         }
         changing_selection = false;
+        preview_dirty = true;
         layout(); refresh(); update_output();
     }
 
@@ -613,6 +717,7 @@ class win32_manager_window
     {
         if (item.session.running() || item.settings.running() || closing) return;
         item.restart = false;
+        item.completed = false;
         item.failure.clear(); item.log.clear();
         try
         {
@@ -735,12 +840,16 @@ class win32_manager_window
             case manager_fullscreen: console_command(win32_manager_fullscreen); break;
             case manager_fit: console_command(win32_manager_reset_size); break;
             case manager_displays: console_command(win32_manager_show_displays); break;
+            case manager_folder: open_machine_path(false); break;
+            case manager_open_log: open_machine_path(true); break;
             case manager_exit: close(); break;
             }
             return 0;
         case WM_NOTIFY:
         {
             const auto* notice = reinterpret_cast<NMHDR*>(lparam);
+            if (notice->idFrom == manager_tabs && notice->code == TCN_SELCHANGE)
+            { select_page(TabCtrl_GetCurSel(tabs)); return 0; }
             if (notice->idFrom != manager_library || changing_selection) break;
             if (notice->code == LVN_ITEMCHANGED)
             {
@@ -754,7 +863,7 @@ class win32_manager_window
             else if (notice->code == NM_DBLCLK)
             {
                 const int index = reinterpret_cast<NMITEMACTIVATE*>(lparam)->iItem;
-                if (index >= 0 && index < (int)machines.size()) { select(index); start(); }
+                if (index >= 0 && index < (int)machines.size()) { select(index); select_page(0); start(); }
             }
             return 0;
         }
@@ -765,6 +874,7 @@ class win32_manager_window
             {
                 if (item->session.poll())
                 {
+                    item->completed = true;
                     const bool restart = item->restart;
                     item->restart = false;
                     if (item->session.exit_code())
@@ -778,6 +888,7 @@ class win32_manager_window
                 }
                 if (item->settings.poll())
                 {
+                    if (item.get() == selected()) preview_dirty = true;
                     if (item->settings.exit_code())
                         item->failure = L"Settings editor exited with code " + to_wstring(item->settings.exit_code()) + L".";
                     changed = true;
@@ -849,7 +960,8 @@ class win32_manager_window
                 FillRect(dc, &bounds, (HBRUSH)GetStockObject(BLACK_BRUSH));
                 SetBkMode(dc, TRANSPARENT); SetTextColor(dc, RGB(190, 190, 190));
                 HGDIOBJ old = SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
-                const wchar_t* text = item->session.running() ? L"Starting machine..." : L"Machine is powered off";
+                const wchar_t* text = item->session.running() ? L"Starting machine..." :
+                    item->failure.empty() ? L"Machine is powered off" : L"Machine error. See Session log for details.";
                 DrawTextW(dc, text, -1, &bounds, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
                 SelectObject(dc, old); EndPaint(hwnd, &paint); return 0;
             }
@@ -881,8 +993,8 @@ public:
         } arguments{CommandLineToArgvW(GetCommandLineW(), &argc)};
         if (!arguments.values || argc < 2 || argc > 3)
             throw runtime_error("Usage: es40.exe --manager [configuration.cfg]");
-        INITCOMMONCONTROLSEX controls = { sizeof(controls), ICC_LISTVIEW_CLASSES };
-        if (!InitCommonControlsEx(&controls)) throw runtime_error("Unable to initialize the machine list.");
+        INITCOMMONCONTROLSEX controls = { sizeof(controls), ICC_LISTVIEW_CLASSES | ICC_TAB_CLASSES };
+        if (!InitCommonControlsEx(&controls)) throw runtime_error("Unable to initialize the manager controls.");
         for (const auto& definition : { pair<const wchar_t*, WNDPROC>(manager_class, procedure),
             {win32_manager_host_class, host_procedure} })
         {
@@ -919,8 +1031,20 @@ public:
         restart_button = control(L"BUTTON", L"Restart", WS_TABSTOP | BS_PUSHBUTTON, manager_restart);
         force_stop_button = control(L"BUTTON", L"Force Stop", WS_TABSTOP | BS_PUSHBUTTON, manager_force_stop);
         status = control(L"STATIC", L"", SS_LEFT);
-        output_label = control(L"STATIC", L"Session output", SS_LEFT);
-        output = control(L"EDIT", L"", WS_BORDER | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL);
+        tabs = control(WC_TABCONTROLW, L"", WS_TABSTOP | WS_CLIPSIBLINGS, manager_tabs);
+        for (const auto* title : { L"Console", L"Machine details", L"Session log" })
+        {
+            TCITEMW tab = {};
+            tab.mask = TCIF_TEXT; tab.pszText = const_cast<LPWSTR>(title);
+            if (SendMessageW(tabs, TCM_INSERTITEMW, TabCtrl_GetItemCount(tabs), (LPARAM)&tab) < 0)
+                throw runtime_error("Unable to create the manager tabs.");
+        }
+        details = control(L"EDIT", L"", WS_BORDER | WS_TABSTOP | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL);
+        output = control(L"EDIT", L"", WS_BORDER | WS_TABSTOP | WS_VSCROLL | WS_HSCROLL |
+            ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL);
+        SendMessageW(details, EM_SETLIMITTEXT, 512 * 1024, 0);
+        SendMessageW(output, EM_SETLIMITTEXT, 256 * 1024, 0);
+        SendMessageW(output, WM_SETFONT, (WPARAM)GetStockObject(ANSI_FIXED_FONT), TRUE);
         empty = control(L"STATIC", L"Create a new machine or add an existing configuration to the library.", SS_CENTER);
         create_menus();
         if (!SetTimer(window, 1, 250, nullptr)) throw runtime_error("Unable to initialize session updates.");
