@@ -36,6 +36,10 @@
 #include <utility>
 #include <vector>
 
+#if defined(_MSC_VER)
+#pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
+#endif
+
 using namespace std;
 
 static constexpr wchar_t manager_class[] = L"ES40.Workstation";
@@ -45,10 +49,17 @@ enum win32_manager_control
     manager_settings, manager_new, manager_copy, manager_restart, manager_force_stop,
     manager_media, manager_capture, manager_release, manager_ctrl_alt_delete,
     manager_fullscreen, manager_fit, manager_displays, manager_exit,
-    manager_tabs, manager_folder, manager_open_log
+    manager_tabs, manager_folder, manager_open_log, manager_about
 };
 static constexpr wchar_t manager_config_filter[] = L"ES40 configuration (*.cfg)\0*.cfg\0All files\0*.*\0";
 static constexpr wchar_t manager_rom_filter[] = L"Firmware images (*.exe;*.rom;*.bin)\0*.exe;*.rom;*.bin\0All files\0*.*\0";
+
+static RECT manager_work_area(HWND window)
+{
+    MONITORINFO monitor = { sizeof(monitor) };
+    if (GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor)) return monitor.rcWork;
+    return { 0, 0, GetSystemMetrics(SM_CXFULLSCREEN), GetSystemMetrics(SM_CYFULLSCREEN) };
+}
 
 static wstring manager_text(const string& text)
 {
@@ -263,6 +274,7 @@ struct win32_manager_machine
     win32_session session;
     win32_settings_session settings;
     wstring failure;
+    unsigned width = 0, height = 0;
     bool restart = false, completed = false;
 
     ~win32_manager_machine() { if (IsWindow(host)) DestroyWindow(host); }
@@ -279,17 +291,20 @@ struct win32_manager_machine
 
 class win32_manager_window
 {
-    HWND window = nullptr, library = nullptr, library_label = nullptr, empty = nullptr;
-    HWND new_button = nullptr, add_button = nullptr, remove_button = nullptr, settings_button = nullptr, start_button = nullptr;
-    HWND copy_button = nullptr, stop_button = nullptr, config_text = nullptr, status = nullptr, output = nullptr;
-    HWND restart_button = nullptr, force_stop_button = nullptr;
-    HWND tabs = nullptr, details = nullptr;
+    HWND window = nullptr, library = nullptr, empty = nullptr, status = nullptr, output = nullptr;
+    HWND tabs = nullptr, details = nullptr, heading = nullptr, subtitle = nullptr;
+    HFONT font = nullptr, heading_font = nullptr, log_font = nullptr;
+    HBRUSH background = nullptr;
+    COLORREF background_color = RGB(245, 247, 250), text_color = RGB(35, 48, 66);
     filesystem::path executable, store;
     vector<unique_ptr<win32_manager_machine>> machines;
+    vector<HWND> buttons;
     wstring last_output, last_details, config_preview;
-    int selection = -1, page = 0;
+    int selection = -1, page = 0, dpi = 96;
     unsigned sequence = 0;
     bool closing = false, changing_selection = false, preview_dirty = true;
+
+    int px(int value) const { return MulDiv(value, dpi, 96); }
 
     win32_manager_machine* selected() const
     { return selection >= 0 && selection < (int)machines.size() ? machines[selection].get() : nullptr; }
@@ -346,7 +361,7 @@ class win32_manager_window
             if (!AppendMenuW(menu, text ? MF_STRING : MF_SEPARATOR, id, text))
                 throw runtime_error("Unable to add a manager menu item.");
         };
-        const HMENU file = popup(L"&File"), machine = popup(L"&Machine"), view = popup(L"&View");
+        const HMENU file = popup(L"&File"), machine = popup(L"&Machine"), view = popup(L"&View"), help = popup(L"&Help");
         entry(file, manager_new, L"&New machine...");
         entry(file, manager_add, L"&Add configuration...");
         entry(file, manager_copy, L"&Copy configuration...");
@@ -370,16 +385,50 @@ class win32_manager_window
         entry(view, manager_fullscreen, L"&Full screen");
         entry(view, manager_fit, L"Fit console to &window");
         entry(view, manager_displays, L"Show &additional displays");
+        entry(help, manager_about, L"&About ES40 Workstation");
         if (!SetMenu(window, menu.value)) throw runtime_error("Unable to attach the manager menu.");
         menu.value = nullptr;
     }
 
-    HWND control(const wchar_t* type, const wchar_t* text, DWORD style, int id = 0)
+    void update_colors()
     {
-        HWND result = CreateWindowExW(0, type, text, WS_CHILD | WS_VISIBLE | style,
+        HIGHCONTRASTW contrast = { sizeof(contrast) };
+        const bool high_contrast = SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) &&
+            (contrast.dwFlags & HCF_HIGHCONTRASTON);
+        background_color = high_contrast ? GetSysColor(COLOR_WINDOW) : RGB(245, 247, 250);
+        text_color = high_contrast ? GetSysColor(COLOR_WINDOWTEXT) : RGB(35, 48, 66);
+        HBRUSH brush = CreateSolidBrush(background_color);
+        if (!brush) throw runtime_error("Unable to create the manager background.");
+        if (background) DeleteObject(background);
+        background = brush;
+        if (window) RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+    }
+
+    void initialize_fonts()
+    {
+        if (HDC dc = GetDC(nullptr))
+        {
+            const int value = GetDeviceCaps(dc, LOGPIXELSX);
+            if (value > 0) dpi = value;
+            ReleaseDC(nullptr, dc);
+        }
+        const auto create = [&](int size, int weight, const wchar_t* face)
+        {
+            return CreateFontW(-px(size), 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, face);
+        };
+        font = create(14, FW_NORMAL, L"Segoe UI");
+        heading_font = create(22, FW_SEMIBOLD, L"Segoe UI");
+        log_font = create(14, FW_NORMAL, L"Consolas");
+        if (!font || !heading_font || !log_font) throw runtime_error("Unable to create the manager fonts.");
+    }
+
+    HWND control(const wchar_t* type, const wchar_t* text, DWORD style, int id = 0, DWORD extended = 0)
+    {
+        HWND result = CreateWindowExW(extended, type, text, WS_CHILD | WS_VISIBLE | style,
             0, 0, 1, 1, window, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
         if (!result) throw runtime_error("Unable to create a manager control.");
-        SendMessageW(result, WM_SETFONT, (WPARAM)GetStockObject(DEFAULT_GUI_FONT), TRUE);
+        SendMessageW(result, WM_SETFONT, (WPARAM)font, TRUE);
         return result;
     }
 
@@ -394,31 +443,36 @@ class win32_manager_window
 
     void layout()
     {
-        if (!library || !empty) return;
+        if (!library || !empty || !status) return;
         RECT bounds = {};
         GetClientRect(window, &bounds);
-        const int width = max(880L, bounds.right), height = max(440L, bounds.bottom);
-        const int left = 284, content_width = width - left - 12;
-        MoveWindow(new_button, 12, 12, 125, 28, TRUE);
-        MoveWindow(add_button, 147, 12, 125, 28, TRUE);
-        MoveWindow(remove_button, 12, 48, 125, 28, TRUE);
-        MoveWindow(settings_button, 147, 48, 125, 28, TRUE);
-        MoveWindow(copy_button, 12, 84, 260, 28, TRUE);
-        MoveWindow(library_label, 12, 121, 260, 22, TRUE);
-        MoveWindow(library, 12, 150, 260, height - 162, TRUE);
-        MoveWindow(config_text, left, 12, content_width - 212, 28, TRUE);
-        MoveWindow(start_button, width - 212, 12, 94, 28, TRUE);
-        MoveWindow(stop_button, width - 106, 12, 94, 28, TRUE);
-        MoveWindow(restart_button, width - 212, 46, 94, 28, TRUE);
-        MoveWindow(force_stop_button, width - 106, 46, 94, 28, TRUE);
-        MoveWindow(status, left, 49, content_width - 212, 22, TRUE);
-        SetWindowPos(tabs, HWND_BOTTOM, left, 78, content_width, height - 90, SWP_NOACTIVATE);
+        const int width = bounds.right, height = bounds.bottom;
+        SendMessageW(status, WM_SIZE, 0, 0);
+        RECT footer = {};
+        GetWindowRect(status, &footer);
+        const int footer_height = footer.bottom - footer.top;
+        const int margin = px(16), sidebar = px(256);
+        MoveWindow(heading, margin, px(14), max(1, width - 2 * margin), px(30), TRUE);
+        MoveWindow(subtitle, margin, px(48), max(1, width - 2 * margin), px(24), TRUE);
+        int x = margin, y = px(82);
+        for (HWND button : buttons)
+        {
+            const int button_width = px(GetDlgCtrlID(button) == manager_fullscreen ? 108 : 86);
+            if (x > margin && x + button_width > width - margin) { x = margin; y += px(38); }
+            MoveWindow(button, x, y, button_width, px(30), TRUE);
+            x += button_width + px(8);
+        }
+        const int top = y + px(44), content_height = max(1, height - top - footer_height - margin);
+        MoveWindow(library, margin, top, sidebar, content_height, TRUE);
+        const int left = sidebar + 2 * margin, content_width = max(1, width - left - margin);
+        SetWindowPos(tabs, HWND_BOTTOM, left, top, content_width, content_height, SWP_NOACTIVATE);
         RECT content = {};
         GetClientRect(tabs, &content);
         TabCtrl_AdjustRect(tabs, FALSE, &content);
         MapWindowPoints(tabs, window, reinterpret_cast<POINT*>(&content), 2);
-        const int page_width = content.right - content.left, page_height = content.bottom - content.top;
-        MoveWindow(empty, content.left, content.top + 18, page_width, 60, TRUE);
+        const int page_width = max(1L, content.right - content.left), page_height = max(1L, content.bottom - content.top);
+        MoveWindow(empty, content.left + px(24), content.top + px(60), max(1, page_width - px(48)),
+            max(1, page_height - px(80)), TRUE);
         ShowWindow(empty, selected() ? SW_HIDE : SW_SHOWNA);
         for (const auto& item : machines)
         {
@@ -498,10 +552,8 @@ class win32_manager_window
         for (int id : {manager_media, manager_capture, manager_release, manager_ctrl_alt_delete,
             manager_fullscreen, manager_fit, manager_displays}) enabled(id, ready);
         DrawMenuBar(window);
-        const wchar_t* state = closing ? L"Stopping before close..." :
-            item ? item->state() : L"Create a machine or add an existing configuration.";
-        SetWindowTextW(status, state);
-        SetWindowTextW(config_text, item ? item->configuration.c_str() : L"");
+        const wstring title = item ? item->configuration.stem().wstring() + L"  /  " + item->state() : L"AlphaServer virtual machines";
+        SetWindowTextW(subtitle, title.c_str());
         for (size_t i = 0; i < machines.size(); ++i)
         {
             LVITEMW row = {};
@@ -510,7 +562,22 @@ class win32_manager_window
             SendMessageW(library, LVM_SETITEMTEXTW, i, (LPARAM)&row);
             InvalidateRect(machines[i]->host, nullptr, TRUE);
         }
+        refresh_status();
         update_details();
+    }
+
+    void refresh_status()
+    {
+        wstring text = L"Create a machine or add an existing configuration.";
+        if (const auto* item = selected())
+        {
+            text = item->configuration.stem().wstring() + L"  |  " + item->state();
+            if (item->session.running() && item->width && item->height)
+                text += L"  |  Display #0: " + to_wstring(item->width) + L" x " + to_wstring(item->height);
+            if (console_ready()) text += L"  |  Machine > Capture input, or use the configured capture hotkey.";
+        }
+        if (closing) text = L"Stopping before close. Machine > Force Stop remains available.";
+        SendMessageW(status, SB_SETTEXTW, 0, (LPARAM)text.c_str());
     }
 
     void update_output()
@@ -718,6 +785,7 @@ class win32_manager_window
         if (item.session.running() || item.settings.running() || closing) return;
         item.restart = false;
         item.completed = false;
+        item.width = item.height = 0;
         item.failure.clear(); item.log.clear();
         try
         {
@@ -811,14 +879,33 @@ class win32_manager_window
         case WM_ENTERSIZEMOVE: release_input(); return 0;
         case WM_ENTERMENULOOP: release_input(); return 0;
         case WM_INITMENUPOPUP: refresh(); return 0;
+        case WM_SYSCOMMAND:
+            if (((wparam & 0xfff0) == SC_SCREENSAVE || (wparam & 0xfff0) == SC_MONITORPOWER) && running()) return 0;
+            break;
+        case WM_SETTINGCHANGE:
+        case WM_SYSCOLORCHANGE: update_colors(); break;
+        case WM_CTLCOLORSTATIC:
+            if ((HWND)lparam == heading || (HWND)lparam == subtitle || (HWND)lparam == empty)
+            { SetBkColor((HDC)wparam, background_color); SetTextColor((HDC)wparam, text_color); return (LRESULT)background; }
+            if ((HWND)lparam == details || (HWND)lparam == output)
+            { SetBkColor((HDC)wparam, GetSysColor(COLOR_WINDOW)); SetTextColor((HDC)wparam, GetSysColor(COLOR_WINDOWTEXT)); return (LRESULT)GetSysColorBrush(COLOR_WINDOW); }
+            break;
+        case WM_ERASEBKGND:
+        {
+            RECT bounds = {}; GetClientRect(hwnd, &bounds);
+            FillRect((HDC)wparam, &bounds, background ? background : GetSysColorBrush(COLOR_WINDOW));
+            return 1;
+        }
         case WM_GETMINMAXINFO:
         {
-            RECT bounds = { 0, 0, 880, 440 };
+            RECT bounds = { 0, 0, px(980), px(540) };
             auto& size = reinterpret_cast<MINMAXINFO*>(lparam)->ptMinTrackSize;
-            size = { 920, 490 };
+            size = { px(1010), px(590) };
             if (AdjustWindowRectEx(&bounds, (DWORD)GetWindowLongPtrW(hwnd, GWL_STYLE), GetMenu(hwnd) != nullptr,
                 (DWORD)GetWindowLongPtrW(hwnd, GWL_EXSTYLE)))
                 size = { max(size.x, bounds.right - bounds.left), max(size.y, bounds.bottom - bounds.top) };
+            const RECT work = manager_work_area(hwnd);
+            size = { min(size.x, work.right - work.left), min(size.y, work.bottom - work.top) };
             return 0;
         }
         case WM_COMMAND:
@@ -842,6 +929,16 @@ class win32_manager_window
             case manager_displays: console_command(win32_manager_show_displays); break;
             case manager_folder: open_machine_path(false); break;
             case manager_open_log: open_machine_path(true); break;
+            case manager_about:
+                release_input();
+                MessageBoxW(window, L"ES40 Workstation\nNative Windows management for the AlphaServer ES40 emulator.\n\n"
+                    L"Create or add a machine, edit its hardware in Settings, then select Start. "
+                    L"Display #0 stays in Console; additional displays open separately.\n\n"
+                    L"Use the Machine menu to capture or release input, and View for full screen. "
+                    L"Console hotkeys follow the machine configuration.\n\n"
+                    L"Shut down the guest OS before Stop. Stop ends emulation and flushes storage.",
+                    L"About ES40 Workstation", MB_OK | MB_ICONINFORMATION);
+                break;
             case manager_exit: close(); break;
             }
             return 0;
@@ -875,6 +972,7 @@ class win32_manager_window
                 if (item->session.poll())
                 {
                     item->completed = true;
+                    item->width = item->height = 0;
                     const bool restart = item->restart;
                     item->restart = false;
                     if (item->session.exit_code())
@@ -945,7 +1043,10 @@ class win32_manager_window
                 if (item->session.attach_display((HWND)wparam, (DWORD)lparam))
                 { self->fit_display(*item); self->refresh(); }
                 return 0;
-            case win32_manager_display_size: return 0;
+            case win32_manager_display_size:
+                if (item->session.running() && item->session.display())
+                { item->width = (unsigned)wparam; item->height = (unsigned)lparam; self->refresh_status(); }
+                return 0;
             case WM_SIZE: self->fit_display(*item); return 0;
             case WM_SETFOCUS:
                 if (item->session.display() && GetParent(item->session.display()) == hwnd)
@@ -958,11 +1059,15 @@ class win32_manager_window
                 HDC dc = BeginPaint(hwnd, &paint);
                 RECT bounds = {}; GetClientRect(hwnd, &bounds);
                 FillRect(dc, &bounds, (HBRUSH)GetStockObject(BLACK_BRUSH));
-                SetBkMode(dc, TRANSPARENT); SetTextColor(dc, RGB(190, 190, 190));
-                HGDIOBJ old = SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
-                const wchar_t* text = item->session.running() ? L"Starting machine..." :
-                    item->failure.empty() ? L"Machine is powered off" : L"Machine error. See Session log for details.";
-                DrawTextW(dc, text, -1, &bounds, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                SetBkMode(dc, TRANSPARENT); SetTextColor(dc, RGB(185, 195, 208));
+                HGDIOBJ old = SelectObject(dc, self->font);
+                const wchar_t* text = item->session.running() ? L"Starting machine...\nThe primary display will appear here." :
+                    item->failure.empty() ? L"This machine is powered off.\nSelect Start to open its console." :
+                    L"The machine could not continue.\nOpen Session log for details.";
+                RECT text_bounds = bounds;
+                DrawTextW(dc, text, -1, &text_bounds, DT_CENTER | DT_WORDBREAK | DT_CALCRECT);
+                bounds.top = max(0L, (bounds.bottom - text_bounds.bottom) / 2);
+                DrawTextW(dc, text, -1, &bounds, DT_CENTER | DT_WORDBREAK);
                 SelectObject(dc, old); EndPaint(hwnd, &paint); return 0;
             }
             case WM_NCDESTROY: item->host = nullptr; break;
@@ -974,7 +1079,15 @@ class win32_manager_window
     }
 
 public:
-    ~win32_manager_window() { if (IsWindow(window)) DestroyWindow(window); }
+    ~win32_manager_window()
+    {
+        if (IsWindow(window)) DestroyWindow(window);
+        machines.clear();
+        if (font) DeleteObject(font);
+        if (heading_font) DeleteObject(heading_font);
+        if (log_font) DeleteObject(log_font);
+        if (background) DeleteObject(background);
+    }
 
     int run()
     {
@@ -993,7 +1106,8 @@ public:
         } arguments{CommandLineToArgvW(GetCommandLineW(), &argc)};
         if (!arguments.values || argc < 2 || argc > 3)
             throw runtime_error("Usage: es40.exe --manager [configuration.cfg]");
-        INITCOMMONCONTROLSEX controls = { sizeof(controls), ICC_LISTVIEW_CLASSES | ICC_TAB_CLASSES };
+        initialize_fonts(); update_colors();
+        INITCOMMONCONTROLSEX controls = { sizeof(controls), ICC_LISTVIEW_CLASSES | ICC_TAB_CLASSES | ICC_BAR_CLASSES };
         if (!InitCommonControlsEx(&controls)) throw runtime_error("Unable to initialize the manager controls.");
         for (const auto& definition : { pair<const wchar_t*, WNDPROC>(manager_class, procedure),
             {win32_manager_host_class, host_procedure} })
@@ -1007,30 +1121,31 @@ public:
             if (!RegisterClassExW(&type) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
                 throw runtime_error("Unable to register the manager window.");
         }
+        const RECT work = manager_work_area(nullptr);
+        const int width = min((LONG)px(1240), work.right - work.left), height = min((LONG)px(820), work.bottom - work.top);
         window = CreateWindowExW(0, manager_class, L"ES40 Workstation", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
-            CW_USEDEFAULT, CW_USEDEFAULT, 1160, 760, nullptr, nullptr, GetModuleHandleW(nullptr), this);
+            work.left + (work.right - work.left - width) / 2, work.top + (work.bottom - work.top - height) / 2,
+            width, height, nullptr, nullptr, GetModuleHandleW(nullptr), this);
         if (!window) throw runtime_error("Unable to create the manager window.");
-        new_button = control(L"BUTTON", L"&New...", WS_TABSTOP | BS_PUSHBUTTON, manager_new);
-        add_button = control(L"BUTTON", L"&Add...", WS_TABSTOP | BS_PUSHBUTTON, manager_add);
-        remove_button = control(L"BUTTON", L"&Remove", WS_TABSTOP | BS_PUSHBUTTON, manager_remove);
-        settings_button = control(L"BUTTON", L"S&ettings...", WS_TABSTOP | BS_PUSHBUTTON, manager_settings);
-        copy_button = control(L"BUTTON", L"&Copy configuration...", WS_TABSTOP | BS_PUSHBUTTON, manager_copy);
-        library_label = control(L"STATIC", L"Machines", SS_LEFT);
-        library = control(WC_LISTVIEWW, L"", WS_BORDER | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL |
-            LVS_SHOWSELALWAYS, manager_library);
+        heading = control(L"STATIC", L"ES40 Workstation", SS_LEFT);
+        SendMessageW(heading, WM_SETFONT, (WPARAM)heading_font, TRUE);
+        subtitle = control(L"STATIC", L"AlphaServer virtual machines", SS_LEFT | SS_ENDELLIPSIS | SS_NOPREFIX);
+        const pair<int, const wchar_t*> actions[] = {
+            {manager_new, L"&New..."}, {manager_add, L"&Add..."}, {manager_settings, L"S&ettings..."},
+            {manager_start, L"&Start"}, {manager_stop, L"S&top"}, {manager_restart, L"Restart"},
+            {manager_media, L"Media..."}, {manager_fullscreen, L"Full screen"}
+        };
+        for (const auto& action : actions)
+            buttons.push_back(control(L"BUTTON", action.second, WS_TABSTOP | BS_PUSHBUTTON, action.first));
+        library = control(WC_LISTVIEWW, L"", WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL |
+            LVS_SHOWSELALWAYS, manager_library, WS_EX_CLIENTEDGE);
         ListView_SetExtendedListViewStyle(library, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
         LVCOLUMNW column = {};
-        column.mask = LVCF_TEXT | LVCF_WIDTH; column.cx = 130;
-        column.pszText = const_cast<LPWSTR>(L"Machine");
+        column.mask = LVCF_TEXT | LVCF_WIDTH; column.cx = px(145);
+        column.pszText = const_cast<LPWSTR>(L"Virtual machine");
         SendMessageW(library, LVM_INSERTCOLUMNW, 0, (LPARAM)&column);
-        column.cx = 120; column.pszText = const_cast<LPWSTR>(L"State");
+        column.cx = px(95); column.pszText = const_cast<LPWSTR>(L"State");
         SendMessageW(library, LVM_INSERTCOLUMNW, 1, (LPARAM)&column);
-        config_text = control(L"EDIT", L"", WS_BORDER | ES_READONLY | ES_AUTOHSCROLL);
-        start_button = control(L"BUTTON", L"&Start", WS_TABSTOP | BS_PUSHBUTTON, manager_start);
-        stop_button = control(L"BUTTON", L"S&top", WS_TABSTOP | BS_PUSHBUTTON, manager_stop);
-        restart_button = control(L"BUTTON", L"Restart", WS_TABSTOP | BS_PUSHBUTTON, manager_restart);
-        force_stop_button = control(L"BUTTON", L"Force Stop", WS_TABSTOP | BS_PUSHBUTTON, manager_force_stop);
-        status = control(L"STATIC", L"", SS_LEFT);
         tabs = control(WC_TABCONTROLW, L"", WS_TABSTOP | WS_CLIPSIBLINGS, manager_tabs);
         for (const auto* title : { L"Console", L"Machine details", L"Session log" })
         {
@@ -1044,8 +1159,10 @@ public:
             ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL);
         SendMessageW(details, EM_SETLIMITTEXT, 512 * 1024, 0);
         SendMessageW(output, EM_SETLIMITTEXT, 256 * 1024, 0);
-        SendMessageW(output, WM_SETFONT, (WPARAM)GetStockObject(ANSI_FIXED_FONT), TRUE);
-        empty = control(L"STATIC", L"Create a new machine or add an existing configuration to the library.", SS_CENTER);
+        SendMessageW(output, WM_SETFONT, (WPARAM)log_font, TRUE);
+        empty = control(L"STATIC", L"Welcome to ES40 Workstation\r\n\r\nCreate a machine or add an existing configuration.\r\n\r\n"
+            L"Each machine has its own console, settings, and session log.\r\nDisplay #0 stays here; additional displays open separately.", SS_CENTER);
+        status = control(STATUSCLASSNAMEW, L"Ready", SBARS_SIZEGRIP);
         create_menus();
         if (!SetTimer(window, 1, 250, nullptr)) throw runtime_error("Unable to initialize session updates.");
         layout(); refresh(); ShowWindow(window, SW_SHOWNORMAL); UpdateWindow(window);
@@ -1069,7 +1186,8 @@ public:
             if (focus_pid == GetCurrentProcessId() && message.message == WM_SYSCHAR &&
                 (message.wParam == L'f' || message.wParam == L'F' ||
                  message.wParam == L'm' || message.wParam == L'M' ||
-                 message.wParam == L'v' || message.wParam == L'V'))
+                 message.wParam == L'v' || message.wParam == L'V' ||
+                 message.wParam == L'h' || message.wParam == L'H'))
             {
                 SendMessageW(window, WM_SYSCOMMAND, SC_KEYMENU, message.wParam);
                 continue;
