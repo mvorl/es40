@@ -136,6 +136,8 @@ class bx_x11_gui_c : public bx_gui_c
     XImage* frame_image = nullptr;
     std::vector<u32> frame_pixels;
     unsigned client_width = 0, client_height = 0, configured_scale = 1;
+    unsigned runtime_scale_override = 0;
+    bool scale_change_enable = false;
     bool video_linear = true;
     bool frame_active = false;
     Atom wm_state_atom = None, net_wm_state_atom = None;
@@ -166,6 +168,8 @@ class bx_x11_gui_c : public bx_gui_c
     void sync_fullscreen(bool state_known = true);
     void reset_window_size();
     void sync_reset_window(bool state_known = true);
+    unsigned window_scale() const;
+    void adjust_window_scale(int delta);
     void present_frame();
     void prepare_frame_image(unsigned width, unsigned height);
     void configure_window(int width, int height);
@@ -178,6 +182,7 @@ class bx_x11_gui_c : public bx_gui_c
     bool legacy_redraw_pending = false;
     bool keyboard_focused = true, detectable_repeat = false;
     x11_hotkey_binding hotkey_ctrl_alt_delete, hotkey_reset_window;
+    x11_hotkey_binding hotkey_scale_up, hotkey_scale_down;
     unsigned hotkey_modifier_masks[8] = {};
     unsigned hotkey_key_modifiers[256] = {};
     struct key_press
@@ -186,6 +191,7 @@ class bx_x11_gui_c : public bx_gui_c
       bool down = false, modifier = false, control = false;
       bool suppressed = false;
       unsigned host_modifiers = 0;
+      int scale_delta = 0;
     } pressed_keys[256];
     std::exception_ptr event_error;
 
@@ -709,6 +715,7 @@ void bx_x11_gui_c::load_video_settings()
            (unsigned long long)scale);
   configured_scale = scale >= 1 && scale <= 10 ? (unsigned)scale : 1;
   video_linear = myCfg->get_bool_value("video.linear", true);
+  scale_change_enable = myCfg->get_bool_value("video.scale_change_enable", false);
 }
 
 void bx_x11_gui_c::specific_init_impl(unsigned tilewidth, unsigned tileheight)
@@ -1471,18 +1478,43 @@ void bx_x11_gui_c::load_hotkeys()
   };
   hotkey_ctrl_alt_delete = load("hotkey.ctrl_alt_delete", "Ctrl+Alt+End");
   hotkey_reset_window = load("hotkey.reset_window", "Ctrl+Alt+Home");
-  if(hotkey_reset_window.enabled && hotkey_ctrl_alt_delete.matches(
-       hotkey_reset_window.key, hotkey_reset_window.modifiers))
-  {
-    printf("%%X11-W-HOTKEY: hotkey.ctrl_alt_delete and hotkey.reset_window both use \"%s\"; "
-           "both actions disabled.\n", hotkey_reset_window.display.c_str());
-    hotkey_ctrl_alt_delete.enabled = hotkey_reset_window.enabled = false;
-  }
+  hotkey_scale_up = load("hotkey.scale_up", "Ctrl+PageUp");
+  hotkey_scale_down = load("hotkey.scale_down", "Ctrl+PageDown");
+  x11_hotkey_binding* bindings[] = {
+    &hotkey_ctrl_alt_delete, &hotkey_reset_window, &hotkey_scale_up, &hotkey_scale_down
+  };
+  const char* names[] = {
+    "hotkey.ctrl_alt_delete", "hotkey.reset_window", "hotkey.scale_up", "hotkey.scale_down"
+  };
+  const bool active[] = {
+    hotkey_ctrl_alt_delete.enabled, hotkey_reset_window.enabled,
+    hotkey_scale_up.enabled && scale_change_enable, hotkey_scale_down.enabled && scale_change_enable
+  };
+  constexpr size_t count = sizeof(bindings) / sizeof(bindings[0]);
+  bool duplicate[count] = {};
+  for(size_t i = 0; i < count; ++i)
+    for(size_t j = i + 1; j < count; ++j)
+      if(active[i] && active[j] && bindings[i]->key == bindings[j]->key &&
+         bindings[i]->modifiers == bindings[j]->modifiers)
+      {
+        printf("%%X11-W-HOTKEY: %s and %s both use \"%s\"; both actions disabled.\n",
+               names[i], names[j], bindings[i]->display.c_str());
+        duplicate[i] = duplicate[j] = true;
+      }
+  for(size_t i = 0; i < count; ++i)
+    if(duplicate[i]) bindings[i]->enabled = false;
   std::string title = "ES40 Emulator";
   if(hotkey_ctrl_alt_delete.enabled)
     title += " - " + hotkey_ctrl_alt_delete.display + " sends C+A+Del";
   if(hotkey_reset_window.enabled)
     title += " - " + hotkey_reset_window.display + " resets window";
+  if(scale_change_enable)
+  {
+    if(hotkey_scale_up.enabled)
+      title += " - " + hotkey_scale_up.display + " increases scale";
+    if(hotkey_scale_down.enabled)
+      title += " - " + hotkey_scale_down.display + " decreases scale";
+  }
   title += " - Alt+Enter fullscreen";
   XStoreName(bx_x_display, win, title.c_str());
 }
@@ -1568,6 +1600,13 @@ void bx_x11_gui_c::keypress(XKeyEvent* event, bool released)
   if(!keyboard_focused) return;
   if(key.down)
   {
+    if(key.scale_delta && scale_change_enable)
+    {
+      const auto& binding = key.scale_delta > 0 ? hotkey_scale_up : hotkey_scale_down;
+      if(binding.matches((u32)x11_hotkey_symbol(event->keycode, XkbGroupForCoreState(event->state)),
+                         hotkey_modifiers(event->state)))
+        adjust_window_scale(key.scale_delta);
+    }
     if(key.guest != BX_KEY_UNHANDLED && !key.modifier)
       guest_keyboard->gen_scancode(key.guest);
     return;
@@ -1584,6 +1623,14 @@ void bx_x11_gui_c::keypress(XKeyEvent* event, bool released)
   {
     key.down = key.suppressed = true;
     reset_window_size();
+    return;
+  }
+  if(scale_change_enable && (hotkey_scale_up.matches(host_key, modifiers) ||
+                            hotkey_scale_down.matches(host_key, modifiers)))
+  {
+    key.down = key.suppressed = true;
+    key.scale_delta = hotkey_scale_up.matches(host_key, modifiers) ? 1 : -1;
+    adjust_window_scale(key.scale_delta);
     return;
   }
   if((host_key == XK_Return || host_key == XK_KP_Enter) && (modifiers & X11_HOTKEY_ALT))
@@ -1610,12 +1657,15 @@ void bx_x11_gui_c::keypress(XKeyEvent* event, bool released)
 void bx_x11_gui_c::release_keys()
 {
   for(unsigned code = 8; code < 256; ++code)
+  {
+    pressed_keys[code].scale_delta = 0;
     if(pressed_keys[code].down && !pressed_keys[code].suppressed)
     {
       XKeyEvent event = {};
       event.keycode = code;
       keypress(&event, true);
     }
+  }
 }
 
 u32 bx_x11_gui_c::translate_key(KeySym keysym)
@@ -2565,6 +2615,26 @@ void bx_x11_gui_c::toggle_fullscreen()
   apply_guest_size();
 }
 
+unsigned bx_x11_gui_c::window_scale() const
+{
+  return runtime_scale_override ? runtime_scale_override : configured_scale;
+}
+
+void bx_x11_gui_c::adjust_window_scale(int delta)
+{
+  if(!scale_change_enable || !bx_x_display || !win || retired || window_destroyed ||
+     !dimension_x || !dimension_y) return;
+  const unsigned next = (unsigned)(std::max)(1, (std::min)(8, (int)window_scale() + delta));
+  if(next == runtime_scale_override) return;
+  if(frame_active && (dimension_x > 32767 / next || dimension_y > 32767 / next))
+  {
+    printf("%%X11-W-SCALE: %ux exceeds the X11 window dimension limit; scale unchanged.\n", next);
+    return;
+  }
+  runtime_scale_override = next;
+  reset_window_size();
+}
+
 void bx_x11_gui_c::reset_window_size()
 {
   if(!bx_x_display || !win || retired || window_destroyed || !dimension_x || !dimension_y) return;
@@ -2692,7 +2762,7 @@ void bx_x11_gui_c::apply_guest_size()
   }
   if(pending_guest_resize)
   {
-    const unsigned scale = frame_active ? configured_scale : 1;
+    const unsigned scale = frame_active ? window_scale() : 1;
     XResizeWindow(bx_x_display, win, dimension_x * scale, dimension_y * scale);
   }
   check_x11_error();
@@ -2916,7 +2986,7 @@ void bx_x11_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheigh
      (fheight && !fwidth))
     FAILURE(Configuration, "Invalid X11 display mode");
 
-  const unsigned scale = full_frame ? configured_scale : 1;
+  const unsigned scale = full_frame ? window_scale() : 1;
   if(x > 32767 / scale || y > 32767 / scale)
     FAILURE(Configuration, "Scaled X11 display dimensions are out of range");
   const bool resize = x != dimension_x || y != dimension_y || full_frame != frame_active;
@@ -2972,6 +3042,7 @@ void bx_x11_gui_c::exit_impl(void)
   if(frame_image) { XDestroyImage(frame_image); frame_image = nullptr; }
   std::vector<u32>().swap(frame_pixels);
   client_width = client_height = 0;
+  runtime_scale_override = 0;
   wm_state_atom = net_wm_state_atom = None;
   net_wm_max_horz = net_wm_max_vert = net_wm_fullscreen = net_wm_hidden = None;
   net_wm_supported = None;
