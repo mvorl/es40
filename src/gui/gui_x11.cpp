@@ -208,6 +208,7 @@ class bx_x11_gui_c : public bx_gui_c
       unsigned host_modifiers = 0;
       int scale_delta = 0;
     } pressed_keys[256];
+    unsigned long key_release_serial[256] = {};
     std::exception_ptr event_error;
 
     void invoke(std::function<void()> fn);
@@ -231,7 +232,7 @@ class bx_x11_gui_c : public bx_gui_c
     void refresh_hotkey_modifiers();
     unsigned hotkey_modifiers(unsigned state) const;
     void send_ctrl_alt_delete(unsigned code);
-    void reconcile_shortcut_keys();
+    void reconcile_keyboard_releases(bool process_input = false);
     bool guest_key_held(u32 key, unsigned except = 256) const;
     void specific_init_impl(unsigned tilewidth, unsigned tileheight);
     void text_update_impl(u8* old_text, u8* new_text, unsigned long cursor_x,
@@ -1147,13 +1148,13 @@ void bx_x11_gui_c::reset_absolute_mouse_position()
 
 void bx_x11_gui_c::reconcile_mouse_buttons()
 {
-  if(!mouse_absolute || !mouse_captured || input_paused || input_detached ||
+  if(!mouse_captured || input_paused || input_detached ||
      !guest_keyboard || !keyboard_focused || retired || XPending(bx_x_display)) return;
   Window root, child;
   int root_x, root_y, x, y;
   unsigned state;
   if(!XQueryPointer(bx_x_display, win, &root, &child, &root_x, &root_y, &x, &y, &state) ||
-     XPending(bx_x_display)) return;
+     x_error || XPending(bx_x_display)) return;
   const unsigned physical = ((state & Button1Mask) ? 1 : 0) |
                             ((state & Button3Mask) ? 2 : 0) |
                             ((state & Button2Mask) ? 4 : 0);
@@ -1434,7 +1435,7 @@ void bx_x11_gui_c::poll_events(bool process_input)
   }             /* end while */
 
   recenter_mouse();
-  reconcile_shortcut_keys();
+  reconcile_keyboard_releases(process_input);
   if(window_state_dirty || pending_guest_resize || pending_window_hints ||
      fullscreen_transition_pending || reset_window_pending) update_window_state();
   if(process_input)
@@ -1721,18 +1722,31 @@ void bx_x11_gui_c::send_ctrl_alt_delete(unsigned code)
     guest_keyboard->gen_scancode(key);
 }
 
-void bx_x11_gui_c::reconcile_shortcut_keys()
+void bx_x11_gui_c::reconcile_keyboard_releases(bool process_input)
 {
   if(!bx_x_display || input_detached || retired) return;
-  bool suppressed = false;
-  for(const auto& key : pressed_keys) suppressed = suppressed || key.suppressed;
-  if(!suppressed || XPending(bx_x_display)) return;
+  const bool live = process_input && !input_paused && guest_keyboard;
+  bool pending = false;
+  for(const auto& key : pressed_keys)
+    pending = pending || (key.down && (live || key.suppressed));
+  if(!pending || XPending(bx_x_display)) return;
   char physical[32] = {};
-  XQueryKeymap(bx_x_display, physical);
-  if(XPending(bx_x_display)) return;
+  const unsigned long serial = XNextRequest(bx_x_display);
+  if(!XQueryKeymap(bx_x_display, physical) || x_error || XPending(bx_x_display)) return;
   for(unsigned code = 8; code < 256; ++code)
-    if(pressed_keys[code].suppressed && !(physical[code / 8] & (1u << (code % 8))))
-      pressed_keys[code] = {};
+  {
+    auto& key = pressed_keys[code];
+    if(!key.down || (!live && !key.suppressed) ||
+       (physical[code / 8] & (1u << (code % 8)))) continue;
+    if(key.guest != BX_KEY_UNHANDLED)
+    {
+      if(!live) continue;
+      if(!guest_key_held(key.guest, code))
+        guest_keyboard->gen_scancode(key.guest | BX_KEY_RELEASED);
+    }
+    key = {};
+    key_release_serial[code] = serial;
+  }
   CTRL_pressed = false;
   for(const auto& key : pressed_keys)
     if(key.down && key.control) CTRL_pressed = true;
@@ -1742,6 +1756,7 @@ void bx_x11_gui_c::keypress(XKeyEvent* event, bool released)
 {
   if(!guest_keyboard || input_paused || input_detached ||
      event->keycode < 8 || event->keycode >= 256) return;
+  if(event->serial < key_release_serial[event->keycode]) return;
   auto& key = pressed_keys[event->keycode];
   if(released)
   {
@@ -1835,6 +1850,7 @@ void bx_x11_gui_c::release_keys()
     {
       XKeyEvent event = {};
       event.keycode = code;
+      event.serial = key_release_serial[code];
       keypress(&event, true);
     }
   }
@@ -3263,6 +3279,7 @@ void bx_x11_gui_c::exit_impl(void)
   CTRL_pressed = false;
   legacy_redraw_pending = false;
   for(auto& key : pressed_keys) key = {};
+  std::fill_n(key_release_serial, 256, 0);
   keyboard_focused = true;
   detectable_repeat = false;
 }
