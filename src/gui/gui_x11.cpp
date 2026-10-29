@@ -67,6 +67,7 @@
 #include "x11_hotkey.h"
 #include "x11_scale.h"
 #include <algorithm>
+#include <chrono>
 #include <limits>
 #include <new>
 #include <vector>
@@ -140,13 +141,23 @@ class bx_x11_gui_c : public bx_gui_c
     Atom wm_state_atom = None, net_wm_state_atom = None;
     Atom net_wm_max_horz = None, net_wm_max_vert = None;
     Atom net_wm_fullscreen = None, net_wm_hidden = None;
+    Atom net_wm_supported = None;
     bool window_state_dirty = true, window_destroyed = false;
     bool window_maximized = false, window_minimized = false, window_fullscreen = false;
     bool fullscreen_windowed_deferred = false;
+    bool fullscreen_requested = false, fullscreen_transition_pending = false;
+    bool fullscreen_target = false, fullscreen_entry_resize = false;
+    bool fullscreen_restore_maximized = false, fullscreen_restore_minimized = false;
+    unsigned fullscreen_restore_width = 0, fullscreen_restore_height = 0;
+    std::chrono::steady_clock::time_point fullscreen_deadline = {};
     bool pending_guest_resize = false, pending_window_hints = false;
     bool read_window_state();
     void update_window_state();
     void apply_guest_size();
+    bool fullscreen_supported();
+    bool send_fullscreen_request(bool enabled);
+    void toggle_fullscreen();
+    void sync_fullscreen(bool state_known = true);
     void present_frame();
     void prepare_frame_image(unsigned width, unsigned height);
     void configure_window(int width, int height);
@@ -880,8 +891,9 @@ try
     net_wm_max_vert = XInternAtom(bx_x_display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
     net_wm_fullscreen = XInternAtom(bx_x_display, "_NET_WM_STATE_FULLSCREEN", False);
     net_wm_hidden = XInternAtom(bx_x_display, "_NET_WM_STATE_HIDDEN", False);
+    net_wm_supported = XInternAtom(bx_x_display, "_NET_SUPPORTED", False);
     if(!wm_state_atom || !net_wm_state_atom || !net_wm_max_horz || !net_wm_max_vert ||
-       !net_wm_fullscreen || !net_wm_hidden)
+       !net_wm_fullscreen || !net_wm_hidden || !net_wm_supported)
       FAILURE(Runtime, "Unable to register X11 window state atoms");
   }
 
@@ -1229,7 +1241,8 @@ void bx_x11_gui_c::poll_events(bool process_input)
     send_keyboard_mouse_status();
   }
   reconcile_shortcut_keys();
-  if(window_state_dirty || pending_guest_resize || pending_window_hints) update_window_state();
+  if(window_state_dirty || pending_guest_resize || pending_window_hints ||
+     fullscreen_transition_pending) update_window_state();
   check_x11_error();
 }
 
@@ -1445,6 +1458,7 @@ void bx_x11_gui_c::load_hotkeys()
   std::string title = "ES40 Emulator";
   if(hotkey_ctrl_alt_delete.enabled)
     title += " - " + hotkey_ctrl_alt_delete.display + " sends C+A+Del";
+  title += " - Alt+Enter fullscreen";
   XStoreName(bx_x_display, win, title.c_str());
 }
 
@@ -1534,11 +1548,17 @@ void bx_x11_gui_c::keypress(XKeyEvent* event, bool released)
     return;
   }
 
-  if(hotkey_ctrl_alt_delete.matches(
-       (u32)x11_hotkey_symbol(event->keycode, XkbGroupForCoreState(event->state)),
-       hotkey_modifiers(event->state)))
+  const u32 host_key = (u32)x11_hotkey_symbol(event->keycode, XkbGroupForCoreState(event->state));
+  const unsigned modifiers = hotkey_modifiers(event->state);
+  if(hotkey_ctrl_alt_delete.matches(host_key, modifiers))
   {
     send_ctrl_alt_delete(event->keycode);
+    return;
+  }
+  if((host_key == XK_Return || host_key == XK_KP_Enter) && (modifiers & X11_HOTKEY_ALT))
+  {
+    key.down = key.suppressed = true;
+    toggle_fullscreen();
     return;
   }
 
@@ -2334,14 +2354,15 @@ void bx_x11_gui_c::prepare_frame_image(unsigned width, unsigned height)
 }
 
 static bool read_x11_property(Atom property, Atom type, unsigned long* values,
-                              unsigned capacity, unsigned long& count, unsigned minimum = 0)
+                              unsigned capacity, unsigned long& count, unsigned minimum = 0,
+                              Window target = win)
 {
   Atom actual_type = None;
   int format = 0;
   unsigned long remaining = 0;
   unsigned char* data = nullptr;
   count = 0;
-  const int status = XGetWindowProperty(bx_x_display, win, property, 0, capacity,
+  const int status = XGetWindowProperty(bx_x_display, target, property, 0, capacity,
       False, type, &actual_type, &format, &count, &remaining, &data);
   const bool valid = status == Success && (actual_type == None ||
       (actual_type == type && format == 32 && remaining == 0 &&
@@ -2377,9 +2398,23 @@ bool bx_x11_gui_c::read_window_state()
     fullscreen = fullscreen || states[i] == net_wm_fullscreen;
     minimized = minimized || states[i] == net_wm_hidden;
   }
-  if(fullscreen && !window_fullscreen)
-    fullscreen_windowed_deferred = window_maximized || window_minimized || maximized || minimized;
-  if(!fullscreen) fullscreen_windowed_deferred = false;
+  if(!fullscreen_transition_pending)
+  {
+    if(fullscreen && !window_fullscreen)
+    {
+      fullscreen_restore_maximized = window_maximized || maximized;
+      fullscreen_restore_minimized = window_minimized || minimized;
+      fullscreen_windowed_deferred = fullscreen_restore_maximized || fullscreen_restore_minimized;
+      fullscreen_restore_width = fullscreen_restore_height = 0;
+    }
+    if(!fullscreen) fullscreen_windowed_deferred = false;
+    fullscreen_requested = fullscreen;
+    if(fullscreen_entry_resize)
+    {
+      if(!fullscreen) pending_guest_resize = true;
+      fullscreen_entry_resize = false;
+    }
+  }
   window_maximized = maximized;
   window_minimized = minimized;
   window_fullscreen = fullscreen;
@@ -2387,9 +2422,120 @@ bool bx_x11_gui_c::read_window_state()
   return true;
 }
 
+bool bx_x11_gui_c::fullscreen_supported()
+{
+  unsigned long supported[256] = {}, count = 0;
+  if(!read_x11_property(net_wm_supported, XA_ATOM, supported, 256, count, 0,
+                        RootWindow(bx_x_display, bx_x_screen_num))) return false;
+  bool state = false, fullscreen = false;
+  for(unsigned long i = 0; i < count; ++i)
+  {
+    state = state || supported[i] == net_wm_state_atom;
+    fullscreen = fullscreen || supported[i] == net_wm_fullscreen;
+  }
+  return state && fullscreen;
+}
+
+bool bx_x11_gui_c::send_fullscreen_request(bool enabled)
+{
+  if(enabled && !fullscreen_supported())
+  {
+    printf("%%X11-W-FULLSCREEN: The window manager does not advertise fullscreen support.\n");
+    return false;
+  }
+  if(enabled)
+  {
+    XSizeHints hints = {};
+    hints.flags = PMinSize | PMaxSize;
+    hints.min_width = hints.min_height = 1;
+    hints.max_width = hints.max_height = 32767;
+    XSetWMNormalHints(bx_x_display, win, &hints);
+    pending_window_hints = true;
+  }
+  XEvent event = {};
+  event.xclient.type = ClientMessage;
+  event.xclient.window = win;
+  event.xclient.message_type = net_wm_state_atom;
+  event.xclient.format = 32;
+  event.xclient.data.l[0] = enabled ? 1 : 0;
+  event.xclient.data.l[1] = (long)net_wm_fullscreen;
+  event.xclient.data.l[3] = 1;
+  if(!XSendEvent(bx_x_display, RootWindow(bx_x_display, bx_x_screen_num), False,
+                 SubstructureRedirectMask | SubstructureNotifyMask, &event))
+  {
+    printf("%%X11-W-FULLSCREEN: Unable to request %s fullscreen.\n", enabled ? "entering" : "leaving");
+    return false;
+  }
+  if(enabled && !window_fullscreen)
+  {
+    fullscreen_restore_maximized = window_maximized;
+    fullscreen_restore_minimized = window_minimized;
+    fullscreen_restore_width = client_width;
+    fullscreen_restore_height = client_height;
+    fullscreen_windowed_deferred = window_maximized || window_minimized;
+    fullscreen_entry_resize = false;
+  }
+  fullscreen_requested = fullscreen_target = enabled;
+  fullscreen_transition_pending = true;
+  fullscreen_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  window_state_dirty = true;
+  return true;
+}
+
+void bx_x11_gui_c::sync_fullscreen(bool state_known)
+{
+  if(!fullscreen_transition_pending) return;
+  const bool restored = (!fullscreen_restore_maximized || window_maximized) &&
+      (!fullscreen_restore_minimized || window_minimized) &&
+      (fullscreen_restore_maximized || fullscreen_restore_minimized ||
+       !fullscreen_restore_width || (client_width == fullscreen_restore_width &&
+                                    client_height == fullscreen_restore_height));
+  if(state_known && window_fullscreen == fullscreen_target && (fullscreen_target || restored))
+  {
+    fullscreen_transition_pending = false;
+    fullscreen_entry_resize = false;
+    if(fullscreen_requested != window_fullscreen && !send_fullscreen_request(fullscreen_requested))
+      fullscreen_requested = window_fullscreen;
+  }
+  else if(std::chrono::steady_clock::now() >= fullscreen_deadline)
+  {
+    if(state_known)
+    {
+      if(fullscreen_target && !window_fullscreen && fullscreen_entry_resize)
+        pending_guest_resize = true;
+      fullscreen_entry_resize = false;
+    }
+    fullscreen_transition_pending = false;
+    fullscreen_requested = window_fullscreen;
+    printf("%%X11-W-FULLSCREEN: The window manager did not complete the fullscreen request.\n");
+  }
+  if(!fullscreen_transition_pending && !window_fullscreen)
+  {
+    fullscreen_windowed_deferred = false;
+    fullscreen_restore_maximized = fullscreen_restore_minimized = false;
+    fullscreen_restore_width = fullscreen_restore_height = 0;
+  }
+}
+
+void bx_x11_gui_c::toggle_fullscreen()
+{
+  if(!bx_x_display || !win || retired || window_destroyed) return;
+  if(!read_window_state())
+  {
+    printf("%%X11-W-FULLSCREEN: Unable to read the window state.\n");
+    return;
+  }
+  sync_fullscreen();
+  fullscreen_requested = !(fullscreen_transition_pending ? fullscreen_requested : window_fullscreen);
+  if(!fullscreen_transition_pending && !send_fullscreen_request(fullscreen_requested))
+    fullscreen_requested = window_fullscreen;
+  apply_guest_size();
+}
+
 void bx_x11_gui_c::apply_guest_size()
 {
-  if(window_destroyed || window_minimized || window_maximized || window_fullscreen) return;
+  if(window_destroyed || window_minimized || window_maximized || window_fullscreen ||
+     fullscreen_requested || fullscreen_transition_pending) return;
   if(pending_window_hints)
   {
     XSizeHints hints = {};
@@ -2411,7 +2557,12 @@ void bx_x11_gui_c::apply_guest_size()
 
 void bx_x11_gui_c::update_window_state()
 {
-  if(read_window_state()) apply_guest_size();
+  if(read_window_state())
+  {
+    sync_fullscreen();
+    apply_guest_size();
+  }
+  else sync_fullscreen(false);
 }
 
 void bx_x11_gui_c::configure_window(int width, int height)
@@ -2654,8 +2805,13 @@ void bx_x11_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheigh
     if(full_frame) XSetWindowBackgroundPixmap(bx_x_display, win, None);
     else XSetWindowBackground(bx_x_display, win, black_pixel);
     pending_window_hints = true;
-    if(!state_known || !window_fullscreen || fullscreen_windowed_deferred)
+    const bool entering_fullscreen = fullscreen_transition_pending && fullscreen_target;
+    if((!state_known && !fullscreen_transition_pending) ||
+       (!window_fullscreen && !fullscreen_requested && !entering_fullscreen) ||
+       fullscreen_windowed_deferred)
       pending_guest_resize = true;
+    if(fullscreen_transition_pending && fullscreen_target && !window_fullscreen)
+      fullscreen_entry_resize = true;
   }
   dimension_x = x;
   dimension_y = y;
@@ -2669,9 +2825,14 @@ void bx_x11_gui_c::exit_impl(void)
   client_width = client_height = 0;
   wm_state_atom = net_wm_state_atom = None;
   net_wm_max_horz = net_wm_max_vert = net_wm_fullscreen = net_wm_hidden = None;
+  net_wm_supported = None;
   window_state_dirty = true;
   window_destroyed = window_maximized = window_minimized = window_fullscreen = false;
   fullscreen_windowed_deferred = pending_guest_resize = pending_window_hints = false;
+  fullscreen_requested = fullscreen_transition_pending = fullscreen_target = false;
+  fullscreen_entry_resize = fullscreen_restore_maximized = fullscreen_restore_minimized = false;
+  fullscreen_restore_width = fullscreen_restore_height = 0;
+  fullscreen_deadline = {};
   if(ximage) { XDestroyImage(ximage); ximage = nullptr; }
   // XCloseDisplay frees server resources, but GCs also need client cleanup.
   if(bx_x_display)
