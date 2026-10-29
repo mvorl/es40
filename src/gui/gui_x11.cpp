@@ -187,8 +187,13 @@ class bx_x11_gui_c : public bx_gui_c
     bool input_paused = false, input_detached = false, retired = false;
     bool legacy_redraw_pending = false;
     bool keyboard_focused = true, detectable_repeat = false;
+    bool mouse_captured = false, guest_mouse_captured = false, mouse_sync_pending = true;
+    bool mouse_warp_pending = false, mouse_position_valid = false;
+    unsigned mouse_buttons = 0, ignored_mouse_buttons = 0;
+    int mouse_x = 0, mouse_y = 0, mouse_warp_x = 0, mouse_warp_y = 0;
+    unsigned long mouse_input_serial = 0, mouse_motion_serial = 0, mouse_warp_serial = 0;
     x11_hotkey_binding hotkey_ctrl_alt_delete, hotkey_reset_window;
-    x11_hotkey_binding hotkey_scale_up, hotkey_scale_down;
+    x11_hotkey_binding hotkey_scale_up, hotkey_scale_down, hotkey_mouse_capture;
     unsigned hotkey_modifier_masks[8] = {};
     unsigned hotkey_key_modifiers[256] = {};
     struct key_press
@@ -209,6 +214,12 @@ class bx_x11_gui_c : public bx_gui_c
     void release_keys();
     void load_keyboard_mapping();
     void load_hotkeys();
+    void update_mouse_title();
+    void sync_mouse_capture();
+    void check_mouse_capture();
+    void recenter_mouse();
+    void mouse_button(XButtonEvent* event, bool released);
+    void mouse_motion(XMotionEvent* event);
     void refresh_hotkey_modifiers();
     unsigned hotkey_modifiers(unsigned state) const;
     void send_ctrl_alt_delete(unsigned code);
@@ -292,33 +303,16 @@ static void check_x11_error()
     FAILURE_1(Runtime, "X11 display request failed (X error %d)", x_error);
 }
 
-// current cursor coordinates
-static int            prev_x = -1, prev_y = -1;
-static int            current_x = -1, current_y = -1, current_z = 0;
-static unsigned       mouse_button_state = 0;
 static bool           CTRL_pressed = 0;
 
 static unsigned       prev_cursor_x = 0;
 static unsigned       prev_cursor_y = 0;
-
-static int            warp_home_x = 200;
-static int            warp_home_y = 200;
-static int            mouse_enable_x = 0;
-static int            mouse_enable_y = 0;
-static int            warp_dx = 0;
-static int            warp_dy = 0;
-
-static void           warp_cursor(int dx, int dy);
-static void           disable_cursor();
-static void           enable_cursor();
 
 static u32            convertStringToXKeysym(const char* string);
 
 static bool           x_init_done = false;
 
 static Pixmap         vgafont[256];
-
-static void           send_keyboard_mouse_status(void);
 
 static bool           x_keymapping;
 static bool           x_private_colormap;
@@ -588,17 +582,24 @@ void bx_x11_gui_c::main_thread_pump()
 
 void bx_x11_gui_c::pause_guest_input()
 {
-  invoke([this] { input_paused = true; });
+  invoke([this] {
+    input_paused = true;
+    mouse_enabled_changed_impl(false);
+  });
 }
 
 void bx_x11_gui_c::resume_guest_input()
 {
-  invoke([this] { input_paused = false; });
+  invoke([this] {
+    mouse_enabled_changed_impl(false);
+    input_paused = false;
+  });
 }
 
 void bx_x11_gui_c::detach_guest_input()
 {
   invoke([this] {
+    mouse_enabled_changed_impl(false);
     input_detached = true;
     guest_keyboard = nullptr;
     guest_system = nullptr;
@@ -620,6 +621,7 @@ void bx_x11_gui_c::pump_events(bool process_input) noexcept
   catch(...)
   {
     event_error = std::current_exception();
+    try { mouse_enabled_changed_impl(false); } catch(...) {}
     if(guest_system) guest_system->RequestShutdown();
   }
 }
@@ -981,30 +983,174 @@ catch(...)
   throw;
 }
 
-// This is called whenever the mouse_enabled parameter changes.  It
-// can change because of a gui event such as clicking on the mouse-enable
-// bitmap or pressing the middle button, or from the configuration interface.
-
-// In all those cases, setting the parameter value will get you here.
 void bx_x11_gui_c::mouse_enabled_changed_impl(bool val)
 {
-  BX_DEBUG(("mouse_enabled=%d, x11 specific code", val ? 1 : 0));
-  if(val)
+  if(!val)
   {
-    BX_INFO(("[x] Mouse on"));
-    mouse_enable_x = current_x;
-    mouse_enable_y = current_y;
-    disable_cursor();
+    const bool was_captured = mouse_captured;
+    mouse_captured = mouse_warp_pending = mouse_position_valid = false;
+    mouse_buttons = ignored_mouse_buttons = 0;
+    mouse_sync_pending = true;
+    if(bx_x_display)
+    {
+      mouse_input_serial = XNextRequest(bx_x_display);
+      XUngrabPointer(bx_x_display, CurrentTime);
+      XFlush(bx_x_display);
+    }
+    if(was_captured) update_mouse_title();
+    return;
+  }
+  if(mouse_captured || !bx_x_display || !win || window_destroyed || retired ||
+     input_paused || input_detached || !guest_keyboard || !keyboard_focused) return;
+  Window focus;
+  int revert;
+  XGetInputFocus(bx_x_display, &focus, &revert);
+  XWindowAttributes attributes = {};
+  if((focus != win && focus != PointerRoot) ||
+     !XGetWindowAttributes(bx_x_display, win, &attributes) || attributes.map_state != IsViewable)
+    return;
+  if(hidden_cursor == None)
+  {
+    const char empty = 0;
+    const Pixmap bitmap = XCreateBitmapFromData(bx_x_display, win, &empty, 1, 1);
+    if(bitmap)
+    {
+      XColor color = {};
+      hidden_cursor = XCreatePixmapCursor(bx_x_display, bitmap, bitmap, &color, &color, 0, 0);
+      XFreePixmap(bx_x_display, bitmap);
+    }
+    if(!hidden_cursor)
+    {
+      printf("%%X11-W-MOUSE: Unable to create the capture cursor.\n");
+      return;
+    }
+  }
+  const int result = XGrabPointer(bx_x_display, win, False,
+      ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+      GrabModeAsync, GrabModeAsync, win, hidden_cursor, CurrentTime);
+  if(result != GrabSuccess)
+  {
+    printf("%%X11-W-MOUSE: Unable to capture the mouse (X grab status %d).\n", result);
+    return;
+  }
+  mouse_captured = true;
+  mouse_sync_pending = true;
+  try
+  {
+    Window root, child;
+    int root_x, root_y;
+    unsigned buttons;
+    if(!XQueryPointer(bx_x_display, win, &root, &child, &root_x, &root_y,
+                      &mouse_x, &mouse_y, &buttons) || x_error)
+    {
+      mouse_enabled_changed_impl(false);
+      check_x11_error();
+      return;
+    }
+    ignored_mouse_buttons = ((buttons & Button1Mask) ? 1 : 0) |
+                            ((buttons & Button3Mask) ? 2 : 0) |
+                            ((buttons & Button2Mask) ? 4 : 0);
+    mouse_buttons = 0;
+    mouse_position_valid = mouse_warp_pending = false;
+    recenter_mouse();
+    mouse_input_serial = mouse_motion_serial = mouse_warp_serial;
+    update_mouse_title();
+  }
+  catch(...)
+  {
+    try { mouse_enabled_changed_impl(false); } catch(...) {}
+    throw;
+  }
+}
 
-    // Move the cursor to a 'safe' place
-    warp_cursor(warp_home_x - current_x, warp_home_y - current_y);
-  }
-  else
+void bx_x11_gui_c::sync_mouse_capture()
+{
+  if(!mouse_sync_pending || input_paused || input_detached || !guest_keyboard) return;
+  // Deliver button release before the guest stops accepting mouse packets.
+  if(guest_mouse_captured) guest_keyboard->mouse_motion(0, 0, 0, 0);
+  guest_keyboard->set_mouse_capture(mouse_captured);
+  guest_mouse_captured = mouse_captured;
+  mouse_sync_pending = false;
+}
+
+void bx_x11_gui_c::check_mouse_capture()
+{
+  if(!mouse_captured || !bx_x_display) return;
+  Window focus;
+  int revert;
+  XGetInputFocus(bx_x_display, &focus, &revert);
+  XWindowAttributes attributes = {};
+  if((focus != win && focus != PointerRoot) ||
+     !XGetWindowAttributes(bx_x_display, win, &attributes) || attributes.map_state != IsViewable)
+    mouse_enabled_changed_impl(false);
+}
+
+void bx_x11_gui_c::recenter_mouse()
+{
+  if(!mouse_captured || mouse_warp_pending || !client_width || !client_height) return;
+  const int x = (int)(client_width / 2), y = (int)(client_height / 2);
+  if(mouse_position_valid && mouse_x == x && mouse_y == y) return;
+  mouse_warp_x = x;
+  mouse_warp_y = y;
+  mouse_warp_serial = XNextRequest(bx_x_display);
+  mouse_warp_pending = true;
+  XWarpPointer(bx_x_display, None, win, 0, 0, 0, 0, x, y);
+}
+
+void bx_x11_gui_c::mouse_button(XButtonEvent* event, bool released)
+{
+  const unsigned bit = event->button == Button1 ? 1 : event->button == Button3 ? 2 :
+                       event->button == Button2 ? 4 : 0;
+  if(event->serial < mouse_input_serial)
   {
-    BX_INFO(("[x] Mouse off"));
-    enable_cursor();
-    warp_cursor(mouse_enable_x - current_x, mouse_enable_y - current_y);
+    if(released) ignored_mouse_buttons &= ~bit;
+    return;
   }
+  if(input_paused || input_detached || !guest_keyboard || !keyboard_focused || retired) return;
+  if(!mouse_captured)
+  {
+    if(!released && event->button == Button1)
+    {
+      mouse_enabled_changed_impl(true);
+      if(mouse_captured) ignored_mouse_buttons |= bit;
+    }
+    return;
+  }
+  sync_mouse_capture();
+  if(ignored_mouse_buttons & bit)
+  {
+    if(released) ignored_mouse_buttons &= ~bit;
+    return;
+  }
+  const unsigned buttons = released ? mouse_buttons & ~bit : mouse_buttons | bit;
+  const int wheel = released ? 0 : event->button == Button4 ? 1 : event->button == Button5 ? -1 : 0;
+  if(buttons != mouse_buttons || wheel)
+    guest_keyboard->mouse_motion(0, 0, wheel, buttons);
+  mouse_buttons = buttons;
+}
+
+void bx_x11_gui_c::mouse_motion(XMotionEvent* event)
+{
+  if(!mouse_captured || event->serial < mouse_input_serial ||
+     event->serial < mouse_motion_serial || input_paused ||
+     input_detached || !guest_keyboard || !keyboard_focused || retired) return;
+  if(mouse_warp_pending && event->serial >= mouse_warp_serial)
+  {
+    // Rebase even if the synthetic center event was coalesced.
+    mouse_x = mouse_warp_x;
+    mouse_y = mouse_warp_y;
+    mouse_position_valid = true;
+    mouse_warp_pending = false;
+  }
+  if(mouse_position_valid)
+  {
+    const int dx = event->x - mouse_x, dy = mouse_y - event->y;
+    sync_mouse_capture();
+    if(dx || dy) guest_keyboard->mouse_motion(dx, dy, 0, mouse_buttons);
+  }
+  mouse_x = event->x;
+  mouse_y = event->y;
+  mouse_position_valid = true;
 }
 
 /**
@@ -1046,17 +1192,9 @@ void bx_x11_gui_c::poll_events(bool process_input)
 {
   if(!bx_x_display) return;
   check_x11_error();
+  check_mouse_capture();
+  if(process_input) sync_mouse_capture();
   XEvent                report;
-  bool                  mouse_update;
-
-  XPointerMovedEvent*   pointer_event;
-  XEnterWindowEvent*    enter_event;
-  XLeaveWindowEvent*    leave_event;
-  XButtonEvent*         button_event;
-
-  //current_x = -1;
-  //current_y = -1;
-  mouse_update = 0;
 
   // Bound polling so worker calls and barriers cannot starve.
   for(unsigned count = 0; count < 256; ++count)
@@ -1077,7 +1215,6 @@ void bx_x11_gui_c::poll_events(bool process_input)
       continue;
     }
     if(report.xany.window != win) continue;
-    current_z = 0;
     switch(report.type)
     {
     case Expose:
@@ -1091,6 +1228,12 @@ void bx_x11_gui_c::poll_events(bool process_input)
 
     case ConfigureNotify:
       configure_window(report.xconfigure.width, report.xconfigure.height);
+      if(mouse_captured)
+      {
+        mouse_position_valid = mouse_warp_pending = false;
+        recenter_mouse();
+        mouse_motion_serial = mouse_warp_serial;
+      }
       if(reset_window_pending && reset_stage == reset_phase::unmaximize &&
          report.xconfigure.serial >= reset_configure_serial)
         reset_configure_seen = true;
@@ -1103,83 +1246,13 @@ void bx_x11_gui_c::poll_events(bool process_input)
       break;
 
     case UnmapNotify:
+      mouse_enabled_changed_impl(false);
       window_state_dirty = true;
       break;
 
     case ButtonPress:
-      button_event = (XButtonEvent*) &report;
-      BX_DEBUG(("xxx: buttonpress"));
-      current_x = button_event->x;
-      current_y = button_event->y;
-      mouse_update = 1;
-      BX_DEBUG(("xxx:   x,y=(%d,%d)", current_x, current_y));
-      switch(button_event->button)
-      {
-      case Button1:
-        mouse_button_state |= 0x01;
-        send_keyboard_mouse_status();
-        mouse_update = 0;
-        break;
-
-      case Button2:
-        if(CTRL_pressed)
-        {
-
-          //            toggle_mouse_enable();
-        }
-        else
-        {
-          mouse_button_state |= 0x04;
-          send_keyboard_mouse_status();
-          mouse_update = 0;
-        }
-        break;
-
-      case Button3:
-        mouse_button_state |= 0x02;
-        send_keyboard_mouse_status();
-        mouse_update = 0;
-        break;
-      }
-      break;
-
     case ButtonRelease:
-      button_event = (XButtonEvent*) &report;
-      current_x = button_event->x;
-      current_y = button_event->y;
-      mouse_update = 1;
-      switch(button_event->button)
-      {
-      case Button1:
-        mouse_button_state &= ~0x01;
-        send_keyboard_mouse_status();
-        mouse_update = 0;
-        break;
-
-      case Button2:
-        mouse_button_state &= ~0x04;
-        send_keyboard_mouse_status();
-        mouse_update = 0;
-        break;
-
-      case Button3:
-        mouse_button_state &= ~0x02;
-        send_keyboard_mouse_status();
-        mouse_update = 0;
-        break;
-
-      case Button4:
-        current_z = 1;
-        send_keyboard_mouse_status();
-        mouse_update = 0;
-        break;
-
-      case Button5:
-        current_z = -1;
-        send_keyboard_mouse_status();
-        mouse_update = 0;
-        break;
-      }
+      mouse_button(&report.xbutton, report.type == ButtonRelease);
       break;
 
     case KeyPress:
@@ -1202,6 +1275,7 @@ void bx_x11_gui_c::poll_events(bool process_input)
       if(report.xfocus.detail != NotifyInferior)
       {
         keyboard_focused = false;
+        mouse_enabled_changed_impl(false);
         release_keys();
       }
       break;
@@ -1211,22 +1285,11 @@ void bx_x11_gui_c::poll_events(bool process_input)
       break;
 
     case MotionNotify:
-      pointer_event = (XPointerMovedEvent*) &report;
-      current_x = pointer_event->x;
-      current_y = pointer_event->y;
-      mouse_update = 1;
+      mouse_motion(&report.xmotion);
       break;
 
     case EnterNotify:
-      enter_event = (XEnterWindowEvent*) &report;
-      prev_x = current_x = enter_event->x;
-      prev_y = current_y = enter_event->y;
-      break;
-
     case LeaveNotify:
-      leave_event = (XLeaveWindowEvent*) &report;
-      prev_x = current_x = -1;
-      prev_y = current_y = -1;
       break;
 
     case MapNotify:
@@ -1245,6 +1308,7 @@ void bx_x11_gui_c::poll_events(bool process_input)
       if(report.xclient.message_type == wm_protocols && report.xclient.format == 32 &&
          (Atom)report.xclient.data.l[0] == wm_delete_window)
       {
+        mouse_enabled_changed_impl(false);
         if(guest_system) guest_system->RequestShutdown();
       }
       break;
@@ -1253,6 +1317,7 @@ void bx_x11_gui_c::poll_events(bool process_input)
       if(report.xdestroywindow.window == win)
       {
         window_destroyed = true;
+        mouse_enabled_changed_impl(false);
         if(guest_system) guest_system->RequestShutdown();
       }
       break;
@@ -1268,53 +1333,12 @@ void bx_x11_gui_c::poll_events(bool process_input)
     }           /* end switch */
   }             /* end while */
 
-  if(mouse_update)
-  {
-    BX_DEBUG(("handle_events(): send mouse status"));
-    send_keyboard_mouse_status();
-  }
+  recenter_mouse();
   reconcile_shortcut_keys();
   if(window_state_dirty || pending_guest_resize || pending_window_hints ||
      fullscreen_transition_pending || reset_window_pending) update_window_state();
+  if(process_input) sync_mouse_capture();
   check_x11_error();
-}
-
-void send_keyboard_mouse_status(void)
-{
-  BX_DEBUG(("XXX: prev=(%d,%d) curr=(%d,%d)", prev_x, prev_y, current_x, current_y));
-
-  if(((prev_x != -1) && (current_x != -1) && (prev_y != -1) && (current_y != -1)
-     ) || (current_z != 0))
-  {
-    int dx;
-
-    int dy;
-
-    int dz;
-
-    // (mch) consider warping here
-    dx = current_x - prev_x - warp_dx;
-    dy = -(current_y - prev_y - warp_dy);
-    dz = current_z;
-    warp_cursor(warp_home_x - current_x, warp_home_y - current_y);
-
-    //DEV_mouse_motion_ext (dx, dy, dz, mouse_button_state);
-    prev_x = current_x;
-    prev_y = current_y;
-  }
-  else
-  {
-    if((current_x != -1) && (current_y != -1))
-    {
-      prev_x = current_x;
-      prev_y = current_y;
-    }
-    else
-    {
-      prev_x = current_x = -1;
-      prev_y = current_y = -1;
-    }
-  }
 }
 
 void bx_x11_gui_c::flush(void)
@@ -1495,15 +1519,19 @@ void bx_x11_gui_c::load_hotkeys()
   hotkey_reset_window = load("hotkey.reset_window", "Ctrl+Alt+Home");
   hotkey_scale_up = load("hotkey.scale_up", "Ctrl+PageUp");
   hotkey_scale_down = load("hotkey.scale_down", "Ctrl+PageDown");
+  hotkey_mouse_capture = load("hotkey.mouse_capture", "Ctrl+F10");
   x11_hotkey_binding* bindings[] = {
-    &hotkey_ctrl_alt_delete, &hotkey_reset_window, &hotkey_scale_up, &hotkey_scale_down
+    &hotkey_ctrl_alt_delete, &hotkey_reset_window, &hotkey_scale_up, &hotkey_scale_down,
+    &hotkey_mouse_capture
   };
   const char* names[] = {
-    "hotkey.ctrl_alt_delete", "hotkey.reset_window", "hotkey.scale_up", "hotkey.scale_down"
+    "hotkey.ctrl_alt_delete", "hotkey.reset_window", "hotkey.scale_up", "hotkey.scale_down",
+    "hotkey.mouse_capture"
   };
   const bool active[] = {
     hotkey_ctrl_alt_delete.enabled, hotkey_reset_window.enabled,
-    hotkey_scale_up.enabled && scale_change_enable, hotkey_scale_down.enabled && scale_change_enable
+    hotkey_scale_up.enabled && scale_change_enable, hotkey_scale_down.enabled && scale_change_enable,
+    hotkey_mouse_capture.enabled
   };
   constexpr size_t count = sizeof(bindings) / sizeof(bindings[0]);
   bool duplicate[count] = {};
@@ -1518,7 +1546,17 @@ void bx_x11_gui_c::load_hotkeys()
       }
   for(size_t i = 0; i < count; ++i)
     if(duplicate[i]) bindings[i]->enabled = false;
+  update_mouse_title();
+}
+
+void bx_x11_gui_c::update_mouse_title()
+{
+  if(!bx_x_display || !win || window_destroyed || retired) return;
   std::string title = "ES40 Emulator";
+  if(!mouse_captured) title += " - Click to capture mouse";
+  if(hotkey_mouse_capture.enabled)
+    title += " - " + hotkey_mouse_capture.display +
+             (mouse_captured ? " releases mouse" : " captures mouse");
   if(hotkey_ctrl_alt_delete.enabled)
     title += " - " + hotkey_ctrl_alt_delete.display + " sends C+A+Del";
   if(hotkey_reset_window.enabled)
@@ -1646,6 +1684,21 @@ void bx_x11_gui_c::keypress(XKeyEvent* event, bool released)
     key.down = key.suppressed = true;
     key.scale_delta = hotkey_scale_up.matches(host_key, modifiers) ? 1 : -1;
     adjust_window_scale(key.scale_delta);
+    return;
+  }
+  if(hotkey_mouse_capture.matches(host_key, modifiers))
+  {
+    key.down = key.suppressed = true;
+    for(unsigned code = 8; code < 256; ++code)
+    {
+      auto& held = pressed_keys[code];
+      if(!held.down || !(held.host_modifiers & hotkey_mouse_capture.modifiers)) continue;
+      if(held.guest != BX_KEY_UNHANDLED && !guest_key_held(held.guest, code))
+        guest_keyboard->gen_scancode(held.guest | BX_KEY_RELEASED);
+      held.guest = BX_KEY_UNHANDLED;
+      held.suppressed = true;
+    }
+    mouse_enabled_changed_impl(!mouse_captured);
     return;
   }
   if((host_key == XK_Return || host_key == XK_KP_Enter) && (modifiers & X11_HOTKEY_ALT))
@@ -3056,6 +3109,10 @@ void bx_x11_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheigh
 
 void bx_x11_gui_c::exit_impl(void)
 {
+  mouse_enabled_changed_impl(false);
+  guest_mouse_captured = false;
+  mouse_sync_pending = true;
+  mouse_input_serial = mouse_motion_serial = mouse_warp_serial = 0;
   if(frame_image) { XDestroyImage(frame_image); frame_image = nullptr; }
   std::vector<u32>().swap(frame_pixels);
   client_width = client_height = 0;
@@ -3095,71 +3152,11 @@ void bx_x11_gui_c::exit_impl(void)
   dimension_x = dimension_y = 0;
   imDepth = imWide = imBPP = 0;
   vga_bpp = 8;
-  prev_x = prev_y = current_x = current_y = -1;
-  current_z = warp_dx = warp_dy = 0;
-  mouse_button_state = 0;
   CTRL_pressed = false;
   legacy_redraw_pending = false;
   for(auto& key : pressed_keys) key = {};
   keyboard_focused = true;
   detectable_repeat = false;
-}
-
-static void warp_cursor(int dx, int dy)
-{
-  if(warp_dx || warp_dy || dx || dy)
-  {
-    warp_dx = dx;
-    warp_dy = dy;
-    XWarpPointer(bx_x_display, None, None, 0, 0, 0, 0, dx, dy);
-  }
-}
-
-static void disable_cursor()
-{
-
-  static int      shape_width = 16;
-  static int      shape_height = 16;
-  static int      mask_width = 16;
-  static int      mask_height = 16;
-
-  static u32      shape_bits[(16 * 16) / 32] = {
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-  };
-  static u32      mask_bits[(16 * 16) / 32] = {
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-    0x00000000, 0x00000000, 0x00000000, 0x00000000,
-  };
-
-  if(hidden_cursor == None)
-  {
-    Pixmap  shape;
-
-    Pixmap  mask;
-    XColor  white;
-    XColor  black;
-    shape = XCreatePixmapFromBitmapData(bx_x_display,
-                                        RootWindow(bx_x_display, bx_x_screen_num),
-                                          (char*) shape_bits, shape_width,
-                                          shape_height, 1, 0, 1);
-    mask = XCreatePixmapFromBitmapData(bx_x_display,
-                                       RootWindow(bx_x_display, bx_x_screen_num),
-                                         (char*) mask_bits, mask_width,
-                                         mask_height, 1, 0, 1);
-    XParseColor(bx_x_display, default_cmap, "black", &black);
-    XParseColor(bx_x_display, default_cmap, "white", &white);
-    hidden_cursor = XCreatePixmapCursor(bx_x_display, shape, mask, &white, &black, 1, 1);
-    XFreePixmap(bx_x_display, shape);
-    XFreePixmap(bx_x_display, mask);
-  }
-
-  XDefineCursor(bx_x_display, win, hidden_cursor);
-}
-
-static void enable_cursor()
-{
-  XUndefineCursor(bx_x_display, win);
 }
 
 static u32 convertStringToXKeysym(const char* string)
