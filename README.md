@@ -15,6 +15,12 @@ Npcap provides bridged networking; the Rust SLIRP backend provides userspace NAT
 macOS VMnet support exists as well as TAP networking support for non-windows hosts.
 Use "NN" builds if you do not need networking.
 
+On Windows, `gui = win32` keeps the traditional emulator window. Add
+`workstation = enable;` inside that GUI block to open ES40 Workstation on startup,
+or use `es40.exe --manager`. Select Start to run a machine with display #0 inside
+the manager; additional displays open separately. `es40.exe --run es40.cfg`
+bypasses the startup setting. See the [Windows manager guide](doc/windows-manager.md).
+
 Latest VC redist may be required to run binaries, available here:  
 https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist  
 Latest 2017-2026 x64 redistributable is recommended.  
