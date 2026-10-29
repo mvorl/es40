@@ -64,7 +64,11 @@
 #include "io/Keyboard.h"
 #include "system/System.h"
 #include "x11_dispatch.h"
+#include "x11_scale.h"
+#include <algorithm>
 #include <limits>
+#include <new>
+#include <vector>
 
 extern "C"
 {
@@ -128,8 +132,15 @@ class bx_x11_gui_c : public bx_gui_c
   private:
     CConfigurator*  myCfg;
     XImage* frame_image = nullptr;
+    std::vector<u32> frame_pixels;
+    unsigned client_width = 0, client_height = 0, configured_scale = 1;
+    bool video_linear = true;
     bool frame_active = false;
     void present_frame();
+    void prepare_frame_image(unsigned width, unsigned height);
+    void configure_window(int width, int height);
+    void load_video_settings();
+    void use_legacy_presentation();
     x11_dispatcher dispatcher;
     CKeyboard* guest_keyboard = nullptr;
     CSystem* guest_system = nullptr;
@@ -159,7 +170,7 @@ class bx_x11_gui_c : public bx_gui_c
     void clear_screen_impl();
     bool palette_change_impl(unsigned index, unsigned red, unsigned green, unsigned blue);
     void dimension_update_impl(unsigned x, unsigned y, unsigned fheight,
-                               unsigned fwidth, unsigned bpp);
+                               unsigned fwidth, unsigned bpp, bool full_frame = false);
     void mouse_enabled_changed_impl(bool val);
     void exit_impl();
     bx_svga_tileinfo_t* graphics_tile_info_impl(bx_svga_tileinfo_t* info);
@@ -609,7 +620,8 @@ bool bx_x11_gui_c::palette_change(unsigned index, unsigned red, unsigned green, 
 void bx_x11_gui_c::dimension_update(unsigned x, unsigned y, unsigned fheight,
                                   unsigned fwidth, unsigned bpp)
 {
-  invoke([&] { dimension_update_impl(x, y, fheight, fwidth, bpp); });
+  invoke([&] { dimension_update_impl(x, y, fheight, fwidth, bpp,
+                                    frame_active && bpp == 32 && !fheight); });
 }
 
 void bx_x11_gui_c::mouse_enabled_changed_specific(bool val)
@@ -649,11 +661,22 @@ void bx_x11_gui_c::exit()
   });
 }
 
+void bx_x11_gui_c::load_video_settings()
+{
+  const u64 scale = myCfg->get_num_value("video.scale_ratio", true, 0);
+  if(scale > 10)
+    printf("%%X11-W-SCALE: invalid video.scale_ratio %llu (valid: 0 - 10); using 1x.\n",
+           (unsigned long long)scale);
+  configured_scale = scale >= 1 && scale <= 10 ? (unsigned)scale : 1;
+  video_linear = myCfg->get_bool_value("video.linear", true);
+}
+
 void bx_x11_gui_c::specific_init_impl(unsigned tilewidth, unsigned tileheight)
 try
 {
   if(x_init_done) { new_gfx_api = 1; return; }
   validate_x11_dimensions(tilewidth, tileheight);
+  load_video_settings();
   unsigned              i;
   int                   x;
   int                   y;  /* window position */
@@ -699,6 +722,8 @@ try
 
   dimension_x = text_cols * font_width;
   dimension_y = text_rows * font_height;
+  client_width = dimension_x;
+  client_height = dimension_y;
 
   /* create opaque window */
   win = XCreateSimpleWindow(bx_x_display,
@@ -992,7 +1017,7 @@ void bx_x11_gui_c::poll_events(bool process_input)
       break;
 
     case ConfigureNotify:
-      BX_DEBUG(("ConfigureNotify Xevent"));
+      configure_window(report.xconfigure.width, report.xconfigure.height);
       break;
 
     case ButtonPress:
@@ -1600,8 +1625,7 @@ void bx_x11_gui_c::clear_screen_impl(void)
   if(!bx_x_display) return;
   if(frame_active && frame_image)
   {
-    memset(frame_image->data, 0,
-           (size_t)frame_image->bytes_per_line * frame_image->height);
+    std::fill(frame_pixels.begin(), frame_pixels.end(), 0);
     present_frame();
     return;
   }
@@ -1613,7 +1637,7 @@ void bx_x11_gui_c::text_update_impl(u8*  old_text, u8*  new_text,
                                bx_vga_tminfo_t tm_info, unsigned nrows,
                                const unsigned* palette_indices)
 {
-  frame_active = false;
+  use_legacy_presentation();
   u8*           old_line;
 
   u8 *new_line;
@@ -1907,7 +1931,7 @@ void bx_x11_gui_c::text_update_impl(u8*  old_text, u8*  new_text,
 
 void bx_x11_gui_c::graphics_tile_update_impl(u8* tile, unsigned x0, unsigned y0)
 {
-  frame_active = false;
+  use_legacy_presentation();
   unsigned  x;
 
   unsigned  y;
@@ -2022,9 +2046,36 @@ void bx_x11_gui_c::graphics_tile_update_impl(u8* tile, unsigned x0, unsigned y0)
 
 void bx_x11_gui_c::present_frame()
 {
-  if(bx_x_display && frame_image && frame_active)
-    XPutImage(bx_x_display, win, gc, frame_image, 0, 0, 0, 0,
-              frame_image->width, frame_image->height);
+  if(!bx_x_display || !frame_active || frame_pixels.empty()) return;
+  prepare_frame_image(client_width, client_height);
+  if(!x11_compose_frame(frame_pixels.data(), dimension_x, dimension_y,
+                       client_width, client_height, video_linear,
+      [this](unsigned x, unsigned y, u32 pixel) {
+        XPutPixel(frame_image, x, y, x11_rgb((pixel >> 16) & 255,
+                                           (pixel >> 8) & 255, pixel & 255));
+      }))
+    FAILURE(Configuration, "Invalid X11 presentation dimensions");
+  XPutImage(bx_x_display, win, gc, frame_image, 0, 0, 0, 0,
+            client_width, client_height);
+}
+
+void bx_x11_gui_c::prepare_frame_image(unsigned width, unsigned height)
+{
+  if(frame_image && frame_image->width == (int)width && frame_image->height == (int)height)
+    return;
+  XImage* replacement = create_x11_image(width, height);
+  if(frame_image) XDestroyImage(frame_image);
+  frame_image = replacement;
+}
+
+void bx_x11_gui_c::configure_window(int width, int height)
+{
+  if(width <= 0 || height <= 0 || width > 32767 || height > 32767) return;
+  if(client_width == (unsigned)width && client_height == (unsigned)height) return;
+  if(frame_active) prepare_frame_image((unsigned)width, (unsigned)height);
+  client_width = (unsigned)width;
+  client_height = (unsigned)height;
+  if(frame_active) present_frame();
 }
 
 void bx_x11_gui_c::graphics_frame_update_impl(const u32* pixels,
@@ -2032,15 +2083,8 @@ void bx_x11_gui_c::graphics_frame_update_impl(const u32* pixels,
 {
   if(!x_init_done) FAILURE(Runtime, "X11 display is not initialized");
   if(!pixels) FAILURE(Configuration, "Missing X11 framebuffer pixels");
-  dimension_update(width, height, 0, 0, 32);
-  for(unsigned y = 0; y < height; ++y)
-    for(unsigned x = 0; x < width; ++x)
-    {
-      const u32 pixel = pixels[(size_t)y * width + x];
-      // XPutPixel handles host byte order, pixel packing and padded scanlines.
-      XPutPixel(frame_image, x, y, x11_rgb((pixel >> 16) & 255,
-                                          (pixel >> 8) & 255, pixel & 255));
-    }
+  dimension_update_impl(width, height, 0, 0, 32, true);
+  std::copy_n(pixels, (size_t)width * height, frame_pixels.data());
   frame_active = true;
   present_frame();
 }
@@ -2171,7 +2215,7 @@ u8* bx_x11_gui_c::graphics_tile_get_impl(unsigned x0, unsigned y0, unsigned*  w,
 void bx_x11_gui_c::graphics_tile_update_in_place_impl(unsigned x0, unsigned y0,
                                                  unsigned w, unsigned h)
 {
-  frame_active = false;
+  use_legacy_presentation();
   XPutImage(bx_x_display, win, gc, ximage, 0, 0, x0, y0, w, h);
 }
 
@@ -2212,8 +2256,13 @@ bool bx_x11_gui_c::palette_change_impl(unsigned index, unsigned red, unsigned gr
   }
 }
 
+void bx_x11_gui_c::use_legacy_presentation()
+{
+  if(frame_active) dimension_update_impl(dimension_x, dimension_y, 0, 0, vga_bpp);
+}
+
 void bx_x11_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheight,
-                                    unsigned fwidth, unsigned bpp)
+                                    unsigned fwidth, unsigned bpp, bool full_frame)
 {
   if(!x_init_done) FAILURE(Runtime, "X11 display is not initialized");
   validate_x11_dimensions(x, y);
@@ -2221,21 +2270,30 @@ void bx_x11_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheigh
      (fheight && !fwidth))
     FAILURE(Configuration, "Invalid X11 display mode");
 
-  if(bpp == 32)
+  const unsigned scale = full_frame ? configured_scale : 1;
+  if(x > 32767 / scale || y > 32767 / scale)
+    FAILURE(Configuration, "Scaled X11 display dimensions are out of range");
+  const unsigned driven_width = x * scale, driven_height = y * scale;
+  const bool resize = x != dimension_x || y != dimension_y || full_frame != frame_active;
+  std::vector<u32> replacement;
+  const bool replace_pixels = full_frame &&
+      (x != dimension_x || y != dimension_y || !frame_active || frame_pixels.empty());
+  if(full_frame)
   {
     if(default_visual->c_class != TrueColor)
       FAILURE(Configuration, "X11 full-frame display requires a TrueColor visual");
-    if(!frame_image || frame_image->width != (int)x || frame_image->height != (int)y)
+    if(replace_pixels)
     {
-      // Leave the old frame and dimensions intact if allocation fails.
-      XImage* replacement = create_x11_image(x, y);
-      if(frame_image) XDestroyImage(frame_image);
-      frame_image = replacement;
-      frame_active = true;
+      if((size_t)x > replacement.max_size() / y)
+        FAILURE(Configuration, "X11 framebuffer dimensions are out of range");
+      try { replacement.resize((size_t)x * y); }
+      catch(const std::bad_alloc&) { FAILURE(OutOfMemory, "Unable to allocate X11 framebuffer"); }
     }
+    prepare_frame_image(resize ? driven_width : client_width,
+                        resize ? driven_height : client_height);
   }
-  else
-    frame_active = false;
+  if(replace_pixels) frame_pixels.swap(replacement);
+  frame_active = full_frame;
   vga_bpp = bpp;
 
   if(fheight > 0)
@@ -2246,28 +2304,30 @@ void bx_x11_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheigh
     text_rows = y / font_height;
   }
 
-  if((x != dimension_x) || (y != dimension_y))
+  if(resize)
   {
-    XSizeHints  hints;
-    long        supplied_return;
-
-    if(XGetWMNormalHints(bx_x_display, win, &hints, &supplied_return)
-     && supplied_return & PMaxSize)
-    {
-      hints.max_width = hints.min_width = x;
-      hints.max_height = hints.min_height = y;
-      XSetWMNormalHints(bx_x_display, win, &hints);
-    }
-
-    XResizeWindow(bx_x_display, win, x, y);
-    dimension_x = x;
-    dimension_y = y;
+    XSizeHints hints = {};
+    hints.flags = PMinSize | PMaxSize;
+    hints.min_width = full_frame ? 1 : (int)x;
+    hints.min_height = full_frame ? 1 : (int)y;
+    hints.max_width = full_frame ? 32767 : (int)x;
+    hints.max_height = full_frame ? 32767 : (int)y;
+    XSetWMNormalHints(bx_x_display, win, &hints);
+    if(full_frame) XSetWindowBackgroundPixmap(bx_x_display, win, None);
+    else XSetWindowBackground(bx_x_display, win, black_pixel);
+    XResizeWindow(bx_x_display, win, driven_width, driven_height);
+    client_width = driven_width;
+    client_height = driven_height;
   }
+  dimension_x = x;
+  dimension_y = y;
 }
 
 void bx_x11_gui_c::exit_impl(void)
 {
   if(frame_image) { XDestroyImage(frame_image); frame_image = nullptr; }
+  std::vector<u32>().swap(frame_pixels);
+  client_width = client_height = 0;
   if(ximage) { XDestroyImage(ximage); ximage = nullptr; }
   // XCloseDisplay frees server resources, but GCs also need client cleanup.
   if(bx_x_display)
