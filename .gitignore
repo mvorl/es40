@@ -453,3 +453,6 @@ build/*
 /Visual Studio/packages/
 /Visual Studio/x64/
 /Visual Studio/x86/
+/Visual Studio/img/
+/Visual Studio/rom/
+/Visual Studio/iso/
