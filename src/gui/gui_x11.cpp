@@ -68,6 +68,8 @@
 #include "x11_scale.h"
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <new>
@@ -189,6 +191,8 @@ class bx_x11_gui_c : public bx_gui_c
     bool keyboard_focused = true, detectable_repeat = false;
     bool mouse_captured = false, guest_mouse_captured = false, mouse_sync_pending = true;
     bool mouse_warp_pending = false, mouse_position_valid = false;
+    bool mouse_invert_x = false, mouse_invert_y = false;
+    double mouse_speed = 1.0, mouse_remainder_x = 0.0, mouse_remainder_y = 0.0;
     unsigned mouse_buttons = 0, ignored_mouse_buttons = 0;
     int mouse_x = 0, mouse_y = 0, mouse_warp_x = 0, mouse_warp_y = 0;
     unsigned long mouse_input_serial = 0, mouse_motion_serial = 0, mouse_warp_serial = 0;
@@ -215,6 +219,8 @@ class bx_x11_gui_c : public bx_gui_c
     void load_keyboard_mapping();
     void load_hotkeys();
     void update_mouse_title();
+    void load_mouse_settings();
+    void send_mouse_motion(double dx, double dy);
     void sync_mouse_capture();
     void check_mouse_capture();
     void recenter_mouse();
@@ -742,12 +748,27 @@ void bx_x11_gui_c::load_video_settings()
   scale_change_enable = myCfg->get_bool_value("video.scale_change_enable", false);
 }
 
+void bx_x11_gui_c::load_mouse_settings()
+{
+  const char* speed = myCfg->get_text_value("mouse.speed", "1.0");
+  mouse_speed = std::atof(speed);
+  if(!std::isfinite(mouse_speed) || mouse_speed <= 0.0 || mouse_speed > 10.0)
+  {
+    printf("%%X11-W-MOUSESPEED: invalid mouse.speed \"%s\" "
+           "(valid: 0.0 < speed <= 10.0); using 1.0.\n", speed);
+    mouse_speed = 1.0;
+  }
+  mouse_invert_x = myCfg->get_bool_value("mouse.invert_x", false);
+  mouse_invert_y = myCfg->get_bool_value("mouse.invert_y", false);
+}
+
 void bx_x11_gui_c::specific_init_impl(unsigned tilewidth, unsigned tileheight)
 try
 {
   if(x_init_done) { new_gfx_api = 1; return; }
   validate_x11_dimensions(tilewidth, tileheight);
   load_video_settings();
+  load_mouse_settings();
   unsigned              i;
   int                   x;
   int                   y;  /* window position */
@@ -990,6 +1011,7 @@ void bx_x11_gui_c::mouse_enabled_changed_impl(bool val)
     const bool was_captured = mouse_captured;
     mouse_captured = mouse_warp_pending = mouse_position_valid = false;
     mouse_buttons = ignored_mouse_buttons = 0;
+    mouse_remainder_x = mouse_remainder_y = 0.0;
     mouse_sync_pending = true;
     if(bx_x_display)
     {
@@ -1002,6 +1024,7 @@ void bx_x11_gui_c::mouse_enabled_changed_impl(bool val)
   }
   if(mouse_captured || !bx_x_display || !win || window_destroyed || retired ||
      input_paused || input_detached || !guest_keyboard || !keyboard_focused) return;
+  mouse_remainder_x = mouse_remainder_y = 0.0;
   Window focus;
   int revert;
   XGetInputFocus(bx_x_display, &focus, &revert);
@@ -1143,14 +1166,27 @@ void bx_x11_gui_c::mouse_motion(XMotionEvent* event)
     mouse_warp_pending = false;
   }
   if(mouse_position_valid)
-  {
-    const int dx = event->x - mouse_x, dy = mouse_y - event->y;
-    sync_mouse_capture();
-    if(dx || dy) guest_keyboard->mouse_motion(dx, dy, 0, mouse_buttons);
-  }
+    send_mouse_motion((double)event->x - mouse_x, (double)mouse_y - event->y);
   mouse_x = event->x;
   mouse_y = event->y;
   mouse_position_valid = true;
+}
+
+void bx_x11_gui_c::send_mouse_motion(double dx, double dy)
+{
+  if(!mouse_captured || input_paused || input_detached || !guest_keyboard ||
+     !keyboard_focused || retired) return;
+  mouse_remainder_x += dx * (mouse_invert_x ? -mouse_speed : mouse_speed);
+  mouse_remainder_y += dy * (mouse_invert_y ? -mouse_speed : mouse_speed);
+  const double minimum = (std::numeric_limits<int>::min)();
+  const double maximum = (std::numeric_limits<int>::max)();
+  mouse_remainder_x = (std::max)(minimum, (std::min)(maximum, mouse_remainder_x));
+  mouse_remainder_y = (std::max)(minimum, (std::min)(maximum, mouse_remainder_y));
+  const int scaled_x = (int)mouse_remainder_x, scaled_y = (int)mouse_remainder_y;
+  mouse_remainder_x -= scaled_x;
+  mouse_remainder_y -= scaled_y;
+  sync_mouse_capture();
+  if(scaled_x || scaled_y) guest_keyboard->mouse_motion(scaled_x, scaled_y, 0, mouse_buttons);
 }
 
 /**
