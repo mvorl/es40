@@ -1027,6 +1027,12 @@ void validation_gui_scaleratio(EditorField *field)
     editor_number(field, EditorField::Type::Integer, 1, 0, 10);
 }
 
+static void validation_gui_workstation(EditorField *field)
+{
+    static const char *const choices[] = {"disable", "enable", nullptr};
+    editor_choices(field, choices);
+}
+
 // Shared GUI video settings.
 void edit_gui_video(const char *title)
 {
@@ -1060,6 +1066,11 @@ void edit_gui_video(const char *title)
     FormValues_t preset;
 
     c = theConfig->find_child("gui");
+    if (c != nullptr && !strcmp(c->get_myValue(), "win32"))
+        entry.push_back({"workstation on startup", "disable", "workstation",
+                         "enable opens ES40 Workstation before emulation starts.\n"
+                         "disable keeps the traditional Win32 window. --run bypasses this setting.\n"
+                         "This applies to standard Windows emulator builds.", validation_gui_workstation});
     if (c != nullptr && !strcmp(c->get_myValue(), "X11"))
         entry.push_back({"private colormap?", STR_YES, "private_colormap",
                          "Use a private X11 colormap.", validation_yes_no});
@@ -1080,7 +1091,11 @@ void edit_gui_video(const char *title)
     if (values != NULL)
     {
         for (int i = 0; i < num_entries; ++i)
-            set_form_value(c, i, entry[i].name, values[i]);
+        {
+            // Startup modes use exact values.
+            const bool startup_changed = !strcmp(entry[i].name, "workstation") && strcmp(preset[i], values[i]);
+            set_form_value(c, i, entry[i].name, values[i], startup_changed);
+        }
 
         // Clean up
         for (int i = 0; i < num_entries; ++i)

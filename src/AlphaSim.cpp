@@ -482,9 +482,23 @@ int main(int argc, char* argv[])
 		}
 		ch1[ll1] = '\0';
 
+#if defined(_WIN32) && !defined(IDB)
+		// Inspect startup options before creating devices.
+		CConfigurator* c = new CConfigurator(0, 0, 0, ch1, ll1, false);
+#else
 		CConfigurator* c = new CConfigurator(0, 0, 0, ch1, ll1);
+#endif
 		fclose(f);
 		free(ch1);
+
+#if defined(_WIN32) && !defined(IDB)
+		if (!direct_run && c->win32_workstation_enabled())
+		{
+			delete c;
+			return win32_manager_main(filename);
+		}
+		c->initialize();
+#endif
 
 		if (!theSystem)
 			FAILURE(Configuration, "no system initialized");

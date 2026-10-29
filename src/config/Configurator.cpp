@@ -181,7 +181,7 @@
    *      few minutes. Also, more comments should be provided to make it more readable.
    **/
 CConfigurator::CConfigurator(class CConfigurator* parent, char* name,
-	char* value, char* text, size_t textlen)
+	char* value, char* text, size_t textlen, bool initialize_root)
 {
 	if (parent == 0)
 	{
@@ -400,6 +400,9 @@ CConfigurator::CConfigurator(class CConfigurator* parent, char* name,
 	iNumValues = 0;
 	myName = name;
 	myValue = value;
+	myDevice = nullptr;
+	myClassId = c_none;
+	myFlags = 0;
 
 	for (size_t curtext = 0; curtext < textlen; curtext++)
 	{
@@ -505,40 +508,18 @@ CConfigurator::CConfigurator(class CConfigurator* parent, char* name,
 		}
 	}
 
-	int i;
-	if (parent == 0)
+	if (!parent && initialize_root) initialize();
+}
+
+bool CConfigurator::win32_workstation_enabled() const
+{
+	for (int i = 0; i < iNumChildren; ++i)
 	{
-		myFlags = 0;
-#if defined(_WIN32) && !defined(CONFIGURATION_ONLY)
-		// Serial-only children still need a shutdown endpoint.
-		const char* managed_gui = getenv("ES40_GUI");
-		if (managed_gui && !strcmp(managed_gui, "win32"))
-		{
-			bool has_gui = false;
-			for (i = 0; i < iNumChildren; ++i)
-			{
-				const char* value = pChildren[i]->get_myValue();
-				if (!strcmp(value, "sdl") || !strcmp(value, "win32") || !strcmp(value, "X11"))
-					has_gui = true;
-			}
-			if (!has_gui)
-			{
-				if (iNumChildren >= CFG_MAX_CHILDREN)
-					FAILURE(Configuration, "No room for the managed GUI configuration");
-				// Names must outlive the parsed configuration.
-				static char gui_name[] = "gui", gui_value[] = "win32";
-				auto* gui = new CConfigurator(this, gui_name, gui_value, nullptr, 0);
-				for (i = iNumChildren; i > 0; --i) pChildren[i] = pChildren[i - 1];
-				pChildren[0] = gui;
-				++iNumChildren;
-			}
-		}
-#endif
-		for (i = 0; i < iNumChildren; i++)
-		{
-			pChildren[i]->initialize();
-		}
+		auto* child = pChildren[i];
+		if (!strcmp(child->myName, "gui") && !strcmp(child->myValue, "win32"))
+			return !strcmp(child->get_text_value("workstation", "disable"), "enable");
 	}
+	return false;
 }
 
 /**
@@ -817,7 +798,7 @@ static const char* const kv_gui_win32[] = {
   "keyboard.use_mapping", "keyboard.map", "mouse.speed", "mouse.invert_x",
   "mouse.invert_y", "mouse.absolute", "hotkey.mouse_capture", "hotkey.ctrl_alt_delete",
   "hotkey.reset_window", "video.scale_ratio", "video.scale_change_enable",
-  "hotkey.scale_up", "hotkey.scale_down", "video.linear", "hotkey.media", 0 };
+  "hotkey.scale_up", "hotkey.scale_down", "video.linear", "hotkey.media", "workstation", 0 };
 static const char* const kv_mpu401[] = { "midi_out", 0 };
 
 classinfo classes[] = {
@@ -874,6 +855,37 @@ const char* CConfigurator::get_gui_name() const
  **/
 void CConfigurator::initialize()
 {
+	if (!pParent)
+	{
+#if defined(_WIN32) && !defined(CONFIGURATION_ONLY)
+		// Serial-only children still need a shutdown endpoint.
+		const char* managed_gui = getenv("ES40_GUI");
+		if (managed_gui && !strcmp(managed_gui, "win32"))
+		{
+			bool has_gui = false;
+			for (int i = 0; i < iNumChildren; ++i)
+			{
+				const char* value = pChildren[i]->get_myValue();
+				if (!strcmp(value, "sdl") || !strcmp(value, "win32") || !strcmp(value, "X11"))
+					has_gui = true;
+			}
+			if (!has_gui)
+			{
+				if (iNumChildren >= CFG_MAX_CHILDREN)
+					FAILURE(Configuration, "No room for the managed GUI configuration");
+				// Names must outlive the parsed configuration.
+				static char gui_name[] = "gui", gui_value[] = "win32";
+				auto* gui = new CConfigurator(this, gui_name, gui_value, nullptr, 0);
+				for (int i = iNumChildren; i > 0; --i) pChildren[i] = pChildren[i - 1];
+				pChildren[0] = gui;
+				++iNumChildren;
+			}
+		}
+#endif
+		for (int i = 0; i < iNumChildren; ++i) pChildren[i]->initialize();
+		return;
+	}
+
 	myClassId = c_none;
 
 	int     i = 0;

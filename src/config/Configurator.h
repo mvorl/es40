@@ -145,8 +145,9 @@ public:
       "=" + std::to_string(value.size()) + ":" + value;
   }
 
+  // Defer root initialization to inspect startup options.
   CConfigurator(class CConfigurator* parent, char* name, char* value,
-    char* text, size_t textlen);
+    char* text, size_t textlen, bool initialize_root = true);
   ~CConfigurator(void);
 
   char* strip_string(char* c);
@@ -173,6 +174,7 @@ public:
   CConfigurator* get_myParent() { return pParent; };
 
   void            initialize();
+  bool            win32_workstation_enabled() const;
 
 #ifdef CONFIGURATION_ONLY
   CConfigurator(class CConfigurator* parent, char* name, char* value);

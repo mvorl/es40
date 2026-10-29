@@ -1089,7 +1089,7 @@ public:
         if (background) DeleteObject(background);
     }
 
-    int run()
+    int run(const char* initial_config)
     {
         DWORD console[2] = {};
         if (GetConsoleProcessList(console, 2) == 1 && console[0] == GetCurrentProcessId()) FreeConsole();
@@ -1104,7 +1104,7 @@ public:
             LPWSTR* values;
             ~arguments_guard() { if (values) LocalFree(values); }
         } arguments{CommandLineToArgvW(GetCommandLineW(), &argc)};
-        if (!arguments.values || argc < 2 || argc > 3)
+        if (!arguments.values || (!initial_config && (argc < 2 || argc > 3 || wcscmp(arguments.values[1], L"--manager"))))
             throw runtime_error("Usage: es40.exe --manager [configuration.cfg]");
         initialize_fonts(); update_colors();
         INITCOMMONCONTROLSEX controls = { sizeof(controls), ICC_LISTVIEW_CLASSES | ICC_TAB_CLASSES | ICC_BAR_CLASSES };
@@ -1172,9 +1172,9 @@ public:
             if (!machines.empty()) select(0);
         }
         catch (const exception& error) { report(error.what()); }
-        if (argc == 3)
+        if (initial_config || argc == 3)
         {
-            try { add_configuration(arguments.values[2]); }
+            try { add_configuration(initial_config ? filesystem::path(initial_config) : filesystem::path(arguments.values[2])); }
             catch (const exception& error) { report(error.what()); }
         }
         MSG message = {};
@@ -1200,9 +1200,9 @@ public:
     }
 };
 
-int win32_manager_main()
+int win32_manager_main(const char* initial_config)
 {
-    try { win32_manager_window manager; return manager.run(); }
+    try { win32_manager_window manager; return manager.run(initial_config); }
     catch (const exception& error)
     {
         try { MessageBoxW(nullptr, manager_text(error.what()).c_str(), L"ES40 Workstation", MB_OK | MB_ICONERROR); }
