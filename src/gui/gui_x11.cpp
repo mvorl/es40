@@ -150,6 +150,12 @@ class bx_x11_gui_c : public bx_gui_c
     bool fullscreen_restore_maximized = false, fullscreen_restore_minimized = false;
     unsigned fullscreen_restore_width = 0, fullscreen_restore_height = 0;
     std::chrono::steady_clock::time_point fullscreen_deadline = {};
+    enum class reset_phase { idle, fullscreen, map, unmaximize };
+    reset_phase reset_stage = reset_phase::idle;
+    bool reset_window_pending = false, reset_configure_seen = false;
+    bool reset_map_maximized = false;
+    unsigned long reset_configure_serial = 0;
+    std::chrono::steady_clock::time_point reset_deadline = {};
     bool pending_guest_resize = false, pending_window_hints = false;
     bool read_window_state();
     void update_window_state();
@@ -158,6 +164,8 @@ class bx_x11_gui_c : public bx_gui_c
     bool send_fullscreen_request(bool enabled);
     void toggle_fullscreen();
     void sync_fullscreen(bool state_known = true);
+    void reset_window_size();
+    void sync_reset_window(bool state_known = true);
     void present_frame();
     void prepare_frame_image(unsigned width, unsigned height);
     void configure_window(int width, int height);
@@ -169,7 +177,7 @@ class bx_x11_gui_c : public bx_gui_c
     bool input_paused = false, input_detached = false, retired = false;
     bool legacy_redraw_pending = false;
     bool keyboard_focused = true, detectable_repeat = false;
-    x11_hotkey_binding hotkey_ctrl_alt_delete;
+    x11_hotkey_binding hotkey_ctrl_alt_delete, hotkey_reset_window;
     unsigned hotkey_modifier_masks[8] = {};
     unsigned hotkey_key_modifiers[256] = {};
     struct key_press
@@ -1061,6 +1069,9 @@ void bx_x11_gui_c::poll_events(bool process_input)
 
     case ConfigureNotify:
       configure_window(report.xconfigure.width, report.xconfigure.height);
+      if(reset_window_pending && reset_stage == reset_phase::unmaximize &&
+         report.xconfigure.serial >= reset_configure_serial)
+        reset_configure_seen = true;
       window_state_dirty = true;
       break;
 
@@ -1242,7 +1253,7 @@ void bx_x11_gui_c::poll_events(bool process_input)
   }
   reconcile_shortcut_keys();
   if(window_state_dirty || pending_guest_resize || pending_window_hints ||
-     fullscreen_transition_pending) update_window_state();
+     fullscreen_transition_pending || reset_window_pending) update_window_state();
   check_x11_error();
 }
 
@@ -1450,14 +1461,28 @@ unsigned bx_x11_gui_c::hotkey_modifiers(unsigned state) const
 void bx_x11_gui_c::load_hotkeys()
 {
   refresh_hotkey_modifiers();
-  const char* configured = myCfg->get_text_value("hotkey.ctrl_alt_delete", "Ctrl+Alt+End");
-  hotkey_ctrl_alt_delete = parse_x11_hotkey(configured, resolve_x11_hotkey);
-  if(hotkey_ctrl_alt_delete.invalid)
-    printf("%%X11-W-HOTKEY: hotkey.ctrl_alt_delete has invalid binding \"%s\"; action disabled.\n",
-           configured ? configured : "");
+  auto load = [this](const char* name, const char* fallback) {
+    const char* configured = myCfg->get_text_value(name, fallback);
+    const auto binding = parse_x11_hotkey(configured, resolve_x11_hotkey);
+    if(binding.invalid)
+      printf("%%X11-W-HOTKEY: %s has invalid binding \"%s\"; action disabled.\n",
+             name, configured ? configured : "");
+    return binding;
+  };
+  hotkey_ctrl_alt_delete = load("hotkey.ctrl_alt_delete", "Ctrl+Alt+End");
+  hotkey_reset_window = load("hotkey.reset_window", "Ctrl+Alt+Home");
+  if(hotkey_reset_window.enabled && hotkey_ctrl_alt_delete.matches(
+       hotkey_reset_window.key, hotkey_reset_window.modifiers))
+  {
+    printf("%%X11-W-HOTKEY: hotkey.ctrl_alt_delete and hotkey.reset_window both use \"%s\"; "
+           "both actions disabled.\n", hotkey_reset_window.display.c_str());
+    hotkey_ctrl_alt_delete.enabled = hotkey_reset_window.enabled = false;
+  }
   std::string title = "ES40 Emulator";
   if(hotkey_ctrl_alt_delete.enabled)
     title += " - " + hotkey_ctrl_alt_delete.display + " sends C+A+Del";
+  if(hotkey_reset_window.enabled)
+    title += " - " + hotkey_reset_window.display + " resets window";
   title += " - Alt+Enter fullscreen";
   XStoreName(bx_x_display, win, title.c_str());
 }
@@ -1553,6 +1578,12 @@ void bx_x11_gui_c::keypress(XKeyEvent* event, bool released)
   if(hotkey_ctrl_alt_delete.matches(host_key, modifiers))
   {
     send_ctrl_alt_delete(event->keycode);
+    return;
+  }
+  if(hotkey_reset_window.matches(host_key, modifiers))
+  {
+    key.down = key.suppressed = true;
+    reset_window_size();
     return;
   }
   if((host_key == XK_Return || host_key == XK_KP_Enter) && (modifiers & X11_HOTKEY_ALT))
@@ -2520,6 +2551,8 @@ void bx_x11_gui_c::sync_fullscreen(bool state_known)
 void bx_x11_gui_c::toggle_fullscreen()
 {
   if(!bx_x_display || !win || retired || window_destroyed) return;
+  reset_window_pending = false;
+  reset_stage = reset_phase::idle;
   if(!read_window_state())
   {
     printf("%%X11-W-FULLSCREEN: Unable to read the window state.\n");
@@ -2532,10 +2565,121 @@ void bx_x11_gui_c::toggle_fullscreen()
   apply_guest_size();
 }
 
+void bx_x11_gui_c::reset_window_size()
+{
+  if(!bx_x_display || !win || retired || window_destroyed || !dimension_x || !dimension_y) return;
+  pending_guest_resize = pending_window_hints = true;
+  if(!reset_window_pending)
+  {
+    reset_window_pending = true;
+    reset_stage = reset_phase::idle;
+    reset_configure_seen = reset_map_maximized = false;
+    reset_configure_serial = 0;
+    reset_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  }
+  if(fullscreen_transition_pending) fullscreen_requested = false;
+  update_window_state();
+}
+
+void bx_x11_gui_c::sync_reset_window(bool state_known)
+{
+  if(!reset_window_pending) return;
+  const auto now = std::chrono::steady_clock::now();
+  auto failed = [this] {
+    reset_window_pending = false;
+    reset_stage = reset_phase::idle;
+    printf("%%X11-W-RESET: The window manager did not restore the window.\n");
+  };
+  if(window_destroyed || retired)
+  {
+    reset_window_pending = false;
+    reset_stage = reset_phase::idle;
+    return;
+  }
+  if(!state_known)
+  {
+    if(now >= reset_deadline) failed();
+    return;
+  }
+  if(reset_stage == reset_phase::fullscreen)
+  {
+    if(fullscreen_transition_pending)
+    {
+      fullscreen_requested = false;
+      return;
+    }
+    if(window_fullscreen) { failed(); return; }
+    reset_stage = reset_phase::idle;
+  }
+  if(reset_stage == reset_phase::map)
+  {
+    if(window_minimized || (reset_map_maximized && !window_maximized && now < reset_deadline))
+    {
+      if(now >= reset_deadline) failed();
+      return;
+    }
+    reset_stage = reset_phase::idle;
+  }
+  if(reset_stage == reset_phase::unmaximize)
+  {
+    if(window_maximized || window_minimized || window_fullscreen)
+    {
+      if(now >= reset_deadline) failed();
+      return;
+    }
+    if(!reset_configure_seen && now < reset_deadline) return;
+    reset_stage = reset_phase::idle;
+  }
+  if(fullscreen_transition_pending || window_fullscreen)
+  {
+    fullscreen_requested = false;
+    if(!fullscreen_transition_pending && !send_fullscreen_request(false))
+    {
+      fullscreen_requested = window_fullscreen;
+      failed();
+      return;
+    }
+    reset_stage = reset_phase::fullscreen;
+    reset_deadline = now + std::chrono::seconds(4);
+    return;
+  }
+  if(window_minimized)
+  {
+    reset_map_maximized = window_maximized;
+    XMapWindow(bx_x_display, win);
+    reset_stage = reset_phase::map;
+    reset_deadline = now + std::chrono::seconds(2);
+    return;
+  }
+  if(window_maximized)
+  {
+    XEvent event = {};
+    event.xclient.type = ClientMessage;
+    event.xclient.window = win;
+    event.xclient.message_type = net_wm_state_atom;
+    event.xclient.format = 32;
+    event.xclient.data.l[1] = (long)net_wm_max_horz;
+    event.xclient.data.l[2] = (long)net_wm_max_vert;
+    event.xclient.data.l[3] = 1;
+    reset_configure_seen = false;
+    reset_configure_serial = XNextRequest(bx_x_display);
+    if(!XSendEvent(bx_x_display, RootWindow(bx_x_display, bx_x_screen_num), False,
+                   SubstructureRedirectMask | SubstructureNotifyMask, &event))
+    {
+      failed();
+      return;
+    }
+    reset_stage = reset_phase::unmaximize;
+    reset_deadline = now + std::chrono::seconds(2);
+    return;
+  }
+  reset_window_pending = false;
+}
+
 void bx_x11_gui_c::apply_guest_size()
 {
   if(window_destroyed || window_minimized || window_maximized || window_fullscreen ||
-     fullscreen_requested || fullscreen_transition_pending) return;
+     fullscreen_requested || fullscreen_transition_pending || reset_window_pending) return;
   if(pending_window_hints)
   {
     XSizeHints hints = {};
@@ -2560,9 +2704,14 @@ void bx_x11_gui_c::update_window_state()
   if(read_window_state())
   {
     sync_fullscreen();
+    sync_reset_window();
     apply_guest_size();
   }
-  else sync_fullscreen(false);
+  else
+  {
+    sync_fullscreen(false);
+    sync_reset_window(false);
+  }
 }
 
 void bx_x11_gui_c::configure_window(int width, int height)
@@ -2833,6 +2982,10 @@ void bx_x11_gui_c::exit_impl(void)
   fullscreen_entry_resize = fullscreen_restore_maximized = fullscreen_restore_minimized = false;
   fullscreen_restore_width = fullscreen_restore_height = 0;
   fullscreen_deadline = {};
+  reset_stage = reset_phase::idle;
+  reset_window_pending = reset_configure_seen = reset_map_maximized = false;
+  reset_configure_serial = 0;
+  reset_deadline = {};
   if(ximage) { XDestroyImage(ximage); ximage = nullptr; }
   // XCloseDisplay frees server resources, but GCs also need client cleanup.
   if(bx_x_display)
