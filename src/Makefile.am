@@ -285,6 +285,7 @@ es40_SOURCES = chipset/AliM1543C.cpp \
        gui/gui.cpp \
        gui/gui_x11.cpp \
        gui/x11_dispatch.h \
+       gui/x11_hotkey.h \
        gui/x11_scale.h \
        gui/keymap.cpp \
        gui/scancodes.cpp \

@@ -509,7 +509,7 @@ endif()
 
 if (HAVE_X11)
     list(APPEND ES40_DEFINITIONS HAVE_X11)
-    list(APPEND ES40_SOURCES src/gui/gui_x11.cpp src/gui/x11_dispatch.h src/gui/x11_scale.h)
+    list(APPEND ES40_SOURCES src/gui/gui_x11.cpp src/gui/x11_dispatch.h src/gui/x11_hotkey.h src/gui/x11_scale.h)
     list(APPEND ES40_LIBRARIES X11::X11)
 endif()
 

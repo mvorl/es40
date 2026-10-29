@@ -64,6 +64,7 @@
 #include "io/Keyboard.h"
 #include "system/System.h"
 #include "x11_dispatch.h"
+#include "x11_hotkey.h"
 #include "x11_scale.h"
 #include <algorithm>
 #include <limits>
@@ -147,10 +148,15 @@ class bx_x11_gui_c : public bx_gui_c
     bool input_paused = false, input_detached = false, retired = false;
     bool legacy_redraw_pending = false;
     bool keyboard_focused = true, detectable_repeat = false;
+    x11_hotkey_binding hotkey_ctrl_alt_delete;
+    unsigned hotkey_modifier_masks[8] = {};
+    unsigned hotkey_key_modifiers[256] = {};
     struct key_press
     {
       u32 guest = BX_KEY_UNHANDLED;
       bool down = false, modifier = false, control = false;
+      bool suppressed = false;
+      unsigned host_modifiers = 0;
     } pressed_keys[256];
     std::exception_ptr event_error;
 
@@ -160,6 +166,11 @@ class bx_x11_gui_c : public bx_gui_c
     void keypress(XKeyEvent* event, bool released);
     u32 translate_key(KeySym keysym);
     void release_keys();
+    void load_hotkeys();
+    void refresh_hotkey_modifiers();
+    unsigned hotkey_modifiers(unsigned state) const;
+    void send_ctrl_alt_delete(unsigned code);
+    void reconcile_shortcut_keys();
     bool guest_key_held(u32 key, unsigned except = 256) const;
     void specific_init_impl(unsigned tilewidth, unsigned tileheight);
     void text_update_impl(u8* old_text, u8* new_text, unsigned long cursor_x,
@@ -681,7 +692,6 @@ try
   int                   x;
   int                   y;  /* window position */
   unsigned int          border_width = 4;         /* four pixels */
-  const char*           window_name = "ES40 Emulator";
   const char*           icon_name = "ES40";
   XSizeHints            size_hints = {};
   char*                 display_name = NULL;
@@ -843,7 +853,7 @@ try
     class_hints.res_name = progname;
     class_hints.res_class = (char*) "ES40 Emulator";
 
-    XStoreName(bx_x_display, win, window_name);
+    load_hotkeys();
     XSetIconName(bx_x_display, win, icon_name);
     XSetWMNormalHints(bx_x_display, win, &size_hints);
     XSetWMHints(bx_x_display, win, &wm_hints);
@@ -1001,6 +1011,7 @@ void bx_x11_gui_c::poll_events(bool process_input)
     if(report.type == MappingNotify)
     {
       XRefreshKeyboardMapping(&report.xmapping);
+      load_hotkeys();
       continue;
     }
     if(report.xany.window != win) continue;
@@ -1183,6 +1194,7 @@ void bx_x11_gui_c::poll_events(bool process_input)
     BX_DEBUG(("handle_events(): send mouse status"));
     send_keyboard_mouse_status();
   }
+  reconcile_shortcut_keys();
   check_x11_error();
 }
 
@@ -1233,6 +1245,174 @@ void bx_x11_gui_c::flush(void)
   });
 }
 
+static unsigned x11_host_modifier(KeySym symbol)
+{
+  switch(symbol)
+  {
+  case XK_Control_L: case XK_Control_R: return X11_HOTKEY_CTRL;
+  case XK_Alt_L: case XK_Alt_R: return X11_HOTKEY_ALT;
+  case XK_Shift_L: case XK_Shift_R: return X11_HOTKEY_SHIFT;
+  case XK_Meta_L: case XK_Meta_R: case XK_Super_L: case XK_Super_R:
+  case XK_Hyper_L: case XK_Hyper_R: return X11_HOTKEY_GUI;
+  case XK_Mode_switch: case XK_ISO_Level3_Shift: case XK_ISO_Level5_Shift:
+    return X11_HOTKEY_UNSUPPORTED;
+  default: return 0;
+  }
+}
+
+static KeySym x11_key_symbol(unsigned code, unsigned group, unsigned level)
+{
+  const KeySym symbol = XkbKeycodeToKeysym(bx_x_display, (KeyCode)code, group, level);
+  if(symbol != NoSymbol || group >= 2 || level >= 2) return symbol;
+  XKeyEvent event = {};
+  event.display = bx_x_display;
+  event.keycode = code;
+  return XLookupKeysym(&event, (int)(group * 2 + level));
+}
+
+static KeySym x11_hotkey_symbol(unsigned code, unsigned group = 0)
+{
+  KeySym symbol = x11_key_symbol(code, group, 0);
+  if(symbol == NoSymbol)
+  {
+    group = 0;
+    symbol = x11_key_symbol(code, group, 0);
+  }
+  const KeySym shifted = x11_key_symbol(code, group, 1);
+  if(shifted >= XK_0 && shifted <= XK_9) return shifted;
+  if(symbol >= XK_A && symbol <= XK_Z) return symbol - XK_A + XK_a;
+  switch(symbol)
+  {
+  case XK_KP_Insert: return XK_KP_0;
+  case XK_KP_End: return XK_KP_1;
+  case XK_KP_Down: return XK_KP_2;
+  case XK_KP_Page_Down: return XK_KP_3;
+  case XK_KP_Left: return XK_KP_4;
+  case XK_KP_Begin: return XK_KP_5;
+  case XK_KP_Right: return XK_KP_6;
+  case XK_KP_Home: return XK_KP_7;
+  case XK_KP_Up: return XK_KP_8;
+  case XK_KP_Page_Up: return XK_KP_9;
+  case XK_KP_Delete: return XK_KP_Decimal;
+  case XK_ISO_Left_Tab: return XK_Tab;
+  case XK_Sys_Req: return XK_Print;
+  case XK_Break: return XK_Pause;
+  default: return symbol;
+  }
+}
+
+static x11_hotkey_key resolve_x11_hotkey(const std::string& configured)
+{
+  std::string name = configured;
+  const struct { const char* alias; const char* name; } aliases[] = {
+    { "Enter", "Return" }, { "Esc", "Escape" }, { "Del", "Delete" },
+    { "Ins", "Insert" }, { "PgUp", "PageUp" }, { "PgDn", "PageDown" },
+    { "PageDn", "PageDown" }, { "KpPlus", "Keypad +" },
+    { "KeypadPlus", "Keypad +" }, { "KpMinus", "Keypad -" },
+    { "KeypadMinus", "Keypad -" }
+  };
+  for(const auto& alias : aliases)
+    if(x11_hotkey_equal(name, alias.alias)) { name = alias.name; break; }
+  const struct { KeySym key; const char* name; } names[] = {
+    { XK_Return, "Return" }, { XK_Escape, "Escape" }, { XK_BackSpace, "Backspace" },
+    { XK_Tab, "Tab" }, { XK_space, "Space" }, { XK_Caps_Lock, "CapsLock" },
+    { XK_Print, "PrintScreen" }, { XK_Scroll_Lock, "ScrollLock" }, { XK_Pause, "Pause" },
+    { XK_Insert, "Insert" }, { XK_Home, "Home" }, { XK_Page_Up, "PageUp" },
+    { XK_Delete, "Delete" }, { XK_End, "End" }, { XK_Page_Down, "PageDown" },
+    { XK_Right, "Right" }, { XK_Left, "Left" }, { XK_Down, "Down" }, { XK_Up, "Up" },
+    { XK_Num_Lock, "Numlock" }, { XK_KP_Divide, "Keypad /" },
+    { XK_KP_Multiply, "Keypad *" }, { XK_KP_Subtract, "Keypad -" },
+    { XK_KP_Add, "Keypad +" }, { XK_KP_Enter, "Keypad Enter" },
+    { XK_KP_Decimal, "Keypad ." }, { XK_KP_Equal, "Keypad =" }
+  };
+  for(const auto& named : names)
+    if(x11_hotkey_equal(name, named.name)) return { (u32)named.key, named.name };
+  for(unsigned i = 0; i < 24; ++i)
+  {
+    const std::string label = "F" + std::to_string(i + 1);
+    if(x11_hotkey_equal(name, label.c_str())) return { XK_F1 + i, label };
+  }
+  for(unsigned i = 0; i < 10; ++i)
+  {
+    const std::string label = "Keypad " + std::to_string(i);
+    if(x11_hotkey_equal(name, label.c_str())) return { XK_KP_0 + i, label };
+  }
+  if(name.size() != 1 || (unsigned char)name[0] < 33 || (unsigned char)name[0] > 126)
+    return {};
+  KeySym symbol = (unsigned char)std::tolower((unsigned char)name[0]);
+  const KeyCode code = XKeysymToKeycode(bx_x_display, symbol);
+  if(code)
+    for(unsigned group = 0; group < 4; ++group)
+    {
+      const KeySym base = x11_key_symbol(code, group, 0);
+      const KeySym shifted = x11_key_symbol(code, group, 1);
+      if(base == symbol || shifted == symbol)
+      {
+        symbol = x11_hotkey_symbol(code, group);
+        break;
+      }
+    }
+  if(symbol < XK_space || symbol > XK_asciitilde) return {};
+  return { (u32)symbol, std::string(1, (char)std::toupper((unsigned char)symbol)) };
+}
+
+void bx_x11_gui_c::refresh_hotkey_modifiers()
+{
+  XModifierKeymap* mapping = XGetModifierMapping(bx_x_display);
+  if(!mapping) FAILURE(Runtime, "Unable to read X11 keyboard modifiers");
+  for(unsigned index = 0; index < 8; ++index)
+  {
+    unsigned modifiers = 0;
+    bool lock = index == 1;
+    for(int slot = 0; slot < mapping->max_keypermod; ++slot)
+    {
+      const KeyCode code = mapping->modifiermap[index * mapping->max_keypermod + slot];
+      if(!code) continue;
+      for(unsigned level = 0; level < 4; ++level)
+      {
+        const KeySym symbol = x11_key_symbol(code, 0, level);
+        modifiers |= x11_host_modifier(symbol);
+        lock = lock || symbol == XK_Caps_Lock || symbol == XK_Shift_Lock ||
+                       symbol == XK_Num_Lock || symbol == XK_Scroll_Lock;
+      }
+    }
+    if(modifiers & X11_HOTKEY_ALT) modifiers &= ~X11_HOTKEY_GUI;
+    hotkey_modifier_masks[index] = modifiers ? modifiers : lock ? 0 : X11_HOTKEY_UNSUPPORTED;
+  }
+  hotkey_modifier_masks[0] = X11_HOTKEY_SHIFT;
+  hotkey_modifier_masks[2] = X11_HOTKEY_CTRL;
+  for(auto& modifiers : hotkey_key_modifiers) modifiers = 0;
+  for(unsigned index = 0; index < 8; ++index)
+    for(int slot = 0; slot < mapping->max_keypermod; ++slot)
+    {
+      const KeyCode code = mapping->modifiermap[index * mapping->max_keypermod + slot];
+      if(code) hotkey_key_modifiers[code] |= hotkey_modifier_masks[index];
+    }
+  XFreeModifiermap(mapping);
+}
+
+unsigned bx_x11_gui_c::hotkey_modifiers(unsigned state) const
+{
+  unsigned modifiers = 0;
+  for(unsigned index = 0; index < 8; ++index)
+    if(state & (1u << index)) modifiers |= hotkey_modifier_masks[index];
+  return modifiers;
+}
+
+void bx_x11_gui_c::load_hotkeys()
+{
+  refresh_hotkey_modifiers();
+  const char* configured = myCfg->get_text_value("hotkey.ctrl_alt_delete", "Ctrl+Alt+End");
+  hotkey_ctrl_alt_delete = parse_x11_hotkey(configured, resolve_x11_hotkey);
+  if(hotkey_ctrl_alt_delete.invalid)
+    printf("%%X11-W-HOTKEY: hotkey.ctrl_alt_delete has invalid binding \"%s\"; action disabled.\n",
+           configured ? configured : "");
+  std::string title = "ES40 Emulator";
+  if(hotkey_ctrl_alt_delete.enabled)
+    title += " - " + hotkey_ctrl_alt_delete.display + " sends C+A+Del";
+  XStoreName(bx_x_display, win, title.c_str());
+}
+
 static bool x11_modifier_key(KeySym symbol, u32 guest)
 {
   return symbol == XK_Control_L || symbol == XK_Control_R ||
@@ -1252,6 +1432,47 @@ bool bx_x11_gui_c::guest_key_held(u32 key, unsigned except) const
     if(i != except && pressed_keys[i].down && pressed_keys[i].guest == key)
       return true;
   return false;
+}
+
+void bx_x11_gui_c::send_ctrl_alt_delete(unsigned code)
+{
+  pressed_keys[code].down = true;
+  pressed_keys[code].suppressed = true;
+  for(unsigned i = 8; i < 256; ++i)
+  {
+    auto& held = pressed_keys[i];
+    if(!held.down) continue;
+    if(!(held.host_modifiers & hotkey_ctrl_alt_delete.modifiers) &&
+       held.guest != BX_KEY_CTRL_L && held.guest != BX_KEY_CTRL_R &&
+       held.guest != BX_KEY_ALT_L && held.guest != BX_KEY_ALT_R &&
+       held.guest != BX_KEY_DELETE) continue;
+    if(held.guest != BX_KEY_UNHANDLED && !guest_key_held(held.guest, i))
+      guest_keyboard->gen_scancode(held.guest | BX_KEY_RELEASED);
+    held.guest = BX_KEY_UNHANDLED;
+    held.suppressed = true;
+  }
+  const u32 chord[] = { BX_KEY_CTRL_L, BX_KEY_ALT_L, BX_KEY_DELETE,
+                       BX_KEY_DELETE | BX_KEY_RELEASED, BX_KEY_ALT_L | BX_KEY_RELEASED,
+                       BX_KEY_CTRL_L | BX_KEY_RELEASED };
+  for(u32 key : chord)
+    guest_keyboard->gen_scancode(key);
+}
+
+void bx_x11_gui_c::reconcile_shortcut_keys()
+{
+  if(!bx_x_display || input_detached || retired) return;
+  bool suppressed = false;
+  for(const auto& key : pressed_keys) suppressed = suppressed || key.suppressed;
+  if(!suppressed || XPending(bx_x_display)) return;
+  char physical[32] = {};
+  XQueryKeymap(bx_x_display, physical);
+  if(XPending(bx_x_display)) return;
+  for(unsigned code = 8; code < 256; ++code)
+    if(pressed_keys[code].suppressed && !(physical[code / 8] & (1u << (code % 8))))
+      pressed_keys[code] = {};
+  CTRL_pressed = false;
+  for(const auto& key : pressed_keys)
+    if(key.down && key.control) CTRL_pressed = true;
 }
 
 void bx_x11_gui_c::keypress(XKeyEvent* event, bool released)
@@ -1278,6 +1499,14 @@ void bx_x11_gui_c::keypress(XKeyEvent* event, bool released)
     return;
   }
 
+  if(hotkey_ctrl_alt_delete.matches(
+       (u32)x11_hotkey_symbol(event->keycode, XkbGroupForCoreState(event->state)),
+       hotkey_modifiers(event->state)))
+  {
+    send_ctrl_alt_delete(event->keycode);
+    return;
+  }
+
   KeySym symbol = NoSymbol;
   char buffer[MAX_MAPPED_STRING_LENGTH];
   XLookupString(event, buffer, sizeof(buffer), &symbol, nullptr);
@@ -1286,7 +1515,8 @@ void bx_x11_gui_c::keypress(XKeyEvent* event, bool released)
     guest_keyboard->gen_scancode(guest);
   key.guest = guest;
   key.down = true;
-  key.modifier = x11_modifier_key(symbol, guest);
+  key.host_modifiers = hotkey_key_modifiers[event->keycode];
+  key.modifier = key.host_modifiers != 0 || x11_modifier_key(symbol, guest);
   key.control = symbol == XK_Control_L || symbol == XK_Control_R;
   CTRL_pressed = CTRL_pressed || key.control;
 }
@@ -1294,7 +1524,7 @@ void bx_x11_gui_c::keypress(XKeyEvent* event, bool released)
 void bx_x11_gui_c::release_keys()
 {
   for(unsigned code = 8; code < 256; ++code)
-    if(pressed_keys[code].down)
+    if(pressed_keys[code].down && !pressed_keys[code].suppressed)
     {
       XKeyEvent event = {};
       event.keycode = code;
