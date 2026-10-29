@@ -69,6 +69,7 @@
 extern "C"
 {
 #include <X11/Xlib.h>
+#include <X11/XKBlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xos.h>
 #include <X11/Xatom.h>
@@ -134,12 +135,21 @@ class bx_x11_gui_c : public bx_gui_c
     CSystem* guest_system = nullptr;
     bool input_paused = false, input_detached = false, retired = false;
     bool legacy_redraw_pending = false;
+    bool keyboard_focused = true, detectable_repeat = false;
+    struct key_press
+    {
+      u32 guest = BX_KEY_UNHANDLED;
+      bool down = false, modifier = false, control = false;
+    } pressed_keys[256];
     std::exception_ptr event_error;
 
     void invoke(std::function<void()> fn);
     void pump_events(bool process_input = false) noexcept;
     void poll_events(bool process_input);
-    void keypress(KeySym keysym, int press_release);
+    void keypress(XKeyEvent* event, bool released);
+    u32 translate_key(KeySym keysym);
+    void release_keys();
+    bool guest_key_held(u32 key, unsigned except = 256) const;
     void specific_init_impl(unsigned tilewidth, unsigned tileheight);
     void text_update_impl(u8* old_text, u8* new_text, unsigned long cursor_x,
                           unsigned long cursor_y, bx_vga_tminfo_t tm_info, unsigned rows,
@@ -514,6 +524,8 @@ void bx_x11_gui_c::detach_guest_input()
     guest_keyboard = nullptr;
     guest_system = nullptr;
     legacy_redraw_pending = false;
+    for(auto& key : pressed_keys) key = {};
+    CTRL_pressed = false;
   });
 }
 
@@ -822,7 +834,10 @@ try
   /* Select event types wanted */
   XSelectInput(bx_x_display, win, ExposureMask | KeyPressMask | KeyReleaseMask |
                ButtonPressMask | ButtonReleaseMask | StructureNotifyMask |
-               PointerMotionMask | EnterWindowMask | LeaveWindowMask);
+               PointerMotionMask | EnterWindowMask | LeaveWindowMask | FocusChangeMask);
+  Bool repeat_supported = False;
+  detectable_repeat = XkbSetDetectableAutoRepeat(bx_x_display, True, &repeat_supported)
+                      && repeat_supported;
 
   /* Create default Graphics Context */
   gc = XCreateGC(bx_x_display, win, valuemask, &values);
@@ -923,6 +938,7 @@ static Bool x11_lifecycle_event(Display*, XEvent* event, XPointer)
   case KeyPress: case KeyRelease:
   case ButtonPress: case ButtonRelease:
   case MotionNotify: case EnterNotify: case LeaveNotify:
+  case FocusIn: case FocusOut: case MappingNotify:
     return False;
   default:
     return True;
@@ -934,12 +950,6 @@ void bx_x11_gui_c::poll_events(bool process_input)
   if(!bx_x_display) return;
   check_x11_error();
   XEvent                report;
-  XKeyEvent*            key_event;
-  KeySym                keysym;
-  XComposeStatus        compose;
-  char                  buffer[MAX_MAPPED_STRING_LENGTH];
-  int                   bufsize = MAX_MAPPED_STRING_LENGTH;
-  int                   charcount;
   bool                  mouse_update;
 
   XPointerMovedEvent*   pointer_event;
@@ -962,6 +972,11 @@ void bx_x11_gui_c::poll_events(bool process_input)
     {
       if(!XPending(bx_x_display)) break;
       XNextEvent(bx_x_display, &report);
+    }
+    if(report.type == MappingNotify)
+    {
+      XRefreshKeyboardMapping(&report.xmapping);
+      continue;
     }
     if(report.xany.window != win) continue;
     current_z = 0;
@@ -1057,15 +1072,31 @@ void bx_x11_gui_c::poll_events(bool process_input)
       break;
 
     case KeyPress:
-      key_event = (XKeyEvent*) &report;
-      charcount = XLookupString(key_event, buffer, bufsize, &keysym, &compose);
-      keypress(keysym, 0);
+      keypress(&report.xkey, false);
       break;
 
     case KeyRelease:
-      key_event = (XKeyEvent*) &report;
-      charcount = XLookupString(key_event, buffer, bufsize, &keysym, &compose);
-      keypress(keysym, 1);
+      if(!detectable_repeat && XEventsQueued(bx_x_display, QueuedAfterReading))
+      {
+        XEvent next;
+        XPeekEvent(bx_x_display, &next);
+        if(next.type == KeyPress && next.xkey.window == report.xkey.window &&
+           next.xkey.keycode == report.xkey.keycode && next.xkey.time == report.xkey.time)
+          break;
+      }
+      keypress(&report.xkey, true);
+      break;
+
+    case FocusOut:
+      if(report.xfocus.detail != NotifyInferior)
+      {
+        keyboard_focused = false;
+        release_keys();
+      }
+      break;
+
+    case FocusIn:
+      keyboard_focused = true;
       break;
 
     case MotionNotify:
@@ -1177,15 +1208,78 @@ void bx_x11_gui_c::flush(void)
   });
 }
 
-void bx_x11_gui_c::keypress(KeySym keysym, int press_release)
+static bool x11_modifier_key(KeySym symbol, u32 guest)
 {
-  if(!guest_keyboard || input_paused || input_detached) return;
-  u32 key_event;
+  return symbol == XK_Control_L || symbol == XK_Control_R ||
+         symbol == XK_Shift_L || symbol == XK_Shift_R ||
+         symbol == XK_Alt_L || symbol == XK_Alt_R ||
+         symbol == XK_Meta_L || symbol == XK_Meta_R ||
+         symbol == XK_Super_L || symbol == XK_Super_R ||
+         guest == BX_KEY_CTRL_L || guest == BX_KEY_CTRL_R ||
+         guest == BX_KEY_SHIFT_L || guest == BX_KEY_SHIFT_R ||
+         guest == BX_KEY_ALT_L || guest == BX_KEY_ALT_R ||
+         guest == BX_KEY_WIN_L || guest == BX_KEY_WIN_R;
+}
 
-  if((keysym == XK_Control_L) || (keysym == XK_Control_R))
+bool bx_x11_gui_c::guest_key_held(u32 key, unsigned except) const
+{
+  for(unsigned i = 0; i < 256; ++i)
+    if(i != except && pressed_keys[i].down && pressed_keys[i].guest == key)
+      return true;
+  return false;
+}
+
+void bx_x11_gui_c::keypress(XKeyEvent* event, bool released)
+{
+  if(!guest_keyboard || input_paused || input_detached ||
+     event->keycode < 8 || event->keycode >= 256) return;
+  auto& key = pressed_keys[event->keycode];
+  if(released)
   {
-    CTRL_pressed = !press_release;
+    if(!key.down) return;
+    if(key.guest != BX_KEY_UNHANDLED && !guest_key_held(key.guest, event->keycode))
+      guest_keyboard->gen_scancode(key.guest | BX_KEY_RELEASED);
+    key = {};
+    CTRL_pressed = false;
+    for(const auto& held : pressed_keys)
+      if(held.down && held.control) CTRL_pressed = true;
+    return;
   }
+  if(!keyboard_focused) return;
+  if(key.down)
+  {
+    if(key.guest != BX_KEY_UNHANDLED && !key.modifier)
+      guest_keyboard->gen_scancode(key.guest);
+    return;
+  }
+
+  KeySym symbol = NoSymbol;
+  char buffer[MAX_MAPPED_STRING_LENGTH];
+  XLookupString(event, buffer, sizeof(buffer), &symbol, nullptr);
+  const u32 guest = translate_key(symbol);
+  if(guest != BX_KEY_UNHANDLED && !guest_key_held(guest))
+    guest_keyboard->gen_scancode(guest);
+  key.guest = guest;
+  key.down = true;
+  key.modifier = x11_modifier_key(symbol, guest);
+  key.control = symbol == XK_Control_L || symbol == XK_Control_R;
+  CTRL_pressed = CTRL_pressed || key.control;
+}
+
+void bx_x11_gui_c::release_keys()
+{
+  for(unsigned code = 8; code < 256; ++code)
+    if(pressed_keys[code].down)
+    {
+      XKeyEvent event = {};
+      event.keycode = code;
+      keypress(&event, true);
+    }
+}
+
+u32 bx_x11_gui_c::translate_key(KeySym keysym)
+{
+  u32 key_event;
 
   /* Old (no mapping) behavior */
   if(!x_keymapping)
@@ -1480,8 +1574,7 @@ void bx_x11_gui_c::keypress(KeySym keysym, int press_release)
 
       default:
         BX_ERROR(("xkeypress(): keysym %x unhandled!", (unsigned) keysym));
-        return;
-        break;
+        return BX_KEY_UNHANDLED;
       }
     }
   }
@@ -1493,16 +1586,13 @@ void bx_x11_gui_c::keypress(KeySym keysym, int press_release)
     if(!entry)
     {
       BX_ERROR(("xkeypress(): keysym %x unhandled!", (unsigned) keysym));
-      return;
+      return BX_KEY_UNHANDLED;
     }
 
     key_event = entry->baseKey;
   }
 
-  if(press_release)
-    key_event |= BX_KEY_RELEASED;
-
-  guest_keyboard->gen_scancode(key_event);
+  return key_event < BX_KEY_NBKEYS ? key_event : BX_KEY_UNHANDLED;
 }
 
 void bx_x11_gui_c::clear_screen_impl(void)
@@ -2204,6 +2294,9 @@ void bx_x11_gui_c::exit_impl(void)
   mouse_button_state = 0;
   CTRL_pressed = false;
   legacy_redraw_pending = false;
+  for(auto& key : pressed_keys) key = {};
+  keyboard_focused = true;
+  detectable_repeat = false;
 }
 
 static void warp_cursor(int dx, int dy)
