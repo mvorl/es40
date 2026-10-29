@@ -1170,6 +1170,16 @@ public:
         {
             for (const auto& configuration : win32_library_load(store)) add_configuration(configuration, false);
             if (!machines.empty()) select(0);
+            else if (!initial_config && argc == 2)
+            {
+                for (const auto& directory : { filesystem::current_path(), executable.parent_path() })
+                {
+                    const filesystem::path candidate = directory / L"es40.cfg";
+                    if (!filesystem::is_regular_file(candidate) || filesystem::file_size(candidate) == 0) continue;
+                    add_configuration(candidate);
+                    break;
+                }
+            }
         }
         catch (const exception& error) { report(error.what()); }
         if (initial_config || argc == 3)
