@@ -137,6 +137,16 @@ class bx_x11_gui_c : public bx_gui_c
     unsigned client_width = 0, client_height = 0, configured_scale = 1;
     bool video_linear = true;
     bool frame_active = false;
+    Atom wm_state_atom = None, net_wm_state_atom = None;
+    Atom net_wm_max_horz = None, net_wm_max_vert = None;
+    Atom net_wm_fullscreen = None, net_wm_hidden = None;
+    bool window_state_dirty = true, window_destroyed = false;
+    bool window_maximized = false, window_minimized = false, window_fullscreen = false;
+    bool fullscreen_windowed_deferred = false;
+    bool pending_guest_resize = false, pending_window_hints = false;
+    bool read_window_state();
+    void update_window_state();
+    void apply_guest_size();
     void present_frame();
     void prepare_frame_image(unsigned width, unsigned height);
     void configure_window(int width, int height);
@@ -864,12 +874,22 @@ try
     if(!wm_delete_window || !wm_protocols ||
        !XSetWMProtocols(bx_x_display, win, &wm_delete_window, 1))
       FAILURE(Runtime, "Unable to register X11 window protocols");
+    wm_state_atom = XInternAtom(bx_x_display, "WM_STATE", False);
+    net_wm_state_atom = XInternAtom(bx_x_display, "_NET_WM_STATE", False);
+    net_wm_max_horz = XInternAtom(bx_x_display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
+    net_wm_max_vert = XInternAtom(bx_x_display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
+    net_wm_fullscreen = XInternAtom(bx_x_display, "_NET_WM_STATE_FULLSCREEN", False);
+    net_wm_hidden = XInternAtom(bx_x_display, "_NET_WM_STATE_HIDDEN", False);
+    if(!wm_state_atom || !net_wm_state_atom || !net_wm_max_horz || !net_wm_max_vert ||
+       !net_wm_fullscreen || !net_wm_hidden)
+      FAILURE(Runtime, "Unable to register X11 window state atoms");
   }
 
   /* Select event types wanted */
   XSelectInput(bx_x_display, win, ExposureMask | KeyPressMask | KeyReleaseMask |
                ButtonPressMask | ButtonReleaseMask | StructureNotifyMask |
-               PointerMotionMask | EnterWindowMask | LeaveWindowMask | FocusChangeMask);
+               PointerMotionMask | EnterWindowMask | LeaveWindowMask | FocusChangeMask |
+               PropertyChangeMask);
   Bool repeat_supported = False;
   detectable_repeat = XkbSetDetectableAutoRepeat(bx_x_display, True, &repeat_supported)
                       && repeat_supported;
@@ -1029,6 +1049,16 @@ void bx_x11_gui_c::poll_events(bool process_input)
 
     case ConfigureNotify:
       configure_window(report.xconfigure.width, report.xconfigure.height);
+      window_state_dirty = true;
+      break;
+
+    case PropertyNotify:
+      if(report.xproperty.atom == wm_state_atom || report.xproperty.atom == net_wm_state_atom)
+        window_state_dirty = true;
+      break;
+
+    case UnmapNotify:
+      window_state_dirty = true;
       break;
 
     case ButtonPress:
@@ -1155,6 +1185,7 @@ void bx_x11_gui_c::poll_events(bool process_input)
       break;
 
     case MapNotify:
+      window_state_dirty = true;
       if(frame_active) present_frame();
       else legacy_redraw_pending = true;
 
@@ -1174,8 +1205,11 @@ void bx_x11_gui_c::poll_events(bool process_input)
       break;
 
     case DestroyNotify:
-      if(report.xdestroywindow.window == win && guest_system)
-        guest_system->RequestShutdown();
+      if(report.xdestroywindow.window == win)
+      {
+        window_destroyed = true;
+        if(guest_system) guest_system->RequestShutdown();
+      }
       break;
 
     default:
@@ -1195,6 +1229,7 @@ void bx_x11_gui_c::poll_events(bool process_input)
     send_keyboard_mouse_status();
   }
   reconcile_shortcut_keys();
+  if(window_state_dirty || pending_guest_resize || pending_window_hints) update_window_state();
   check_x11_error();
 }
 
@@ -2298,6 +2333,87 @@ void bx_x11_gui_c::prepare_frame_image(unsigned width, unsigned height)
   frame_image = replacement;
 }
 
+static bool read_x11_property(Atom property, Atom type, unsigned long* values,
+                              unsigned capacity, unsigned long& count, unsigned minimum = 0)
+{
+  Atom actual_type = None;
+  int format = 0;
+  unsigned long remaining = 0;
+  unsigned char* data = nullptr;
+  count = 0;
+  const int status = XGetWindowProperty(bx_x_display, win, property, 0, capacity,
+      False, type, &actual_type, &format, &count, &remaining, &data);
+  const bool valid = status == Success && (actual_type == None ||
+      (actual_type == type && format == 32 && remaining == 0 &&
+       count >= minimum && count <= capacity &&
+       (!count || data)));
+  if(valid && actual_type != None && count)
+    std::copy_n(reinterpret_cast<unsigned long*>(data), count, values);
+  if(actual_type == None) count = 0;
+  if(data) XFree(data);
+  return valid;
+}
+
+bool bx_x11_gui_c::read_window_state()
+{
+  if(!bx_x_display || !win || window_destroyed) return false;
+  XWindowAttributes attributes = {};
+  unsigned long states[64] = {}, wm_state[2] = {}, count = 0, wm_count = 0;
+  if(!XGetWindowAttributes(bx_x_display, win, &attributes) ||
+     !read_x11_property(net_wm_state_atom, XA_ATOM, states, 64, count) ||
+     !read_x11_property(wm_state_atom, wm_state_atom, wm_state, 2, wm_count, 2) ||
+     (wm_count && wm_state[0] != NormalState && wm_state[0] != IconicState &&
+      wm_state[0] != WithdrawnState))
+  {
+    window_state_dirty = true;
+    return false;
+  }
+  bool maximized = false, fullscreen = false;
+  bool minimized = attributes.map_state != IsViewable ||
+                   (wm_count && wm_state[0] != NormalState);
+  for(unsigned long i = 0; i < count; ++i)
+  {
+    maximized = maximized || states[i] == net_wm_max_horz || states[i] == net_wm_max_vert;
+    fullscreen = fullscreen || states[i] == net_wm_fullscreen;
+    minimized = minimized || states[i] == net_wm_hidden;
+  }
+  if(fullscreen && !window_fullscreen)
+    fullscreen_windowed_deferred = window_maximized || window_minimized || maximized || minimized;
+  if(!fullscreen) fullscreen_windowed_deferred = false;
+  window_maximized = maximized;
+  window_minimized = minimized;
+  window_fullscreen = fullscreen;
+  window_state_dirty = false;
+  return true;
+}
+
+void bx_x11_gui_c::apply_guest_size()
+{
+  if(window_destroyed || window_minimized || window_maximized || window_fullscreen) return;
+  if(pending_window_hints)
+  {
+    XSizeHints hints = {};
+    hints.flags = PMinSize | PMaxSize;
+    hints.min_width = frame_active ? 1 : (int)dimension_x;
+    hints.min_height = frame_active ? 1 : (int)dimension_y;
+    hints.max_width = frame_active ? 32767 : (int)dimension_x;
+    hints.max_height = frame_active ? 32767 : (int)dimension_y;
+    XSetWMNormalHints(bx_x_display, win, &hints);
+  }
+  if(pending_guest_resize)
+  {
+    const unsigned scale = frame_active ? configured_scale : 1;
+    XResizeWindow(bx_x_display, win, dimension_x * scale, dimension_y * scale);
+  }
+  check_x11_error();
+  pending_window_hints = pending_guest_resize = false;
+}
+
+void bx_x11_gui_c::update_window_state()
+{
+  if(read_window_state()) apply_guest_size();
+}
+
 void bx_x11_gui_c::configure_window(int width, int height)
 {
   if(width <= 0 || height <= 0 || width > 32767 || height > 32767) return;
@@ -2503,7 +2619,6 @@ void bx_x11_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheigh
   const unsigned scale = full_frame ? configured_scale : 1;
   if(x > 32767 / scale || y > 32767 / scale)
     FAILURE(Configuration, "Scaled X11 display dimensions are out of range");
-  const unsigned driven_width = x * scale, driven_height = y * scale;
   const bool resize = x != dimension_x || y != dimension_y || full_frame != frame_active;
   std::vector<u32> replacement;
   const bool replace_pixels = full_frame &&
@@ -2519,9 +2634,9 @@ void bx_x11_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheigh
       try { replacement.resize((size_t)x * y); }
       catch(const std::bad_alloc&) { FAILURE(OutOfMemory, "Unable to allocate X11 framebuffer"); }
     }
-    prepare_frame_image(resize ? driven_width : client_width,
-                        resize ? driven_height : client_height);
+    prepare_frame_image(client_width, client_height);
   }
+  const bool state_known = resize && read_window_state();
   if(replace_pixels) frame_pixels.swap(replacement);
   frame_active = full_frame;
   vga_bpp = bpp;
@@ -2536,21 +2651,15 @@ void bx_x11_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheigh
 
   if(resize)
   {
-    XSizeHints hints = {};
-    hints.flags = PMinSize | PMaxSize;
-    hints.min_width = full_frame ? 1 : (int)x;
-    hints.min_height = full_frame ? 1 : (int)y;
-    hints.max_width = full_frame ? 32767 : (int)x;
-    hints.max_height = full_frame ? 32767 : (int)y;
-    XSetWMNormalHints(bx_x_display, win, &hints);
     if(full_frame) XSetWindowBackgroundPixmap(bx_x_display, win, None);
     else XSetWindowBackground(bx_x_display, win, black_pixel);
-    XResizeWindow(bx_x_display, win, driven_width, driven_height);
-    client_width = driven_width;
-    client_height = driven_height;
+    pending_window_hints = true;
+    if(!state_known || !window_fullscreen || fullscreen_windowed_deferred)
+      pending_guest_resize = true;
   }
   dimension_x = x;
   dimension_y = y;
+  if(state_known) apply_guest_size();
 }
 
 void bx_x11_gui_c::exit_impl(void)
@@ -2558,6 +2667,11 @@ void bx_x11_gui_c::exit_impl(void)
   if(frame_image) { XDestroyImage(frame_image); frame_image = nullptr; }
   std::vector<u32>().swap(frame_pixels);
   client_width = client_height = 0;
+  wm_state_atom = net_wm_state_atom = None;
+  net_wm_max_horz = net_wm_max_vert = net_wm_fullscreen = net_wm_hidden = None;
+  window_state_dirty = true;
+  window_destroyed = window_maximized = window_minimized = window_fullscreen = false;
+  fullscreen_windowed_deferred = pending_guest_resize = pending_window_hints = false;
   if(ximage) { XDestroyImage(ximage); ximage = nullptr; }
   // XCloseDisplay frees server resources, but GCs also need client cleanup.
   if(bx_x_display)
