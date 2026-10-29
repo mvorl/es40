@@ -456,3 +456,4 @@ build/*
 /Visual Studio/img/
 /Visual Studio/rom/
 /Visual Studio/iso/
+Visual Studio/toy.rom
