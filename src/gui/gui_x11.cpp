@@ -191,7 +191,7 @@ class bx_x11_gui_c : public bx_gui_c
     bool keyboard_focused = true, detectable_repeat = false;
     bool mouse_captured = false, guest_mouse_captured = false, mouse_sync_pending = true;
     bool mouse_warp_pending = false, mouse_position_valid = false;
-    bool mouse_invert_x = false, mouse_invert_y = false;
+    bool mouse_invert_x = false, mouse_invert_y = false, mouse_absolute = false;
     double mouse_speed = 1.0, mouse_remainder_x = 0.0, mouse_remainder_y = 0.0;
     unsigned mouse_buttons = 0, ignored_mouse_buttons = 0;
     int mouse_x = 0, mouse_y = 0, mouse_warp_x = 0, mouse_warp_y = 0;
@@ -223,6 +223,8 @@ class bx_x11_gui_c : public bx_gui_c
     void send_mouse_motion(double dx, double dy);
     void sync_mouse_capture();
     void check_mouse_capture();
+    void reconcile_mouse_buttons();
+    void reset_absolute_mouse_position();
     void recenter_mouse();
     void mouse_button(XButtonEvent* event, bool released);
     void mouse_motion(XMotionEvent* event);
@@ -760,6 +762,7 @@ void bx_x11_gui_c::load_mouse_settings()
   }
   mouse_invert_x = myCfg->get_bool_value("mouse.invert_x", false);
   mouse_invert_y = myCfg->get_bool_value("mouse.invert_y", false);
+  mouse_absolute = myCfg->get_bool_value("mouse.absolute", false);
 }
 
 void bx_x11_gui_c::specific_init_impl(unsigned tilewidth, unsigned tileheight)
@@ -1017,6 +1020,8 @@ void bx_x11_gui_c::mouse_enabled_changed_impl(bool val)
     {
       mouse_input_serial = XNextRequest(bx_x_display);
       XUngrabPointer(bx_x_display, CurrentTime);
+      if(mouse_absolute && was_captured && win && !window_destroyed)
+        XUndefineCursor(bx_x_display, win);
       XFlush(bx_x_display);
     }
     if(was_captured) update_mouse_title();
@@ -1048,21 +1053,30 @@ void bx_x11_gui_c::mouse_enabled_changed_impl(bool val)
       return;
     }
   }
-  const int result = XGrabPointer(bx_x_display, win, False,
-      ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-      GrabModeAsync, GrabModeAsync, win, hidden_cursor, CurrentTime);
-  if(result != GrabSuccess)
+  if(!mouse_absolute)
   {
-    printf("%%X11-W-MOUSE: Unable to capture the mouse (X grab status %d).\n", result);
-    return;
+    const int result = XGrabPointer(bx_x_display, win, False,
+        ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+        GrabModeAsync, GrabModeAsync, win, hidden_cursor, CurrentTime);
+    if(result != GrabSuccess)
+    {
+      printf("%%X11-W-MOUSE: Unable to capture the mouse (X grab status %d).\n", result);
+      return;
+    }
   }
   mouse_captured = true;
   mouse_sync_pending = true;
   try
   {
+    if(mouse_absolute)
+    {
+      XUngrabPointer(bx_x_display, CurrentTime);
+      XDefineCursor(bx_x_display, win, hidden_cursor);
+    }
     Window root, child;
     int root_x, root_y;
     unsigned buttons;
+    const unsigned long pointer_serial = XNextRequest(bx_x_display);
     if(!XQueryPointer(bx_x_display, win, &root, &child, &root_x, &root_y,
                       &mouse_x, &mouse_y, &buttons) || x_error)
     {
@@ -1076,7 +1090,7 @@ void bx_x11_gui_c::mouse_enabled_changed_impl(bool val)
     mouse_buttons = 0;
     mouse_position_valid = mouse_warp_pending = false;
     recenter_mouse();
-    mouse_input_serial = mouse_motion_serial = mouse_warp_serial;
+    mouse_input_serial = mouse_motion_serial = mouse_absolute ? pointer_serial : mouse_warp_serial;
     update_mouse_title();
   }
   catch(...)
@@ -1110,7 +1124,7 @@ void bx_x11_gui_c::check_mouse_capture()
 
 void bx_x11_gui_c::recenter_mouse()
 {
-  if(!mouse_captured || mouse_warp_pending || !client_width || !client_height) return;
+  if(mouse_absolute || !mouse_captured || mouse_warp_pending || !client_width || !client_height) return;
   const int x = (int)(client_width / 2), y = (int)(client_height / 2);
   if(mouse_position_valid && mouse_x == x && mouse_y == y) return;
   mouse_warp_x = x;
@@ -1118,6 +1132,39 @@ void bx_x11_gui_c::recenter_mouse()
   mouse_warp_serial = XNextRequest(bx_x_display);
   mouse_warp_pending = true;
   XWarpPointer(bx_x_display, None, win, 0, 0, 0, 0, x, y);
+}
+
+void bx_x11_gui_c::reset_absolute_mouse_position()
+{
+  if(!mouse_absolute) return;
+  mouse_position_valid = false;
+  if(mouse_captured && bx_x_display)
+  {
+    mouse_motion_serial = XNextRequest(bx_x_display);
+    XNoOp(bx_x_display);
+  }
+}
+
+void bx_x11_gui_c::reconcile_mouse_buttons()
+{
+  if(!mouse_absolute || !mouse_captured || input_paused || input_detached ||
+     !guest_keyboard || !keyboard_focused || retired || XPending(bx_x_display)) return;
+  Window root, child;
+  int root_x, root_y, x, y;
+  unsigned state;
+  if(!XQueryPointer(bx_x_display, win, &root, &child, &root_x, &root_y, &x, &y, &state) ||
+     XPending(bx_x_display)) return;
+  const unsigned physical = ((state & Button1Mask) ? 1 : 0) |
+                            ((state & Button3Mask) ? 2 : 0) |
+                            ((state & Button2Mask) ? 4 : 0);
+  ignored_mouse_buttons &= physical;
+  const unsigned held = mouse_buttons & physical;
+  if(held != mouse_buttons)
+  {
+    sync_mouse_capture();
+    guest_keyboard->mouse_motion(0, 0, 0, held);
+    mouse_buttons = held;
+  }
 }
 
 void bx_x11_gui_c::mouse_button(XButtonEvent* event, bool released)
@@ -1130,6 +1177,12 @@ void bx_x11_gui_c::mouse_button(XButtonEvent* event, bool released)
     return;
   }
   if(input_paused || input_detached || !guest_keyboard || !keyboard_focused || retired) return;
+  if(mouse_absolute && !released && (event->x < 0 || event->y < 0 ||
+     (unsigned)event->x >= client_width || (unsigned)event->y >= client_height))
+  {
+    XUngrabPointer(bx_x_display, CurrentTime);
+    return;
+  }
   if(!mouse_captured)
   {
     if(!released && event->button == Button1)
@@ -1139,6 +1192,8 @@ void bx_x11_gui_c::mouse_button(XButtonEvent* event, bool released)
     }
     return;
   }
+  // Cancel X11's implicit button grab so absolute input can leave the window.
+  if(mouse_absolute && !released) XUngrabPointer(bx_x_display, CurrentTime);
   sync_mouse_capture();
   if(ignored_mouse_buttons & bit)
   {
@@ -1157,6 +1212,12 @@ void bx_x11_gui_c::mouse_motion(XMotionEvent* event)
   if(!mouse_captured || event->serial < mouse_input_serial ||
      event->serial < mouse_motion_serial || input_paused ||
      input_detached || !guest_keyboard || !keyboard_focused || retired) return;
+  if(mouse_absolute && (event->x < 0 || event->y < 0 ||
+     (unsigned)event->x >= client_width || (unsigned)event->y >= client_height))
+  {
+    mouse_position_valid = false;
+    return;
+  }
   if(mouse_warp_pending && event->serial >= mouse_warp_serial)
   {
     // Rebase even if the synthetic center event was coalesced.
@@ -1264,7 +1325,8 @@ void bx_x11_gui_c::poll_events(bool process_input)
 
     case ConfigureNotify:
       configure_window(report.xconfigure.width, report.xconfigure.height);
-      if(mouse_captured)
+      reset_absolute_mouse_position();
+      if(mouse_captured && !mouse_absolute)
       {
         mouse_position_valid = mouse_warp_pending = false;
         recenter_mouse();
@@ -1326,6 +1388,8 @@ void bx_x11_gui_c::poll_events(bool process_input)
 
     case EnterNotify:
     case LeaveNotify:
+      if(mouse_absolute && report.xcrossing.mode == NotifyNormal)
+        mouse_position_valid = false;
       break;
 
     case MapNotify:
@@ -1373,7 +1437,11 @@ void bx_x11_gui_c::poll_events(bool process_input)
   reconcile_shortcut_keys();
   if(window_state_dirty || pending_guest_resize || pending_window_hints ||
      fullscreen_transition_pending || reset_window_pending) update_window_state();
-  if(process_input) sync_mouse_capture();
+  if(process_input)
+  {
+    sync_mouse_capture();
+    reconcile_mouse_buttons();
+  }
   check_x11_error();
 }
 
@@ -2744,6 +2812,7 @@ void bx_x11_gui_c::adjust_window_scale(int delta)
 void bx_x11_gui_c::reset_window_size()
 {
   if(!bx_x_display || !win || retired || window_destroyed || !dimension_x || !dimension_y) return;
+  reset_absolute_mouse_position();
   pending_guest_resize = pending_window_hints = true;
   if(!reset_window_pending)
   {
@@ -3096,6 +3165,8 @@ void bx_x11_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheigh
   if(x > 32767 / scale || y > 32767 / scale)
     FAILURE(Configuration, "Scaled X11 display dimensions are out of range");
   const bool resize = x != dimension_x || y != dimension_y || full_frame != frame_active;
+  const bool mode_changed = resize || bpp != vga_bpp ||
+      (fheight && (fheight != font_height || fwidth != font_width));
   std::vector<u32> replacement;
   const bool replace_pixels = full_frame &&
       (x != dimension_x || y != dimension_y || !frame_active || frame_pixels.empty());
@@ -3113,6 +3184,7 @@ void bx_x11_gui_c::dimension_update_impl(unsigned x, unsigned y, unsigned fheigh
     prepare_frame_image(client_width, client_height);
   }
   const bool state_known = resize && read_window_state();
+  if(mode_changed) reset_absolute_mouse_position();
   if(replace_pixels) frame_pixels.swap(replacement);
   frame_active = full_frame;
   vga_bpp = bpp;
