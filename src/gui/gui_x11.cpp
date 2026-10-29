@@ -69,6 +69,7 @@
 #include <algorithm>
 #include <chrono>
 #include <limits>
+#include <memory>
 #include <new>
 #include <vector>
 
@@ -87,12 +88,16 @@ class bx_x11_gui_c : public bx_gui_c
 {
   public:
     bx_x11_gui_c(CConfigurator* cfg)
+      : myCfg(cfg), keyboard_map(std::make_unique<bx_keymap_c>(cfg))
     {
-      myCfg = cfg;
-      bx_keymap = new bx_keymap_c(cfg);
+      bx_keymap = keyboard_map.get();
     };
 
-    ~bx_x11_gui_c() override { try { exit(); } catch(...) {} }
+    ~bx_x11_gui_c() override
+    {
+      try { exit(); } catch(...) {}
+      if(bx_keymap == keyboard_map.get()) bx_keymap = nullptr;
+    }
 
     virtual void                  specific_init(unsigned x_tilesize,
                                                 unsigned y_tilesize);
@@ -133,6 +138,7 @@ class bx_x11_gui_c : public bx_gui_c
                                                    u16*  bpp);
   private:
     CConfigurator*  myCfg;
+    std::unique_ptr<bx_keymap_c> keyboard_map;
     XImage* frame_image = nullptr;
     std::vector<u32> frame_pixels;
     unsigned client_width = 0, client_height = 0, configured_scale = 1;
@@ -199,8 +205,9 @@ class bx_x11_gui_c : public bx_gui_c
     void pump_events(bool process_input = false) noexcept;
     void poll_events(bool process_input);
     void keypress(XKeyEvent* event, bool released);
-    u32 translate_key(KeySym keysym);
+    u32 translate_key(KeySym keysym, KeySym sdl_symbol = NoSymbol);
     void release_keys();
+    void load_keyboard_mapping();
     void load_hotkeys();
     void refresh_hotkey_modifiers();
     unsigned hotkey_modifiers(unsigned state) const;
@@ -315,6 +322,21 @@ static void           send_keyboard_mouse_status(void);
 
 static bool           x_keymapping;
 static bool           x_private_colormap;
+static constexpr u32  x11_sdl_keymap_mask = 0x40000000;
+
+void bx_x11_gui_c::load_keyboard_mapping()
+{
+  const bool enabled = myCfg->get_bool_value("keyboard.use_mapping", false);
+  if(enabled)
+  {
+    auto loaded = std::make_unique<bx_keymap_c>(myCfg);
+    loaded->loadKeymap(convertStringToXKeysym);
+    const bool published = bx_keymap == keyboard_map.get();
+    keyboard_map.swap(loaded);
+    if(published) bx_keymap = keyboard_map.get();
+  }
+  x_keymapping = enabled;
+}
 
 // X11 split-image offsets must fit signed 16-bit coordinates.
 static void validate_x11_dimensions(unsigned width, unsigned height)
@@ -945,14 +967,7 @@ try
   //XGrabPointer( bx_x_display, win, True, 0, GrabModeAsync, GrabModeAsync,
   //  win, None, CurrentTime );
 
-  // loads keymap for x11
-  x_keymapping = myCfg->get_bool_value("keyboard.use_mapping", false);
-  if(x_keymapping)
-  {
-
-    //if (SIM->get_param_bool(BXPN_KBD_USEMAPPING)->get()) {
-    bx_keymap->loadKeymap(convertStringToXKeysym);
-  }
+  load_keyboard_mapping();
 
   XMapWindow(bx_x_display, win);
   XSync(bx_x_display, False);
@@ -1643,7 +1658,7 @@ void bx_x11_gui_c::keypress(XKeyEvent* event, bool released)
   KeySym symbol = NoSymbol;
   char buffer[MAX_MAPPED_STRING_LENGTH];
   XLookupString(event, buffer, sizeof(buffer), &symbol, nullptr);
-  const u32 guest = translate_key(symbol);
+  const u32 guest = translate_key(symbol, host_key);
   if(guest != BX_KEY_UNHANDLED && !guest_key_held(guest))
     guest_keyboard->gen_scancode(guest);
   key.guest = guest;
@@ -1668,7 +1683,7 @@ void bx_x11_gui_c::release_keys()
   }
 }
 
-u32 bx_x11_gui_c::translate_key(KeySym keysym)
+u32 bx_x11_gui_c::translate_key(KeySym keysym, KeySym sdl_symbol)
 {
   u32 key_event;
 
@@ -1972,8 +1987,10 @@ u32 bx_x11_gui_c::translate_key(KeySym keysym)
   else
   {
 
-    /* use mapping */
-    BXKeyEntry*   entry = bx_keymap->findHostKey(keysym);
+    // Explicit X11 mappings take precedence over normalized SDL-style entries.
+    BXKeyEntry* entry = keyboard_map->findHostKey((u32)keysym);
+    if(!entry && sdl_symbol != NoSymbol)
+      entry = keyboard_map->findHostKey(x11_sdl_keymap_mask | (u32)sdl_symbol);
     if(!entry)
     {
       BX_ERROR(("xkeypress(): keysym %x unhandled!", (unsigned) keysym));
@@ -3145,24 +3162,59 @@ static void enable_cursor()
   XUndefineCursor(bx_x_display, win);
 }
 
-/* convertStringToXKeysym is a keymap callback
- * used when reading the keymap file.
- * It converts a Symblic String to a GUI Constant
- *
- * It returns a u32 constant or BX_KEYMAP_UNKNOWN if it fails
- */
 static u32 convertStringToXKeysym(const char* string)
 {
-  if(strncmp("XK_", string, 3) != 0)
-    return BX_KEYMAP_UNKNOWN;
+  if(!string) return BX_KEYMAP_UNKNOWN;
+  if(strncmp(string, "XK_", 3) == 0)
+  {
+    const KeySym symbol = XStringToKeysym(string + 3);
+    return symbol != NoSymbol ? (u32)symbol : BX_KEYMAP_UNKNOWN;
+  }
+  if(strncmp(string, "SDLK_", 5) != 0) return BX_KEYMAP_UNKNOWN;
+  const std::string key = string + 5;
+  if(key.size() == 1)
+  {
+    const unsigned char ch = (unsigned char)key[0];
+    if(ch >= 'A' && ch <= 'Z') return x11_sdl_keymap_mask | (ch - 'A' + XK_a);
+    if((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9'))
+      return x11_sdl_keymap_mask | ch;
+  }
+  if(key.size() == 4 && key.compare(0, 3, "KP_") == 0 &&
+     key[3] >= '0' && key[3] <= '9')
+    return x11_sdl_keymap_mask | (XK_KP_0 + key[3] - '0');
+  for(unsigned i = 0; i < 24; ++i)
+    if(key == "F" + std::to_string(i + 1)) return x11_sdl_keymap_mask | (XK_F1 + i);
 
-  KeySym  keysym = XStringToKeysym(string + 3);
-
-  // failure, return unknown
-  if(keysym == NoSymbol)
-    return BX_KEYMAP_UNKNOWN;
-
-  return((u32) keysym);
+  static const struct { const char* name; KeySym symbol; } names[] = {
+    { "RETURN", XK_Return }, { "ESCAPE", XK_Escape },
+    { "BACKSPACE", XK_BackSpace }, { "TAB", XK_Tab }, { "SPACE", XK_space },
+    { "CAPSLOCK", XK_Caps_Lock }, { "PRINTSCREEN", XK_Print },
+    { "SCROLLLOCK", XK_Scroll_Lock }, { "PAUSE", XK_Pause },
+    { "INSERT", XK_Insert }, { "HOME", XK_Home }, { "PAGEUP", XK_Page_Up },
+    { "DELETE", XK_Delete }, { "END", XK_End }, { "PAGEDOWN", XK_Page_Down },
+    { "RIGHT", XK_Right }, { "LEFT", XK_Left }, { "DOWN", XK_Down }, { "UP", XK_Up },
+    { "NUMLOCK", XK_Num_Lock }, { "NUMLOCKCLEAR", XK_Num_Lock }, { "CLEAR", XK_Clear },
+    { "LSHIFT", XK_Shift_L }, { "RSHIFT", XK_Shift_R },
+    { "LCTRL", XK_Control_L }, { "RCTRL", XK_Control_R },
+    { "LALT", XK_Alt_L }, { "RALT", XK_Alt_R },
+    { "LGUI", XK_Super_L }, { "RGUI", XK_Super_R },
+    { "MENU", XK_Menu }, { "HELP", XK_Help },
+    { "KP_ENTER", XK_KP_Enter }, { "KP_PERIOD", XK_KP_Decimal },
+    { "KP_DIVIDE", XK_KP_Divide }, { "KP_MULTIPLY", XK_KP_Multiply },
+    { "KP_MINUS", XK_KP_Subtract }, { "KP_PLUS", XK_KP_Add }, { "KP_EQUALS", XK_KP_Equal },
+    { "EXCLAIM", XK_exclam }, { "DBLAPOSTROPHE", XK_quotedbl }, { "HASH", XK_numbersign },
+    { "DOLLAR", XK_dollar }, { "AMPERSAND", XK_ampersand }, { "APOSTROPHE", XK_apostrophe },
+    { "LEFTPAREN", XK_parenleft }, { "RIGHTPAREN", XK_parenright }, { "ASTERISK", XK_asterisk },
+    { "PLUS", XK_plus }, { "COMMA", XK_comma }, { "MINUS", XK_minus }, { "PERIOD", XK_period },
+    { "SLASH", XK_slash }, { "COLON", XK_colon }, { "SEMICOLON", XK_semicolon },
+    { "LESS", XK_less }, { "EQUALS", XK_equal }, { "GREATER", XK_greater },
+    { "QUESTION", XK_question }, { "AT", XK_at }, { "LEFTBRACKET", XK_bracketleft },
+    { "BACKSLASH", XK_backslash }, { "RIGHTBRACKET", XK_bracketright }, { "CARET", XK_asciicircum },
+    { "UNDERSCORE", XK_underscore }, { "GRAVE", XK_grave }
+  };
+  for(const auto& named : names)
+    if(x11_hotkey_equal(key, named.name)) return x11_sdl_keymap_mask | (u32)named.symbol;
+  return BX_KEYMAP_UNKNOWN;
 }
 
 void bx_x11_gui_c::get_capabilities(u16* xres, u16* yres, u16* bpp)
