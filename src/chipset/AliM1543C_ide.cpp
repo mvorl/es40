@@ -688,6 +688,8 @@ u32 CAliM1543C_ide::ide_command_read(int index, u32 address, int dsize)
 	switch (address)
 	{
 	case REG_COMMAND_DATA:
+		if (SEL_STATUS(index).drq && abort_if_offline(index))
+			break;
 		if (!SEL_STATUS(index).drq)
 		{
 #ifdef DEBUG_IDE_REG_COMMAND
@@ -800,6 +802,8 @@ void CAliM1543C_ide::ide_command_write(int index, u32 address, int dsize,
 	switch (address)
 	{
 	case REG_COMMAND_DATA:
+		if (SEL_STATUS(index).drq && abort_if_offline(index))
+			break;
 		if (!SEL_STATUS(index).drq)
 		{
 #ifdef DEBUG_IDE_REG_COMMAND
@@ -958,6 +962,7 @@ u32 CAliM1543C_ide::ide_control_read(int index, u32 address)
 				| (SEL_STATUS(index).drq ? 0x08 : 0x00)
 				| (SEL_STATUS(index).index_pulse ? 0x02 : 0x00)
 				| (SEL_STATUS(index).err ? 0x01 : 0x00);
+			data = apply_offline_status(index, (u8)data);
 		}
 #ifdef DEBUG_IDE_REG_CONTROL
 		static u32  last_data = 0;
@@ -1325,6 +1330,7 @@ u8 CAliM1543C_ide::get_status(int index)
 		(SEL_STATUS(index).drq ? 0x08 : 0x00) |
 		(SEL_STATUS(index).index_pulse ? 0x02 : 0x00) |
 		(SEL_STATUS(index).err ? 0x01 : 0x00);
+	data = apply_offline_status(index, data);
 	SEL_STATUS(index).index_pulse_count++;
 	SEL_STATUS(index).index_pulse = false;
 	if (SEL_STATUS(index).index_pulse_count >= 10)
@@ -1608,6 +1614,71 @@ void CAliM1543C_ide::command_aborted(int index, u8 command)
 	raise_interrupt(index);
 }
 
+u8 CAliM1543C_ide::apply_offline_status(int index, u8 status)
+{
+	// Keep the task file and IDENTIFY data available while the attached
+	// hard disk reports DRDY clear and a device fault. ATAPI uses SCSI sense.
+	CDisk* disk = SEL_DISK(index);
+	if (disk && !disk->cdrom() && disk->is_offline())
+		status = (status & ~0x40) | 0x20;
+	return status;
+}
+
+bool CAliM1543C_ide::abort_if_offline(int index)
+{
+	CDisk* disk = SEL_DISK(index);
+	if (!disk || !disk->is_offline())
+		return false;
+
+	// Reset, identification and interface setup still work. Packet commands
+	// reach CDisk's SCSI engine, which supplies NOT READY sense as appropriate.
+	switch (SEL_COMMAND(index).current_command) {
+	case 0x08: case 0x90: case 0x91:
+	case 0xa0: case 0xa1: case 0xc6: case 0xec: case 0xef:
+		return false;
+	}
+
+	SEL_STATUS(index).busy = false;
+	SEL_STATUS(index).drive_ready = true; // Offline is overlaid in status reads.
+	SEL_STATUS(index).fault = false;
+	SEL_STATUS(index).seek_complete = false;
+	SEL_STATUS(index).drq = false;
+	SEL_STATUS(index).err = true;
+	SEL_REGISTERS(index).error = 0x04; // ABRT
+	CONTROLLER(index).data_ptr = 0;
+	CONTROLLER(index).data_size = 0;
+	SEL_COMMAND(index).command_in_progress = false;
+	if (SEL_COMMAND(index).current_command >= 0xc8 &&
+		SEL_COMMAND(index).current_command <= 0xcb) {
+		SCOPED_WRITE_LOCK(mtBusMaster[index]);
+		// End DMA with error and completion pending, including a fault before
+		// the guest sets the bus-master start bit.
+		CONTROLLER(index).busmaster[2] =
+			(CONTROLLER(index).busmaster[2] & ~0x01) | 0x06;
+	}
+	UPDATE_ALT_STATUS(index);
+	raise_interrupt(index);
+	return true;
+}
+
+bool CAliM1543C_ide::transfer_sectors(int index, u32 lba, void* buffer,
+	size_t sectors, bool write)
+{
+	if (abort_if_offline(index))
+		return false;
+	CDisk* disk = SEL_DISK(index);
+	bool ok = disk->seek_block(lba);
+	if (ok)
+		ok = (write ? disk->write_blocks(buffer, sectors) :
+			disk->read_blocks(buffer, sectors)) == sectors;
+	// The state may change between command dispatch and the backing I/O.
+	if (abort_if_offline(index))
+		return false;
+	if (!ok)
+		command_aborted(index, SEL_COMMAND(index).current_command);
+	return ok;
+}
+
 CAliM1543C_ide* theIDE = 0;
 
 void CAliM1543C_ide::ide_status(int index)
@@ -1646,6 +1717,8 @@ void CAliM1543C_ide::check_state()
 
 void CAliM1543C_ide::execute(int index)
 {
+	if (abort_if_offline(index))
+		return;
 	if (SEL_DISK(index) == NULL && SEL_COMMAND(index).current_command != 0x90)
 	{
 		// Command issued to a nonexistent device.  Clear BSY/DRQ that
@@ -1751,8 +1824,8 @@ void CAliM1543C_ide::execute(int index)
 				{
 					u32 lba = get_disk_lba(index);
 
-					SEL_DISK(index)->seek_block(lba);
-					SEL_DISK(index)->read_blocks(&(CONTROLLER(index).data[0]), 1);
+					if (!transfer_sectors(index, lba, CONTROLLER(index).data, 1, false))
+						break;
 #if defined(ES40_BIG_ENDIAN)
 					for (int i = 0; i < SEL_DISK(index)->get_block_size() / sizeof(u16);
 						i++)
@@ -1822,16 +1895,16 @@ void CAliM1543C_ide::execute(int index)
 						{
 							u16 data[IDE_BUFFER_SIZE];
 
-							SEL_DISK(index)->seek_block(lba);
 							for (int i = 0; i < SEL_DISK(index)->get_block_size() / sizeof(u16);
 								i++)
 								data[i] = endian_16(CONTROLLER(index).data[i]);
-							SEL_DISK(index)->write_blocks(&(data[0]), 1);
+							if (!transfer_sectors(index, lba, data, 1, true))
+								break;
 						}
 
 #else
-						SEL_DISK(index)->seek_block(lba);
-						SEL_DISK(index)->write_blocks(&(CONTROLLER(index).data[0]), 1);
+						if (!transfer_sectors(index, lba, CONTROLLER(index).data, 1, true))
+							break;
 #endif
 						SEL_STATUS(index).busy = false;
 						SEL_STATUS(index).drive_ready = true;
@@ -2378,9 +2451,9 @@ void CAliM1543C_ide::execute(int index)
 							CONTROLLER(index).selected, CONTROLLER(index).data_size / 256,
 							SEL_REGISTERS(index).sector_count);
 #endif
-						SEL_DISK(index)->seek_block(lba);
-						SEL_DISK(index)->read_blocks(&(CONTROLLER(index).data[0]),
-							CONTROLLER(index).data_size / 256);  // actual number of blocks we want.
+						if (!transfer_sectors(index, lba, CONTROLLER(index).data,
+							CONTROLLER(index).data_size / 256, false))
+							break;
 #if defined(ES40_BIG_ENDIAN)
 						for (int i = 0; i < CONTROLLER(index).data_size; i++)
 							CONTROLLER(index).data[i] = endian_16(CONTROLLER(index).data[i]);
@@ -2464,17 +2537,17 @@ void CAliM1543C_ide::execute(int index)
 							{
 								u16 data[IDE_BUFFER_SIZE];
 
-								SEL_DISK(index)->seek_block(lba);
 								for (int i = 0; i < CONTROLLER(index).data_size; i++)
 									data[i] = endian_16(CONTROLLER(index).data[i]);
-								SEL_DISK(index)->write_blocks(&(data[0]),
-									CONTROLLER(index).data_size / 256);
+								if (!transfer_sectors(index, lba, data,
+									CONTROLLER(index).data_size / 256, true))
+									break;
 							}
 
 #else
-							SEL_DISK(index)->seek_block(lba);
-							SEL_DISK(index)->write_blocks(&(CONTROLLER(index).data[0]),
-								CONTROLLER(index).data_size / 256);
+							if (!transfer_sectors(index, lba, CONTROLLER(index).data,
+								CONTROLLER(index).data_size / 256, true))
+								break;
 #endif
 							SEL_STATUS(index).busy = false;
 							SEL_STATUS(index).drive_ready = true;
@@ -2556,15 +2629,16 @@ void CAliM1543C_ide::execute(int index)
 
 				u32 lba = get_disk_lba(index);
 
-				SEL_DISK(index)->seek_block(lba);
-
-				SEL_DISK(index)->read_blocks(&(CONTROLLER(index).data[0]),
-					SEL_REGISTERS(index).sector_count);
+				if (!transfer_sectors(index, lba, CONTROLLER(index).data,
+					SEL_REGISTERS(index).sector_count, false))
+					break;
 
 				u8* ptr = (u8*)(&CONTROLLER(index).data[0]);
 				u8    status = do_dma_transfer(index, ptr,
 					SEL_REGISTERS(index).sector_count * 512,
 					false);
+				if (status == 3 || abort_if_offline(index))
+					break;
 				SEL_COMMAND(index).command_in_progress = false;
 				SEL_STATUS(index).drive_ready = true;
 				SEL_STATUS(index).seek_complete = true;
@@ -2605,11 +2679,13 @@ void CAliM1543C_ide::execute(int index)
 					u8    status = do_dma_transfer(index, ptr,
 						SEL_REGISTERS(index).sector_count * 512,
 						true);
+					if (status == 3 || abort_if_offline(index))
+						break;
 					u32   lba = get_disk_lba(index);
 
-					SEL_DISK(index)->seek_block(lba);
-					SEL_DISK(index)->write_blocks(&(CONTROLLER(index).data[0]),
-						SEL_REGISTERS(index).sector_count);
+					if (!transfer_sectors(index, lba, CONTROLLER(index).data,
+						SEL_REGISTERS(index).sector_count, true))
+						break;
 					SEL_COMMAND(index).command_in_progress = false;
 					SEL_STATUS(index).drive_ready = true;
 					SEL_STATUS(index).seek_complete = true;
@@ -2768,13 +2844,22 @@ int CAliM1543C_ide::do_dma_transfer(int index, u8* buffer, u32 buffersize,
 	u8      status = 0;
 	u8      count = 0;
 	u32     prd;
-	semBusMaster[index]->wait();  // wait until the start bit is set.
+	// A fault can be injected while the guest has not yet started DMA.
+	// Check between bounded waits so the command completes with an error.
+	while (!semBusMaster[index]->tryWait(20)) {
+		if (abort_if_offline(index))
+			return 3;
+	}
+	if (abort_if_offline(index))
+		return 3;
 	{
 		SCOPED_READ_LOCK(mtBusMaster[index]);
 		prd = endian_32(*(u32*)(&CONTROLLER(index).busmaster[4]));
 	}
 	do
 	{
+		if (abort_if_offline(index))
+			return 3;
 		u32 base;
 		do_pci_read(prd, &base, 4, 1);
 

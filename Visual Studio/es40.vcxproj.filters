@@ -495,6 +495,9 @@
     <ClInclude Include="..\src\storage\Disk.h">
       <Filter>Header Files\storage</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\storage\DiskFault.h">
+      <Filter>Header Files\storage</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\storage\DiskController.h">
       <Filter>Header Files\storage</Filter>
     </ClInclude>

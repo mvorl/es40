@@ -29,6 +29,7 @@
 #if defined(_WIN32)
 #include "win32_media.h"
 #include "storage/DiskFile.h"
+#include "storage/DiskFault.h"
 #include <commdlg.h>
 #include <windowsx.h>
 #include <algorithm>
@@ -64,7 +65,7 @@ bool pointer_press(UINT msg)
 
 struct win32_media_selector::state : std::enable_shared_from_this<state>
 {
-    enum class mode { closed, devices, floppy, size, cdrom, locked, message };
+    enum class mode { closed, devices, faults, floppy, size, cdrom, locked, message };
     mode page = mode::closed;
     HWND parent = nullptr, window = nullptr, dialog = nullptr;
     bool dialog_open = false, cancel_dialog = false, stopping = false;
@@ -72,6 +73,7 @@ struct win32_media_selector::state : std::enable_shared_from_this<state>
     int selected = 0, device_selection = 0, locked_selection = 0, first_visible = 0;
     int width = 0, height = 0, row_height = 0, header_height = 0, footer_height = 0;
     std::vector<std::shared_ptr<CDiskFileMediaMailbox>> devices;
+    std::vector<std::shared_ptr<CDiskFaultControl>> disks;
     std::shared_ptr<CDiskFileMediaMailbox> device;
     std::string pending_path, message;
     std::vector<RECT> rows;
@@ -91,7 +93,8 @@ struct win32_media_selector::state : std::enable_shared_from_this<state>
     {
         switch (page)
         {
-        case mode::devices: return (int)devices.size() + 1;
+        case mode::devices: return (int)devices.size() + 2;
+        case mode::faults: return (int)disks.size() + 1;
         case mode::floppy: return 5;
         case mode::size: return 6;
         case mode::cdrom: return 3;
@@ -107,7 +110,7 @@ struct win32_media_selector::state : std::enable_shared_from_this<state>
         HWND old = window;
         window = nullptr;
         page = mode::closed;
-        devices.clear(); device.reset(); pending_path.clear(); rows.clear();
+        devices.clear(); disks.clear(); device.reset(); pending_path.clear(); rows.clear();
         message.clear(); reset_button = {};
         pending_eject = false;
         if (old)
@@ -290,7 +293,11 @@ struct win32_media_selector::state : std::enable_shared_from_this<state>
 
     void back()
     {
-        if (page == mode::size) { page = mode::floppy; selected = 1; }
+        if (page == mode::faults)
+        {
+            page = mode::devices; disks.clear(); selected = (int)devices.size();
+        }
+        else if (page == mode::size) { page = mode::floppy; selected = 1; }
         else if (page == mode::locked)
         {
             page = mode::cdrom; selected = locked_selection;
@@ -316,6 +323,11 @@ struct win32_media_selector::state : std::enable_shared_from_this<state>
                 page = device->is_floppy() ? mode::floppy : mode::cdrom;
                 selected = first_visible = 0; update();
             }
+            else if (selected == (int)devices.size())
+            {
+                disks = disk_fault_controls(); page = mode::faults;
+                selected = first_visible = 0; update();
+            }
             else
             {
                 const bool reset_selected = selected == item_count();
@@ -323,6 +335,16 @@ struct win32_media_selector::state : std::enable_shared_from_this<state>
                 close_popup();
                 if (reset_selected && request_reset) request_reset();
             }
+        }
+        else if (page == mode::faults)
+        {
+            if (selected < (int)disks.size())
+            {
+                auto disk = disks[selected];
+                if (disk->set_offline(!disk->is_offline())) update();
+                else show_message("The selected disk is no longer available.");
+            }
+            else back();
         }
         else if (page == mode::floppy && device)
         {
@@ -395,10 +417,14 @@ struct win32_media_selector::state : std::enable_shared_from_this<state>
         RECT all = { 0, 0, width, height };
         FillRect(dc, &all, GetSysColorBrush(COLOR_WINDOW));
         FrameRect(dc, &all, GetSysColorBrush(COLOR_WINDOWFRAME));
-        std::string title = "Change removable media", subtitle;
+        std::string title = "Disk and media controls", subtitle;
         switch (page)
         {
-        case mode::devices: subtitle = devices.empty() ? "No removable media devices are configured." : "Choose a configured drive"; break;
+        case mode::devices: subtitle = "Choose a drive or manage disk failures"; break;
+        case mode::faults:
+            title = "Disk failures";
+            subtitle = disks.empty() ? "No disks are configured." : "Select a disk to toggle offline / online";
+            break;
         case mode::floppy: title = "Floppy media"; subtitle = device->label(); break;
         case mode::size: title = "Create blank floppy image"; subtitle = "Choose an unformatted raw-image capacity"; break;
         case mode::cdrom: title = "CD-ROM media"; subtitle = device->label(); break;
@@ -427,7 +453,18 @@ struct win32_media_selector::state : std::enable_shared_from_this<state>
                     label = devices[index]->label();
                     image = "Image: " + devices[index]->mounted_image_name();
                 }
-                else label = "Cancel";
+                else label = index == (int)devices.size() ? "Disk failures..." : "Cancel";
+            }
+            else if (page == mode::faults)
+            {
+                if (index < (int)disks.size())
+                {
+                    label = disks[index]->label();
+                    image = disks[index]->is_offline() ?
+                        "Offline (failed) - select to bring online" :
+                        "Online - select to take offline";
+                }
+                else label = "Back";
             }
             else if (page == mode::floppy)
             {

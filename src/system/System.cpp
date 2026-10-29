@@ -2075,7 +2075,8 @@ static const u32 system_state_magic = 0xa1fae540;
 // 2.7 requires writable M7101 docking selectors and removes the CF8/CFC latch.
 // 2.8 preserves the Trio64 scan-counter phase.
 // 2.9 uses the EV68 128-entry instruction and data translation buffers.
-static const u32 system_state_version = 0x00020009;
+// 2.10 persists injected disk offline conditions.
+static const u32 system_state_version = 0x0002000a;
 static const u32 snapshot_identity_limit = 65536;
 
 void CSystem::flush_storage()

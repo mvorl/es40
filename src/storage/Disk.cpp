@@ -185,6 +185,9 @@ CDisk::CDisk(CConfigurator* cfg, CSystem* sys, CDiskController* ctrl,
 	state.scsi.sense.available = false;
 	state.scsi.locked = false;
 	state.scsi.media_changed = SCSI_MEDIA_STATE_STABLE;
+	fault_control = std::make_shared<CDiskFaultControl>(devid_string,
+		myCfg->get_bool_value("offline", false));
+	register_disk_fault_control(fault_control);
 
 	myCtrl->register_disk(this, myBus, myDev);
 }
@@ -194,6 +197,7 @@ CDisk::CDisk(CConfigurator* cfg, CSystem* sys, CDiskController* ctrl,
  **/
 CDisk::~CDisk(void)
 {
+	fault_control->deactivate();
 	free(devid_string);
 	devid_string = nullptr;
 }
@@ -272,11 +276,13 @@ static u32  disk_magic2 = 0x15D15D15;
  **/
 int CDisk::SaveState(FILE* f)
 {
-	long  ss = sizeof(state);
+	const u8 offline = is_offline() ? 1 : 0;
+	long  ss = sizeof(state) + sizeof(offline);
 
 	if (fwrite(&disk_magic1, sizeof(u32), 1, f) != 1 ||
 		fwrite(&ss, sizeof(long), 1, f) != 1 ||
 		fwrite(&state, sizeof(state), 1, f) != 1 ||
+		fwrite(&offline, sizeof(offline), 1, f) != 1 ||
 		fwrite(&disk_magic2, sizeof(u32), 1, f) != 1)
 		return -1;
 	printf("%s: %d bytes saved.\n", devid_string, (int)ss);
@@ -313,7 +319,7 @@ int CDisk::RestoreState(FILE* f)
 		return -1;
 	}
 
-	if (ss != sizeof(state))
+	if (ss != sizeof(state) && ss != sizeof(state) + sizeof(u8))
 	{
 		printf("%s: STRUCT SIZE does not match!\n", devid_string);
 		return -1;
@@ -328,6 +334,14 @@ int CDisk::RestoreState(FILE* f)
 		return -1;
 	}
 
+	// Older disk records predate failure injection and restore as online.
+	u8 offline = 0;
+	if (ss != sizeof(state) &&
+		(fread(&offline, sizeof(offline), 1, f) != 1 || offline > 1))
+	{
+		printf("%s: Invalid disk offline state.\n", devid_string);
+		return -1;
+	}
 	r = fread(&m2, sizeof(u32), 1, f);
 	if (r != 1)
 	{
@@ -360,6 +374,7 @@ int CDisk::RestoreState(FILE* f)
 		return -1;
 	}
 	memcpy(&state, restored_state.get(), sizeof(state));
+	set_offline(offline != 0);
 	//calc_cylinders(); // state.block_size may have changed.
 	determine_layout();
 	media_lock_changed(state.scsi.locked);
@@ -685,6 +700,7 @@ void CDisk::scsi_xfer_done_me(int bus)
 #define SCSI_MEDIA_LOCKED           - 9 /* Medium removal prevented */
 #define SCSI_HARDWARE_ERROR        - 10 /* Backing-media operation failed */
 #define SCSI_WRITE_PROTECTED       - 11 /* Medium is read-only */
+#define SCSI_OFFLINE               - 12 /* Attached drive requires intervention */
 
 void CDisk::do_scsi_error(int errcode, int info)
 {
@@ -771,6 +787,12 @@ void CDisk::do_scsi_error(int errcode, int info)
 		state.scsi.sense.data[2] = 0x02;    // not ready
 		state.scsi.sense.data[12] = 0x3a;   // media not present
 		state.scsi.sense.data[13] = 0x00;
+		break;
+
+	case SCSI_OFFLINE:
+		state.scsi.sense.data[2] = 0x02;    // NOT READY
+		state.scsi.sense.data[12] = 0x04;   // logical unit not ready
+		state.scsi.sense.data[13] = 0x03;   // manual intervention required
 		break;
 
 	case SCSI_MEDIA_LOCKED:
@@ -1121,6 +1143,17 @@ int CDisk::do_scsi_command()
 		return 0;
 	}
 
+	// Keep discovery and diagnostics available while the drive has failed.
+	// This is also checked when WRITE returns from its DATA OUT phase, so
+	// injection during a transfer cannot commit that command to the image.
+	if (is_offline() && state.scsi.cmd.data[0] != SCSICMD_INQUIRY &&
+		state.scsi.cmd.data[0] != SCSICMD_REQUEST_SENSE)
+	{
+		state.scsi.dati.available = state.scsi.dati.read = 0;
+		do_scsi_error(SCSI_OFFLINE);
+		return 0;
+	}
+
 	switch (state.scsi.cmd.data[0])
 	{
 	case SCSICMD_TEST_UNIT_READY:
@@ -1128,8 +1161,7 @@ int CDisk::do_scsi_command()
 		printf("%s: TEST UNIT READY.\n", devid_string);
 #endif
 
-		// unit is always ready...
-		// ...unless it's a cdrom and the media was changed.
+		// The offline gate above applies to fixed and removable drives.
 		if (cdrom()) {
 			if (!media_present()) {
 				do_scsi_error(SCSI_MEDIA_REMOVED);
@@ -2128,8 +2160,10 @@ int CDisk::do_scsi_command()
 			do_scsi_error(SCSI_LBA_RANGE);
 			break;
 		}
-		seek_block(ofs);
-		do_scsi_error(SCSI_OK);
+		if (!seek_block(ofs))
+			do_scsi_error(is_offline() ? SCSI_OFFLINE : SCSI_HARDWARE_ERROR);
+		else
+			do_scsi_error(SCSI_OK);
 		break;
 	}
 
@@ -2312,7 +2346,7 @@ int CDisk::do_scsi_command()
 			if (retlen && (!seek_block(ofs) ||
 				read_blocks(state.scsi.dati.data, retlen) != retlen))
 			{
-				do_scsi_error(SCSI_HARDWARE_ERROR);
+				do_scsi_error(is_offline() ? SCSI_OFFLINE : SCSI_HARDWARE_ERROR);
 				break;
 			}
 		}
@@ -2387,7 +2421,7 @@ int CDisk::do_scsi_command()
 		{
 			if (!seek_block(ofs) || read_blocks(state.scsi.dati.data, 1) != 1)
 			{
-				do_scsi_error(SCSI_HARDWARE_ERROR);
+				do_scsi_error(is_offline() ? SCSI_OFFLINE : SCSI_HARDWARE_ERROR);
 				break;
 			}
 		}
@@ -2479,7 +2513,7 @@ int CDisk::do_scsi_command()
 			if (retlen && (!seek_block(ofs) ||
 				write_blocks(state.scsi.dato.data, retlen) != retlen))
 			{
-				do_scsi_error(SCSI_HARDWARE_ERROR);
+				do_scsi_error(is_offline() ? SCSI_OFFLINE : SCSI_HARDWARE_ERROR);
 				break;
 			}
 		}

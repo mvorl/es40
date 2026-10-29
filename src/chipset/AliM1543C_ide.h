@@ -218,6 +218,9 @@ private:
   void  set_signature(int channel, int id);
   u8    get_status(int index);
   void  command_aborted(int index, u8 command);
+  bool  abort_if_offline(int index);
+  u8    apply_offline_status(int index, u8 status);
+  bool  transfer_sectors(int index, u32 lba, void* buffer, size_t sectors, bool write);
   void  identify_drive(int index, bool packet);
   void  ide_status(int index);
 

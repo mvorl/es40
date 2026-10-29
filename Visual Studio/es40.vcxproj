@@ -2345,6 +2345,7 @@
     <ClInclude Include="..\src\network\DEC21143_tulipreg.h" />
     <ClInclude Include="..\src\CPU\diag_rpcc.h" />
     <ClInclude Include="..\src\storage\Disk.h" />
+    <ClInclude Include="..\src\storage\DiskFault.h" />
     <ClInclude Include="..\src\storage\DiskController.h" />
     <ClInclude Include="..\src\storage\DiskDevice.h" />
     <ClInclude Include="..\src\storage\DiskFile.h" />

@@ -1383,7 +1383,7 @@ int CDiskFile::RestoreState(FILE* f)
  **/
 bool CDiskFile::seek_byte(off_t_large byte)
 {
-    if (!media_present())
+    if (!is_ready())
         return false;
 
     if (qcow2)
@@ -1438,7 +1438,7 @@ bool CDiskFile::seek_byte(off_t_large byte)
  **/
 size_t CDiskFile::read_bytes(void* dest, size_t bytes)
 {
-    if (!media_present())
+    if (!is_ready())
         return 0;
 
     if (is_bincue)
@@ -1524,7 +1524,7 @@ size_t CDiskFile::read_bytes(void* dest, size_t bytes)
  **/
 size_t CDiskFile::write_bytes(void* src, size_t bytes)
 {
-    if (!media_present())
+    if (!is_ready())
         return 0;
 
     if (is_bincue)

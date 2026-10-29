@@ -38,6 +38,7 @@
 
 #include "sdl_media.h"
 #include "storage/DiskFile.h"
+#include "storage/DiskFault.h"
 #include "system/System.h"
 
 #include <SDL3/SDL.h>
@@ -81,6 +82,7 @@ enum EMediaPopupMode
 {
     MEDIA_POPUP_CLOSED,
     MEDIA_POPUP_DEVICES,
+    MEDIA_POPUP_DISK_FAULTS,
     MEDIA_POPUP_FLOPPY,
     MEDIA_POPUP_FLOPPY_SIZE,
     MEDIA_POPUP_CDROM,
@@ -96,6 +98,7 @@ struct SMediaPopupState
     SDL_Renderer* renderer = nullptr;
     SDL_WindowID window_id = 0;
     std::vector<std::shared_ptr<CDiskFileMediaMailbox> > devices;
+    std::vector<std::shared_ptr<CDiskFaultControl>> disks;
     std::shared_ptr<CDiskFileMediaMailbox> device;
     std::string pending_path;
     bool pending_eject = false;
@@ -142,7 +145,9 @@ bool sdl_media_input_active() noexcept
 static int item_count()
 {
     if (media_popup.mode == MEDIA_POPUP_DEVICES)
-        return (int)media_popup.devices.size() + 1;
+        return (int)media_popup.devices.size() + 2;
+    if (media_popup.mode == MEDIA_POPUP_DISK_FAULTS)
+        return (int)media_popup.disks.size() + 1;
     if (media_popup.mode == MEDIA_POPUP_FLOPPY)
         return 5;
     if (media_popup.mode == MEDIA_POPUP_FLOPPY_SIZE)
@@ -185,6 +190,7 @@ static void close_popup()
     destroy_popup_window();
     media_popup.mode = MEDIA_POPUP_CLOSED;
     media_popup.devices.clear();
+    media_popup.disks.clear();
     media_popup.device.reset();
     media_popup.pending_path.clear();
     media_popup.pending_eject = false;
@@ -257,10 +263,14 @@ static void render_popup()
     std::string subtitle;
     if (media_popup.mode == MEDIA_POPUP_DEVICES)
     {
-        title = "Change removable media";
-        subtitle = media_popup.devices.empty() ?
-            "No removable media devices are configured." :
-            "Choose a configured drive";
+        title = "Disk and media controls";
+        subtitle = "Choose a drive or manage disk failures";
+    }
+    else if (media_popup.mode == MEDIA_POPUP_DISK_FAULTS)
+    {
+        title = "Disk failures";
+        subtitle = media_popup.disks.empty() ? "No disks are configured." :
+            "Select a disk to toggle offline / online";
     }
     else if (media_popup.mode == MEDIA_POPUP_FLOPPY)
     {
@@ -349,7 +359,22 @@ static void render_popup()
                 device_row = true;
             }
             else
-                label = "Cancel";
+                label = index == (int)media_popup.devices.size() ?
+                    "Disk failures..." : "Cancel";
+        }
+        else if (media_popup.mode == MEDIA_POPUP_DISK_FAULTS)
+        {
+            if (index < (int)media_popup.disks.size())
+            {
+                const auto& disk = media_popup.disks[(size_t)index];
+                label = disk->label();
+                image_label = disk->is_offline() ?
+                    "Offline (failed) - select to bring online" :
+                    "Online - select to take offline";
+                device_row = true;
+            }
+            else
+                label = "Back";
         }
         else if (media_popup.mode == MEDIA_POPUP_FLOPPY)
         {
@@ -418,6 +443,7 @@ static void render_popup()
     }
 
     const bool back_available =
+        media_popup.mode == MEDIA_POPUP_DISK_FAULTS ||
         media_popup.mode == MEDIA_POPUP_FLOPPY ||
         media_popup.mode == MEDIA_POPUP_CDROM ||
         media_popup.mode == MEDIA_POPUP_FLOPPY_SIZE ||
@@ -870,6 +896,13 @@ static void activate_selection()
         if (media_popup.selected >= 0 &&
             media_popup.selected < (int)media_popup.devices.size())
             open_device(media_popup.devices[(size_t)media_popup.selected]);
+        else if (media_popup.selected == (int)media_popup.devices.size())
+        {
+            media_popup.disks = disk_fault_controls();
+            media_popup.mode = MEDIA_POPUP_DISK_FAULTS;
+            media_popup.selected = media_popup.first_visible = 0;
+            update_popup_content();
+        }
         else if (media_popup.selected == item_count())
         {
             close_popup();
@@ -881,6 +914,21 @@ static void activate_selection()
         return;
     }
 
+    if (media_popup.mode == MEDIA_POPUP_DISK_FAULTS)
+    {
+        if (media_popup.selected >= 0 &&
+            media_popup.selected < (int)media_popup.disks.size())
+        {
+            const auto& disk = media_popup.disks[(size_t)media_popup.selected];
+            if (disk->set_offline(!disk->is_offline()))
+                render_popup();
+            else
+                show_message("The selected disk is no longer available.");
+        }
+        else
+            cancel_or_go_back();
+        return;
+    }
     if (media_popup.mode == MEDIA_POPUP_FLOPPY)
     {
         std::shared_ptr<CDiskFileMediaMailbox> mailbox = media_popup.device;
@@ -1010,6 +1058,15 @@ static void activate_selection()
 
 static void cancel_or_go_back()
 {
+    if (media_popup.mode == MEDIA_POPUP_DISK_FAULTS)
+    {
+        media_popup.mode = MEDIA_POPUP_DEVICES;
+        media_popup.disks.clear();
+        media_popup.selected = (int)media_popup.devices.size();
+        media_popup.first_visible = 0;
+        update_popup_content();
+        return;
+    }
     if (media_popup.mode == MEDIA_POPUP_FLOPPY_SIZE)
     {
         media_popup.mode = MEDIA_POPUP_FLOPPY;

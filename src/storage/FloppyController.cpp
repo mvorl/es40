@@ -420,7 +420,7 @@ bool CFloppyController::format_track(int drive, int head, u8 sector_size,
 	};
 
 	CDisk* disk = drive >= 0 && drive < 2 ? FDISK(drive) : NULL;
-	if (disk == NULL || !disk->media_present()) {
+	if (disk == NULL || !disk->is_ready()) {
 		set_result(0x40 | ST0_NR | (head << 2) | drive, 0, NULL);
 		return false;
 	}
@@ -464,7 +464,9 @@ bool CFloppyController::format_track(int drive, int head, u8 sector_size,
 			offset > disk->get_byte_size() - 512 ||
 			!disk->seek_byte(offset) ||
 			disk->write_bytes(sector_data, sizeof(sector_data)) != sizeof(sector_data)) {
-			set_result(0x40 | (head << 2) | drive, ST1_ND, id);
+			const bool not_ready = !disk->is_ready();
+			set_result(0x40 | (not_ready ? ST0_NR : 0) | (head << 2) | drive,
+				not_ready ? 0 : ST1_ND, id);
 			return false;
 		}
 	}
@@ -481,6 +483,17 @@ void CFloppyController::finish_pio_transfer(bool ok)
 	bool was_format = state.pio.format;
 	u32 transferred = state.pio.pos;
 	u32 requested = state.pio.size;
+	bool not_ready = disk == NULL || !disk->is_ready();
+	if (not_ready) {
+		ok = false;
+		if (was_format) {
+			state.cmd_res[0] = state.pio.drive | (state.pio.head << 2);
+			state.cmd_res[3] = state.drive[state.pio.drive].cylinder;
+			state.cmd_res[4] = state.pio.head;
+			state.cmd_res[5] = 1;
+			state.cmd_res[6] = state.pio.format_n;
+		}
+	}
 
 	if (ok && was_format) {
 		ok = format_track(state.pio.drive, state.pio.head,
@@ -499,6 +512,9 @@ void CFloppyController::finish_pio_transfer(bool ok)
 		if (ok)
 			disk->flush();
 	}
+	not_ready = disk == NULL || !disk->is_ready();
+	if (not_ready)
+		ok = false;
 
 	state.pio.active = false;
 	state.pio.write = false;
@@ -517,7 +533,11 @@ void CFloppyController::finish_pio_transfer(bool ok)
 	state.cmd_res_ptr = 0;
 	state.cmd_res_max = 7;
 
-	if (!ok && !was_format) {
+	if (not_ready) {
+		state.cmd_res[0] = (state.cmd_res[0] & (ST0_DS | ST0_HA)) | 0x40 | ST0_NR;
+		state.cmd_res[1] = 0;
+		state.cmd_res[2] = 0;
+	} else if (!ok && !was_format) {
 		state.cmd_res[0] = (state.cmd_res[0] & (ST0_DS | ST0_HA)) | 0x40;
 		state.cmd_res[1] = ST1_ND;
 		state.cmd_res[2] = 0;
@@ -619,6 +639,11 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 		service_pending_media_actions_if_idle();
 
 		if (state.pio.active) {
+			CDisk* disk = FDISK(state.pio.drive);
+			if (!disk || !disk->is_ready()) {
+				finish_pio_transfer(false);
+				break;
+			}
 			if (!state.pio.write) {
 				FDC_DEBUG("FDC: write to data register during non-DMA read phase.\n");
 				break;
@@ -680,6 +705,8 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 					// returning it clear makes an otherwise present disk appear
 					// offline.
 					u8 st3 = 0x20;
+					if (disk && disk->is_offline())
+						st3 &= ~0x20; // Inject a legacy not-ready drive; keep reserved bits clear.
 					if (drive_idx < 2 && state.drive[drive_idx].cylinder == 0)
 						st3 |= 0x10; // Track 0
 					st3 |= (head << 2);
@@ -720,8 +747,8 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 					// A data command to an absent drive or empty drive terminates
 					// abnormally instead of trying to access a backing image.
 					// ST0 IC=01 (abnormal termination) with the Not Ready bit set.
-					if (disk == NULL || !disk->media_present()) {
-						FDC_DEBUG("FDC [CMD %02x]: drive %d not ready (no media) - aborting\n", cmd, drive_idx);
+					if (disk == NULL || !disk->is_ready()) {
+						FDC_DEBUG("FDC [CMD %02x]: drive %d not ready - aborting\n", cmd, drive_idx);
 						state.cmd_res[0] = 0x40 | ST0_NR | (head << 2) | drive_idx; // ST0
 						state.cmd_res[1] = 0;                   // ST1
 						state.cmd_res[2] = 0;                   // ST2
@@ -937,7 +964,10 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 							mt, true, count);
 						do_interrupt();
 					} else {
-						fail_rw(ST1_ND);
+						const bool not_ready = !disk->is_ready();
+						fail_rw(not_ready ? 0 : ST1_ND);
+						if (not_ready)
+							state.cmd_res[0] |= ST0_NR;
 					}
 				}
 				break;
@@ -965,7 +995,7 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 						do_interrupt();
 					};
 
-					if (disk == NULL || !disk->media_present()) {
+					if (disk == NULL || !disk->is_ready()) {
 						fail_format(0x40 | ST0_NR | (head << 2) | drive_idx, 0);
 						break;
 					}
@@ -1043,7 +1073,7 @@ void CFloppyController::WriteMem(int index, u64 address, int dsize, u64 data)
 					int drive_idx = state.cmd_parms[1] & 3;
 					int head = (state.cmd_parms[1] >> 2) & 1;
 					CDisk* disk = drive_idx < 2 ? FDISK(drive_idx) : NULL;
-					if (!disk || !disk->media_present())
+					if (!disk || !disk->is_ready())
 					{
 						state.cmd_res[0] = 0x40 | ST0_NR | (head << 2) | drive_idx;
 						state.cmd_res[1] = ST1_MAM;
@@ -1214,6 +1244,11 @@ u64 CFloppyController::ReadMem(int index, u64 address, int dsize)
 
 		for (int i = 0; i < bytes; i++) {
 			u8 value = 0;
+			if (state.pio.active) {
+				CDisk* disk = FDISK(state.pio.drive);
+				if (!disk || !disk->is_ready())
+					finish_pio_transfer(false);
+			}
 			if (state.pio.active) {
 				if (state.pio.write) {
 					FDC_DEBUG("FDC: read from data register during non-DMA write phase.\n");

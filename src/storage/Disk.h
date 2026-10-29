@@ -81,6 +81,7 @@
 #define __DISK_H__
 
 #include "DiskController.h"
+#include "DiskFault.h"
 #include "SCSIDevice.h"
 #include "SCSIBus.h"
 
@@ -162,6 +163,10 @@ public:
   bool        rw() { return !read_only; };
   bool        cdrom() { return is_cdrom; };
   bool        media_present() const { return byte_size > 0; };
+  // A failed drive remains attached and retains its media and identity.
+  bool        is_offline() const { return fault_control->is_offline(); }
+  bool        is_ready() const { return media_present() && !is_offline(); }
+  void        set_offline(bool offline) { fault_control->set_offline(offline); }
   bool        media_change_pending() const { return state.scsi.media_changed != 0; };
   void        acknowledge_media_change() { state.scsi.media_changed = 0; };
 
@@ -187,6 +192,7 @@ protected:
   long              sectors;
 
   bool              atapi_mode;
+  std::shared_ptr<CDiskFaultControl> fault_control;
 
   /// The state structure contains all elements that need to be saved to the statefile
   struct SDisk_state

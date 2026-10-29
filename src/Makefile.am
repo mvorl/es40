@@ -122,6 +122,7 @@ noinst_HEADERS += audio/ES1370.h audio/ES1371.h audio/HostAudio.h \
        audio/HostAudioBackend.h audio/MPU401.h
 
 noinst_HEADERS += storage/Disk.h \
+       storage/DiskFault.h \
        storage/DiskController.h \
        storage/DiskDevice.h \
        storage/DiskFile.h \

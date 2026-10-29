@@ -184,6 +184,8 @@ CDiskDevice::~CDiskDevice(void)
 
 bool CDiskDevice::seek_byte(off_t_large byte)
 {
+	if (is_offline())
+		return false;
 	if (byte >= byte_size)
 	{
 		FAILURE_1(InvalidArgument, "%s: Seek beyond end of file!\n", devid_string);
@@ -200,6 +202,8 @@ bool CDiskDevice::seek_byte(off_t_large byte)
 
 size_t CDiskDevice::read_bytes(void* dest, size_t bytes)
 {
+	if (is_offline())
+		return 0;
 
 	//  printf("%s: read %d bytes @ %" PRId64 ".\n",devid_string,bytes,state.byte_pos);
 #if defined(_WIN32)
@@ -249,6 +253,8 @@ size_t CDiskDevice::read_bytes(void* dest, size_t bytes)
 
 size_t CDiskDevice::write_bytes(void* src, size_t bytes)
 {
+	if (is_offline())
+		return 0;
 	if (read_only)
 		return 0;
 

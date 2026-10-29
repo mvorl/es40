@@ -177,7 +177,7 @@ struct GUIHotkeyPrompt
 
 static const GUIHotkeyPrompt gui_hotkey_prompts[] = {
 	{ "hotkey.mouse_capture", "Mouse capture", "Ctrl+F10" },
-	{ "hotkey.media", "Removable media selector", "Ctrl+F11" },
+	{ "hotkey.media", "Disk and media controls", "Ctrl+F11" },
 	{ "hotkey.ctrl_alt_delete", "Send Ctrl+Alt+Delete to the guest", "Ctrl+Alt+End" },
 	{ "hotkey.reset_window", "Reset window size", "Ctrl+Alt+Home" },
 	{ "hotkey.scale_up", "Increase runtime window scale", "Ctrl+PageUp" },
@@ -421,6 +421,15 @@ void add_disks(ShrinkingChoiceQuestion* disk_q, ostream* os, bool floppy = false
 			ro_q.ask();
 		}
 		*os << "      read_only = " << ro_q.getAnswer() << ";\n";
+
+		MultipleChoiceQuestion offline_q;
+		offline_q.setQuestion("Should " + disk_q->getAnswer() + " start offline (failed)?");
+		offline_q.setExplanation("An offline drive remains attached and identifiable, but reports not ready and rejects disk I/O.");
+		offline_q.addAnswer("no", "false", "Normal disk operation");
+		offline_q.addAnswer("yes", "true", "Inject a disk failure");
+		offline_q.setDefault("no");
+		if (offline_q.ask() == "true")
+			*os << "      offline = true;\n";
 
 		/* The user can define a custom model
 		 * number for the device.

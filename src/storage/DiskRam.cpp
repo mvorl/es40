@@ -206,6 +206,8 @@ int CDiskRam::RestoreState(FILE* f)
 
 bool CDiskRam::seek_byte(off_t_large byte)
 {
+	if (is_offline())
+		return false;
 	if (byte < 0 || byte >= byte_size)
 	{
 		FAILURE_1(InvalidArgument, "%s: Seek outside disk image!\n", devid_string);
@@ -217,6 +219,8 @@ bool CDiskRam::seek_byte(off_t_large byte)
 
 size_t CDiskRam::read_bytes(void* dest, size_t bytes)
 {
+	if (is_offline())
+		return 0;
 	if (state.byte_pos >= byte_size)
 		return 0;
 
@@ -231,6 +235,8 @@ size_t CDiskRam::read_bytes(void* dest, size_t bytes)
 
 size_t CDiskRam::write_bytes(void* src, size_t bytes)
 {
+	if (is_offline())
+		return 0;
 	if (state.byte_pos >= byte_size)
 		return 0;
 

@@ -632,6 +632,10 @@ void add_disks(const char *title, const char *disk_name, CConfigurator *parent)
          "This parameter is ignored for CD-ROMs (always true),\n"
          "and for ramdisks (always false)",
          validation_yes_no},
+        {"Offline (failed disk)?", STR_NO, "offline",
+         "Inject a disk failure at startup. The drive stays attached and identifiable,\n"
+         "but reports not ready and rejects disk I/O until brought online.",
+         validation_yes_no},
         {"Disk model number", "", "model_number",
          "Would you like to set a disk model number?",
          NULL},
@@ -909,7 +913,7 @@ void edit_gui_keyboard(const char *title)
          "The keymap file to use when keyboard.use_mapping is enabled.",
          validation_file},
         {"hotkey.media", "Ctrl+F11", "hotkey.media",
-         "Host key combination used to bring up the removable media selector.\n" HOTKEY_HELP,
+         "Host key combination used to bring up disk failure and removable media controls.\n" HOTKEY_HELP,
          validation_hotkey},
         {"hotkey.ctrl_alt_delete", "Ctrl+Alt+End", "hotkey.ctrl_alt_delete",
          "Host key combination used to send Ctrl+Alt+Delete to the guest.\n" HOTKEY_HELP,
