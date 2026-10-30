@@ -189,6 +189,7 @@ class bx_x11_gui_c : public bx_gui_c
     bool input_paused = false, input_detached = false, retired = false;
     bool legacy_redraw_pending = false;
     bool keyboard_focused = true, detectable_repeat = false;
+    bool keyboard_grabbed = false;
     bool mouse_captured = false, guest_mouse_captured = false, mouse_sync_pending = true;
     bool mouse_warp_pending = false, mouse_position_valid = false;
     bool mouse_invert_x = false, mouse_invert_y = false, mouse_absolute = false;
@@ -215,6 +216,8 @@ class bx_x11_gui_c : public bx_gui_c
     void pump_events(bool process_input = false) noexcept;
     void poll_events(bool process_input);
     void keypress(XKeyEvent* event, bool released);
+    void dispatch_keypress(XKeyEvent* event);
+    void suppress_guest_keys();
     u32 translate_key(KeySym keysym, KeySym sdl_symbol = NoSymbol);
     void release_keys();
     void load_keyboard_mapping();
@@ -1019,12 +1022,14 @@ void bx_x11_gui_c::mouse_enabled_changed_impl(bool val)
     mouse_sync_pending = true;
     if(bx_x_display)
     {
+      if(keyboard_grabbed) XUngrabKeyboard(bx_x_display, CurrentTime);
       mouse_input_serial = XNextRequest(bx_x_display);
       XUngrabPointer(bx_x_display, CurrentTime);
       if(mouse_absolute && was_captured && win && !window_destroyed)
         XUndefineCursor(bx_x_display, win);
       XFlush(bx_x_display);
     }
+    keyboard_grabbed = false;
     if(was_captured) update_mouse_title();
     return;
   }
@@ -1074,6 +1079,12 @@ void bx_x11_gui_c::mouse_enabled_changed_impl(bool val)
       XUngrabPointer(bx_x_display, CurrentTime);
       XDefineCursor(bx_x_display, win, hidden_cursor);
     }
+    const int keyboard_result = XGrabKeyboard(bx_x_display, win, False,
+        GrabModeAsync, GrabModeAsync, CurrentTime);
+    keyboard_grabbed = keyboard_result == GrabSuccess;
+    if(!keyboard_grabbed)
+      printf("%%X11-W-KEYBOARD: Unable to capture system shortcuts (X grab status %d).\n",
+             keyboard_result);
     Window root, child;
     int root_x, root_y;
     unsigned buttons;
@@ -1355,7 +1366,7 @@ void bx_x11_gui_c::poll_events(bool process_input)
       break;
 
     case KeyPress:
-      keypress(&report.xkey, false);
+      dispatch_keypress(&report.xkey);
       break;
 
     case KeyRelease:
@@ -1371,7 +1382,8 @@ void bx_x11_gui_c::poll_events(bool process_input)
       break;
 
     case FocusOut:
-      if(report.xfocus.detail != NotifyInferior)
+      if(report.xfocus.mode != NotifyGrab && report.xfocus.mode != NotifyUngrab &&
+         report.xfocus.detail != NotifyInferior)
       {
         keyboard_focused = false;
         mouse_enabled_changed_impl(false);
@@ -1380,7 +1392,8 @@ void bx_x11_gui_c::poll_events(bool process_input)
       break;
 
     case FocusIn:
-      keyboard_focused = true;
+      if(report.xfocus.mode != NotifyGrab && report.xfocus.mode != NotifyUngrab)
+        keyboard_focused = true;
       break;
 
     case MotionNotify:
@@ -1752,6 +1765,41 @@ void bx_x11_gui_c::reconcile_keyboard_releases(bool process_input)
     if(key.down && key.control) CTRL_pressed = true;
 }
 
+void bx_x11_gui_c::dispatch_keypress(XKeyEvent* event)
+{
+  const bool escape = keyboard_grabbed && keyboard_focused && !input_paused &&
+      !input_detached && !retired && guest_keyboard && event->keycode >= 8 &&
+      event->keycode < 256 && event->serial >= key_release_serial[event->keycode] &&
+      !pressed_keys[event->keycode].down &&
+      x11_hotkey_symbol(event->keycode, XkbGroupForCoreState(event->state)) == XK_Tab &&
+      (hotkey_modifiers(event->state) & X11_HOTKEY_ALT);
+  keypress(event, false);
+  if(!escape || reset_window_pending ||
+     (fullscreen_transition_pending && !fullscreen_requested) ||
+     !read_window_state() || !window_fullscreen) return;
+  suppress_guest_keys();
+  mouse_enabled_changed_impl(false);
+  sync_mouse_capture();
+  if(!XIconifyWindow(bx_x_display, win, bx_x_screen_num))
+    printf("%%X11-W-FULLSCREEN: Unable to request fullscreen minimization.\n");
+  window_state_dirty = true;
+}
+
+void bx_x11_gui_c::suppress_guest_keys()
+{
+  if(!guest_keyboard || input_paused || input_detached) return;
+  for(unsigned code = 8; code < 256; ++code)
+  {
+    auto& key = pressed_keys[code];
+    if(!key.down) continue;
+    if(key.guest != BX_KEY_UNHANDLED && !guest_key_held(key.guest, code))
+      guest_keyboard->gen_scancode(key.guest | BX_KEY_RELEASED);
+    key.guest = BX_KEY_UNHANDLED;
+    key.suppressed = true;
+    key.scale_delta = 0;
+  }
+}
+
 void bx_x11_gui_c::keypress(XKeyEvent* event, bool released)
 {
   if(!guest_keyboard || input_paused || input_detached ||
@@ -2104,6 +2152,18 @@ u32 bx_x11_gui_c::translate_key(KeySym keysym, KeySym sdl_symbol)
         key_event = BX_KEY_ALT_R;
         break;
 #endif
+
+      case XK_Super_L:
+        key_event = BX_KEY_WIN_L;
+        break;
+
+      case XK_Super_R:
+        key_event = BX_KEY_WIN_R;
+        break;
+
+      case XK_Menu:
+        key_event = BX_KEY_MENU;
+        break;
 
       case XK_Caps_Lock:
         key_event = BX_KEY_CAPS_LOCK;
